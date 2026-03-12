@@ -1,0 +1,50 @@
+{
+  "name": "@lamalibre/create-portlama",
+  "version": "1.0.23",
+  "description": "One-command setup for secure reverse tunnels with a management dashboard",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "create-portlama": "bin/create-portlama.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "vendor"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "prepublishOnly": "npm run lint && node scripts/bundle-vendor.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/portlama.git",
+    "directory": "packages/create-portlama"
+  },
+  "homepage": "https://github.com/lamalibre/portlama#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/portlama/issues"
+  },
+  "keywords": [
+    "tunnel",
+    "reverse-tunnel",
+    "chisel",
+    "nginx",
+    "management",
+    "dashboard",
+    "vps",
+    "self-hosted",
+    "authelia",
+    "mtls"
+  ],
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "execa": "^9.0.0",
+    "listr2": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

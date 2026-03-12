@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.*
+*.p12
+*.key
+*.pem
+*.csr
+.DS_Store
+*.log
+coverage/
+.vite/
+dev/panel.json
+/tmp/
+.claude/
+packages/create-portlama/vendor/
+local-gate/

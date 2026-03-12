@@ -1,0 +1,45 @@
+# ============================================================================
+# Portlama E2E Docker Compose
+# ============================================================================
+# Spins up a systemd-enabled Ubuntu 24.04 container for E2E testing.
+#
+# Usage:
+#   cd tests/e2e/docker
+#   docker compose up -d
+#   docker compose exec portlama bash /opt/portlama/project/tests/e2e/run-all.sh
+#   docker compose down
+#
+# Limitations:
+#   - Requires --privileged for systemd (or specific cgroup setup)
+#   - Let's Encrypt tests are not runnable (no real DNS)
+#   - Set SKIP_DNS_TESTS=1 when running inside Docker
+# ============================================================================
+
+services:
+  portlama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: portlama-e2e
+    privileged: true
+    volumes:
+      # Mount the project root into the container
+      - ../../../:/opt/portlama/project:rw
+      # cgroup mount for systemd
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    ports:
+      - "9292:9292"
+    environment:
+      - NODE_ENV=development
+      - SKIP_DNS_TESTS=1
+      - container=docker
+    tmpfs:
+      - /run
+      - /run/lock
+    stop_grace_period: 3s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9292/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s

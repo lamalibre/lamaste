@@ -1,0 +1,43 @@
+{
+  "name": "@lamalibre/portlama-agent",
+  "version": "1.0.1",
+  "description": "Mac agent for Portlama — installs Chisel tunnel client and manages launchd agent",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "portlama-agent": "bin/portlama-agent.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/portlama.git",
+    "directory": "packages/portlama-agent"
+  },
+  "homepage": "https://github.com/lamalibre/portlama#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/portlama/issues"
+  },
+  "keywords": [
+    "portlama",
+    "tunnel",
+    "chisel",
+    "macos",
+    "launchd",
+    "agent"
+  ],
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "execa": "^9.0.0",
+    "listr2": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

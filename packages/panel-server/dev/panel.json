@@ -1,0 +1,9 @@
+{
+  "ip": "127.0.0.1",
+  "domain": null,
+  "email": null,
+  "dataDir": "./data",
+  "onboarding": {
+    "status": "FRESH"
+  }
+}

@@ -1,0 +1,29 @@
+# Development files
+tests/
+documents/
+.github/
+.vscode/
+.idea/
+.claude/
+
+# Configuration
+.env
+.env.*
+*.local
+eslint.config.js
+
+# Build artifacts that shouldn't be published
+node_modules/
+coverage/
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+CLAUDE.md

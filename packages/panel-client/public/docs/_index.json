@@ -1,0 +1,85 @@
+{
+  "sections": [
+    {
+      "title": "Introduction",
+      "pages": [
+        { "title": "What is Portlama?", "slug": "what-is-portlama", "file": "00-introduction/what-is-portlama.md" },
+        { "title": "How It Works", "slug": "how-it-works", "file": "00-introduction/how-it-works.md" },
+        { "title": "Quick Start", "slug": "quickstart", "file": "00-introduction/quickstart.md" }
+      ]
+    },
+    {
+      "title": "Concepts",
+      "pages": [
+        { "title": "Tunneling", "slug": "tunneling", "file": "01-concepts/tunneling.md" },
+        { "title": "mTLS & Client Certificates", "slug": "mtls", "file": "01-concepts/mtls.md" },
+        { "title": "Authentication (Authelia)", "slug": "authentication", "file": "01-concepts/authentication.md" },
+        { "title": "nginx Reverse Proxy", "slug": "nginx-reverse-proxy", "file": "01-concepts/nginx-reverse-proxy.md" },
+        { "title": "DNS & Domains", "slug": "dns-and-domains", "file": "01-concepts/dns-and-domains.md" },
+        { "title": "TLS Certificates", "slug": "certificates", "file": "01-concepts/certificates.md" },
+        { "title": "Security Model", "slug": "security-model", "file": "01-concepts/security-model.md" }
+      ]
+    },
+    {
+      "title": "Guides",
+      "pages": [
+        { "title": "Installation", "slug": "installation", "file": "02-guides/installation.md" },
+        { "title": "Onboarding Wizard", "slug": "onboarding", "file": "02-guides/onboarding.md" },
+        { "title": "Your First Tunnel", "slug": "first-tunnel", "file": "02-guides/first-tunnel.md" },
+        { "title": "Mac Client Setup", "slug": "mac-client-setup", "file": "02-guides/mac-client-setup.md" },
+        { "title": "Managing Users", "slug": "managing-users", "file": "02-guides/managing-users.md" },
+        { "title": "Certificate Management", "slug": "certificate-management", "file": "02-guides/certificate-management.md" },
+        { "title": "Static Sites", "slug": "static-sites", "file": "02-guides/static-sites.md" },
+        { "title": "Disaster Recovery", "slug": "disaster-recovery", "file": "02-guides/disaster-recovery.md" }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "pages": [
+        { "title": "System Overview", "slug": "architecture-overview", "file": "03-architecture/overview.md" },
+        { "title": "System Overview (Diagram)", "slug": "system-overview", "file": "03-architecture/system-overview.md" },
+        { "title": "Installer Internals", "slug": "installer", "file": "03-architecture/installer.md" },
+        { "title": "Installer Flow", "slug": "installer-flow", "file": "03-architecture/installer-flow.md" },
+        { "title": "Onboarding Flow", "slug": "onboarding-flow", "file": "03-architecture/onboarding-flow.md" },
+        { "title": "Management Flow", "slug": "management-flow", "file": "03-architecture/management-flow.md" },
+        { "title": "Panel Server", "slug": "panel-server", "file": "03-architecture/panel-server.md" },
+        { "title": "Panel Client", "slug": "panel-client", "file": "03-architecture/panel-client.md" },
+        { "title": "nginx Configuration", "slug": "nginx-configuration", "file": "03-architecture/nginx-configuration.md" },
+        { "title": "State Management", "slug": "state-management", "file": "03-architecture/state-management.md" },
+        { "title": "E2E Three-VM Sequences", "slug": "e2e-three-vm-sequences", "file": "03-architecture/e2e-three-vm-sequences.md" }
+      ]
+    },
+    {
+      "title": "API Reference",
+      "pages": [
+        { "title": "API Overview", "slug": "api-overview", "file": "04-api-reference/overview.md" },
+        { "title": "Onboarding API", "slug": "api-onboarding", "file": "04-api-reference/onboarding.md" },
+        { "title": "Tunnels API", "slug": "api-tunnels", "file": "04-api-reference/tunnels.md" },
+        { "title": "Users API", "slug": "api-users", "file": "04-api-reference/users.md" },
+        { "title": "Certificates API", "slug": "api-certificates", "file": "04-api-reference/certificates.md" },
+        { "title": "Services API", "slug": "api-services", "file": "04-api-reference/services.md" },
+        { "title": "Sites API", "slug": "api-sites", "file": "04-api-reference/sites.md" },
+        { "title": "System API", "slug": "api-system", "file": "04-api-reference/system.md" }
+      ]
+    },
+    {
+      "title": "Operations",
+      "pages": [
+        { "title": "Monitoring", "slug": "monitoring", "file": "05-operations/monitoring.md" },
+        { "title": "Upgrades", "slug": "upgrades", "file": "05-operations/upgrades.md" },
+        { "title": "Backup & Restore", "slug": "backup-and-restore", "file": "05-operations/backup-and-restore.md" },
+        { "title": "Uninstalling", "slug": "uninstalling", "file": "05-operations/uninstalling.md" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "pages": [
+        { "title": "Installer Flags", "slug": "installer-flags", "file": "06-reference/installer-flags.md" },
+        { "title": "Config Files", "slug": "config-files", "file": "06-reference/config-files.md" },
+        { "title": "Ports & Services", "slug": "ports-and-services", "file": "06-reference/ports-and-services.md" },
+        { "title": "Troubleshooting", "slug": "troubleshooting", "file": "06-reference/troubleshooting.md" },
+        { "title": "Glossary", "slug": "glossary", "file": "06-reference/glossary.md" }
+      ]
+    }
+  ]
+}

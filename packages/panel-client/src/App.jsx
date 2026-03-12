@@ -1,0 +1,66 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useOnboardingStatus } from './hooks/useOnboardingStatus.js';
+import { ToastProvider } from './components/Toast.jsx';
+import Layout from './components/layout/Layout.jsx';
+import LoadingScreen from './components/LoadingScreen.jsx';
+import ErrorScreen from './components/ErrorScreen.jsx';
+import OnboardingShell from './pages/onboarding/OnboardingShell.jsx';
+import Dashboard from './pages/management/Dashboard.jsx';
+import Tunnels from './pages/management/Tunnels.jsx';
+import Sites from './pages/management/Sites.jsx';
+import Users from './pages/Users.jsx';
+import Certificates from './pages/management/Certificates.jsx';
+import Services from './pages/management/Services.jsx';
+import DocsPage from './pages/docs/DocsPage.jsx';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+function AppRoutes() {
+  const { status, isLoading, isError, refetch } = useOnboardingStatus();
+
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
+
+  if (isError) {
+    return <ErrorScreen onRetry={refetch} />;
+  }
+
+  if (status !== 'COMPLETED') {
+    return <OnboardingShell />;
+  }
+
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/tunnels" element={<Tunnels />} />
+        <Route path="/sites" element={<Sites />} />
+        <Route path="/users" element={<Users />} />
+        <Route path="/certificates" element={<Certificates />} />
+        <Route path="/services" element={<Services />} />
+        <Route path="/docs/*" element={<DocsPage />} />
+      </Route>
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </ToastProvider>
+    </QueryClientProvider>
+  );
+}
