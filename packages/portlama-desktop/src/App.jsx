@@ -2,7 +2,16 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-shell';
-import { Terminal, Activity, Network, Compass, ScrollText, Settings, AlertTriangle, ExternalLink } from 'lucide-react';
+import {
+  Terminal,
+  Activity,
+  Network,
+  Compass,
+  ScrollText,
+  Settings,
+  AlertTriangle,
+  ExternalLink,
+} from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Tunnels from './pages/Tunnels.jsx';
 import Services from './pages/Services.jsx';
@@ -63,12 +72,18 @@ export default function App() {
 
   const renderPage = () => {
     switch (activeTab) {
-      case 'dashboard': return <Dashboard status={status} />;
-      case 'tunnels': return <Tunnels />;
-      case 'services': return <Services />;
-      case 'logs': return <Logs />;
-      case 'settings': return <SettingsPage />;
-      default: return <Dashboard status={status} />;
+      case 'dashboard':
+        return <Dashboard status={status} />;
+      case 'tunnels':
+        return <Tunnels />;
+      case 'services':
+        return <Services />;
+      case 'logs':
+        return <Logs />;
+      case 'settings':
+        return <SettingsPage />;
+      default:
+        return <Dashboard status={status} />;
     }
   };
 
@@ -108,9 +123,11 @@ export default function App() {
         {/* Connection status */}
         <div className="p-3 border-t border-zinc-800">
           <div className="flex items-center gap-2 text-xs">
-            <span className={`h-2 w-2 rounded-full ${
-              status?.chisel?.running ? 'bg-green-400' : 'bg-red-400'
-            }`} />
+            <span
+              className={`h-2 w-2 rounded-full ${
+                status?.chisel?.running ? 'bg-green-400' : 'bg-red-400'
+              }`}
+            />
             <span className="text-zinc-500">
               {status?.chisel?.running ? 'Connected' : 'Disconnected'}
             </span>
@@ -119,9 +136,7 @@ export default function App() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-y-auto">
-        {renderPage()}
-      </div>
+      <div className="flex-1 overflow-y-auto">{renderPage()}</div>
     </div>
   );
 }

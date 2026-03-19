@@ -2,8 +2,19 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  Loader2, RefreshCw, Plus, X, Globe, Brain, Database, Container,
-  Code, Film, BarChart3, Wrench, Trash2,
+  Loader2,
+  RefreshCw,
+  Plus,
+  X,
+  Globe,
+  Brain,
+  Database,
+  Container,
+  Code,
+  Film,
+  BarChart3,
+  Wrench,
+  Trash2,
 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -49,7 +60,12 @@ export default function Services() {
   const [exposeData, setExposeData] = useState({ subdomain: '', port: '', description: '' });
   const [exposeError, setExposeError] = useState(null);
   const [customData, setCustomData] = useState({
-    name: '', port: '', binary: '', processName: '', category: 'dev', description: '',
+    name: '',
+    port: '',
+    binary: '',
+    processName: '',
+    category: 'dev',
+    description: '',
   });
   const [customError, setCustomError] = useState(null);
   const [removeConfirm, setRemoveConfirm] = useState(null);
@@ -93,7 +109,14 @@ export default function Services() {
       }),
     onSuccess: () => {
       setShowCustomForm(false);
-      setCustomData({ name: '', port: '', binary: '', processName: '', category: 'dev', description: '' });
+      setCustomData({
+        name: '',
+        port: '',
+        binary: '',
+        processName: '',
+        category: 'dev',
+        description: '',
+      });
       setCustomError(null);
       queryClient.invalidateQueries({ queryKey: ['services'] });
     },
@@ -211,10 +234,20 @@ export default function Services() {
 
       {/* Custom service form */}
       {showCustomForm && (
-        <form onSubmit={handleAddCustom} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5 mb-4">
+        <form
+          onSubmit={handleAddCustom}
+          className="bg-zinc-900 border border-zinc-800 rounded-lg p-5 mb-4"
+        >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-white">Add Custom Service</h2>
-            <button type="button" onClick={() => { setShowCustomForm(false); setCustomError(null); }} className="text-zinc-500 hover:text-zinc-300">
+            <button
+              type="button"
+              onClick={() => {
+                setShowCustomForm(false);
+                setCustomError(null);
+              }}
+              className="text-zinc-500 hover:text-zinc-300"
+            >
               <X size={16} />
             </button>
           </div>
@@ -273,7 +306,9 @@ export default function Services() {
                 className="w-full rounded bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
               >
                 {CATEGORY_DROPDOWN_OPTIONS.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
                 ))}
               </select>
             </div>
@@ -300,7 +335,10 @@ export default function Services() {
             </button>
             <button
               type="button"
-              onClick={() => { setShowCustomForm(false); setCustomError(null); }}
+              onClick={() => {
+                setShowCustomForm(false);
+                setCustomError(null);
+              }}
               className="rounded bg-zinc-800 border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
             >
               Cancel
@@ -335,16 +373,17 @@ export default function Services() {
                   removeConfirm={removeConfirm}
                   onRemoveClick={() => setRemoveConfirm(service.id)}
                   onRemoveConfirm={() => removeCustomMutation.mutate(service.id)}
-                  onRemoveCancel={() => { setRemoveConfirm(null); setRemoveError(null); }}
+                  onRemoveCancel={() => {
+                    setRemoveConfirm(null);
+                    setRemoveError(null);
+                  }}
                   removeIsPending={removeCustomMutation.isPending}
                 />
               ))}
             </div>
           )}
 
-          {removeError && (
-            <p className="text-red-400 text-xs mb-3">{removeError}</p>
-          )}
+          {removeError && <p className="text-red-400 text-xs mb-3">{removeError}</p>}
 
           {filteredServices.length === 0 && !showDocker && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-8 text-center mb-6">
@@ -357,9 +396,7 @@ export default function Services() {
             <>
               <div className="flex items-center gap-2 mb-4">
                 <Container size={16} className="text-cyan-400" />
-                <h2 className="text-sm font-semibold text-white">
-                  Docker Containers
-                </h2>
+                <h2 className="text-sm font-semibold text-white">Docker Containers</h2>
                 <span className="text-xs text-zinc-500">({dockerContainers.length})</span>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -393,7 +430,10 @@ export default function Services() {
               <h2 className="text-sm font-semibold text-white">Expose Service</h2>
               <button
                 type="button"
-                onClick={() => { setShowExposeModal(null); setExposeError(null); }}
+                onClick={() => {
+                  setShowExposeModal(null);
+                  setExposeError(null);
+                }}
                 className="text-zinc-500 hover:text-zinc-300"
               >
                 <X size={16} />
@@ -405,7 +445,9 @@ export default function Services() {
                 <input
                   type="text"
                   value={exposeData.subdomain}
-                  onChange={(e) => setExposeData({ ...exposeData, subdomain: e.target.value.toLowerCase() })}
+                  onChange={(e) =>
+                    setExposeData({ ...exposeData, subdomain: e.target.value.toLowerCase() })
+                  }
                   className="w-full rounded bg-zinc-950 border border-zinc-700 px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none"
                 />
               </div>
@@ -443,7 +485,10 @@ export default function Services() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowExposeModal(null); setExposeError(null); }}
+                onClick={() => {
+                  setShowExposeModal(null);
+                  setExposeError(null);
+                }}
                 className="rounded bg-zinc-800 border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
               >
                 Cancel
@@ -456,7 +501,16 @@ export default function Services() {
   );
 }
 
-function ServiceCard({ service, onExpose, isCustom, removeConfirm, onRemoveClick, onRemoveConfirm, onRemoveCancel, removeIsPending }) {
+function ServiceCard({
+  service,
+  onExpose,
+  isCustom,
+  removeConfirm,
+  onRemoveClick,
+  onRemoveConfirm,
+  onRemoveCancel,
+  removeIsPending,
+}) {
   const isRunning = service.status === 'running';
   const hasTunnel = !!service.tunnelFqdn;
   const categoryColor = CATEGORY_COLORS[service.category] || CATEGORY_COLORS.custom;
@@ -464,7 +518,9 @@ function ServiceCard({ service, onExpose, isCustom, removeConfirm, onRemoveClick
   const showingConfirm = removeConfirm === service.id;
 
   return (
-    <div className={`bg-zinc-900 border border-zinc-800 rounded-lg p-4 ${service.status === 'not_found' ? 'opacity-50' : ''}`}>
+    <div
+      className={`bg-zinc-900 border border-zinc-800 rounded-lg p-4 ${service.status === 'not_found' ? 'opacity-50' : ''}`}
+    >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
           <CategoryIcon category={service.category} size={14} />
@@ -524,7 +580,10 @@ function ServiceCard({ service, onExpose, isCustom, removeConfirm, onRemoveClick
             </button>
           )}
           {hasTunnel && (
-            <span className="text-xs text-cyan-400 font-mono truncate max-w-[160px]" title={service.tunnelFqdn}>
+            <span
+              className="text-xs text-cyan-400 font-mono truncate max-w-[160px]"
+              title={service.tunnelFqdn}
+            >
               {service.tunnelFqdn}
             </span>
           )}
@@ -558,7 +617,10 @@ function DockerCard({ container, onExpose }) {
                 :{port.hostPort} → :{port.containerPort}/{port.protocol}
               </span>
               {container.tunnelFqdn ? (
-                <span className="text-xs text-cyan-400 font-mono truncate max-w-[160px]" title={container.tunnelFqdn}>
+                <span
+                  className="text-xs text-cyan-400 font-mono truncate max-w-[160px]"
+                  title={container.tunnelFqdn}
+                >
                   {container.tunnelFqdn}
                 </span>
               ) : (
