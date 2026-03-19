@@ -2,8 +2,7 @@ import { z } from 'zod';
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import { getConfig } from '../../lib/config.js';
-import { readSites, writeSites } from '../../lib/state.js';
-import { readTunnels } from '../../lib/state.js';
+import { readSites, writeSites, readTunnels } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
 import { updateAccessControl } from '../../lib/authelia.js';
 import { issueTunnelCert, getCertPath } from '../../lib/certbot.js';
@@ -15,6 +14,7 @@ import {
   deleteFile,
   getSiteSize,
   validatePath,
+  validateFileExtension,
   getSiteRoot,
 } from '../../lib/files.js';
 
@@ -51,6 +51,10 @@ const DeleteFileSchema = z.object({
   path: z.string().min(1, 'Path is required'),
 });
 
+const PathQuerySchema = z.object({
+  path: z.string().max(500).optional().default('.'),
+});
+
 /**
  * Resolve A records for a hostname, returning an empty array on expected DNS errors.
  */
@@ -65,13 +69,31 @@ async function resolveA(hostname) {
   }
 }
 
+function assertAgentSiteAccess(request, site) {
+  if (request.certRole === 'agent') {
+    const allowed = request.certAllowedSites || [];
+    if (!allowed.includes(site.name)) {
+      const err = new Error('You do not have access to this site');
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+}
+
 export default async function sitesRoutes(fastify, _opts) {
   // GET /api/sites
   fastify.get('/sites', {
-    preHandler: fastify.requireRole(['admin']),
-  }, async (_request, _reply) => {
-    const sites = await readSites();
+    preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'sites:read' }),
+  }, async (request, _reply) => {
+    let sites = await readSites();
     sites.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // Agents only see their allowed sites
+    if (request.certRole === 'agent') {
+      const allowed = request.certAllowedSites || [];
+      sites = sites.filter((s) => allowed.includes(s.name));
+    }
+
     return { sites };
   });
 
@@ -422,16 +444,18 @@ export default async function sitesRoutes(fastify, _opts) {
 
   // GET /api/sites/:id/files
   fastify.get('/sites/:id/files', {
-    preHandler: fastify.requireRole(['admin']),
+    preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'sites:read' }),
   }, async (request, reply) => {
     const { id } = IdParamSchema.parse(request.params);
-    const relativePath = request.query.path || '.';
+    const { path: relativePath } = PathQuerySchema.parse(request.query);
 
     const sites = await readSites();
     const site = sites.find((s) => s.id === id);
     if (!site) {
       return reply.code(404).send({ error: 'Site not found' });
     }
+
+    assertAgentSiteAccess(request, site);
 
     try {
       const files = await listFiles(id, relativePath);
@@ -443,7 +467,7 @@ export default async function sitesRoutes(fastify, _opts) {
 
   // POST /api/sites/:id/files — multipart file upload
   fastify.post('/sites/:id/files', {
-    preHandler: fastify.requireRole(['admin']),
+    preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'sites:write' }),
   }, async (request, reply) => {
     const { id } = IdParamSchema.parse(request.params);
     const config = getConfig();
@@ -454,7 +478,9 @@ export default async function sitesRoutes(fastify, _opts) {
       return reply.code(404).send({ error: 'Site not found' });
     }
 
-    const uploadDir = request.query.path || '.';
+    assertAgentSiteAccess(request, site);
+
+    const { path: uploadDir } = PathQuerySchema.parse(request.query);
     const uploadedFiles = [];
 
     try {
@@ -468,8 +494,9 @@ export default async function sitesRoutes(fastify, _opts) {
           ? part.filename
           : `${uploadDir}/${part.filename}`;
 
-        // Validate path before saving
+        // Validate path and file extension before saving
         validatePath(relativePath);
+        validateFileExtension(part.filename);
 
         await saveUploadedFile(id, relativePath, part.file);
         uploadedFiles.push(relativePath);
@@ -505,7 +532,7 @@ export default async function sitesRoutes(fastify, _opts) {
 
   // DELETE /api/sites/:id/files
   fastify.delete('/sites/:id/files', {
-    preHandler: fastify.requireRole(['admin']),
+    preHandler: fastify.requireRole(['admin', 'agent'], { capability: 'sites:write' }),
   }, async (request, reply) => {
     const { id } = IdParamSchema.parse(request.params);
 
@@ -514,6 +541,8 @@ export default async function sitesRoutes(fastify, _opts) {
     if (!site) {
       return reply.code(404).send({ error: 'Site not found' });
     }
+
+    assertAgentSiteAccess(request, site);
 
     const body = DeleteFileSchema.parse(request.body);
 

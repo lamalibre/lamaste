@@ -75,8 +75,14 @@ Agent certificates are generated from the panel UI and should be used instead of
 | `services:read` | View service status |
 | `services:write` | Start/stop/restart services |
 | `system:read` | View system stats (CPU, RAM, disk) |
+| `sites:read` | List assigned sites and browse their files |
+| `sites:write` | Upload and delete files on assigned sites |
 
-Capabilities are stored server-side and can be updated without reissuing the certificate. Users, certificates, agent management, and logs always remain admin-only. This way, even if a Mac is compromised, the attacker is limited to whichever capabilities were assigned to that agent — and the admin can revoke or reduce them immediately.
+Capabilities are stored server-side and can be updated without reissuing the certificate. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
+
+In addition to capabilities, agent certificates support **per-site scoping** via `allowedSites`. Each agent has a list of site names it is permitted to access. When an agent calls `GET /api/sites`, it only sees sites in its `allowedSites` list. File operations (upload, list, delete) require both the relevant capability and the site name in the agent's `allowedSites`. The admin manages site assignments from **Panel** > **Certificates** > edit agent > **Site Access**, or via the `PATCH /api/certs/agent/:label/allowed-sites` endpoint.
+
+This two-level model (capabilities + site scoping) means that even if a Mac is compromised, the attacker is limited to whichever capabilities and sites were assigned to that agent — and the admin can revoke or reduce them immediately.
 
 mTLS is stronger than a login page because:
 - There is no password to brute-force

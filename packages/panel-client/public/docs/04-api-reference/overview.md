@@ -299,7 +299,22 @@ There is no application-level rate limiting. The mTLS requirement means only aut
 | GET | `/api/certs/agent` | Management | List agent certificates |
 | GET | `/api/certs/agent/:label/download` | Management | Download agent .p12 |
 | PATCH | `/api/certs/agent/:label/capabilities` | Management | Update agent capabilities |
+| PATCH | `/api/certs/agent/:label/allowed-sites` | Management | Update agent site access |
 | DELETE | `/api/certs/agent/:label` | Management | Revoke agent certificate |
 | GET | `/api/services` | Management | List service statuses |
-| POST | `/api/services/:name/:action` | Management | Control a service |
+| POST | `/api/services/:name/:action` | Management | Control a service (start/stop/restart) |
 | WS | `/api/services/:name/logs` | Management | Stream service logs |
+
+### Agent Capabilities
+
+Agent certificates use capability-based access control. The following capabilities can be assigned:
+
+| Capability | Description |
+|------------|-------------|
+| `tunnels:read` | List tunnels, download Mac plist (always-on, cannot be removed) |
+| `tunnels:write` | Create and delete tunnels |
+| `services:read` | View service status |
+| `services:write` | Start, stop, and restart services |
+| `system:read` | View system stats (CPU, RAM, disk) |
+| `sites:read` | List sites and browse files |
+| `sites:write` | Upload and delete files on assigned sites |

@@ -186,7 +186,7 @@ Each site is stored in `/etc/portlama/sites.json` as a JSON array:
     "allowedUsers": [],
     "dnsVerified": true,
     "certIssued": true,
-    "rootPath": "/var/lib/portlama/sites/550e8400-e29b-41d4-a716-446655440000",
+    "rootPath": "/var/www/portlama/550e8400-e29b-41d4-a716-446655440000",
     "createdAt": "2024-01-15T10:30:00.000Z",
     "totalSize": 245760
   }
@@ -284,6 +284,39 @@ Each static site vhost includes:
 - Optional Authelia `auth_request` for protected sites
 - Standard security headers
 - Gzip compression for text-based assets
+
+## CLI Deployment
+
+As an alternative to the browser-based file management described above, you can manage static sites and deploy files directly from the command line using the Portlama agent CLI.
+
+### Prerequisites
+
+- The Portlama agent CLI installed on your Mac (see [Mac Client Setup](mac-client-setup.md))
+- An agent certificate with `sites:read` and `sites:write` capabilities. Generate one from the panel: **Certificates** > **Agent Certificates** > **Generate**, and check the `sites:read` and `sites:write` capability boxes.
+- The agent certificate must have the target site listed in its **Site Access** configuration. The admin assigns sites to agents from **Panel** > **Certificates** > edit agent > **Site Access**.
+
+### Workflow
+
+Site creation and deletion are admin-only operations. The admin creates the site through the panel or admin certificate, then assigns it to the agent. The agent can then deploy files to the site.
+
+```bash
+# Admin creates the site through the panel UI first, then:
+
+# Build your app and deploy (agent cert must have the site in its allowedSites)
+npm run build
+portlama-agent deploy blog ./dist
+```
+
+The `deploy` command clears all existing files on the site and uploads all non-hidden files from the specified local directory. It is a full replacement, not a merge. Every deploy is a clean slate.
+
+You can also list sites assigned to your agent from the CLI:
+
+```bash
+# List sites assigned to this agent
+portlama-agent sites
+```
+
+For the full list of flags and options, see the [agent CLI README](https://github.com/lamalibre/portlama/tree/main/packages/portlama-agent).
 
 ## Quick Reference
 

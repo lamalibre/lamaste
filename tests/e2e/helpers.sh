@@ -322,6 +322,28 @@ api_patch_status() {
     "${BASE_URL}/api/${api_path}" 2>/dev/null || echo "000"
 }
 
+# api_upload_file path file_path
+# Multipart file upload to API. Returns body on stdout.
+api_upload_file() {
+  local api_path="$1"
+  local file_path="$2"
+  _curl_mtls \
+    -X POST \
+    -F "file=@${file_path}" \
+    "${BASE_URL}/api/${api_path}"
+}
+
+# api_upload_file_status path file_path
+# Multipart file upload returning only the HTTP status code.
+api_upload_file_status() {
+  local api_path="$1"
+  local file_path="$2"
+  _curl_mtls -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -F "file=@${file_path}" \
+    "${BASE_URL}/api/${api_path}" 2>/dev/null || echo "000"
+}
+
 # api_delete_status path
 # DELETE request returning only the HTTP status code.
 api_delete_status() {

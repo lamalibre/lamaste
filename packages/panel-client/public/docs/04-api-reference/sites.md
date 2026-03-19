@@ -18,6 +18,28 @@ All site endpoints require a valid mTLS client certificate and a completed onboa
 
 If onboarding is not complete, all endpoints return `503 Service Unavailable`.
 
+### Role-Based Access
+
+Site endpoints use a two-level access model: capabilities control which operations are permitted, and `allowedSites` controls which sites an agent can interact with.
+
+**Admin-only endpoints (require admin certificate):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/sites` | Create a new site |
+| `PATCH /api/sites/:id` | Update site settings |
+| `DELETE /api/sites/:id` | Delete a site |
+| `POST /api/sites/:id/verify-dns` | Verify DNS for custom domain sites |
+
+**Agent-accessible endpoints (require capability + site in allowedSites):**
+
+| Capability | Grants Access To | Site Scoping |
+|------------|-----------------|--------------|
+| `sites:read` | `GET /api/sites` (list sites), `GET /api/sites/:id/files` (list files) | Agent sees only sites in its `allowedSites` list |
+| `sites:write` | `POST /api/sites/:id/files` (upload files), `DELETE /api/sites/:id/files` (delete files) | Agent can only modify files on sites in its `allowedSites` list |
+
+Admin certificates have full access to all endpoints and see all sites regardless of `allowedSites`. Agent certificates must have both the relevant capability and the site name in their `allowedSites` list. The admin assigns sites to agents from **Panel** > **Certificates** > **Agent Certificates** > edit agent > **Site Access**.
+
 ## Endpoints
 
 ### `GET /api/sites`
@@ -48,7 +70,7 @@ curl -s --cert client.p12:password \
       "allowedUsers": [],
       "dnsVerified": true,
       "certIssued": true,
-      "rootPath": "/var/lib/portlama/sites/c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "rootPath": "/var/www/portlama/c3d4e5f6-a7b8-9012-cdef-123456789012",
       "createdAt": "2026-03-13T14:30:00.000Z",
       "totalSize": 524288
     },
@@ -62,7 +84,7 @@ curl -s --cert client.p12:password \
       "allowedUsers": [],
       "dnsVerified": false,
       "certIssued": false,
-      "rootPath": "/var/lib/portlama/sites/d4e5f6a7-b8c9-0123-defa-234567890123",
+      "rootPath": "/var/www/portlama/d4e5f6a7-b8c9-0123-defa-234567890123",
       "createdAt": "2026-03-12T10:15:00.000Z",
       "totalSize": 0
     }
@@ -168,7 +190,7 @@ curl -s --cert client.p12:password \
     "autheliaProtected": false,
     "dnsVerified": true,
     "certIssued": true,
-    "rootPath": "/var/lib/portlama/sites/c3d4e5f6-a7b8-9012-cdef-123456789012",
+    "rootPath": "/var/www/portlama/c3d4e5f6-a7b8-9012-cdef-123456789012",
     "createdAt": "2026-03-13T14:30:00.000Z",
     "totalSize": 0
   }
@@ -189,7 +211,7 @@ curl -s --cert client.p12:password \
     "autheliaProtected": false,
     "dnsVerified": false,
     "certIssued": false,
-    "rootPath": "/var/lib/portlama/sites/d4e5f6a7-b8c9-0123-defa-234567890123",
+    "rootPath": "/var/www/portlama/d4e5f6a7-b8c9-0123-defa-234567890123",
     "createdAt": "2026-03-13T14:30:00.000Z",
     "totalSize": 0
   },
@@ -294,7 +316,7 @@ curl -s --cert client.p12:password \
     "allowedUsers": ["alice"],
     "dnsVerified": true,
     "certIssued": true,
-    "rootPath": "/var/lib/portlama/sites/c3d4e5f6-a7b8-9012-cdef-123456789012",
+    "rootPath": "/var/www/portlama/c3d4e5f6-a7b8-9012-cdef-123456789012",
     "createdAt": "2026-03-13T14:30:00.000Z",
     "totalSize": 524288
   }
@@ -414,9 +436,9 @@ curl -s --cert client.p12:password \
 ```json
 {
   "files": [
-    { "name": "index.html", "type": "file", "size": 2048 },
-    { "name": "css", "type": "directory", "size": 0 },
-    { "name": "logo.png", "type": "file", "size": 15360 }
+    { "name": "index.html", "type": "file", "size": 2048, "modifiedAt": "2026-03-19T10:30:00.000Z", "relativePath": "index.html" },
+    { "name": "css", "type": "directory", "size": 4096, "modifiedAt": "2026-03-19T10:30:00.000Z", "relativePath": "css" },
+    { "name": "logo.png", "type": "file", "size": 15360, "modifiedAt": "2026-03-19T10:30:00.000Z", "relativePath": "logo.png" }
   ],
   "path": "."
 }
@@ -492,7 +514,7 @@ curl -s --cert client.p12:password \
 
 | Status | Body | When |
 |--------|------|------|
-| 400 | `{"error":"Upload failed: ..."}` | Path traversal attempt, invalid path, or stream error |
+| 400 | `{"error":"Upload failed: ..."}` | Path traversal attempt, invalid path, disallowed file extension, or stream error |
 | 404 | `{"error":"Site not found"}` | No site with the given UUID |
 
 File paths are validated to prevent directory traversal. Paths containing `..` or absolute paths are rejected.
@@ -565,7 +587,7 @@ curl -s --cert client.p12:password \
   "allowedUsers": [],
   "dnsVerified": true,
   "certIssued": true,
-  "rootPath": "/var/lib/portlama/sites/<uuid>",
+  "rootPath": "/var/www/portlama/<uuid>",
   "createdAt": "2026-03-13T14:30:00.000Z",
   "totalSize": 524288
 }

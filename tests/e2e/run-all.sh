@@ -64,6 +64,7 @@ TEST_SCRIPTS=(
   "10-resilience.sh"
   "11-input-validation.sh"
   "12-user-invitations.sh"
+  "13-site-lifecycle.sh"
 )
 
 PASSED=0

@@ -15,6 +15,7 @@ import {
   Trash2,
   Key,
   Settings,
+  Globe,
 } from 'lucide-react';
 import { useToast } from '../../components/Toast.jsx';
 
@@ -54,11 +55,11 @@ async function fetchAgentCerts() {
   return res.json();
 }
 
-async function generateAgentCert({ label, capabilities }) {
+async function generateAgentCert({ label, capabilities, allowedSites }) {
   const res = await fetch('/api/certs/agent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, capabilities }),
+    body: JSON.stringify({ label, capabilities, allowedSites }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to generate agent certificate');
@@ -66,7 +67,7 @@ async function generateAgentCert({ label, capabilities }) {
 }
 
 async function updateAgentCaps(label, capabilities) {
-  const res = await fetch(`/api/certs/agent/${label}/capabilities`, {
+  const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}/capabilities`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ capabilities }),
@@ -76,15 +77,26 @@ async function updateAgentCaps(label, capabilities) {
   return data;
 }
 
+async function updateAgentAllowedSites(label, allowedSites) {
+  const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}/allowed-sites`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allowedSites }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update allowed sites');
+  return data;
+}
+
 async function revokeAgentCert(label) {
-  const res = await fetch(`/api/certs/agent/${label}`, { method: 'DELETE' });
+  const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}`, { method: 'DELETE' });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to revoke agent certificate');
   return data;
 }
 
 async function downloadAgentP12(label) {
-  const res = await fetch(`/api/certs/agent/${label}/download`);
+  const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}/download`);
   if (!res.ok) throw new Error('Download failed');
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -336,6 +348,8 @@ const CAPABILITY_OPTIONS = [
   { value: 'services:read', label: 'services:read', description: 'View service status' },
   { value: 'services:write', label: 'services:write', description: 'Start/stop/restart services' },
   { value: 'system:read', label: 'system:read', description: 'View system stats (CPU, RAM, disk)' },
+  { value: 'sites:read', label: 'sites:read', description: 'List sites and browse files' },
+  { value: 'sites:write', label: 'sites:write', description: 'Create, delete, and deploy to sites' },
 ];
 
 function CapabilityCheckboxes({ capabilities, onChange, disabled }) {
@@ -382,9 +396,15 @@ function AgentGenerateModal({ onClose }) {
 
   const [label, setLabel] = useState('');
   const [capabilities, setCapabilities] = useState(['tunnels:read']);
+  const [allowedSites, setAllowedSites] = useState([]);
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
+
+  const { data: sitesData } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => fetch('/api/sites').then((r) => r.json()),
+  });
 
   const generateMutation = useMutation({
     mutationFn: generateAgentCert,
@@ -409,9 +429,9 @@ function AgentGenerateModal({ onClose }) {
         setError('Lowercase letters, numbers, and hyphens only. Cannot start or end with a hyphen.');
         return;
       }
-      generateMutation.mutate({ label, capabilities });
+      generateMutation.mutate({ label, capabilities, allowedSites });
     },
-    [label, capabilities, generateMutation],
+    [label, capabilities, allowedSites, generateMutation],
   );
 
   const handleCopyPassword = useCallback(async () => {
@@ -481,6 +501,38 @@ function AgentGenerateModal({ onClose }) {
                   disabled={generateMutation.isPending}
                 />
               </div>
+
+              {(capabilities.includes('sites:read') || capabilities.includes('sites:write')) && (
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-2">Site Access</label>
+                <p className="text-xs text-zinc-500 mb-2">Select which static sites this agent can manage files for.</p>
+                {sitesData?.sites?.length > 0 ? (
+                  <div className="space-y-1">
+                    {sitesData.sites.map((site) => (
+                      <label key={site.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={allowedSites.includes(site.name)}
+                          onChange={() => {
+                            setAllowedSites((prev) =>
+                              prev.includes(site.name)
+                                ? prev.filter((s) => s !== site.name)
+                                : [...prev, site.name]
+                            );
+                          }}
+                          disabled={generateMutation.isPending}
+                          className="rounded border-zinc-600 bg-zinc-800 text-cyan-400 focus:ring-cyan-400"
+                        />
+                        <span className="font-mono">{site.name}</span>
+                        <span className="text-zinc-500 text-xs">({site.fqdn})</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500">No sites created yet.</p>
+                )}
+              </div>
+              )}
 
               {error && (
                 <div className="rounded bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
@@ -678,6 +730,99 @@ function AgentEditCapsModal({ agent, onClose }) {
   );
 }
 
+function AgentEditSitesModal({ agent, onClose }) {
+  const queryClient = useQueryClient();
+  const addToast = useToast();
+
+  const [selectedSites, setSelectedSites] = useState(agent.allowedSites || []);
+
+  const { data: sitesData } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => fetch('/api/sites').then((r) => r.json()),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (sites) => updateAgentAllowedSites(agent.label, sites),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agent-certs'] });
+      addToast(`Allowed sites updated for ${agent.label}`);
+      onClose();
+    },
+    onError: (err) => {
+      addToast(err.message, 'error');
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-zinc-900 border border-zinc-800 shadow-xl">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-white">
+            <Globe size={20} className="text-cyan-400" />
+            Site Access — {agent.label}
+          </h3>
+          <button type="button" onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-xs text-zinc-500">Select which static sites this agent can manage files for.</p>
+          {sitesData?.sites?.length > 0 ? (
+            <div className="space-y-1">
+              {sitesData.sites.map((site) => (
+                <label key={site.id} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedSites.includes(site.name)}
+                    onChange={() => {
+                      setSelectedSites((prev) =>
+                        prev.includes(site.name)
+                          ? prev.filter((s) => s !== site.name)
+                          : [...prev, site.name]
+                      );
+                    }}
+                    disabled={updateMutation.isPending}
+                    className="rounded border-zinc-600 bg-zinc-800 text-cyan-400 focus:ring-cyan-400"
+                  />
+                  <span className="font-mono">{site.name}</span>
+                  <span className="text-zinc-500 text-xs">({site.fqdn})</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-500">No sites created yet.</p>
+          )}
+          <div className="flex items-center gap-3 justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={updateMutation.isPending}
+              className="rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => updateMutation.mutate(selectedSites)}
+              disabled={updateMutation.isPending}
+              className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+            >
+              {updateMutation.isPending ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save'
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AgentCertsSection() {
   const queryClient = useQueryClient();
   const addToast = useToast();
@@ -685,6 +830,7 @@ function AgentCertsSection() {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [editCapsTarget, setEditCapsTarget] = useState(null);
+  const [editSitesTarget, setEditSitesTarget] = useState(null);
 
   const agentQuery = useQuery({
     queryKey: ['agent-certs'],
@@ -789,6 +935,11 @@ function AgentCertsSection() {
                           </span>
                         ))}
                       </div>
+                      {cert.allowedSites?.length > 0 && (
+                        <span className="text-xs text-zinc-500 mt-1 block">
+                          Sites: {cert.allowedSites.join(', ')}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <AgentStatusBadge status={cert.status} />
@@ -803,6 +954,16 @@ function AgentCertsSection() {
                             title="Edit capabilities"
                           >
                             <Settings size={12} />
+                          </button>
+                        )}
+                        {cert.status !== 'revoked' && (
+                          <button
+                            type="button"
+                            onClick={() => setEditSitesTarget(cert)}
+                            className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
+                            title="Edit site access"
+                          >
+                            <Globe size={12} />
                           </button>
                         )}
                         {cert.status !== 'revoked' && (
@@ -855,6 +1016,14 @@ function AgentCertsSection() {
         <AgentEditCapsModal
           agent={editCapsTarget}
           onClose={() => setEditCapsTarget(null)}
+        />
+      )}
+
+      {/* Edit site access modal */}
+      {editSitesTarget && (
+        <AgentEditSitesModal
+          agent={editSitesTarget}
+          onClose={() => setEditSitesTarget(null)}
         />
       )}
     </div>

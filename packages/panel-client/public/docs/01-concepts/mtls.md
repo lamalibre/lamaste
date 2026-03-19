@@ -112,6 +112,8 @@ Agent certificates have capability-based access. By default, a new agent can onl
 | `services:read` | View service status |
 | `services:write` | Start/stop/restart services |
 | `system:read` | View system stats (CPU, RAM, disk) |
+| `sites:read` | List sites and browse files |
+| `sites:write` | Upload and delete files on assigned sites |
 
 Capabilities are stored server-side, so changing what an agent can do does not require reissuing its certificate. Users, certificates, agent management, and logs always remain admin-only.
 
@@ -430,6 +432,7 @@ openssl pkcs12 -in /etc/portlama/pki/client.p12 -info -nokeys
 | GET | `/api/certs/agent` | List agent certificates |
 | GET | `/api/certs/agent/:label/download` | Download agent `.p12` file |
 | PATCH | `/api/certs/agent/:label/capabilities` | Update agent capabilities |
+| PATCH | `/api/certs/agent/:label/allowed-sites` | Update agent site access |
 | DELETE | `/api/certs/agent/:label` | Revoke agent certificate |
 
 ### Related documentation

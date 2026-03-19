@@ -18,6 +18,9 @@ This directory contains end-to-end tests that verify the complete Portlama syste
 | 08 | `08-mtls-rotation.sh` | mTLS rotation, P12 download, certificate fingerprint change | No |
 | 09 | `09-ip-fallback.sh` | IP:9292 access works independently of domain nginx configuration | No |
 | 10 | `10-resilience.sh` | Service failure detection and recovery via API | No |
+| 11 | `11-input-validation.sh` | Input validation across all API endpoints | No |
+| 12 | `12-user-invitations.sh` | User invitation flow: create, accept, token validation | No |
+| 13 | `13-site-lifecycle.sh` | Static site CRUD, file upload/delete, settings, input validation | No |
 
 ## Prerequisites
 

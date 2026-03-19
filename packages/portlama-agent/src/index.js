@@ -22,6 +22,8 @@ ${b('COMMANDS')}
   ${c('uninstall')}   Stop agent and remove all files
   ${c('status')}      Show agent health, tunnel list, connection status
   ${c('logs')}        Stream Chisel log output (tail -f)
+  ${c('sites')}       List, create, or delete static sites
+  ${c('deploy')}      Deploy a local directory to a static site
 
 ${b('EXAMPLES')}
 
@@ -33,6 +35,15 @@ ${b('EXAMPLES')}
 
   ${d('# Check if the agent is running')}
   ${c('portlama-agent status')}
+
+  ${d('# List static sites')}
+  ${c('portlama-agent sites')}
+
+  ${d('# Create a managed static site')}
+  ${c('portlama-agent sites create blog')}
+
+  ${d('# Deploy local build to a site')}
+  ${c('portlama-agent deploy blog ./dist')}
 
 ${b('PREREQUISITES')}
 
@@ -79,6 +90,16 @@ export async function main() {
     case 'logs': {
       const { runLogs } = await import('./commands/logs.js');
       await runLogs();
+      break;
+    }
+    case 'sites': {
+      const { runSites } = await import('./commands/sites.js');
+      await runSites(args.slice(1));
+      break;
+    }
+    case 'deploy': {
+      const { runDeploy } = await import('./commands/deploy.js');
+      await runDeploy(args.slice(1));
       break;
     }
     default:

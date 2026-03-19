@@ -1,6 +1,6 @@
 import fp from 'fastify-plugin';
 import { isRevoked } from '../lib/revocation.js';
-import { getAgentCapabilities } from '../lib/mtls.js';
+import { getAgentCapabilities, getAgentAllowedSites } from '../lib/mtls.js';
 
 let devWarningLogged = false;
 
@@ -12,6 +12,7 @@ async function mtlsPlugin(fastify, _opts) {
       request.certRole = 'admin';
       request.certLabel = null;
       request.certCapabilities = null;
+      request.certAllowedSites = null;
       return;
     }
 
@@ -25,6 +26,7 @@ async function mtlsPlugin(fastify, _opts) {
       request.certRole = 'admin';
       request.certLabel = null;
       request.certCapabilities = null;
+      request.certAllowedSites = null;
       return;
     }
 
@@ -57,13 +59,21 @@ async function mtlsPlugin(fastify, _opts) {
       request.certLabel = cn.slice('agent:'.length);
       try {
         request.certCapabilities = await getAgentCapabilities(request.certLabel);
-      } catch {
+      } catch (err) {
+        request.log.warn({ err, label: request.certLabel }, 'Failed to load agent capabilities, using defaults');
         request.certCapabilities = ['tunnels:read'];
+      }
+      try {
+        request.certAllowedSites = await getAgentAllowedSites(request.certLabel);
+      } catch (err) {
+        request.log.warn({ err, label: request.certLabel }, 'Failed to load agent allowed sites, using defaults');
+        request.certAllowedSites = [];
       }
     } else {
       request.certRole = 'admin';
       request.certLabel = null;
       request.certCapabilities = null;
+      request.certAllowedSites = null;
     }
   });
 }

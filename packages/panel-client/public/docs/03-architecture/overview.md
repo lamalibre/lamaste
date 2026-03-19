@@ -317,6 +317,7 @@ Layer 4: mTLS (Admin Panel)
   └─ Panel Server double-checks X-SSL-Client-Verify header
   └─ Panel Server checks certificate serial against revoked.json
   └─ Panel Server parses DN for role (admin vs agent) and sets certRole/certLabel/certCapabilities
+  └─ Agent capabilities: tunnels:read/write, services:read/write, system:read, sites:read/write
 
 Layer 5: Authelia (Tunneled Apps)
   └─ nginx forward auth for every app request

@@ -191,6 +191,7 @@ Host static websites directly on the Portlama server, served via nginx.
 | GET    | `/api/certs/agent`                | List agent certificates              |
 | GET    | `/api/certs/agent/:label/download`| Download agent .p12                  |
 | PATCH  | `/api/certs/agent/:label/capabilities` | Update agent capabilities       |
+| PATCH  | `/api/certs/agent/:label/allowed-sites` | Update agent site access      |
 | DELETE | `/api/certs/agent/:label`         | Revoke agent certificate             |
 
 ### Service Management
@@ -220,14 +221,14 @@ Host static websites directly on the Portlama server, served via nginx.
 
 | Method | Path                          | Description                          | Roles |
 | ------ | ----------------------------- | ------------------------------------ | ----- |
-| GET    | `/api/sites`                  | List all static sites                | admin |
+| GET    | `/api/sites`                  | List all static sites                | admin, agent (`sites:read`) |
 | POST   | `/api/sites`                  | Create a static site                 | admin |
 | DELETE | `/api/sites/:id`              | Delete a static site                 | admin |
 | PATCH  | `/api/sites/:id`              | Update site settings                 | admin |
 | POST   | `/api/sites/:id/verify-dns`   | Verify DNS for custom domain site    | admin |
-| GET    | `/api/sites/:id/files`        | List files in site directory         | admin |
-| POST   | `/api/sites/:id/files`        | Upload files (multipart)             | admin |
-| DELETE | `/api/sites/:id/files`        | Delete a file from site directory    | admin |
+| GET    | `/api/sites/:id/files`        | List files in site directory         | admin, agent (`sites:read`) |
+| POST   | `/api/sites/:id/files`        | Upload files (multipart)             | admin, agent (`sites:write`) |
+| DELETE | `/api/sites/:id/files`        | Delete a file from site directory    | admin, agent (`sites:write`) |
 
 ### System
 

@@ -9,6 +9,51 @@ import crypto from 'node:crypto';
 const SITES_ROOT = '/var/www/portlama';
 
 /**
+ * Set of file extensions allowed for static site uploads.
+ * Allowlist approach — unknown extensions are blocked by default.
+ */
+export const ALLOWED_EXTENSIONS = new Set([
+  // HTML
+  '.html', '.htm',
+  // Styles
+  '.css',
+  // Scripts
+  '.js', '.mjs',
+  // Images
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.avif', '.bmp',
+  // Fonts
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  // Media
+  '.mp4', '.webm', '.ogg', '.mp3', '.wav', '.flac',
+  // Documents
+  '.pdf', '.txt', '.md',
+  // Data
+  '.json', '.xml', '.csv', '.geojson', '.topojson',
+  // Maps
+  '.map',
+  // Web config
+  '.webmanifest', '.manifest',
+  // WebAssembly
+  '.wasm',
+]);
+
+/**
+ * Validate that a filename has an allowed extension for static site uploads.
+ * Throws with a descriptive message if the extension is not in the allowlist.
+ *
+ * @param {string} filename - The filename to validate
+ */
+export function validateFileExtension(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  if (!ext) {
+    throw new Error(`File '${filename}' has no extension and is not allowed`);
+  }
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    throw new Error(`File '${filename}' has disallowed extension '${ext}'`);
+  }
+}
+
+/**
  * Validate a relative path to prevent directory traversal and injection attacks.
  * Throws on invalid paths.
  *
@@ -126,6 +171,11 @@ export async function listFiles(siteId, relativePath = '.') {
   const cleanPath = relativePath === '.' ? '.' : validatePath(relativePath);
   const targetDir = cleanPath === '.' ? siteRoot : path.join(siteRoot, cleanPath);
 
+  // Safety: ensure resolved path is still under site root
+  if (targetDir !== siteRoot && !targetDir.startsWith(siteRoot + '/')) {
+    throw new Error('Path traversal detected');
+  }
+
   try {
     // Use sudo find with maxdepth 1 to list immediate children
     const { stdout } = await execa('sudo', [
@@ -172,11 +222,14 @@ export async function saveUploadedFile(siteId, relativePath, fileStream) {
   const siteRoot = getSiteRoot(siteId);
   const destPath = path.join(siteRoot, cleanPath);
 
+  // Safety: ensure resolved path is still under site root
+  if (!destPath.startsWith(siteRoot + '/')) {
+    throw new Error('Path traversal detected');
+  }
+
   // Ensure parent directory exists
   const parentDir = path.dirname(destPath);
   await execa('sudo', ['mkdir', '-p', parentDir]);
-  // Temporarily allow writing by the current user
-  await execa('sudo', ['chown', `${process.getuid()}:${process.getgid()}`, parentDir]);
 
   // Stream to a temp file first, then sudo mv to destination
   const tmpFile = path.join(tmpdir(), `site-upload-${crypto.randomBytes(8).toString('hex')}`);

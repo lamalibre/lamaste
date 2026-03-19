@@ -47,9 +47,6 @@ WantedBy=multi-user.target
  * @returns {string}
  */
 export function generateSudoersContent() {
-  const processUid = process.getuid?.() ?? 0;
-  const processGid = process.getgid?.() ?? 0;
-
   return `# Portlama panel-server sudo rules
 # Allows the portlama user to manage specific services and run specific commands
 
@@ -120,7 +117,7 @@ portlama ALL=(root) NOPASSWD: /usr/local/bin/authelia storage *
 portlama ALL=(root) NOPASSWD: /usr/bin/mkdir -p /var/www/portlama/*
 portlama ALL=(root) NOPASSWD: /usr/bin/chown -R www-data\\:www-data /var/www/portlama/*
 portlama ALL=(root) NOPASSWD: /usr/bin/chown www-data\\:www-data /var/www/portlama/*
-portlama ALL=(root) NOPASSWD: /usr/bin/chown ${processUid}\\:${processGid} /var/www/portlama/*
+portlama ALL=(root) NOPASSWD: /usr/bin/chown portlama\\:portlama /var/www/portlama/*
 portlama ALL=(root) NOPASSWD: /usr/bin/chmod -R 755 /var/www/portlama/*
 portlama ALL=(root) NOPASSWD: /usr/bin/chmod 644 /var/www/portlama/*
 portlama ALL=(root) NOPASSWD: /usr/bin/rm -rf /var/www/portlama/*

@@ -190,6 +190,8 @@ The admin certificate (`CN=admin`) has unrestricted access to all panel endpoint
    - **services:read** — view service status.
    - **services:write** — start, stop, and restart services.
    - **system:read** — view system stats (CPU, RAM, disk).
+   - **sites:read** — list sites and browse files.
+   - **sites:write** — upload and delete files on assigned sites.
 6. Click **Generate**.
 7. **Save the P12 password immediately** — it is only shown once and cannot be retrieved later.
 8. Click **Download** to save the `.p12` file.
@@ -251,6 +253,7 @@ Revocation is immediate — the certificate serial is added to a revocation list
 | `GET` | `/api/certs/agent` | List agent certificates |
 | `GET` | `/api/certs/agent/:label/download` | Download agent .p12 |
 | `PATCH` | `/api/certs/agent/:label/capabilities` | Update agent capabilities |
+| `PATCH` | `/api/certs/agent/:label/allowed-sites` | Update agent site access |
 | `DELETE` | `/api/certs/agent/:label` | Revoke agent certificate |
 
 ### Certificate Response Format

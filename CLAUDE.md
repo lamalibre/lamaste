@@ -79,6 +79,11 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 **Certificate scoping:**
 - Admin cert (`CN=admin`) — full panel access
 - Agent cert (`CN=agent:<label>`) — capability-based access, stored server-side in registry
+  - `tunnels:read` / `tunnels:write` — tunnel listing and management
+  - `services:read` / `services:write` — service status and control
+  - `system:read` — system stats
+  - `sites:read` / `sites:write` — static site file browsing and deployment (site CRUD is admin-only)
+  - `allowedSites: string[]` — per-site scoping; agent sees and can deploy to only listed sites
 - Revoked certs tracked in `revoked.json`, rejected by middleware
 - Never give admin cert to Mac agents — generate scoped agent certs
 

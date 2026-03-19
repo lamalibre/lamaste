@@ -22,6 +22,83 @@ connection details and an agent-scoped mTLS certificate.
 | `uninstall` | Remove Chisel, plist, and configuration  |
 | `status`    | Show tunnel connection status            |
 | `logs`      | Display recent tunnel logs               |
+| `sites`     | List all static sites                    |
+| `sites create <name>` | Create a new static site (admin cert only) |
+| `sites delete <name-or-id>` | Delete a static site (admin cert only) |
+| `deploy <name-or-id> <local-path>` | Deploy a local directory to a site |
+
+### Sites Command
+
+Manage static sites hosted on your Portlama server. Requires an agent certificate with `sites:read` and/or `sites:write` capabilities.
+
+**Important:** `sites create` and `sites delete` require admin-level access (admin certificate). Agent certificates cannot create or delete sites. The admin creates sites through the panel and assigns them to agent certificates via **Panel > Certificates > Agent Certificates > Edit > Site Access**.
+
+**List sites assigned to this agent:**
+
+```bash
+portlama-agent sites
+```
+
+The agent only sees sites listed in its `allowedSites` configuration. The admin controls which sites each agent can access.
+
+**Create a managed subdomain site (admin only):**
+
+```bash
+portlama-agent sites create blog
+```
+
+**Create a site with options:**
+
+```bash
+# Managed subdomain with SPA mode and Authelia protection
+portlama-agent sites create docs --spa --auth
+
+# Custom domain site
+portlama-agent sites create myblog --type custom --domain myblog.com
+```
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--type <managed\|custom>` | `managed` | Site type: managed subdomain or custom domain |
+| `--domain <fqdn>` | — | Custom domain (required when `--type custom`) |
+| `--spa` | off | Enable SPA mode (serve `index.html` for all routes) |
+| `--auth` | off | Enable Authelia protection |
+
+**Delete a site:**
+
+```bash
+portlama-agent sites delete blog
+portlama-agent sites delete 550e8400-e29b-41d4-a716-446655440000
+```
+
+### Deploy Command
+
+Deploy a local directory to a static site. This clears all existing files on the site and uploads all non-hidden files from the specified directory. It is a full replacement, not a merge.
+
+Requires an agent certificate with both `sites:read` and `sites:write` capabilities, and the site must be listed in the agent's `allowedSites` configuration. The admin assigns sites to agent certs via **Panel > Certificates > Agent Certificates > Edit > Site Access**.
+
+```bash
+portlama-agent deploy blog ./dist
+```
+
+**Typical workflow:**
+
+```bash
+# Admin creates the site via the panel UI or with an admin certificate:
+#   portlama-agent sites create blog   (requires admin cert)
+# Then assigns the site to the agent cert via Panel > Certificates > Site Access
+
+# Agent builds and deploys (requires agent cert with sites:read + sites:write)
+npm run build
+portlama-agent deploy blog ./dist
+```
+
+**What happens during deploy:**
+
+1. All existing remote files are cleared.
+2. All non-hidden files from the local directory are uploaded (batched for memory safety).
+3. The remote file list is verified against what was uploaded.
+4. A summary is printed with file count, total size, and live URL.
 
 ## Requirements
 

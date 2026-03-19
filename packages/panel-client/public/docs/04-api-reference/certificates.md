@@ -266,14 +266,15 @@ Agent certificates provide scoped access for Mac tunnel clients. Only admins can
 
 ### `POST /api/certs/agent`
 
-Generates a new agent-scoped certificate with the specified label and capabilities. The certificate CN is set to `agent:<label>`.
+Generates a new agent-scoped certificate with the specified label, capabilities, and optional site access list. The certificate CN is set to `agent:<label>`.
 
 **Request:**
 
 ```json
 {
   "label": "macbook-pro",
-  "capabilities": ["tunnels:read", "tunnels:write"]
+  "capabilities": ["tunnels:read", "tunnels:write", "sites:read", "sites:write"],
+  "allowedSites": ["blog", "docs"]
 }
 ```
 
@@ -281,13 +282,14 @@ Generates a new agent-scoped certificate with the specified label and capabiliti
 |-------|------|----------|-------------|
 | `label` | `string` | Yes | 1-50 characters, lowercase letters, numbers, and hyphens only |
 | `capabilities` | `string[]` | No | List of capabilities. Defaults to `["tunnels:read"]`. Must always include `tunnels:read` |
+| `allowedSites` | `string[]` | No | List of site names this agent can access for file operations. Defaults to `[]` (no site access). Only relevant when `sites:read` or `sites:write` capabilities are granted |
 
-**Valid capabilities:** `tunnels:read`, `tunnels:write`, `services:read`, `services:write`, `system:read`
+**Valid capabilities:** `tunnels:read`, `tunnels:write`, `services:read`, `services:write`, `system:read`, `sites:read`, `sites:write`
 
 ```bash
 curl -s --cert client.p12:password \
   -X POST -H 'Content-Type: application/json' \
-  -d '{"label":"macbook-pro","capabilities":["tunnels:read","tunnels:write"]}' \
+  -d '{"label":"macbook-pro","capabilities":["tunnels:read","sites:read","sites:write"],"allowedSites":["blog"]}' \
   https://203.0.113.42:9292/api/certs/agent | jq
 ```
 
@@ -344,7 +346,8 @@ curl -s --cert client.p12:password \
     {
       "label": "macbook-pro",
       "serial": "ABC123DEF456...",
-      "capabilities": ["tunnels:read", "tunnels:write"],
+      "capabilities": ["tunnels:read", "tunnels:write", "sites:read", "sites:write"],
+      "allowedSites": ["blog", "docs"],
       "createdAt": "2026-03-16T10:00:00.000Z",
       "expiresAt": "2028-03-16T10:00:00.000Z",
       "revoked": false,
@@ -354,6 +357,7 @@ curl -s --cert client.p12:password \
       "label": "office-imac",
       "serial": "789GHI012...",
       "capabilities": ["tunnels:read"],
+      "allowedSites": [],
       "createdAt": "2026-03-10T08:00:00.000Z",
       "expiresAt": "2028-03-10T08:00:00.000Z",
       "revoked": true,
@@ -368,6 +372,7 @@ curl -s --cert client.p12:password \
 | `label` | `string` | Agent identifier (matches certificate CN `agent:<label>`) |
 | `serial` | `string` | Certificate serial number |
 | `capabilities` | `string[]` | Granted capabilities |
+| `allowedSites` | `string[]` | Site names this agent can access for file operations |
 | `createdAt` | `string` | ISO 8601 creation timestamp |
 | `expiresAt` | `string` | ISO 8601 expiry timestamp |
 | `revoked` | `boolean` | Whether the certificate has been revoked |
@@ -444,6 +449,48 @@ curl -s --cert client.p12:password \
 
 ---
 
+### `PATCH /api/certs/agent/:label/allowed-sites`
+
+Updates the list of sites an agent certificate is allowed to access. This controls which sites the agent can see (via `GET /api/sites`) and which sites the agent can perform file operations on (upload, list, delete files). Like capabilities, `allowedSites` is stored server-side in the agent registry, so no certificate reissue is needed.
+
+**Request:**
+
+```json
+{
+  "allowedSites": ["blog", "docs", "landing-page"]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `allowedSites` | `string[]` | Yes | New list of site names this agent can access. Use `[]` to remove all site access |
+
+```bash
+curl -s --cert client.p12:password \
+  -X PATCH -H 'Content-Type: application/json' \
+  -d '{"allowedSites":["blog","docs"]}' \
+  https://203.0.113.42:9292/api/certs/agent/macbook-pro/allowed-sites | jq
+```
+
+**Response (200):**
+
+```json
+{
+  "ok": true,
+  "label": "macbook-pro",
+  "allowedSites": ["blog", "docs"]
+}
+```
+
+**Errors:**
+
+| Status | Body | When |
+|--------|------|------|
+| 400 | `{"error":"Validation failed",...}` | Invalid request body |
+| 404 | `{"error":"Agent certificate \"macbook-pro\" not found"}` | No active agent with this label |
+
+---
+
 ### `DELETE /api/certs/agent/:label`
 
 Revokes an agent certificate. The certificate serial is added to the revocation list, the registry entry is marked as revoked, and the P12 files are deleted from disk. The agent loses access immediately.
@@ -502,6 +549,7 @@ curl -s --cert client.p12:password \
 - **Purpose:** Scoped access for Mac tunnel clients (`CN=agent:<label>`)
 - **Validity:** 2 years
 - **Capabilities:** Server-side, updatable without reissuing the certificate
+- **Site access:** Per-site scoping via `allowedSites` — agents can only see and modify files on sites explicitly assigned to them
 - **Path:** `/etc/portlama/pki/agents/<label>/client.p12`
 - **Issued via:** `POST /api/certs/agent` (admin only)
 - **Revocation:** Immediate via `/api/certs/agent/:label` (serial added to revocation list)
@@ -519,6 +567,7 @@ curl -s --cert client.p12:password \
 | GET | `/api/certs/agent` | List agent certificates |
 | GET | `/api/certs/agent/:label/download` | Download agent .p12 file |
 | PATCH | `/api/certs/agent/:label/capabilities` | Update agent capabilities |
+| PATCH | `/api/certs/agent/:label/allowed-sites` | Update agent site access |
 | DELETE | `/api/certs/agent/:label` | Revoke agent certificate |
 
 ### Certificate Object Shape
@@ -560,10 +609,10 @@ curl -s --cert client.p12:password \
   -o client-new.p12 \
   https://203.0.113.42:9292/api/certs/mtls/download
 
-# Generate an agent certificate
+# Generate an agent certificate with site access
 curl -s --cert client.p12:password \
   -X POST -H 'Content-Type: application/json' \
-  -d '{"label":"macbook-pro","capabilities":["tunnels:read","tunnels:write"]}' \
+  -d '{"label":"macbook-pro","capabilities":["tunnels:read","sites:read","sites:write"],"allowedSites":["blog"]}' \
   https://203.0.113.42:9292/api/certs/agent | jq
 
 # List agent certificates
@@ -575,6 +624,12 @@ curl -s --cert client.p12:password \
   -X PATCH -H 'Content-Type: application/json' \
   -d '{"capabilities":["tunnels:read","services:read"]}' \
   https://203.0.113.42:9292/api/certs/agent/macbook-pro/capabilities | jq
+
+# Update agent site access
+curl -s --cert client.p12:password \
+  -X PATCH -H 'Content-Type: application/json' \
+  -d '{"allowedSites":["blog","docs"]}' \
+  https://203.0.113.42:9292/api/certs/agent/macbook-pro/allowed-sites | jq
 
 # Revoke an agent certificate
 curl -s --cert client.p12:password \

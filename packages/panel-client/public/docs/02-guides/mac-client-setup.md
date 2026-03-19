@@ -193,6 +193,10 @@ npx serve -l 3000
 3. Log in through Authelia with your username, password, and TOTP code.
 4. You see your local app served through the tunnel.
 
+## Static Site Management
+
+If your agent certificate includes `sites:read` and `sites:write` capabilities, you can also manage static sites and deploy files directly from the command line. See the [Static Sites guide](static-sites.md) for details.
+
 ## Troubleshooting
 
 ### Connection refused or timeout

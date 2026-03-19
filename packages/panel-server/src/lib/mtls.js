@@ -226,6 +226,8 @@ export const VALID_CAPABILITIES = [
   'services:read',
   'services:write',
   'system:read',
+  'sites:read',
+  'sites:write',
 ];
 
 /**
@@ -288,9 +290,11 @@ export function getAgentP12Path(label) {
  *
  * @param {string} label - Unique agent label (e.g. "macbook-pro")
  * @param {import('pino').Logger} logger
+ * @param {string[]} [capabilities] - Capability list (defaults to ['tunnels:read'])
+ * @param {string[]} [allowedSites] - Allowed site labels (defaults to [])
  * @returns {Promise<{ label: string, p12Password: string, serial: string, expiresAt: string }>}
  */
-export async function generateAgentCert(label, logger, capabilities) {
+export async function generateAgentCert(label, logger, capabilities, allowedSites) {
   return withRegistryLock(async () => {
   // Check registry for duplicate (non-revoked) label
   const registry = await loadAgentRegistry();
@@ -404,6 +408,7 @@ export async function generateAgentCert(label, logger, capabilities) {
       label,
       serial,
       capabilities: capabilities || ['tunnels:read'],
+      allowedSites: allowedSites || [],
       createdAt: new Date().toISOString(),
       expiresAt,
       revoked: false,
@@ -500,6 +505,39 @@ export async function updateAgentCapabilities(label, capabilities) {
     await saveAgentRegistry(registry);
 
     return { ok: true, label, capabilities };
+  });
+}
+
+/**
+ * Get allowed sites for a specific agent by label.
+ *
+ * @param {string} label
+ * @returns {Promise<string[]>}
+ */
+export async function getAgentAllowedSites(label) {
+  const registry = await loadAgentRegistry();
+  const agent = registry.agents.find((a) => a.label === label && !a.revoked);
+  if (!agent) return [];
+  return agent.allowedSites || [];
+}
+
+/**
+ * Update allowed sites for an agent certificate.
+ *
+ * @param {string} label
+ * @param {string[]} allowedSites
+ * @returns {Promise<{ ok: true, label: string, allowedSites: string[] }>}
+ */
+export async function updateAgentAllowedSites(label, allowedSites) {
+  return withRegistryLock(async () => {
+    const registry = await loadAgentRegistry();
+    const agent = registry.agents.find((a) => a.label === label && !a.revoked);
+    if (!agent) {
+      throw Object.assign(new Error(`Agent certificate "${label}" not found`), { statusCode: 404 });
+    }
+    agent.allowedSites = allowedSites || [];
+    await saveAgentRegistry(registry);
+    return { ok: true, label, allowedSites: agent.allowedSites };
   });
 }
 

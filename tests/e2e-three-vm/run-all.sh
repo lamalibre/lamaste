@@ -96,6 +96,7 @@ TEST_SCRIPTS=(
   "06-tunnel-user-journey.sh"
   "07-site-visitor-journey.sh"
   "08-invitation-journey.sh"
+  "09-agent-site-deploy.sh"
 )
 
 PASSED=0

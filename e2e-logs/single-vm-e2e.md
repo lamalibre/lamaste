@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-16 17:21:17 UTC`
+> Run at `2026-03-19 12:17:00 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-16 17:21:17 UTC
+  Date:           2026-03-19 12:17:00 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 15 17:20:20 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 18 12:16:01 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: 2c7bb1a4-b1c9-4515-a894-30e28b43c8bd
+  [INFO] Created tunnel ID: 500a2ebf-3ce1-4aa5-baf1-770d68cdab87
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1773681678
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1773922620
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=AC:0C:7A:0B:C0:04:8D:E8:D9:B9:88:D4:6E:C4:04:20:36:33:D9:B4:FB:42:87:BF:03:F0:BF:1D:6B:79:79:DD
+  [INFO] Current cert fingerprint: sha256 Fingerprint=C3:31:85:68:10:5E:6C:59:E9:EA:D4:A8:54:F1:23:74:CB:F1:41:70:D0:D2:18:36:D3:2C:66:F4:7F:A4:5A:1A
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-15T17:21:47.000Z
+  [PASS] Rotation response contains expiry: 2028-03-18T12:17:30.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=04:58:2D:E2:74:F3:5A:B6:E1:05:D3:1B:BB:F2:EB:B6:C1:5D:F0:CB:8F:BA:BF:0E:4C:13:C5:C0:7B:F6:C9:FB
+  [INFO] New cert fingerprint: sha256 Fingerprint=8C:D3:A6:75:EF:89:B6:7A:7D:AF:8E:05:88:FF:8D:59:D5:98:9E:18:60:12:E6:46:6C:78:E1:4A:71:8E:AB:82
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.64
+  [INFO] Server IP: 192.168.2.85
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -509,6 +509,70 @@
   Results: 28 passed, 0 failed, 0 skipped (28 total)
 ============================================================================
 
+  Running: 13-site-lifecycle.sh
+
+============================================================================
+ Portlama E2E: 13 — Site Lifecycle
+============================================================================
+
+
+--- Pre-flight: check onboarding is complete ---
+  [PASS] Onboarding is complete
+
+--- Create managed static site ---
+  [PASS] Site creation returned ok: true
+  [PASS] Site has an ID
+  [PASS] Site name matches
+  [PASS] Site type is managed
+  [INFO] Created site: e2esite.test.portlama.local (ID: 42ee82c4-c71b-40f3-9ece-bdf259db4a14)
+
+--- Verify site in listing ---
+  [PASS] Site appears in listing
+
+--- List files — default content ---
+  [PASS] Site has default files (count: 1)
+  [PASS] Default index.html exists
+
+--- Upload test file ---
+  [PASS] File upload returned ok: true
+
+--- Verify uploaded file in listing ---
+  [PASS] Uploaded file appears in listing
+
+--- Delete uploaded file ---
+  [PASS] File deletion returned ok: true
+
+--- Verify file removed ---
+  [PASS] Deleted file no longer in listing
+
+--- Update site settings ---
+  [PASS] Settings update returned ok: true
+  [PASS] SPA mode is now enabled
+  [PASS] SPA mode persisted in listing
+
+--- File extension validation ---
+  [PASS] Upload of .php file rejected with 400
+  [PASS] Upload of .exe file rejected with 400
+  [PASS] Upload of file with no extension rejected with 400
+  [PASS] Upload of .css file succeeds
+
+--- Input validation ---
+  [PASS] Duplicate site name rejected with 400
+  [PASS] Reserved name 'panel' rejected with 400
+  [PASS] Reserved name 'auth' rejected with 400
+  [PASS] Invalid UUID rejected with 400
+
+--- Delete site ---
+  [PASS] Site deletion returned ok: true
+
+--- Verify site removed ---
+  [PASS] Deleted site no longer in listing
+  [PASS] Deleted site returns 404
+
+============================================================================
+  Results: 26 passed, 0 failed, 0 skipped (26 total)
+============================================================================
+
 
 ============================================================================
   Test Suite Summary
@@ -526,7 +590,8 @@
   [PASS] 10-resilience.sh
   [PASS] 11-input-validation.sh
   [PASS] 12-user-invitations.sh
+  [PASS] 13-site-lifecycle.sh
 
-  Total: 12 tests — 12 passed, 0 failed
+  Total: 13 tests — 13 passed, 0 failed
 
   SUITE PASSED

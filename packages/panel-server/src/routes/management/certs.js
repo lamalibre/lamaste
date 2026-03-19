@@ -4,7 +4,7 @@ import { listCerts } from '../../lib/certbot.js';
 import {
   getMtlsCerts, readCertExpiry, rotateClientCert, getP12Path,
   generateAgentCert, listAgentCerts, revokeAgentCert, getAgentP12Path,
-  updateAgentCapabilities, VALID_CAPABILITIES,
+  updateAgentCapabilities, updateAgentAllowedSites, VALID_CAPABILITIES,
 } from '../../lib/mtls.js';
 import * as nginx from '../../lib/nginx.js';
 
@@ -22,6 +22,7 @@ const AgentGenerateBodySchema = z.object({
     .refine((caps) => caps.includes('tunnels:read'), {
       message: 'tunnels:read is mandatory and cannot be removed',
     }),
+  allowedSites: z.array(z.string().min(1).max(100).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Site name must contain only lowercase letters, numbers, and hyphens')).optional().default([]),
 });
 
 const UpdateCapabilitiesSchema = z.object({
@@ -29,6 +30,10 @@ const UpdateCapabilitiesSchema = z.object({
     .refine((caps) => caps.includes('tunnels:read'), {
       message: 'tunnels:read is mandatory and cannot be removed',
     }),
+});
+
+const UpdateAllowedSitesSchema = z.object({
+  allowedSites: z.array(z.string().min(1).max(100).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Site name must contain only lowercase letters, numbers, and hyphens')),
 });
 
 const AgentLabelParamSchema = z.object({
@@ -214,7 +219,7 @@ export default async function certsRoutes(fastify, _opts) {
     const body = AgentGenerateBodySchema.parse(request.body);
 
     try {
-      const result = await generateAgentCert(body.label, request.log, body.capabilities);
+      const result = await generateAgentCert(body.label, request.log, body.capabilities, body.allowedSites);
       return { ok: true, ...result };
     } catch (err) {
       const statusCode = err.statusCode || 500;
@@ -295,6 +300,26 @@ export default async function certsRoutes(fastify, _opts) {
       const statusCode = err.statusCode || 500;
       return reply.code(statusCode).send({
         error: err.message || 'Failed to update capabilities',
+      });
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // PATCH /certs/agent/:label/allowed-sites — update agent allowed sites
+  // ------------------------------------------------------------------
+  fastify.patch('/certs/agent/:label/allowed-sites', {
+    preHandler: fastify.requireRole(['admin']),
+  }, async (request, reply) => {
+    const params = AgentLabelParamSchema.parse(request.params);
+    const body = UpdateAllowedSitesSchema.parse(request.body);
+
+    try {
+      const result = await updateAgentAllowedSites(params.label, body.allowedSites);
+      return result;
+    } catch (err) {
+      const statusCode = err.statusCode || 500;
+      return reply.code(statusCode).send({
+        error: err.message || 'Failed to update allowed sites',
       });
     }
   });
