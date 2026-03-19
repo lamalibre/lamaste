@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add service discovery & marketplace UI in the desktop app — auto-detects 17 well-known local services (Ollama, ComfyUI, LM Studio, PostgreSQL, Redis, Docker containers, etc.) with one-click tunnel creation
+- Add custom service definitions — users can register their own services with name, port, binary, process name, and category, persisted in `~/.portlama/services.json`
+- Add Services tab in the desktop sidebar with category filtering (AI, Database, Docker, Dev, Media, Monitoring, Custom)
+- Add shared `api.rs` module in the desktop app — extracted curl helpers from `commands.rs` for reuse across the Rust backend
 - Add file type allowlist for static site uploads — only safe web assets (HTML, CSS, JS, images, fonts, media, documents, data, WASM) are accepted; server rejects disallowed extensions with 400
 - Add ClamAV malware scanning via Docker in `portlama-agent deploy` — scans files before upload, aborts on infections, warns if Docker is unavailable
 - Add extension allowlist check in `portlama-agent deploy` — aborts with listing if blocked files are found
@@ -28,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add curl config file atomic creation with `O_EXCL` and `0o600` permissions in the desktop app, preventing symlink attacks and race conditions
+- Add input validation for custom service definitions — binary names, process names, categories validated against strict allowlists with length and count limits
+- Add registry file validation on load to reject tampered entries in the desktop app
+- Add subprocess timeouts (5-10s) on `pgrep`, `lsof`, and `docker ps` commands in the desktop app to prevent hangs
+- Add Mutex-based serialization for registry mutations in the desktop app to prevent concurrent write races
 - Add server-side file extension allowlist enforcement — blocks uploads of executable, scripting, and unknown file types regardless of client
 - Add client-side (agent) file extension allowlist — catches disallowed files early with helpful error messages before upload
 - Add ClamAV malware scanning in deploy pipeline — prevents deploying infected content to static sites

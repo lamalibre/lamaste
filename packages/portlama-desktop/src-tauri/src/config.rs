@@ -35,6 +35,10 @@ pub fn error_log_path() -> PathBuf {
     agent_dir().join("logs").join("chisel.error.log")
 }
 
+pub fn services_registry_path() -> PathBuf {
+    agent_dir().join("services.json")
+}
+
 pub fn plist_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {

@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-shell';
-import { Terminal, Activity, Network, ScrollText, Settings, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Terminal, Activity, Network, Compass, ScrollText, Settings, AlertTriangle, ExternalLink } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Tunnels from './pages/Tunnels.jsx';
+import Services from './pages/Services.jsx';
 import Logs from './pages/Logs.jsx';
 import SettingsPage from './pages/Settings.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'tunnels', label: 'Tunnels', icon: Network },
+  { id: 'services', label: 'Services', icon: Compass },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -63,6 +65,7 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return <Dashboard status={status} />;
       case 'tunnels': return <Tunnels />;
+      case 'services': return <Services />;
       case 'logs': return <Logs />;
       case 'settings': return <SettingsPage />;
       default: return <Dashboard status={status} />;

@@ -11,7 +11,7 @@ portlama/
 │   ├── panel-server/          @lamalibre/portlama-panel-server — Fastify REST API
 │   ├── panel-client/          @lamalibre/portlama-panel-client — React + Vite + Tailwind UI
 │   ├── portlama-agent/        @lamalibre/portlama-agent — Mac tunnel agent CLI
-│   └── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop agent (WIP)
+│   └── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop agent (service discovery, tunnel management)
 ├── tests/
 │   ├── e2e/                   Single-VM end-to-end tests
 │   └── e2e-three-vm/          Three-VM integration tests (Multipass)
@@ -59,6 +59,13 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Tailwind utility classes only — no CSS files
 - Dark terminal aesthetic: `zinc-950` bg, `zinc-900` cards, `cyan-400` accents
 - Icons from `lucide-react`
+
+**Rust / Tauri (Desktop):**
+- Shared HTTP helpers in `api.rs` — all panel API calls go through `curl_panel`
+- Service discovery in `services.rs` — detection via `which`/`pgrep`/`lsof`/TCP probe, Docker via `docker ps`
+- `tokio::task::spawn_blocking` for subprocess calls — never block the Tauri event loop
+- Service registry persisted as JSON at `~/.portlama/services.json`
+- Atomic file writes (temp → rename) for registry and config
 
 **Installer:**
 - Zero prompts — all configuration happens through browser onboarding UI

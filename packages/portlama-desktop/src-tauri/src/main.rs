@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api;
 mod commands;
 mod config;
 mod chisel;
+mod services;
 mod tray;
 
 fn main() {
@@ -28,6 +30,10 @@ fn main() {
             commands::download_certificate,
             commands::get_panel_url,
             commands::get_logs,
+            services::scan_services,
+            services::get_service_registry,
+            services::add_custom_service,
+            services::remove_custom_service,
         ])
         .run(tauri::generate_context!())
         .expect("error while running portlama desktop");
