@@ -11,7 +11,6 @@ import {
   validateShellAccess,
   logShellSession,
   updateShellSession,
-  getAgentShellPolicy,
 } from '../../lib/shell.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 
@@ -41,22 +40,6 @@ const PolicyIdSchema = z
   .min(1)
   .max(50)
   .regex(/^[a-z0-9-]+$/, 'Policy ID must contain only lowercase letters, numbers, and hyphens');
-
-const PolicySchema = z.object({
-  id: PolicyIdSchema,
-  name: z.string().min(1).max(100),
-  description: z.string().max(500).default(''),
-  allowedIps: z.array(IpEntrySchema).default([]),
-  deniedIps: z.array(IpEntrySchema).default([]),
-  maxFileSize: z
-    .number()
-    .int()
-    .min(1024)
-    .max(500 * 1024 * 1024)
-    .default(100 * 1024 * 1024),
-  inactivityTimeout: z.number().int().min(60).max(7200).default(600),
-  commandBlocklist: CommandBlocklistSchema.default({}),
-});
 
 const CreatePolicySchema = z.object({
   id: PolicyIdSchema.optional(),
