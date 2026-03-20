@@ -190,7 +190,7 @@ export default function Tunnels() {
           <Network size={32} className="mx-auto text-zinc-600 mb-3" />
           <p className="text-zinc-400 text-sm">No tunnels configured.</p>
           <p className="text-zinc-500 text-xs mt-1">
-            Click "New Tunnel" to expose a local service.
+            Click &quot;New Tunnel&quot; to expose a local service.
           </p>
         </div>
       ) : (

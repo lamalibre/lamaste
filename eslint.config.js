@@ -78,6 +78,37 @@ export default [
     },
   },
 
-  // 5. Prettier compat — must be last to disable formatting rules
+  // 5. React/Browser config for portlama-desktop
+  {
+    files: ['packages/portlama-desktop/**/*.{js,jsx}'],
+    plugins: {
+      react: reactPlugin,
+      'react-hooks': reactHooksPlugin,
+    },
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+    },
+    settings: {
+      react: {
+        version: 'detect',
+      },
+    },
+    rules: {
+      ...reactPlugin.configs.recommended.rules,
+      ...reactHooksPlugin.configs.recommended.rules,
+      'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+
+  // 6. Prettier compat — must be last to disable formatting rules
   prettierConfig,
 ];

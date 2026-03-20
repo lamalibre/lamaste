@@ -91,6 +91,9 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Remote shell: 5-gate auth chain (global toggle → agent cert enabled → time window → IP check → admin cert) — shell access is never implicitly on
 - Shell sessions use tmux on the agent machine — `portlama-shell.sh` wrapper enforces a command blocklist with hard-blocked patterns and restricted prefixes
 - Shell session recordings stored on the agent in `~/.portlama/shell-recordings/`, audit log on the server in `shell-sessions.json`
+- Agent TLS: panel uses a self-signed server cert separate from the mTLS CA — agent uses `-k` / `rejectUnauthorized: false` until server certificate distribution is implemented. The mTLS client cert still authenticates the agent to the panel.
+- P12 password protection: curl uses a temporary config file (`-K`, O_EXCL + 0600, cleaned up in try/finally) and openssl uses `PORTLAMA_P12_PASS` environment variable — password never appears in process listings. Stale config files cleaned up at module load.
+- Agent directory `~/.portlama/` created with mode 0700. PEM private keys cleaned up after CA extraction during setup.
 
 **Certificate scoping:**
 

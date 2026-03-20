@@ -1,13 +1,34 @@
 import crypto from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { readdirSync, unlinkSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
 import { AGENT_DIR } from './platform.js';
-import { CA_CERT_PATH } from './ws-helpers.js';
 
-/** Track whether the insecure-fallback warning has already been printed. */
-let insecureWarningShown = false;
+/**
+ * Clean up stale curl config temp files left behind by previous crashes.
+ * Runs once at module load — synchronous to keep it simple and non-blocking
+ * at startup (these files are tiny).
+ */
+function cleanupStaleCurlConfigs() {
+  try {
+    const entries = readdirSync(AGENT_DIR);
+    for (const entry of entries) {
+      if (entry.startsWith('.curl-config-') && entry.endsWith('.tmp')) {
+        try {
+          unlinkSync(path.join(AGENT_DIR, entry));
+        } catch {
+          // Best-effort — may be locked or already removed
+        }
+      }
+    }
+  } catch {
+    // AGENT_DIR may not exist yet — that is fine
+  }
+}
+
+// Run cleanup once at import time
+cleanupStaleCurlConfigs();
 
 /**
  * Validate that p12Path and p12Password do not contain newlines or other
@@ -16,11 +37,11 @@ let insecureWarningShown = false;
  * @param {string} p12Password
  */
 function validateCertInputs(p12Path, p12Password) {
-  if (/[\r\n]/.test(p12Path)) {
-    throw new Error('p12Path must not contain newline characters');
+  if (/[\r\n\0]/.test(p12Path)) {
+    throw new Error('p12Path must not contain newline or null characters');
   }
-  if (/[\r\n]/.test(p12Password)) {
-    throw new Error('p12Password must not contain newline characters');
+  if (/[\r\n\0]/.test(p12Password)) {
+    throw new Error('p12Password must not contain newline or null characters');
   }
 }
 
@@ -36,8 +57,13 @@ async function createCurlConfig(p12Path, p12Password) {
   validateCertInputs(p12Path, p12Password);
   const suffix = crypto.randomBytes(8).toString('hex');
   const configPath = path.join(AGENT_DIR, `.curl-config-${suffix}.tmp`);
-  const content = `cert = "${p12Path}:${p12Password}"\ncert-type = "P12"\n`;
-  await writeFile(configPath, content, { mode: 0o600 });
+  // Escape backslashes and double-quotes in the cert path and password to prevent
+  // curl config injection. Curl config files use \" for literal quote and \\ for backslash.
+  const escapedPath = p12Path.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escapedPass = p12Password.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const content = `cert = "${escapedPath}:${escapedPass}"\ncert-type = "P12"\n`;
+  // O_EXCL (wx flag) prevents symlink attacks — fails if the file already exists
+  await writeFile(configPath, content, { flag: 'wx', mode: 0o600 });
   return configPath;
 }
 
@@ -58,37 +84,28 @@ async function removeCurlConfig(configPath) {
  * Build the common curl args for mTLS authentication.
  * The cert credentials are passed via a config file (-K) so the P12
  * password never appears in process argument lists.
- * Uses the panel CA certificate for TLS verification when available.
- * Falls back to -k (insecure) with a warning if the CA cert is missing.
+ *
+ * TODO: Implement server certificate distribution during setup so we can
+ * replace -k with --cacert and verify the panel's TLS server certificate.
+ *
  * @param {string} configPath - Path to the temporary curl config file
  * @returns {string[]}
  */
 function certArgs(configPath) {
-  const args = [
+  // The panel uses a self-signed TLS server certificate that is separate from
+  // the mTLS CA used to sign client certificates. The CA cert extracted from
+  // the P12 (mTLS CA) cannot verify the server's TLS cert. Until proper server
+  // certificate distribution is implemented, we must skip server TLS verification
+  // with -k. The mTLS client cert still authenticates the agent to the panel.
+  return [
     '-K',
     configPath,
     '-s', // silent
     '-f', // fail on HTTP errors
     '--max-time',
     '30',
+    '-k', // skip server TLS verification (self-signed server cert)
   ];
-
-  if (existsSync(CA_CERT_PATH)) {
-    args.push('--cacert', CA_CERT_PATH);
-  } else {
-    args.push('-k');
-    if (!insecureWarningShown) {
-      insecureWarningShown = true;
-      process.stderr.write(
-        'WARNING: CA certificate not found at ' +
-          CA_CERT_PATH +
-          '. Using -k (insecure). ' +
-          'Re-run "portlama-agent setup" to extract the CA certificate from your P12.\n',
-      );
-    }
-  }
-
-  return args;
 }
 
 /**

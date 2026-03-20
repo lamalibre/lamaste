@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-20 11:03:16 UTC`
+> Run at `2026-03-20 14:33:29 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-20 11:03:16 UTC
+  Date:           2026-03-20 14:33:29 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 19 11:02:19 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 19 14:32:28 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: a9890662-1e9d-495c-9854-f83fd4da2239
+  [INFO] Created tunnel ID: 8966cd1f-804f-47e6-93cc-ae162ef1cc44
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774004596
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774017209
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=13:44:A9:36:64:7F:6D:D0:64:F1:24:F2:F7:68:B1:F7:4B:5D:BC:AB:5C:38:89:36:67:9E:7A:BF:9A:A1:F6:C9
+  [INFO] Current cert fingerprint: sha256 Fingerprint=95:E2:0E:2D:C0:62:F3:5D:5D:41:41:21:B9:72:75:F4:D1:8C:39:69:99:49:14:9F:34:54:8E:77:0C:A0:CE:B3
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-19T11:03:46.000Z
+  [PASS] Rotation response contains expiry: 2028-03-19T14:33:59.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=83:7F:CD:17:8C:75:9C:46:14:61:08:42:A8:F7:63:C0:AC:06:EB:E6:E6:32:36:B4:E4:04:92:61:2F:87:8E:5B
+  [INFO] New cert fingerprint: sha256 Fingerprint=27:E5:A0:3A:36:5F:DC:9B:5B:EC:0A:4E:46:CF:8A:BE:5E:14:21:E7:BA:5B:E5:67:E7:08:2B:2A:E1:C9:DE:3B
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.94
+  [INFO] Server IP: 192.168.2.100
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 74dfafb6-f1b1-45f2-a3a9-24a0a8b05771)
+  [INFO] Created site: e2esite.test.portlama.local (ID: a5ebe809-022f-4b6e-8677-ad714f92fdaa)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -624,7 +624,7 @@
   [INFO] Found agent: test-agent
   [PASS] Shell enable for agent returned ok: true
   [PASS] shellEnabledUntil is set
-  [PASS] shellEnabledUntil has a value: 2026-03-20T11:09:06.104Z
+  [PASS] shellEnabledUntil has a value: 2026-03-20T14:39:19.497Z
   [PASS] Shell disable for agent returned ok: true
 
 --- Shell enable without global toggle ---

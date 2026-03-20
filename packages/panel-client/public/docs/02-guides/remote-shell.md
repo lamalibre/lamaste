@@ -14,7 +14,7 @@ Because remote shell grants direct command execution on the agent machine, it is
 
 - A completed [Portlama onboarding](onboarding.md) on your VPS
 - An **admin certificate** on the machine initiating the shell session
-- An **agent certificate** on the target machine
+- An **agent certificate** on the target machine, with agent setup completed (`portlama-agent setup`)
 - **tmux** installed on the agent machine:
   - macOS: `brew install tmux`
   - Linux: `sudo apt install tmux`
@@ -268,6 +268,10 @@ Check if the shell time window expired. The agent's `shellEnabledUntil` timestam
 | **Command blocklist**  | `~/.portlama/shell-blocklist.json` (agent)   |
 | **Shell wrapper**      | `~/.portlama/portlama-shell.sh` (agent)      |
 | **Command history**    | `~/.portlama/shell-history.log` (agent)      |
+
+### Security
+
+All agent-to-panel connections authenticate via mTLS client certificates extracted from the P12 bundle. The agent currently uses `-k` (curl) and `rejectUnauthorized: false` (WebSocket) because the panel's self-signed server TLS certificate belongs to a different PKI chain than the mTLS CA extracted from the P12 bundle, so server certificate verification is not possible with the available CA. Server certificate verification (e.g., via a pinned server cert or a shared CA) is planned for a future release. The P12 password is never exposed in process listings — it is passed via temporary config files for curl and environment variables for openssl.
 
 ### Related Documentation
 

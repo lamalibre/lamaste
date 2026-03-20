@@ -316,37 +316,6 @@ export function isAgentShellEnabled(agent) {
   return new Date(agent.shellEnabledUntil) > new Date();
 }
 
-/**
- * Get the active shell policy for an agent.
- * Looks up the agent's assigned shellPolicy from the config policies array.
- * Falls back to the config's defaultPolicy if the agent has no explicit policy.
- *
- * @param {string} label - Agent label
- * @returns {Promise<{ ok: true, policy: object } | { ok: false, error: string, statusCode: number }>}
- */
-export async function getAgentShellPolicy(label) {
-  const registry = await loadAgentRegistry();
-  const agent = registry.agents.find((a) => a.label === label && !a.revoked);
-
-  if (!agent) {
-    return { ok: false, error: `Agent certificate "${label}" not found`, statusCode: 404 };
-  }
-
-  const config = await readShellConfig();
-  const policyId = agent.shellPolicy || config.defaultPolicy;
-  const policy = config.policies.find((p) => p.id === policyId);
-
-  if (!policy) {
-    return {
-      ok: false,
-      error: `Policy "${policyId}" not found in shell configuration`,
-      statusCode: 500,
-    };
-  }
-
-  return { ok: true, policy };
-}
-
 // --- Reusable shell access validation ---
 
 /**

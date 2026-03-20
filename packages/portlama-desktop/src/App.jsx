@@ -35,6 +35,7 @@ function SetupRequired({ message }) {
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-8 max-w-md text-center">
         <AlertTriangle size={48} className="text-amber-400 mx-auto mb-4" />
         <h1 className="text-xl font-bold text-white mb-3">Agent Not Configured</h1>
+        {message && <p className="text-zinc-400 text-sm mb-4">{message}</p>}
         <p className="text-zinc-400 text-sm mb-6">
           Run the following command in your terminal to connect to your Portlama server:
         </p>

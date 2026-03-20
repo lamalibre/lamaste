@@ -12,8 +12,6 @@ import {
   Copy,
   Check,
   Mail,
-  Link,
-  Clock,
   XCircle,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
@@ -794,7 +792,7 @@ export default function Users() {
           <div className="p-8 text-center text-red-400 text-sm">Failed to load invitations</div>
         ) : invitations.length === 0 ? (
           <div className="p-8 text-center text-zinc-500 text-sm">
-            No invitations yet. Click "Invite User" to generate a link.
+            No invitations yet. Click &quot;Invite User&quot; to generate a link.
           </div>
         ) : (
           <table className="w-full text-left">

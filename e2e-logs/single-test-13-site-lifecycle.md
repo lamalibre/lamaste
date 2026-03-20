@@ -1,73 +1,73 @@
 # Portlama E2E: 13 — Site Lifecycle
 
-> Started at `2026-03-20 11:04:04 UTC`
+> Started at `2026-03-20 14:34:18 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-✅ `11:04:04` Onboarding is complete  
+✅ `14:34:18` Onboarding is complete  
 
 ## Create managed static site
 
-✅ `11:04:05` Site creation returned ok: true  
-✅ `11:04:05` Site has an ID  
-✅ `11:04:05` Site name matches  
-✅ `11:04:05` Site type is managed  
-ℹ️ `11:04:05` Created site: e2esite.test.portlama.local (ID: 74dfafb6-f1b1-45f2-a3a9-24a0a8b05771)  
+✅ `14:34:18` Site creation returned ok: true  
+✅ `14:34:18` Site has an ID  
+✅ `14:34:18` Site name matches  
+✅ `14:34:18` Site type is managed  
+ℹ️ `14:34:18` Created site: e2esite.test.portlama.local (ID: a5ebe809-022f-4b6e-8677-ad714f92fdaa)  
 
 ## Verify site in listing
 
-✅ `11:04:05` Site appears in listing  
+✅ `14:34:18` Site appears in listing  
 
 ## List files — default content
 
-✅ `11:04:05` Site has default files (count: 1)  
-✅ `11:04:05` Default index.html exists  
+✅ `14:34:18` Site has default files (count: 1)  
+✅ `14:34:18` Default index.html exists  
 
 ## Upload test file
 
-✅ `11:04:05` File upload returned ok: true  
+✅ `14:34:18` File upload returned ok: true  
 
 ## Verify uploaded file in listing
 
-✅ `11:04:05` Uploaded file appears in listing  
+✅ `14:34:18` Uploaded file appears in listing  
 
 ## Delete uploaded file
 
-✅ `11:04:05` File deletion returned ok: true  
+✅ `14:34:18` File deletion returned ok: true  
 
 ## Verify file removed
 
-✅ `11:04:05` Deleted file no longer in listing  
+✅ `14:34:18` Deleted file no longer in listing  
 
 ## Update site settings
 
-✅ `11:04:05` Settings update returned ok: true  
-✅ `11:04:05` SPA mode is now enabled  
-✅ `11:04:05` SPA mode persisted in listing  
+✅ `14:34:18` Settings update returned ok: true  
+✅ `14:34:18` SPA mode is now enabled  
+✅ `14:34:18` SPA mode persisted in listing  
 
 ## File extension validation
 
-✅ `11:04:05` Upload of .php file rejected with 400  
-✅ `11:04:05` Upload of .exe file rejected with 400  
-✅ `11:04:05` Upload of file with no extension rejected with 400  
-✅ `11:04:05` Upload of .css file succeeds  
+✅ `14:34:18` Upload of .php file rejected with 400  
+✅ `14:34:18` Upload of .exe file rejected with 400  
+✅ `14:34:18` Upload of file with no extension rejected with 400  
+✅ `14:34:18` Upload of .css file succeeds  
 
 ## Input validation
 
-✅ `11:04:05` Duplicate site name rejected with 400  
-✅ `11:04:05` Reserved name 'panel' rejected with 400  
-✅ `11:04:05` Reserved name 'auth' rejected with 400  
-✅ `11:04:05` Invalid UUID rejected with 400  
+✅ `14:34:19` Duplicate site name rejected with 400  
+✅ `14:34:19` Reserved name 'panel' rejected with 400  
+✅ `14:34:19` Reserved name 'auth' rejected with 400  
+✅ `14:34:19` Invalid UUID rejected with 400  
 
 ## Delete site
 
-✅ `11:04:05` Site deletion returned ok: true  
+✅ `14:34:19` Site deletion returned ok: true  
 
 ## Verify site removed
 
-✅ `11:04:05` Deleted site no longer in listing  
-✅ `11:04:05` Deleted site returns 404  
+✅ `14:34:19` Deleted site no longer in listing  
+✅ `14:34:19` Deleted site returns 404  
 
 ---
 

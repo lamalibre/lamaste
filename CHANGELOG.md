@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add P12 password removed from process listings — agent curl calls use temporary config file (`-K`, O_EXCL + 0600), openssl uses `PORTLAMA_P12_PASS` environment variable. Stale config files cleaned up at module load.
+- Add P12 password protection — curl uses a temporary config file (O_EXCL + mode `0600`, deleted in try/finally) and openssl uses `PORTLAMA_P12_PASS` environment variable, so the password never appears in process listings. Stale config files cleaned up at module load.
+- Add PEM private key cleanup after CA extraction during setup — only `ca.crt` persists, client cert/key PEM files are deleted
+- Add restrictive directory permissions (`0700`) on `~/.portlama/` and `~/.portlama/.pem/`
 - Add curl config file atomic creation with `O_EXCL` and `0o600` permissions in the desktop app, preventing symlink attacks and race conditions
 - Add input validation for custom service definitions — binary names, process names, categories validated against strict allowlists with length and count limits
 - Add registry file validation on load to reject tampered entries in the desktop app

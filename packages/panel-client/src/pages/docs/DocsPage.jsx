@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useReducer } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -184,18 +184,33 @@ export default function DocsPage() {
   const contentRef = useRef(null);
 
   const [index, setIndex] = useState(null);
-  const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeHeadingId, setActiveHeadingId] = useState('');
+
+  // Reducer for markdown fetch state — avoids synchronous setState in effects
+  const [docState, dispatchDoc] = useReducer(
+    (state, action) => {
+      switch (action.type) {
+        case 'fetch':
+          return { content: '', loading: true, error: null };
+        case 'success':
+          return { content: action.content, loading: false, error: null };
+        case 'error':
+          return { content: '', loading: false, error: action.error };
+        default:
+          return state;
+      }
+    },
+    { content: '', loading: true, error: null },
+  );
+  const { content, loading, error } = docState;
 
   // Load navigation index
   useEffect(() => {
     fetch('/docs/_index.json')
       .then((r) => r.json())
       .then(setIndex)
-      .catch((err) => setError(`Failed to load docs index: ${err.message}`));
+      .catch((err) => dispatchDoc({ type: 'error', error: `Failed to load docs index: ${err.message}` }));
   }, []);
 
   // Flatten all pages for prev/next navigation
@@ -231,21 +246,29 @@ export default function DocsPage() {
   // Load markdown content when slug changes
   useEffect(() => {
     if (!currentPage) return;
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
+
+    dispatchDoc({ type: 'fetch' });
+
     fetch(`/docs/${currentPage.file}`)
       .then((r) => {
         if (!r.ok) throw new Error(`Document not found (${r.status})`);
         return r.text();
       })
       .then((md) => {
-        setContent(md);
-        setLoading(false);
+        if (!cancelled) {
+          dispatchDoc({ type: 'success', content: md });
+        }
       })
       .catch((err) => {
-        setError(err.message);
-        setLoading(false);
+        if (!cancelled) {
+          dispatchDoc({ type: 'error', error: err.message });
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [currentPage]);
 
   // Scroll to top when page changes

@@ -53,7 +53,7 @@ After the app launches, it shows a setup screen prompting you to run the agent s
 npx @lamalibre/portlama-agent setup
 ```
 
-This command connects to your VPS panel using the agent certificate and configures the local Chisel client. Once setup completes, the app detects the configuration and switches to the main interface.
+This command connects to your VPS panel using the agent certificate and configures the local Chisel client. During setup, the client certificate and key are extracted from the P12 bundle for mTLS client authentication. Once setup completes, the app detects the configuration and switches to the main interface.
 
 ## Using the App
 

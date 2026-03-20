@@ -1069,8 +1069,8 @@ export default function Shell() {
 
 function AgentShellCard({
   agent,
-  sessions,
-  policies,
+  sessions: _sessions,
+  policies: _policies,
   getPolicyName,
   onEnable,
   onDisable,
@@ -1080,7 +1080,6 @@ function AgentShellCard({
   const { label } = agent;
   const shellTimeRemaining = formatTimeRemaining(agent.shellEnabledUntil);
   const isShellActive = !!shellTimeRemaining;
-  const activeSession = sessions.find((s) => s.agentLabel === label && !s.endedAt);
   const policyName = agent.shellPolicy ? getPolicyName(agent.shellPolicy) : null;
 
   const handleConnect = async () => {

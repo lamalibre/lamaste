@@ -61,6 +61,10 @@ Every connection to your VPS is encrypted with TLS 1.2 or 1.3. Even if someone i
 
 The admin panel requires a client certificate at the TLS layer. Without the certificate, nginx rejects the connection before any HTTP traffic is exchanged. See [mTLS](mtls.md) for full details.
 
+**Agent-side TLS verification:** The panel uses a self-signed TLS server certificate that is separate from the mTLS CA used to sign client certificates. Because these are different PKI chains, the agent currently uses `-k` (curl) and `rejectUnauthorized: false` (WebSocket) for server TLS verification. The mTLS client certificate still authenticates the agent to the panel. Server certificate distribution (so the agent can verify the panel's identity) is planned as a future improvement.
+
+**P12 password security:** The agent never passes the P12 password as a command-line argument. Curl calls use a temporary config file (created with mode `0600`, deleted after use), and openssl calls use the `PORTLAMA_P12_PASS` environment variable. This prevents the password from being visible in process listings (`ps aux`).
+
 Portlama supports two types of certificates with different access levels:
 
 - **Admin certificate** — full access to all panel endpoints (for browser-based management)

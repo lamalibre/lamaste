@@ -20,7 +20,7 @@ export async function loadAgentConfig() {
  * @param {object} config
  */
 export async function saveAgentConfig(config) {
-  await mkdir(AGENT_DIR, { recursive: true });
+  await mkdir(AGENT_DIR, { recursive: true, mode: 0o700 });
   const tmp = CONFIG_PATH + '.tmp';
   await writeFile(tmp, JSON.stringify(config, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
   await rename(tmp, CONFIG_PATH);
