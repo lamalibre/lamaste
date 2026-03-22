@@ -98,6 +98,7 @@ TEST_SCRIPTS=(
   "08-invitation-journey.sh"
   "09-agent-site-deploy.sh"
   "10-shell-lifecycle.sh"
+  "11-plugin-lifecycle.sh"
 )
 
 PASSED=0

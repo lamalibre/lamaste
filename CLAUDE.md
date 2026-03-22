@@ -104,9 +104,25 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
   - `system:read` — system stats
   - `sites:read` / `sites:write` — static site file browsing and deployment (site CRUD is admin-only)
   - `allowedSites: string[]` — per-site scoping; agent sees and can deploy to only listed sites
+- Plugins declare additional capabilities in their manifest; these are merged with base capabilities dynamically via `getValidCapabilities()`
 - Shell management endpoints (enable/disable, policies, sessions) are admin-only at the route level — there is no `shell:admin` capability
+- Plugin management endpoints (install, enable, push install) are admin-only at the route level
 - Revoked certs tracked in `revoked.json`, rejected by middleware
 - Never give admin cert to Mac agents — generate scoped agent certs
+
+**Plugin system:**
+
+- Plugins are `@lamalibre/`-scoped npm packages with a `portlama-plugin.json` manifest
+- Server-side plugin code runs unsandboxed in the panel process — `@lamalibre/` scope is the trust boundary
+- All `npm install` calls use `--ignore-scripts` to block postinstall script execution
+- Plugin names matching core API prefixes (`tunnels`, `plugins`, `health`, etc.) are rejected
+- Plugin server routes are mounted with two-level Fastify encapsulation: auth guard on outer scope (plugin cannot override), plugin code on inner scope
+- Plugin panel bundles served at `/{pluginName}/panel.js` with runtime `@lamalibre/` scope check
+- Disabled plugins return 503 via `onRequest` hook (Fastify cannot remove routes at runtime — clean state requires restart)
+- Push install: admin enables a time-windowed session per agent, then sends install/update/uninstall commands
+- Push install policies: IP allow/deny lists, allowed plugins (`@lamalibre/` scope enforced via Zod), allowed actions
+- Plugin state: `/etc/portlama/plugins.json` (registry), `/etc/portlama/plugins/` (per-plugin data directories)
+- Agent plugin state: `~/.portlama/plugins.json`, `~/.portlama/plugins/` directories
 
 **File operations:**
 

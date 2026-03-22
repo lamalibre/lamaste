@@ -1,6 +1,6 @@
 # Portlama E2E: 02 — Tunnel Traffic (Three-VM)
 
-> Started at `2026-03-20 14:34:34 UTC`
+> Started at `2026-03-22 18:25:39 UTC`
 
 
 ## Pre-flight: verify onboarding is complete
@@ -8,45 +8,45 @@
 
 ## Create tunnel via API
 
-✅ `14:34:37` Tunnel creation returned ok: true  
-✅ `14:34:37` Tunnel has an ID  
-ℹ️ `14:34:37` Created tunnel ID: 3a0f455c-29ba-4b91-b31f-4ef57790c013 (e2etraffic.test.portlama.local)  
+✅ `18:25:41` Tunnel creation returned ok: true  
+✅ `18:25:41` Tunnel has an ID  
+ℹ️ `18:25:41` Created tunnel ID: 1aea56e5-7d66-4f6c-a4d3-8b9de3dba17c (e2etraffic.test.portlama.local)  
 
 ## Configure agent VM for tunnel
 
-✅ `14:34:37` Added tunnel.test.portlama.local to agent /etc/hosts  
-✅ `14:34:37` Added e2etraffic.test.portlama.local to agent /etc/hosts  
+✅ `18:25:42` Added tunnel.test.portlama.local to agent /etc/hosts  
+✅ `18:25:42` Added e2etraffic.test.portlama.local to agent /etc/hosts  
 
 ## Start HTTP server on agent VM
 
-✅ `14:34:39` HTTP server running on agent at port 18080  
+✅ `18:25:44` HTTP server running on agent at port 18080  
 
 ## Start Chisel client on agent VM
 
-ℹ️ `14:34:40` Waiting for Chisel tunnel to establish...  
-✅ `14:34:40` Chisel tunnel established (port 18080 accessible on host)  
+ℹ️ `18:25:44` Waiting for Chisel tunnel to establish...  
+✅ `18:25:44` Chisel tunnel established (port 18080 accessible on host)  
 
 ## Verify traffic through tunnel (direct, bypassing Authelia)
 
-✅ `14:34:40` Direct tunnel traffic returns expected content  
+✅ `18:25:44` Direct tunnel traffic returns expected content  
 
 ## Reset TOTP before authentication
 
-✅ `14:34:40` TOTP reset returned otpauth URI  
-✅ `14:34:40` Extracted TOTP secret from otpauth URI  
+✅ `18:25:45` TOTP reset returned otpauth URI  
+✅ `18:25:45` Extracted TOTP secret from otpauth URI  
 
 ## Authenticate with Authelia (first factor)
 
-✅ `14:34:43` Authelia first factor authentication succeeded  
+✅ `18:25:48` Authelia first factor authentication succeeded  
 
 ## Second factor authentication (TOTP)
 
-ℹ️ `14:34:43` Generated TOTP code: 845746  
-✅ `14:34:43` Second factor authentication succeeded (TOTP accepted)  
+ℹ️ `18:25:48` Generated TOTP code: 843851  
+✅ `18:25:48` Second factor authentication succeeded (TOTP accepted)  
 
 ## Verify traffic through nginx with Authelia (full path)
 
-✅ `14:34:44` Full-path tunnel traffic (nginx + Authelia) returns expected content  
+✅ `18:25:48` Full-path tunnel traffic (nginx + Authelia) returns expected content  
 
 ---
 
@@ -59,5 +59,5 @@
 | **Skipped** | `0` |
 | **Total** | `12` |
 
-ℹ️ `14:34:44` Cleaning up test resources...  
-🔵 `14:34:46` **Running: 03-tunnel-toggle-traffic.sh**  
+ℹ️ `18:25:48` Cleaning up test resources...  
+🔵 `18:25:51` **Running: 03-tunnel-toggle-traffic.sh**  

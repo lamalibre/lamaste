@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   BookOpen,
   FileText,
   Globe,
   LayoutDashboard,
   Menu,
+  Package,
   Server,
   ShieldCheck,
   Users,
@@ -12,17 +14,46 @@ import {
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
 
-const navItems = [
+const baseNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/tunnels', icon: Globe, label: 'Tunnels' },
   { to: '/sites', icon: FileText, label: 'Static Sites' },
   { to: '/users', icon: Users, label: 'Users' },
   { to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
   { to: '/services', icon: Server, label: 'Services' },
+  { to: '/plugins', icon: Package, label: 'Plugins' },
   { to: '/docs', icon: BookOpen, label: 'Documentation' },
 ];
 
+async function fetchEnabledPlugins() {
+  try {
+    const res = await fetch('/api/plugins');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.plugins || []).filter(
+      (p) => p.status === 'enabled' && p.panel?.label,
+    );
+  } catch {
+    return [];
+  }
+}
+
 function SidebarContent({ onLinkClick }) {
+  const { data: enabledPlugins } = useQuery({
+    queryKey: ['sidebar-plugins'],
+    queryFn: fetchEnabledPlugins,
+    refetchInterval: 30000,
+    staleTime: 15000,
+  });
+
+  const pluginNavItems = (enabledPlugins || []).map((p) => ({
+    to: `/plugins/${p.name}`,
+    icon: Package,
+    label: p.panel.label,
+  }));
+
+  const navItems = [...baseNavItems, ...pluginNavItems];
+
   return (
     <>
       <div className="border-b border-zinc-800 px-4 py-5">

@@ -253,6 +253,13 @@ if [ "$SKIP_SETUP" = "false" ]; then
       multipass transfer "$f" "${vm}:/tmp/e2e/$(basename "$f")"
     done
   done
+  # Transfer VM-side API helper scripts used by three-VM tests
+  for f in "${REPO_ROOT}"/tests/e2e-three-vm/vm-api-helper.sh "${REPO_ROOT}"/tests/e2e-three-vm/vm-api-status-helper.sh; do
+    if [ -f "$f" ]; then
+      multipass transfer "$f" "${VM_HOST}:/tmp/$(basename "$f")"
+      multipass exec "${VM_HOST}" -- sudo chmod +x "/tmp/$(basename "$f")"
+    fi
+  done
   log_ok "Test scripts transferred to all VMs"
 
   log_step "Running setup-host.sh on ${VM_HOST}..."

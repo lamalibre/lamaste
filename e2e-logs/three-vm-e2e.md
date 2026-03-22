@@ -1,6 +1,6 @@
 # run-all
 
-> Started at `2026-03-20 14:34:22 UTC` — log level **1**
+> Started at `2026-03-22 18:25:26 UTC` — log level **1**
 
 
 ---
@@ -10,14 +10,14 @@
 
 | Key | Value |
 |-----|-------|
-| **HOST_IP** | `192.168.2.100` |
-| **AGENT_IP** | `192.168.2.101` |
-| **VISITOR_IP** | `192.168.2.102` |
+| **HOST_IP** | `192.168.2.154` |
+| **AGENT_IP** | `192.168.2.155` |
+| **VISITOR_IP** | `192.168.2.156` |
 | **TEST_DOMAIN** | `test.portlama.local` |
 | **TEST_USER** | `testuser` |
-| **Date** | `2026-03-20 14:34:22 UTC` |
+| **Date** | `2026-03-22 18:25:26 UTC` |
 | **Log file** | `<repo>/e2e-logs/run-all.md` |
 
-🔵 `14:34:22` **Clearing Authelia regulation state...**  
-✅ `14:34:25` Authelia regulation state cleared  
-🔵 `14:34:26` **Running: 01-onboarding-complete.sh**  
+🔵 `18:25:26` **Clearing Authelia regulation state...**  
+✅ `18:25:30` Authelia regulation state cleared  
+🔵 `18:25:30` **Running: 01-onboarding-complete.sh**  

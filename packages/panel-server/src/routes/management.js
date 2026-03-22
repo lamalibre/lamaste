@@ -8,6 +8,7 @@ import tunnelRoutes from './management/tunnels.js';
 import sitesRoutes from './management/sites.js';
 import invitationRoutes from './management/invitations.js';
 import shellRoutes from './management/shell.js';
+import pluginRoutes from './management/plugins.js';
 
 export default async function managementRoutes(fastify, _opts) {
   fastify.addHook('onRequest', managementOnly());
@@ -21,4 +22,5 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(certsRoutes);
   await fastify.register(invitationRoutes);
   await fastify.register(shellRoutes);
+  await fastify.register(pluginRoutes);
 }

@@ -28,6 +28,7 @@ ${b('COMMANDS')}
   ${c('shell')}           Connect to a remote agent shell
   ${c('cp')}              Copy files to/from a remote agent
   ${c('shell-log')}       List or download shell session recordings
+  ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
 
 ${b('EXAMPLES')}
 
@@ -60,6 +61,10 @@ ${b('EXAMPLES')}
 
   ${d('# List shell session recordings')}
   ${c('portlama-agent shell-log myagent')}
+
+  ${d('# Manage plugins')}
+  ${c('portlama-agent plugin status')}
+  ${c('portlama-agent plugin install @lamalibre/shell-agent')}
 
 ${b('PREREQUISITES')}
 
@@ -136,6 +141,11 @@ export async function main() {
     case 'shell-log': {
       const { runShellLog } = await import('./commands/shell-log.js');
       await runShellLog(args.slice(1));
+      break;
+    }
+    case 'plugin': {
+      const { runPlugin } = await import('./commands/plugin.js');
+      await runPlugin(args.slice(1));
       break;
     }
     default:

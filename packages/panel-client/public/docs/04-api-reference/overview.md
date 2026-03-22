@@ -193,6 +193,8 @@ Two endpoints use WebSocket for real-time streaming:
 | ------------------------------------- | ------------------------ | ------------- |
 | `WS /api/onboarding/provision/stream` | Provisioning progress    | JSON messages |
 | `WS /api/services/:name/logs`         | Live service log tailing | JSON messages |
+| `WS /api/shell/connect/:label`        | Admin shell relay        | JSON messages |
+| `WS /api/shell/agent/:label`          | Agent shell relay        | JSON messages |
 
 WebSocket connections follow the standard upgrade handshake over the same HTTPS connection. The `wss://` protocol is used in production since all traffic goes through nginx with TLS.
 
@@ -319,10 +321,29 @@ There is no application-level rate limiting. The mTLS requirement means only aut
 | POST   | `/api/shell/file/:label`                  | Management | Upload file to agent                   |
 | WS     | `/api/shell/connect/:label`               | Management | Admin WebSocket for shell relay        |
 | WS     | `/api/shell/agent/:label`                 | Management | Agent WebSocket for shell relay        |
+| GET    | `/api/plugins`                            | Management | List installed plugins                 |
+| GET    | `/api/plugins/:name`                      | Management | Get plugin details                     |
+| POST   | `/api/plugins/install`                    | Management | Install a plugin                       |
+| POST   | `/api/plugins/:name/enable`               | Management | Enable a plugin                        |
+| POST   | `/api/plugins/:name/disable`              | Management | Disable a plugin                       |
+| DELETE | `/api/plugins/:name`                      | Management | Uninstall a plugin                     |
+| GET    | `/api/plugins/push-install/config`        | Management | Get push install configuration         |
+| PATCH  | `/api/plugins/push-install/config`        | Management | Update push install configuration      |
+| GET    | `/api/plugins/push-install/policies`      | Management | List push install policies             |
+| POST   | `/api/plugins/push-install/policies`      | Management | Create push install policy             |
+| PATCH  | `/api/plugins/push-install/policies/:id`  | Management | Update push install policy             |
+| DELETE | `/api/plugins/push-install/policies/:id`  | Management | Delete push install policy             |
+| POST   | `/api/plugins/push-install/enable/:label` | Management | Enable push install for agent          |
+| DELETE | `/api/plugins/push-install/enable/:label` | Management | Disable push install for agent         |
+| GET    | `/api/plugins/push-install/agent-status`  | Management | Agent checks own push install status   |
+| POST   | `/api/plugins/push-install/command/:label`| Management | Send push install command to agent     |
+| GET    | `/api/plugins/push-install/sessions`      | Management | List push install audit log            |
 
 ### Agent Capabilities
 
-Agent certificates use capability-based access control. The following capabilities can be assigned:
+Agent certificates use capability-based access control. Base capabilities are always available; plugins can declare additional capabilities in their manifest.
+
+**Base capabilities:**
 
 | Capability       | Description                                                     |
 | ---------------- | --------------------------------------------------------------- |
@@ -333,3 +354,5 @@ Agent certificates use capability-based access control. The following capabiliti
 | `system:read`    | View system stats (CPU, RAM, disk)                              |
 | `sites:read`     | List sites and browse files                                     |
 | `sites:write`    | Upload and delete files on assigned sites                       |
+
+**Plugin-declared capabilities:** Plugins can declare additional capabilities in their `portlama-plugin.json` manifest. These are merged with base capabilities and available for assignment to agent certificates. Capabilities are validated dynamically via `getValidCapabilities()`.

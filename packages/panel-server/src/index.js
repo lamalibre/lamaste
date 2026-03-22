@@ -12,7 +12,10 @@ import errorHandler from './middleware/errors.js';
 import healthRoutes from './routes/health.js';
 import onboardingRoutes from './routes/onboarding/index.js';
 import managementRoutes from './routes/management.js';
+import pluginRouter from './routes/plugin-router.js';
 import inviteRoutes from './routes/invite.js';
+import { getPluginCapabilities } from './lib/plugins.js';
+import { setPluginCapabilities } from './lib/mtls.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +24,14 @@ const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
 
 async function start() {
   const config = await loadConfig();
+
+  // Load plugin capabilities at startup so agent cert validation includes them
+  try {
+    const pluginCaps = await getPluginCapabilities();
+    setPluginCapabilities(pluginCaps);
+  } catch {
+    // Plugin registry may not exist yet — ignore on first boot
+  }
 
   const server = Fastify({ logger: true });
 
@@ -67,6 +78,7 @@ async function start() {
     app.register(healthRoutes, { prefix: '/api' });
     app.register(onboardingRoutes, { prefix: '/api/onboarding' });
     app.register(managementRoutes, { prefix: '/api' });
+    app.register(pluginRouter, { prefix: '/api' });
   });
 
   // --- SPA fallback ---

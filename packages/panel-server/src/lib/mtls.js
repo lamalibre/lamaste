@@ -7,7 +7,7 @@ const PKI_DIR = process.env.PORTLAMA_PKI_DIR || '/etc/portlama/pki';
 
 // Promise-chain mutex to serialize agent registry modifications
 let registryLock = Promise.resolve();
-function withRegistryLock(fn) {
+export function withRegistryLock(fn) {
   const prev = registryLock;
   let resolve;
   registryLock = new Promise((r) => {
@@ -253,10 +253,10 @@ export function getP12Path() {
 const AGENTS_DIR = `${PKI_DIR}/agents`;
 
 /**
- * Valid capabilities that can be assigned to agent certificates.
+ * Base capabilities that can be assigned to agent certificates.
  * - tunnels:read is always-on (mandatory baseline for all agents)
  */
-export const VALID_CAPABILITIES = [
+const BASE_CAPABILITIES = [
   'tunnels:read',
   'tunnels:write',
   'services:read',
@@ -265,6 +265,32 @@ export const VALID_CAPABILITIES = [
   'sites:read',
   'sites:write',
 ];
+
+/**
+ * Plugin-contributed capabilities, loaded at startup.
+ * @type {string[]}
+ */
+let pluginCapabilities = [];
+
+/**
+ * Set plugin-contributed capabilities.
+ * Called at startup after loading plugin manifests.
+ *
+ * @param {string[]} caps - Capability strings from plugins
+ */
+export function setPluginCapabilities(caps) {
+  pluginCapabilities = [...new Set(caps)];
+}
+
+/**
+ * Get the full list of valid capabilities (base + plugin).
+ *
+ * @returns {string[]}
+ */
+export function getValidCapabilities() {
+  return [...BASE_CAPABILITIES, ...pluginCapabilities];
+}
+
 
 /**
  * Load the agent registry from disk.
@@ -526,7 +552,10 @@ export async function getAgentCapabilities(label) {
   const registry = await loadAgentRegistry();
   const agent = registry.agents.find((a) => a.label === label && !a.revoked);
   if (!agent) return ['tunnels:read'];
-  return agent.capabilities || ['tunnels:read'];
+  const stored = agent.capabilities || ['tunnels:read'];
+  // Filter against currently valid capabilities so disabled-plugin caps are excluded
+  const valid = getValidCapabilities();
+  return stored.filter((c) => valid.includes(c));
 }
 
 /**
@@ -545,9 +574,10 @@ export async function updateAgentCapabilities(label, capabilities) {
       throw Object.assign(new Error(`Agent certificate "${label}" not found`), { statusCode: 404 });
     }
 
-    // Validate all capabilities
+    // Validate all capabilities against base + plugin capabilities
+    const validCaps = getValidCapabilities();
     for (const cap of capabilities) {
-      if (!VALID_CAPABILITIES.includes(cap)) {
+      if (!validCaps.includes(cap)) {
         throw Object.assign(new Error(`Invalid capability: ${cap}`), { statusCode: 400 });
       }
     }

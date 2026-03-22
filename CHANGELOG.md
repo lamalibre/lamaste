@@ -5,9 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-03-19
+## [Unreleased] - 2026-03-22
 
 ### Added
+
+- Add plugin system with install, uninstall, enable, and disable lifecycle — plugins are `@lamalibre/`-scoped npm packages with a `portlama-plugin.json` manifest
+- Add plugin server-side route mounting with two-level Fastify encapsulation — auth guard on outer scope prevents plugins from overriding access control
+- Add plugin panel micro-frontend loader — plugins can ship a `panel.js` bundle rendered in the Plugins page
+- Add dynamic capability registration — plugins declare capabilities in their manifest, which are merged with base capabilities for agent certificate scoping
+- Add push install system for remote plugin management — admin enables a time-windowed push install session per agent, then sends install/update/uninstall commands
+- Add push install policies with IP allow/deny lists, allowed plugins, and allowed actions
+- Add push install session audit log with configurable retention (default 500 entries)
+- Add `portlama-agent plugin` CLI commands: install, uninstall, update, list, and remote push-install polling
+- Add Plugins page in the desktop app with install, uninstall, enable, disable, and push install management
+- Add Plugins tab to the panel sidebar
+
+### Changed
+
+- Update agent certificate capabilities to support dynamic plugin-declared capabilities
+- Update `GET /api/certs/agent` to return only currently valid capabilities (filtering against base + plugin set)
+
+### Security
+
+- Add `@lamalibre/` npm scope enforcement on all plugin install paths — server, agent, push install policies, and agent uninstall/update operations
+- Add `--ignore-scripts` flag on all plugin `npm install` calls to block postinstall script execution
+- Add reserved plugin name validation — names matching core API prefixes (`tunnels`, `plugins`, `health`, etc.) are rejected at install time
+- Add `@lamalibre/` scope check on server module loading path as defense-in-depth against registry file tampering
+- Add agent-side manifest name validation (`/^[a-z0-9-]+$/`) to prevent path traversal via malicious plugin names
+- Add disabled-plugin route guard with 5-second TTL cache — disabled plugins return 503 without server restart
+- Add `ScopedPackageSchema` validation on push install policy `allowedPlugins` field
 
 - Add service discovery & marketplace UI in the desktop app — auto-detects 17 well-known local services (Ollama, ComfyUI, LM Studio, PostgreSQL, Redis, Docker containers, etc.) with one-click tunnel creation
 - Add custom service definitions — users can register their own services with name, port, binary, process name, and category, persisted in `~/.portlama/services.json`
@@ -69,11 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Affected packages:**
 
-- `@lamalibre/portlama-panel-server` 0.1.0 → 0.1.2
-- `@lamalibre/portlama-panel-client` 0.1.0 → 0.1.1
-- `@lamalibre/create-portlama` 1.0.23 → 1.0.25
-- `@lamalibre/portlama-agent` 1.0.1 → 1.0.3
-- `@lamalibre/portlama-desktop` 0.1.0 → 0.1.1
+- `@lamalibre/portlama-panel-server` 0.1.0 → 0.1.3
+- `@lamalibre/portlama-panel-client` 0.1.0 → 0.1.2
+- `@lamalibre/create-portlama` 1.0.23 → 1.0.26
+- `@lamalibre/portlama-agent` 1.0.1 → 1.0.5
+- `@lamalibre/portlama-desktop` 0.1.0 → 0.1.2
 - `@lamalibre/install-portlama-desktop` 0.0.2 → 0.0.3
 
 ## [1.0.0] - 2026-03-12

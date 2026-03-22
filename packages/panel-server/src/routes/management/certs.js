@@ -12,7 +12,7 @@ import {
   getAgentP12Path,
   updateAgentCapabilities,
   updateAgentAllowedSites,
-  VALID_CAPABILITIES,
+  getValidCapabilities,
 } from '../../lib/mtls.js';
 import * as nginx from '../../lib/nginx.js';
 
@@ -25,8 +25,6 @@ const DomainParamSchema = z.object({
     ),
 });
 
-const CapabilityEnum = z.enum(VALID_CAPABILITIES);
-
 const AgentGenerateBodySchema = z.object({
   label: z
     .string()
@@ -34,11 +32,19 @@ const AgentGenerateBodySchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Label must contain only lowercase letters, numbers, and hyphens'),
   capabilities: z
-    .array(CapabilityEnum)
+    .array(z.string())
     .optional()
     .default(['tunnels:read'])
     .refine((caps) => caps.includes('tunnels:read'), {
       message: 'tunnels:read is mandatory and cannot be removed',
+    })
+    .superRefine((caps, ctx) => {
+      const validCaps = getValidCapabilities();
+      for (const c of caps) {
+        if (!validCaps.includes(c)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid capability: ${c}` });
+        }
+      }
     }),
   allowedSites: z
     .array(
@@ -56,9 +62,19 @@ const AgentGenerateBodySchema = z.object({
 });
 
 const UpdateCapabilitiesSchema = z.object({
-  capabilities: z.array(CapabilityEnum).refine((caps) => caps.includes('tunnels:read'), {
-    message: 'tunnels:read is mandatory and cannot be removed',
-  }),
+  capabilities: z
+    .array(z.string())
+    .refine((caps) => caps.includes('tunnels:read'), {
+      message: 'tunnels:read is mandatory and cannot be removed',
+    })
+    .superRefine((caps, ctx) => {
+      const validCaps = getValidCapabilities();
+      for (const c of caps) {
+        if (!validCaps.includes(c)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid capability: ${c}` });
+        }
+      }
+    }),
 });
 
 const UpdateAllowedSitesSchema = z.object({

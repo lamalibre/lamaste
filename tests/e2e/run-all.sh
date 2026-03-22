@@ -66,6 +66,7 @@ TEST_SCRIPTS=(
   "12-user-invitations.sh"
   "13-site-lifecycle.sh"
   "14-shell-lifecycle.sh"
+  "15-plugin-lifecycle.sh"
 )
 
 PASSED=0

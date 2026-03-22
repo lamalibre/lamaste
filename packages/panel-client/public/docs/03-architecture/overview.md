@@ -242,7 +242,9 @@ portlama/
 │   │       │       ├── tunnels.js    ← Tunnel CRUD + plist download
 │   │       │       ├── sites.js      ← Static site CRUD + file management
 │   │       │       ├── users.js      ← Authelia user CRUD + TOTP
-│   │       │       └── certs.js      ← Certificate listing + renewal + mTLS rotation
+│   │       │       ├── certs.js      ← Certificate listing + renewal + mTLS rotation
+│   │       │       └── plugins.js    ← Plugin management + push install API
+│   │       ├── plugin-router.js      ← Dynamic plugin route mounting + disabled-plugin guard
 │   │       └── lib/
 │   │           ├── config.js         ← panel.json loading + Zod validation + atomic updates
 │   │           ├── state.js          ← tunnels.json + sites.json + invitations.json atomic read/write
@@ -252,7 +254,9 @@ portlama/
 │   │           ├── chisel.js         ← Chisel install + service management
 │   │           ├── authelia.js       ← Authelia install + config + user CRUD
 │   │           ├── certbot.js        ← Let's Encrypt issuance + renewal
-│   │           ├── mtls.js           ← mTLS cert info + rotation
+│   │           ├── mtls.js           ← mTLS cert info + rotation + dynamic capabilities
+│   │           ├── plugins.js        ← Plugin install/uninstall/enable/disable + manifest validation
+│   │           ├── push-install.js   ← Push install config, policies, sessions, agent enable/disable
 │   │           ├── services.js       ← systemctl wrapper for managed services
 │   │           ├── system-stats.js   ← CPU, memory, disk stats via systeminformation
 │   │           ├── plist.js          ← macOS launchd plist generator
@@ -278,7 +282,8 @@ portlama/
 │           │   │   ├── Tunnels.jsx        ← Tunnel CRUD + Mac plist download
 │           │   │   ├── Sites.jsx          ← Static site management + file browser
 │           │   │   ├── Services.jsx       ← Service control + live logs
-│           │   │   └── Certificates.jsx   ← Cert listing + renewal
+│           │   │   ├── Certificates.jsx   ← Cert listing + renewal
+│           │   │   └── Plugins.jsx       ← Plugin management + push install UI
 │           │   ├── Users.jsx             ← Authelia user CRUD + TOTP enrollment
 │           │   └── docs/
 │           │       └── DocsPage.jsx      ← Documentation viewer (markdown)
@@ -287,6 +292,7 @@ portlama/
 │               │   ├── Layout.jsx        ← Sidebar + content area
 │               │   ├── Sidebar.jsx       ← Navigation with mobile responsive
 │               │   └── SidebarLink.jsx   ← Active-state nav link
+│               ├── PluginLoader.jsx       ← Plugin micro-frontend loader
 │               ├── Toast.jsx             ← Toast notification system
 │               ├── LoadingScreen.jsx     ← Full-page loading state
 │               ├── ErrorScreen.jsx       ← Full-page error with retry
@@ -317,7 +323,7 @@ Layer 4: mTLS (Admin Panel)
   └─ Panel Server double-checks X-SSL-Client-Verify header
   └─ Panel Server checks certificate serial against revoked.json
   └─ Panel Server parses DN for role (admin vs agent) and sets certRole/certLabel/certCapabilities
-  └─ Agent capabilities: tunnels:read/write, services:read/write, system:read, sites:read/write
+  └─ Agent capabilities: tunnels:read/write, services:read/write, system:read, sites:read/write, plus plugin-declared capabilities
 
 Layer 5: Authelia (Tunneled Apps)
   └─ nginx forward auth for every app request
@@ -394,6 +400,7 @@ Phase 3: Operation (browser UI)
   └─ Host static sites → served via nginx at https://<site>.<domain>
   └─ Monitor services → dashboard, live logs
   └─ Manage certificates → auto-renewal, mTLS rotation
+  └─ Install plugins → extend functionality via @lamalibre/ npm packages
 
 Phase 4: Recovery (if needed)
   └─ Domain lost? → https://<ip>:9292 always works
@@ -420,4 +427,8 @@ Phase 4: Recovery (if needed)
 | `/etc/systemd/system/portlama-panel.service` | Panel Server systemd unit                            |
 | `/etc/systemd/system/chisel.service`         | Chisel Server systemd unit                           |
 | `/etc/systemd/system/authelia.service`       | Authelia systemd unit                                |
+| `/etc/portlama/plugins.json`                 | Plugin registry (installed plugins and status)       |
+| `/etc/portlama/plugins/`                     | Per-plugin data directories                          |
+| `/etc/portlama/push-install-config.json`     | Push install configuration and policies              |
+| `/etc/portlama/push-install-sessions.json`   | Push install session audit log                       |
 | `/etc/sudoers.d/portlama`                    | Scoped sudo rules for portlama user                  |

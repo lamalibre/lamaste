@@ -12,6 +12,8 @@ import Sites from './pages/management/Sites.jsx';
 import Users from './pages/Users.jsx';
 import Certificates from './pages/management/Certificates.jsx';
 import Services from './pages/management/Services.jsx';
+import Plugins from './pages/management/Plugins.jsx';
+import PluginLoader from './components/PluginLoader.jsx';
 import DocsPage from './pages/docs/DocsPage.jsx';
 
 const queryClient = new QueryClient({
@@ -47,6 +49,8 @@ function AppRoutes() {
         <Route path="/users" element={<Users />} />
         <Route path="/certificates" element={<Certificates />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/plugins" element={<Plugins />} />
+        <Route path="/plugins/:pluginName/*" element={<PluginLoader />} />
         <Route path="/docs/*" element={<DocsPage />} />
       </Route>
     </Routes>

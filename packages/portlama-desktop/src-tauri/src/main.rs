@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod chisel;
 mod services;
+mod plugins;
 mod shell;
 mod tray;
 
@@ -45,6 +46,11 @@ fn main() {
             shell::disable_agent_shell,
             shell::get_shell_sessions,
             shell::get_agent_certs,
+            plugins::get_plugins,
+            plugins::install_plugin,
+            plugins::enable_plugin,
+            plugins::disable_plugin,
+            plugins::uninstall_plugin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running portlama desktop");

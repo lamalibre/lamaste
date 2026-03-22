@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-20 14:33:29 UTC`
+> Run at `2026-03-22 18:24:27 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-20 14:33:29 UTC
+  Date:           2026-03-22 18:24:27 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 19 14:32:28 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 21 18:23:09 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: 8966cd1f-804f-47e6-93cc-ae162ef1cc44
+  [INFO] Created tunnel ID: 1b5d3efb-3e5b-4fe3-9b78-1c4687d8ce62
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774017209
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774203868
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=95:E2:0E:2D:C0:62:F3:5D:5D:41:41:21:B9:72:75:F4:D1:8C:39:69:99:49:14:9F:34:54:8E:77:0C:A0:CE:B3
+  [INFO] Current cert fingerprint: sha256 Fingerprint=3D:51:FD:3F:AB:80:8D:7F:CA:36:8E:B6:1F:B6:A9:F4:11:2B:C0:51:D1:96:6A:4F:DD:08:76:EE:34:BA:1B:6D
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-19T14:33:59.000Z
+  [PASS] Rotation response contains expiry: 2028-03-21T18:24:57.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=27:E5:A0:3A:36:5F:DC:9B:5B:EC:0A:4E:46:CF:8A:BE:5E:14:21:E7:BA:5B:E5:67:E7:08:2B:2A:E1:C9:DE:3B
+  [INFO] New cert fingerprint: sha256 Fingerprint=53:47:18:76:38:75:43:18:C5:12:F8:8C:C0:61:19:3A:CF:A6:CB:09:9A:A1:3D:24:EB:E1:5F:BD:2D:65:49:D1
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.100
+  [INFO] Server IP: 192.168.2.154
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: a5ebe809-022f-4b6e-8677-ad714f92fdaa)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 4238e5bc-c1ec-42d6-aee6-a56d907ee5a9)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -624,7 +624,7 @@
   [INFO] Found agent: test-agent
   [PASS] Shell enable for agent returned ok: true
   [PASS] shellEnabledUntil is set
-  [PASS] shellEnabledUntil has a value: 2026-03-20T14:39:19.497Z
+  [PASS] shellEnabledUntil has a value: 2026-03-22T18:30:20.044Z
   [PASS] Shell disable for agent returned ok: true
 
 --- Shell enable without global toggle ---
@@ -664,6 +664,96 @@
   Results: 47 passed, 0 failed, 0 skipped (47 total)
 ============================================================================
 
+  Running: 15-plugin-lifecycle.sh
+
+============================================================================
+ Portlama E2E: 15 — Plugin Lifecycle
+============================================================================
+
+
+--- Pre-flight: check onboarding is complete ---
+  [PASS] Onboarding is complete
+
+--- Empty initial plugin list ---
+  [PASS] Initial plugin list is empty
+
+--- Plugin install validation ---
+  [PASS] Non-@lamalibre package rejected (HTTP 400)
+  [PASS] Empty package name rejected (HTTP 400)
+
+--- Plugin detail for non-existent plugin ---
+  [PASS] GET non-existent plugin returns 404
+
+--- Enable/disable non-existent plugin ---
+  [PASS] Enable non-existent plugin returns 404
+  [PASS] Disable non-existent plugin returns 404
+
+--- Uninstall non-existent plugin ---
+  [PASS] Uninstall non-existent plugin returns 404
+
+--- Push install config defaults ---
+  [PASS] Push install is disabled by default
+  [PASS] Default policy ID is 'default'
+  [PASS] At least one push install policy exists (count: 1)
+
+--- Push install config update ---
+  [PASS] PATCH push-install config returned ok: true
+  [PASS] Push install is now enabled
+
+--- Create a push install policy ---
+  [PASS] Policy creation returned ok: true
+  [PASS] Policy ID matches
+
+--- Verify policy in listing ---
+  [PASS] Created policy appears in listing
+
+--- Update the push install policy ---
+  [PASS] Policy update returned ok: true
+  [PASS] Description updated
+
+--- Cannot delete the default push install policy ---
+  [PASS] Cannot delete the default policy (HTTP 400)
+
+--- Delete the e2e-pi-test policy ---
+  [PASS] Policy deletion returned ok: true
+  [PASS] Deleted policy no longer in listing
+
+--- Push install policy validation ---
+  [PASS] POST policy with empty name rejected (HTTP 400)
+  [PASS] POST policy with duplicate ID rejected (HTTP 409)
+  [PASS] PATCH non-existent policy returns 404
+  [PASS] DELETE non-existent policy returns 404
+
+--- Push install enable/disable for agent ---
+  [INFO] Found agent: test-agent
+  [PASS] Push install enable for agent returned ok: true
+  [PASS] pushInstallEnabledUntil is set
+  [PASS] Push install disable for agent returned ok: true
+
+--- Push install without global toggle ---
+  [PASS] Cannot enable push install when globally disabled (HTTP 400)
+
+--- Push install sessions audit log ---
+  [PASS] GET push-install sessions returns a sessions array
+
+--- Push install input validation ---
+  [PASS] POST enable with durationMinutes: 0 rejected (HTTP 400)
+  [PASS] POST enable with durationMinutes: 9999 rejected (HTTP 400)
+  [PASS] PATCH config with non-existent defaultPolicy rejected (HTTP 400)
+  [PASS] POST enable for non-existent agent returns 404
+  [PASS] DELETE enable for non-existent agent returns 404
+  [PASS] POST enable with invalid label format rejected (HTTP 400)
+  [PASS] GET plugin with invalid name rejected (HTTP 400)
+
+--- Cleanup ---
+  [PASS] Push install disabled globally for cleanup
+  [PASS] Push install is disabled after cleanup
+  [PASS] Cleanup complete — plugin state restored
+
+============================================================================
+  Results: 40 passed, 0 failed, 0 skipped (40 total)
+============================================================================
+
 
 ============================================================================
   Test Suite Summary
@@ -683,7 +773,8 @@
   [PASS] 12-user-invitations.sh
   [PASS] 13-site-lifecycle.sh
   [PASS] 14-shell-lifecycle.sh
+  [PASS] 15-plugin-lifecycle.sh
 
-  Total: 14 tests — 14 passed, 0 failed
+  Total: 15 tests — 15 passed, 0 failed
 
   SUITE PASSED
