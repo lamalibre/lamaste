@@ -30,21 +30,16 @@ export const vmCreateTool = {
 
     const results = [];
 
-    // Delete existing VMs in parallel, single purge at the end
-    let needsPurge = false;
+    // Delete existing VMs in parallel (per-VM purge, won't affect other VMs)
     await Promise.all(
       targets.map(async (name) => {
         const existing = await mp.info(name);
         if (existing) {
-          await mp.deleteVmNoPurge(name);
-          needsPurge = true;
+          await mp.deleteVm(name);
           results.push(`Deleted existing ${name}`);
         }
       }),
     );
-    if (needsPurge) {
-      await mp.run(['purge'], { allowFailure: true });
-    }
 
     // Create VMs in parallel
     await Promise.all(
@@ -105,14 +100,13 @@ export const vmDeleteTool = {
   async handler({ vms } = {}) {
     const targets = vms ? vms.map((v) => VM_NAME_MAP[v]) : ALL_VMS;
 
-    // Delete VMs in parallel (purge runs once at the end)
+    // Delete VMs in parallel (per-VM purge, won't affect other VMs)
     await Promise.all(
       targets.map(async (name) => {
-        await mp.run(['delete', name], { allowFailure: true });
+        await mp.deleteVm(name);
         removeVmState(name);
       }),
     );
-    await mp.run(['purge'], { allowFailure: true });
 
     return {
       content: [

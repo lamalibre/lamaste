@@ -42,15 +42,9 @@ export async function launch(name, { cpus, memory, disk }) {
   ]);
 }
 
-/** Delete a VM and purge all deleted instances. */
+/** Delete a VM and purge only that VM (not other users' deleted VMs). */
 export async function deleteVm(name) {
-  await run(['delete', name], { allowFailure: true });
-  await run(['purge'], { allowFailure: true });
-}
-
-/** Delete a VM without purging (caller handles purge). */
-export async function deleteVmNoPurge(name) {
-  await run(['delete', name], { allowFailure: true });
+  await run(['delete', '--purge', name], { allowFailure: true });
 }
 
 /** Get info for a VM as JSON. Returns null if VM doesn't exist. */
