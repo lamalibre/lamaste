@@ -31,6 +31,7 @@ The primary configuration file for the panel server. Created by the installer, u
 | `dataDir`           | string         | Yes      | `/etc/portlama` | Path to data/state directory                          |
 | `staticDir`         | string         | No       | —               | Path to panel-client dist directory                   |
 | `maxSiteSize`       | number         | No       | `524288000`     | Max static site upload size in bytes (500 MB)         |
+| `adminAuthMode`     | string         | No       | `"p12"`         | `"p12"` or `"hardware-bound"`. When `"hardware-bound"`, P12 download and rotation are disabled; admin authenticates via Keychain-backed certificate. |
 | `onboarding.status` | enum           | Yes      | `FRESH`         | Current onboarding state                              |
 
 **Onboarding status values:**

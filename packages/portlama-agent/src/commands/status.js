@@ -69,7 +69,7 @@ export async function runStatus() {
   console.log(d('  ─'.repeat(28)));
 
   try {
-    const data = await fetchTunnels(config.panelUrl, config.p12Path, config.p12Password);
+    const data = await fetchTunnels(config);
     const tunnels = data.tunnels || [];
 
     if (tunnels.length === 0) {

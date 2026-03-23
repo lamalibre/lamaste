@@ -71,7 +71,7 @@ export async function runDeploy(args) {
 
   let data;
   try {
-    data = await fetchSites(config.panelUrl, config.p12Path, config.p12Password);
+    data = await fetchSites(config);
   } catch (err) {
     console.error(`\n  ${chalk.red(`Failed to connect to panel: ${err.message}`)}\n`);
     process.exit(1);
@@ -161,22 +161,10 @@ export async function runDeploy(args) {
       {
         title: 'Clearing remote files',
         task: async (_ctx, task) => {
-          const { files: remoteFiles } = await fetchSiteFiles(
-            config.panelUrl,
-            config.p12Path,
-            config.p12Password,
-            siteId,
-            '.',
-          );
+          const { files: remoteFiles } = await fetchSiteFiles(config, siteId, '.');
           for (const f of remoteFiles) {
             task.output = `Removing ${f.name}`;
-            await deleteSiteFile(
-              config.panelUrl,
-              config.p12Path,
-              config.p12Password,
-              siteId,
-              f.name,
-            );
+            await deleteSiteFile(config, siteId, f.name);
           }
         },
         rendererOptions: { persistentOutput: false },
@@ -200,9 +188,7 @@ export async function runDeploy(args) {
               const batch = groupFiles.slice(i, i + 10);
               const uploadDir = dir === '.' ? '.' : dir;
               await uploadSiteFiles(
-                config.panelUrl,
-                config.p12Path,
-                config.p12Password,
+                config,
                 siteId,
                 uploadDir,
                 batch.map((f) => f.absolutePath),
@@ -220,13 +206,7 @@ export async function runDeploy(args) {
           // Count remote files recursively to match local recursive scan
           let remoteCount = 0;
           const countRemote = async (dirPath) => {
-            const { files: entries } = await fetchSiteFiles(
-              config.panelUrl,
-              config.p12Path,
-              config.p12Password,
-              siteId,
-              dirPath,
-            );
+            const { files: entries } = await fetchSiteFiles(config, siteId, dirPath);
             for (const entry of entries) {
               if (entry.type === 'directory') {
                 const subPath = dirPath === '.' ? entry.name : `${dirPath}/${entry.name}`;

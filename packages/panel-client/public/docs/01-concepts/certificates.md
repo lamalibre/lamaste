@@ -324,7 +324,13 @@ The self-signed certificate uses a 2048-bit key (smaller than the 4096-bit mTLS 
 ├── client.crt               mTLS client certificate
 ├── client.key               mTLS client private key
 ├── client.p12               PKCS12 bundle for browser import
-└── .p12-password            Password for the .p12 file
+├── .p12-password            Password for the .p12 file
+├── revoked.json             Revoked certificate serials
+├── enrollment-tokens.json   Pending hardware-bound enrollment tokens
+└── agents/
+    ├── registry.json        Agent certificate registry
+    └── <label>/
+        └── client.p12       Agent PKCS12 bundle
 ```
 
 ### mTLS certificate expiry monitoring
@@ -359,6 +365,9 @@ Certificates with 30 or fewer days remaining are flagged as `expiringSoon` in th
 | `packages/panel-server/src/routes/management/certs.js` | Certificate management API               |
 | `packages/create-portlama/src/tasks/nginx.js`          | Self-signed cert generation              |
 | `packages/create-portlama/src/tasks/mtls.js`           | mTLS CA and client cert generation       |
+| `packages/panel-server/src/lib/csr-signing.js`         | CSR signing for hardware-bound enrollment|
+| `packages/panel-server/src/lib/enrollment.js`          | Enrollment token management              |
+| `packages/panel-server/src/routes/enrollment.js`       | Public enrollment route                  |
 
 ## Quick Reference
 
@@ -415,6 +424,10 @@ openssl verify -CAfile /etc/letsencrypt/live/panel.example.com/chain.pem \
 | POST   | `/api/certs/:domain/renew` | Force renewal of a specific certificate      |
 | POST   | `/api/certs/mtls/rotate`   | Rotate the mTLS client certificate           |
 | GET    | `/api/certs/mtls/download` | Download the current `.p12` bundle           |
+| POST   | `/api/certs/agent/enroll`  | Generate enrollment token (admin)            |
+| POST   | `/api/enroll`              | Enroll agent with token (public)             |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)   |
+| GET    | `/api/certs/admin/auth-mode` | Get admin auth mode (admin)                |
 
 ### Let's Encrypt rate limits
 

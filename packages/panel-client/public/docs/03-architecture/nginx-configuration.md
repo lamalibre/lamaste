@@ -388,21 +388,42 @@ The mTLS configuration is shared across panel vhosts via an nginx snippet:
 
 ```nginx
 ssl_client_certificate /etc/portlama/pki/ca.crt;
-ssl_verify_client on;
+ssl_verify_client optional;
 ```
 
 Included with `include /etc/nginx/snippets/portlama-mtls.conf;` in any vhost that requires client certificate verification.
 
-**What `ssl_verify_client on` does:**
+**What `ssl_verify_client optional` does:**
 
 - During the TLS handshake, nginx requests a client certificate from the browser
-- The browser presents the imported `client.p12` certificate
+- The browser presents the imported `client.p12` certificate (or sends no certificate)
 - nginx verifies the certificate was signed by the CA at `/etc/portlama/pki/ca.crt`
-- If verification succeeds: connection proceeds, `$ssl_client_verify` is set to `SUCCESS`
-- If verification fails: nginx returns error code 496 (bad cert) or 495 (no cert)
-- No HTTP request is processed until verification succeeds
+- If verification succeeds: `$ssl_client_verify` is set to `SUCCESS`
+- If no certificate is sent or verification fails: the TLS handshake still completes, but `$ssl_client_verify` is not `SUCCESS`
 
-This means the admin panel is protected at the TLS layer, before any application code runs.
+**Location-level mTLS enforcement:**
+
+Protected locations (`/`, `/api`) enforce mTLS explicitly:
+
+```nginx
+if ($ssl_client_verify != SUCCESS) { return 496; }
+```
+
+Public locations (`/api/enroll`, `/api/invite`) skip the mTLS check and clear cert headers to prevent spoofing:
+
+```nginx
+location /api/enroll {
+    proxy_set_header X-SSL-Client-Verify "";
+    proxy_set_header X-SSL-Client-DN "";
+    proxy_set_header X-SSL-Client-Serial "";
+    # ... proxy_pass to panel-server
+    limit_req zone=enroll burst=5 nodelay;
+}
+```
+
+The `/api/enroll` endpoint is rate-limited (`limit_req zone=enroll burst=5 nodelay`) to prevent brute-force token attempts. The `enroll` zone is defined in the `http` block.
+
+This design allows the panel vhosts to serve both mTLS-protected and public endpoints on the same port, while keeping the security boundary at the location level.
 
 ## Write-With-Rollback Pattern
 

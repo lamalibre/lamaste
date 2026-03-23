@@ -87,7 +87,7 @@ async function runList(config) {
 
   let sites;
   try {
-    const data = await fetchSites(config.panelUrl, config.p12Path, config.p12Password);
+    const data = await fetchSites(config);
     sites = data.sites || [];
   } catch {
     console.log(`  ${y('Could not reach panel to fetch site list.')}`);
@@ -163,7 +163,7 @@ async function runCreate(config, args) {
 
   let result;
   try {
-    result = await createSite(config.panelUrl, config.p12Path, config.p12Password, body);
+    result = await createSite(config, body);
   } catch (err) {
     const detail = err.message || 'Unknown error';
     console.error(`\n  ${chalk.red(`Failed to create site: ${detail}`)}\n`);
@@ -207,7 +207,7 @@ async function runDelete(config, args) {
   } else {
     let data;
     try {
-      data = await fetchSites(config.panelUrl, config.p12Path, config.p12Password);
+      data = await fetchSites(config);
     } catch (err) {
       console.error(`\n  ${chalk.red(`Failed to connect to panel: ${err.message}`)}\n`);
       process.exit(1);
@@ -229,7 +229,7 @@ async function runDelete(config, args) {
   }
 
   try {
-    await deleteSite(config.panelUrl, config.p12Path, config.p12Password, siteId);
+    await deleteSite(config, siteId);
   } catch (err) {
     const detail = err.message || 'Unknown error';
     console.error(`\n  ${chalk.red(`Failed to delete site: ${detail}`)}\n`);

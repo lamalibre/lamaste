@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# ============================================================================
+# 12 — Enrollment Token Lifecycle (Three-VM)
+# ============================================================================
+# Tests the hardware-bound certificate enrollment flow across VMs:
+# - Token creation on host
+# - Public enrollment endpoint reachable from agent VM without mTLS
+# - CSR-based enrollment
+# - Agent registry shows hardware-bound enrollment method
+# - Admin upgrade + P12 lockdown
+# - Revert for subsequent tests
+# ============================================================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../e2e/helpers.sh"
+
+require_commands multipass curl jq openssl
+
+# ---------------------------------------------------------------------------
+# VM exec helpers
+# ---------------------------------------------------------------------------
+
+agent_exec() { multipass exec portlama-agent -- bash -c "$1"; }
+
+# Use the vm-api-helper.sh on the host VM for reliable API calls.
+# It avoids quoting issues with multipass exec + sudo bash -c.
+host_api_get() {
+  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh GET "$1"
+}
+
+host_api_post() {
+  local path="$1"
+  local body="$2"
+  local b64body
+  b64body=$(echo -n "$body" | base64)
+  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh POST "$path" "$b64body"
+}
+
+host_api_delete() {
+  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh DELETE "$1"
+}
+
+host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
+
+begin_test "12 — Enrollment Token Lifecycle (Three-VM)"
+
+# ---------------------------------------------------------------------------
+log_section "Pre-flight: check onboarding is complete"
+# ---------------------------------------------------------------------------
+
+ONBOARDING=$(host_api_get "onboarding/status" || echo '{"status":"unknown"}')
+STATUS=$(echo "$ONBOARDING" | jq -r '.status' 2>/dev/null || echo "unknown")
+if [ "$STATUS" != "COMPLETED" ]; then
+  log_skip "Onboarding not complete — skipping enrollment tests"
+  end_test
+  exit $?
+fi
+log_pass "Onboarding is complete"
+
+# ---------------------------------------------------------------------------
+log_section "Admin auth mode defaults to p12"
+# ---------------------------------------------------------------------------
+
+AUTH_MODE=$(host_api_get "certs/admin/auth-mode" || echo '{}')
+assert_json_field "$AUTH_MODE" '.adminAuthMode' 'p12' "Admin auth mode is p12" || true
+
+# ---------------------------------------------------------------------------
+log_section "Create enrollment token on host"
+# ---------------------------------------------------------------------------
+
+TOKEN_LABEL="e2e-enroll-$(date +%s)"
+TOKEN_RESPONSE=$(host_api_post "certs/agent/enroll" "{\"label\":\"${TOKEN_LABEL}\",\"capabilities\":[\"tunnels:read\",\"tunnels:write\"]}" || echo '{"ok":false}')
+assert_json_field "$TOKEN_RESPONSE" '.ok' 'true' "Token created" || true
+
+TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token' 2>/dev/null || echo "")
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  log_fail "Token value is empty — cannot continue enrollment tests"
+  end_test
+  exit $?
+fi
+log_pass "Token value present (${#TOKEN} chars)"
+
+# ---------------------------------------------------------------------------
+log_section "Public enrollment reachable from agent VM without mTLS"
+# ---------------------------------------------------------------------------
+
+# Agent VM calls the host's enrollment endpoint WITHOUT any client cert
+AGENT_ENROLL_STATUS=$(multipass exec portlama-agent -- curl -sk -o /dev/null -w '%{http_code}' \
+  --max-time 30 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"0000000000000000000000000000000000000000000000000000000000000000","csr":"-----BEGIN CERTIFICATE REQUEST-----\nfake\n-----END CERTIFICATE REQUEST-----"}' \
+  "https://${HOST_IP}:9292/api/enroll" 2>/dev/null || echo "000")
+
+# 400 = CSR validation failed, 401 = invalid token — both prove endpoint is reachable
+if [ "$AGENT_ENROLL_STATUS" = "400" ] || [ "$AGENT_ENROLL_STATUS" = "401" ]; then
+  log_pass "Enrollment endpoint reachable from agent VM without mTLS (HTTP $AGENT_ENROLL_STATUS)"
+else
+  log_fail "Enrollment endpoint not reachable from agent VM (HTTP $AGENT_ENROLL_STATUS — expected 400 or 401)"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "Generate CSR on agent VM and enroll"
+# ---------------------------------------------------------------------------
+
+# Generate keypair + CSR on agent VM
+agent_exec "openssl genrsa -out /tmp/enroll-test.key 2048 2>/dev/null"
+agent_exec "openssl req -new -key /tmp/enroll-test.key -out /tmp/enroll-test.csr -subj '/CN=agent:pending/O=Portlama' 2>/dev/null"
+
+# Read CSR from agent VM
+CSR_PEM=$(multipass exec portlama-agent -- cat /tmp/enroll-test.csr)
+
+# Build JSON body and transfer to agent VM via temp file
+ENROLL_BODY=$(jq -n --arg token "$TOKEN" --arg csr "$CSR_PEM" '{token: $token, csr: $csr}')
+LOCAL_BODY_TMP=$(mktemp /tmp/enroll-body-XXXXXXXX.json)
+echo "$ENROLL_BODY" > "$LOCAL_BODY_TMP"
+multipass transfer "$LOCAL_BODY_TMP" portlama-agent:/tmp/enroll-body.json
+rm -f "$LOCAL_BODY_TMP"
+
+# Enroll from agent VM (no mTLS cert needed)
+ENROLL_RESPONSE=$(multipass exec portlama-agent -- curl -sk \
+  --max-time 60 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d @/tmp/enroll-body.json \
+  "https://${HOST_IP}:9292/api/enroll" 2>/dev/null || echo '{"ok":false,"error":"curl failed"}')
+
+ENROLL_OK=$(echo "$ENROLL_RESPONSE" | jq -r '.ok // "false"' 2>/dev/null || echo "false")
+if [ "$ENROLL_OK" = "true" ]; then
+  log_pass "Agent enrolled successfully"
+else
+  ENROLL_ERR=$(echo "$ENROLL_RESPONSE" | jq -r '.error // "unknown"' 2>/dev/null || echo "unknown")
+  log_fail "Agent enrollment failed: $ENROLL_ERR"
+fi
+
+assert_json_field "$ENROLL_RESPONSE" '.label' "$TOKEN_LABEL" "Enrolled label matches" || true
+
+SERIAL=$(echo "$ENROLL_RESPONSE" | jq -r '.serial // ""' 2>/dev/null || echo "")
+assert_not_eq "$SERIAL" "" "Enrollment returns serial" || true
+
+# ---------------------------------------------------------------------------
+log_section "Token replay rejected"
+# ---------------------------------------------------------------------------
+
+REPLAY_STATUS=$(multipass exec portlama-agent -- curl -sk -o /dev/null -w '%{http_code}' \
+  --max-time 30 \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -d @/tmp/enroll-body.json \
+  "https://${HOST_IP}:9292/api/enroll" 2>/dev/null || echo "000")
+
+assert_eq "$REPLAY_STATUS" "401" "Token replay rejected with 401" || true
+
+# ---------------------------------------------------------------------------
+log_section "Enrolled agent in registry with hardware-bound method"
+# ---------------------------------------------------------------------------
+
+AGENTS=$(host_api_get "certs/agent" || echo '{"agents":[]}')
+METHOD=$(echo "$AGENTS" | jq -r "[.agents[] | select(.label==\"${TOKEN_LABEL}\" and .revoked==false)] | last | .enrollmentMethod" 2>/dev/null || echo "unknown")
+assert_eq "$METHOD" "hardware-bound" "Agent shows enrollmentMethod: hardware-bound" || true
+
+# ---------------------------------------------------------------------------
+log_section "Clean up: revoke test agent"
+# ---------------------------------------------------------------------------
+
+multipass exec portlama-host -- sudo curl -sk --max-time 10 \
+  --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt \
+  -X DELETE "https://127.0.0.1:9292/api/certs/agent/${TOKEN_LABEL}" 2>/dev/null || true
+agent_exec "rm -f /tmp/enroll-test.key /tmp/enroll-test.csr /tmp/enroll-body.json" 2>/dev/null || true
+log_pass "Cleaned up test agent and temp files"
+
+# ---------------------------------------------------------------------------
+log_section "Admin upgrade to hardware-bound"
+# ---------------------------------------------------------------------------
+
+# Generate admin CSR on host
+host_exec "openssl genrsa -out /tmp/admin-up.key 2048 2>/dev/null && openssl req -new -key /tmp/admin-up.key -out /tmp/admin-up.csr -subj '/CN=admin/O=Portlama' 2>/dev/null"
+ADMIN_CSR=$(host_exec "cat /tmp/admin-up.csr")
+
+# Build body and transfer to host
+ADMIN_BODY=$(jq -n --arg csr "$ADMIN_CSR" '{csr: $csr}')
+LOCAL_ADMIN_TMP=$(mktemp /tmp/admin-up-body-XXXXXXXX.json)
+echo "$ADMIN_BODY" > "$LOCAL_ADMIN_TMP"
+multipass transfer "$LOCAL_ADMIN_TMP" portlama-host:/tmp/admin-up-body.json
+rm -f "$LOCAL_ADMIN_TMP"
+
+UPGRADE_RESPONSE=$(host_exec "curl -sk --max-time 60 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d @/tmp/admin-up-body.json https://127.0.0.1:9292/api/certs/admin/upgrade-to-hardware-bound" || echo '{"ok":false}')
+
+UPGRADE_OK=$(echo "$UPGRADE_RESPONSE" | jq -r '.ok // "false"' 2>/dev/null || echo "false")
+if [ "$UPGRADE_OK" = "true" ]; then
+  log_pass "Admin upgrade to hardware-bound succeeded"
+else
+  log_fail "Admin upgrade failed: $(echo "$UPGRADE_RESPONSE" | jq -r '.error // "unknown"' 2>/dev/null | head -c 200)"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "P12 lockdown: rotate returns 410"
+# ---------------------------------------------------------------------------
+
+ROTATE_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST https://127.0.0.1:9292/api/certs/mtls/rotate" 2>/dev/null || echo "000")
+
+# After admin upgrade, the old admin cert is revoked. The rotate endpoint
+# returns 410 if the cert is still accepted, or the connection fails entirely
+# (000/496) if nginx rejects the revoked cert. Both prove the lockdown works.
+if [ "$ROTATE_STATUS" = "410" ]; then
+  log_pass "P12 rotation returns 410 when hardware-bound"
+elif [[ "$ROTATE_STATUS" =~ ^0+$ ]] || [ "$ROTATE_STATUS" = "496" ]; then
+  log_pass "P12 rotation blocked — old admin cert revoked during upgrade (HTTP $ROTATE_STATUS)"
+else
+  log_fail "Unexpected status for P12 rotation: HTTP $ROTATE_STATUS (expected 410 or connection failure)"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "Revert admin auth mode for subsequent tests"
+# ---------------------------------------------------------------------------
+
+host_exec "jq '.adminAuthMode = \"p12\"' /etc/portlama/panel.json > /tmp/panel-revert.json && mv /tmp/panel-revert.json /etc/portlama/panel.json && chmod 640 /etc/portlama/panel.json"
+sleep 1
+log_pass "Reverted adminAuthMode to p12"
+
+# Clean up temp files on host
+host_exec "rm -f /tmp/admin-up.key /tmp/admin-up.csr /tmp/admin-up-body.json" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+end_test

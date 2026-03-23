@@ -255,6 +255,10 @@ Revocation is immediate — the certificate serial is added to a revocation list
 | `PATCH`  | `/api/certs/agent/:label/capabilities`  | Update agent capabilities          |
 | `PATCH`  | `/api/certs/agent/:label/allowed-sites` | Update agent site access           |
 | `DELETE` | `/api/certs/agent/:label`               | Revoke agent certificate           |
+| `POST`   | `/api/certs/agent/enroll`               | Generate enrollment token (admin)  |
+| `POST`   | `/api/enroll`                           | Enroll agent with token (public)   |
+| `POST`   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)    |
+| `GET`    | `/api/certs/admin/auth-mode`            | Get admin auth mode (admin)        |
 
 ### Certificate Response Format
 

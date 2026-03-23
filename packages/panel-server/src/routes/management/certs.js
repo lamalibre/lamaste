@@ -14,6 +14,10 @@ import {
   updateAgentAllowedSites,
   getValidCapabilities,
 } from '../../lib/mtls.js';
+import { createEnrollmentToken } from '../../lib/enrollment.js';
+import { signAdminCSR } from '../../lib/csr-signing.js';
+import { getConfig, updateConfig } from '../../lib/config.js';
+import { addToRevocationList } from '../../lib/revocation.js';
 import * as nginx from '../../lib/nginx.js';
 
 const DomainParamSchema = z.object({
@@ -88,6 +92,15 @@ const UpdateAllowedSitesSchema = z.object({
         'Site name must contain only lowercase letters, numbers, and hyphens',
       ),
   ),
+});
+
+const AdminUpgradeSchema = z.object({
+  csr: z
+    .string()
+    .min(1, 'CSR is required')
+    .refine((v) => v.includes('BEGIN CERTIFICATE REQUEST'), {
+      message: 'CSR must be PEM-encoded',
+    }),
 });
 
 const AgentLabelParamSchema = z.object({
@@ -231,6 +244,14 @@ export default async function certsRoutes(fastify, _opts) {
       preHandler: fastify.requireRole(['admin']),
     },
     async (request, reply) => {
+      // Block P12 rotation when admin uses hardware-bound auth
+      const config = getConfig();
+      if (config.adminAuthMode === 'hardware-bound') {
+        return reply.code(410).send({
+          error: 'P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use portlama-reset-admin on the server to revert.',
+        });
+      }
+
       try {
         const result = await rotateClientCert(request.log);
 
@@ -272,6 +293,14 @@ export default async function certsRoutes(fastify, _opts) {
       preHandler: fastify.requireRole(['admin']),
     },
     async (request, reply) => {
+      // Block P12 download when admin uses hardware-bound auth
+      const config = getConfig();
+      if (config.adminAuthMode === 'hardware-bound') {
+        return reply.code(410).send({
+          error: 'P12 certificate download is disabled. Admin uses hardware-bound authentication. Use portlama-reset-admin on the server to revert.',
+        });
+      }
+
       const p12Path = getP12Path();
       const { readFile } = await import('node:fs/promises');
 
@@ -289,6 +318,77 @@ export default async function certsRoutes(fastify, _opts) {
         request.log.error({ err }, 'Failed to read client.p12');
         return reply.code(500).send({ error: 'Failed to download certificate' });
       }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /certs/admin/upgrade-to-hardware-bound — upgrade admin cert
+  // to hardware-bound (Keychain) authentication via CSR
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/certs/admin/upgrade-to-hardware-bound',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const body = AdminUpgradeSchema.parse(request.body);
+
+      const config = getConfig();
+      if (config.adminAuthMode === 'hardware-bound') {
+        return reply.code(409).send({
+          error: 'Admin is already using hardware-bound authentication',
+        });
+      }
+
+      try {
+        const result = await signAdminCSR(body.csr, request.log);
+
+        // Revoke old admin cert
+        if (result.oldSerial) {
+          request.log.info({ serial: result.oldSerial }, 'Revoking old admin certificate');
+          await addToRevocationList(result.oldSerial, 'admin (upgraded to hardware-bound)');
+        }
+
+        // Set adminAuthMode to hardware-bound
+        await updateConfig({ adminAuthMode: 'hardware-bound' });
+
+        // Reload nginx to pick up revocation changes
+        const testResult = await nginx.testConfig();
+        if (testResult.valid) {
+          try {
+            await nginx.reload();
+          } catch (reloadErr) {
+            request.log.error({ err: reloadErr }, 'nginx reload failed after admin upgrade');
+          }
+        }
+
+        return {
+          ok: true,
+          cert: result.certPem,
+          caCert: result.caCertPem,
+          serial: result.serial,
+          expiresAt: result.expiresAt,
+        };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send({
+          error: err.message || 'Admin upgrade failed',
+        });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /certs/admin/auth-mode — get current admin auth mode
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/certs/admin/auth-mode',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (_request, _reply) => {
+      const config = getConfig();
+      return { adminAuthMode: config.adminAuthMode || 'p12' };
     },
   );
 
@@ -315,6 +415,35 @@ export default async function certsRoutes(fastify, _opts) {
         const statusCode = err.statusCode || 500;
         return reply.code(statusCode).send({
           error: err.message || 'Agent certificate generation failed',
+        });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /certs/agent/enroll — generate a one-time enrollment token
+  // for hardware-bound agent certificate enrollment via CSR
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/certs/agent/enroll',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const body = AgentGenerateBodySchema.parse(request.body);
+
+      try {
+        const result = await createEnrollmentToken(
+          body.label,
+          body.capabilities,
+          body.allowedSites,
+          request.log,
+        );
+        return { ok: true, ...result };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send({
+          error: err.message || 'Enrollment token generation failed',
         });
       }
     },

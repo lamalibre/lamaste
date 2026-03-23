@@ -399,6 +399,13 @@ export async function runShellServer() {
     process.exit(1);
   }
 
+  // WebSocket requires PEM cert/key — not available with Keychain-bound keys
+  if (config.authMethod === 'keychain') {
+    console.error(chalk.red('  Shell server is not yet supported with hardware-bound (Keychain) certificates.'));
+    console.error(chalk.dim('  Use a P12-enrolled agent for shell access.'));
+    process.exit(1);
+  }
+
   // Extract PEM certificates from p12
   let pem;
   try {
@@ -438,7 +445,7 @@ export async function runShellServer() {
   while (running) {
     let agentStatus;
     try {
-      agentStatus = await fetchAgentStatus(config.panelUrl, config.p12Path, config.p12Password);
+      agentStatus = await fetchAgentStatus(config);
     } catch (err) {
       console.error(chalk.yellow(`  Could not reach panel: ${err.message}`));
       await sleep(POLL_INTERVAL_MS);

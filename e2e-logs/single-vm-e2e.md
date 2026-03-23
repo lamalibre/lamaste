@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-22 18:24:27 UTC`
+> Run at `2026-03-23 12:08:54 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-22 18:24:27 UTC
+  Date:           2026-03-23 12:08:55 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 21 18:23:09 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 22 12:07:49 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: 1b5d3efb-3e5b-4fe3-9b78-1c4687d8ce62
+  [INFO] Created tunnel ID: 264df70d-5cdf-4796-8fb8-c5dba90c5029
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774203868
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774267735
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=3D:51:FD:3F:AB:80:8D:7F:CA:36:8E:B6:1F:B6:A9:F4:11:2B:C0:51:D1:96:6A:4F:DD:08:76:EE:34:BA:1B:6D
+  [INFO] Current cert fingerprint: sha256 Fingerprint=53:F1:8B:0D:9C:55:75:94:57:E5:DD:E4:11:66:E2:74:52:5F:40:B5:0E:40:5B:09:06:75:B2:FF:F4:67:55:DB
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-21T18:24:57.000Z
+  [PASS] Rotation response contains expiry: 2028-03-22T12:09:25.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=53:47:18:76:38:75:43:18:C5:12:F8:8C:C0:61:19:3A:CF:A6:CB:09:9A:A1:3D:24:EB:E1:5F:BD:2D:65:49:D1
+  [INFO] New cert fingerprint: sha256 Fingerprint=35:9B:DF:FF:A3:26:C4:48:39:AF:25:55:BD:C7:79:4E:3A:AB:C8:6B:09:D0:63:08:32:75:D1:9C:EA:DF:90:61
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.154
+  [INFO] Server IP: 192.168.2.187
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 4238e5bc-c1ec-42d6-aee6-a56d907ee5a9)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 4331a69c-31a6-49b2-a516-65ec37ad1e2f)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -624,7 +624,7 @@
   [INFO] Found agent: test-agent
   [PASS] Shell enable for agent returned ok: true
   [PASS] shellEnabledUntil is set
-  [PASS] shellEnabledUntil has a value: 2026-03-22T18:30:20.044Z
+  [PASS] shellEnabledUntil has a value: 2026-03-23T12:14:45.108Z
   [PASS] Shell disable for agent returned ok: true
 
 --- Shell enable without global toggle ---
@@ -754,6 +754,68 @@
   Results: 40 passed, 0 failed, 0 skipped (40 total)
 ============================================================================
 
+  Running: 16-enrollment-tokens.sh
+
+============================================================================
+ Portlama E2E: 16 — Hardware-Bound Certificate Enrollment
+============================================================================
+
+
+--- Pre-flight: check onboarding is complete ---
+
+--- Admin auth mode defaults to p12 ---
+  [PASS] Admin auth mode is p12 by default
+
+--- Create enrollment token ---
+  [PASS] Token creation returns ok: true
+  [PASS] Token is not empty
+  [PASS] Token has expiresAt
+  [PASS] Token response contains correct label
+
+--- Duplicate token for same label rejected ---
+  [PASS] Duplicate token for active label returns 409
+
+--- Public enrollment endpoint reachable without mTLS ---
+  [PASS] Enrollment endpoint reachable without mTLS (HTTP 400)
+
+--- Enrollment with invalid token rejected ---
+  [PASS] Invalid token rejected with correct message
+
+--- Enroll agent with valid token + CSR ---
+  [PASS] Enrollment returns ok: true
+  [PASS] Enrolled label matches
+  [PASS] Enrollment returns signed certificate
+  [PASS] Enrollment returns CA certificate
+  [PASS] Enrollment returns serial number
+  [PASS] Signed cert has correct CN
+
+--- Token replay rejected (single-use) ---
+  [PASS] Token replay returns 401
+
+--- Enrolled agent visible in agent list with hardware-bound method ---
+  [PASS] Agent shows enrollmentMethod: hardware-bound
+
+--- P12 download hidden for hardware-bound agent ---
+  [PASS] P12 download returns 404 for hardware-bound agent (no P12 on disk)
+
+--- Clean up: revoke test agent ---
+  [PASS] Revoked enrollment test agent
+
+--- Admin upgrade to hardware-bound ---
+  [PASS] Admin upgrade returns ok: true
+  [PASS] Admin upgrade returns signed certificate
+
+--- P12 lockdown after admin upgrade ---
+  [PASS] P12 rotation blocked after admin upgrade (HTTP 000000)
+
+--- Revert admin to P12 mode (for other tests) ---
+  [PASS] Reverted admin to P12 mode with fresh cert
+  [PASS] Admin auth mode reverted to p12
+
+============================================================================
+  Results: 23 passed, 0 failed, 0 skipped (23 total)
+============================================================================
+
 
 ============================================================================
   Test Suite Summary
@@ -774,7 +836,8 @@
   [PASS] 13-site-lifecycle.sh
   [PASS] 14-shell-lifecycle.sh
   [PASS] 15-plugin-lifecycle.sh
+  [PASS] 16-enrollment-tokens.sh
 
-  Total: 15 tests — 15 passed, 0 failed
+  Total: 16 tests — 16 passed, 0 failed
 
   SUITE PASSED

@@ -12,7 +12,8 @@ portlama/
 │   ├── panel-client/          @lamalibre/portlama-panel-client — React + Vite + Tailwind UI
 │   ├── portlama-agent/        @lamalibre/portlama-agent — Mac tunnel agent CLI
 │   ├── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop agent (service discovery, tunnel management)
-│   └── install-portlama-desktop/ @lamalibre/install-portlama-desktop — npx installer for the desktop app
+│   ├── install-portlama-desktop/ @lamalibre/install-portlama-desktop — npx installer for the desktop app
+│   └── install-portlama-admin/ @lamalibre/install-portlama-admin — npx admin cert upgrade to hardware-bound
 ├── tests/
 │   ├── e2e/                   Single-VM end-to-end tests
 │   └── e2e-three-vm/          Three-VM integration tests (Multipass)
@@ -82,7 +83,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 
 **Security rules:**
 
-- Panel vhost: `ssl_verify_client on` — no cert = TLS rejected before HTTP
+- Panel vhost: `ssl_verify_client optional` at server level, `if ($ssl_client_verify != SUCCESS) { return 496; }` at protected locations — public endpoints (`/api/enroll`, `/api/invite`) skip the check
 - All services bind `127.0.0.1` — nginx is the sole public-facing service
 - `https://<ip>:9292` always works (mTLS) — fallback if domain is lost
 - Secrets: `crypto.randomBytes`, never hardcoded
@@ -94,11 +95,17 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Agent TLS: panel uses a self-signed server cert separate from the mTLS CA — agent uses `-k` / `rejectUnauthorized: false` until server certificate distribution is implemented. The mTLS client cert still authenticates the agent to the panel.
 - P12 password protection: curl uses a temporary config file (`-K`, O_EXCL + 0600, cleaned up in try/finally) and openssl uses `PORTLAMA_P12_PASS` environment variable — password never appears in process listings. Stale config files cleaned up at module load.
 - Agent directory `~/.portlama/` created with mode 0700. PEM private keys cleaned up after CA extraction during setup.
+- Hardware-bound certificates: agent private keys can be imported into macOS Keychain as non-extractable (`security import -x`). Temporary key files exist on disk for seconds only during enrollment, then are securely deleted (overwrite + unlink).
+- Enrollment tokens: one-time use, 10-minute expiry, stored at `/etc/portlama/pki/enrollment-tokens.json`. Public `/api/enroll` endpoint accepts token + CSR (no mTLS required — the token is the sole auth gate).
+- Dual auth: agent config `authMethod` is `'p12'` (default, backwards compatible) or `'keychain'`. Panel API functions accept both calling conventions.
+- Admin auth mode: panel.json `adminAuthMode` is `'p12'` (default) or `'hardware-bound'`. When hardware-bound, `GET /certs/mtls/download` and `POST /certs/mtls/rotate` return 410 Gone. Recovery: `sudo portlama-reset-admin` on the server (root-only CLI).
+- Admin upgrade: `POST /certs/admin/upgrade-to-hardware-bound` accepts CSR, signs with CA, revokes old admin cert, sets `adminAuthMode: 'hardware-bound'`. One-way operation — reversible only via DO root console.
 
 **Certificate scoping:**
 
 - Admin cert (`CN=admin`) — full panel access
 - Agent cert (`CN=agent:<label>`) — capability-based access, stored server-side in registry
+  - Registry `enrollmentMethod`: `'p12'` (traditional) or `'hardware-bound'` (Keychain-bound)
   - `tunnels:read` / `tunnels:write` — tunnel listing and management
   - `services:read` / `services:write` — service status and control
   - `system:read` — system stats

@@ -96,9 +96,7 @@ async function runDownload(config, source, dest) {
 
   try {
     await downloadRemoteFile(
-      config.panelUrl,
-      config.p12Path,
-      config.p12Password,
+      config,
       agentLabel,
       remotePath,
       localPath,
@@ -152,9 +150,7 @@ async function runUpload(config, source, dest) {
 
   try {
     await uploadRemoteFile(
-      config.panelUrl,
-      config.p12Path,
-      config.p12Password,
+      config,
       agentLabel,
       remotePath,
       localPath,

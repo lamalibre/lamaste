@@ -76,7 +76,7 @@ async function runList(config, agentLabel) {
 
   let sessions;
   try {
-    const data = await fetchShellSessions(config.panelUrl, config.p12Path, config.p12Password);
+    const data = await fetchShellSessions(config);
     sessions = data.sessions || [];
   } catch (err) {
     console.log(`  ${y(`Could not fetch sessions: ${err.message}`)}`);
@@ -142,9 +142,7 @@ async function runDownload(config, agentLabel, sessionId) {
 
   try {
     await downloadShellRecording(
-      config.panelUrl,
-      config.p12Path,
-      config.p12Password,
+      config,
       agentLabel,
       sessionId,
       outputPath,

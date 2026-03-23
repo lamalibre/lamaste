@@ -52,7 +52,7 @@ export function nginxTasks(ctx, task) {
         }
 
         const mtlsSnippet = `ssl_client_certificate ${pkiDir}/ca.crt;
-ssl_verify_client on;
+ssl_verify_client optional;
 `;
         await writeFile('/etc/nginx/snippets/portlama-mtls.conf', mtlsSnippet);
 
@@ -63,7 +63,10 @@ ssl_verify_client on;
     {
       title: 'Writing IP-based panel vhost',
       task: async (_ctx, subtask) => {
-        const vhostConfig = `map $http_upgrade $connection_upgrade {
+        const vhostConfig = `# Rate limit zone for public enrollment endpoint (5 requests/minute per IP)
+limit_req_zone $binary_remote_addr zone=enroll:1m rate=5r/m;
+
+map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
@@ -89,8 +92,11 @@ server {
         internal;
     }
 
-    # Proxy to panel-server
+    # Proxy to panel-server (mTLS required — reject if cert missing or invalid)
     location / {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
         proxy_pass http://127.0.0.1:3100;
 
         # Client cert headers — set from nginx TLS variables, never passed through from client
@@ -105,8 +111,45 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # API paths with WebSocket upgrade support
+    # Public API paths (no mTLS verification check).
+    # ssl_verify_client is 'optional' at server level, so TLS handshake
+    # succeeds without a cert. These locations skip the $ssl_client_verify
+    # check and clear cert headers so the backend sees no client identity.
+    location /api/enroll {
+        limit_req zone=enroll burst=5 nodelay;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        # Clear cert headers so the backend sees no client cert
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/invite {
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # API paths with WebSocket upgrade support (mTLS required)
     location /api {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
 

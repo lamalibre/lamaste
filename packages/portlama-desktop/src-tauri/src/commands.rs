@@ -321,6 +321,12 @@ pub struct RotateResult {
 pub async fn rotate_certificate() -> Result<RotateResult, String> {
     let mut cfg = config::load_config()?;
 
+    // Certificate rotation only applies to P12-based agents
+    if cfg.auth_method == "keychain" {
+        return Err("Certificate rotation is not supported for hardware-bound (Keychain) certificates. \
+            Re-run enrollment with a new token to rotate.".to_string());
+    }
+
     // 1. Rotate certificate on server
     let body = curl_panel(&cfg, "POST", "/api/certs/mtls/rotate", None)?;
 
@@ -359,7 +365,7 @@ pub async fn rotate_certificate() -> Result<RotateResult, String> {
         .map_err(|e| format!("Failed to save certificate: {}", e))?;
 
     // 3. Update config to point to the new p12
-    cfg.p12_path = p12_dest.to_string_lossy().to_string();
+    cfg.p12_path = Some(p12_dest.to_string_lossy().to_string());
     config::save_config(&cfg)?;
 
     Ok(RotateResult {
@@ -371,6 +377,10 @@ pub async fn rotate_certificate() -> Result<RotateResult, String> {
 #[tauri::command]
 pub async fn download_certificate() -> Result<String, String> {
     let mut cfg = config::load_config()?;
+
+    if cfg.auth_method == "keychain" {
+        return Err("Certificate download is not supported for hardware-bound (Keychain) certificates.".to_string());
+    }
 
     let p12_dest = config::agent_dir().join("client.p12");
     let tmp_path = p12_dest.with_extension("p12.tmp");
@@ -395,7 +405,7 @@ pub async fn download_certificate() -> Result<String, String> {
         .map_err(|e| format!("Failed to save certificate: {}", e))?;
 
     // Update config to point to the new p12 path
-    cfg.p12_path = p12_dest.to_string_lossy().to_string();
+    cfg.p12_path = Some(p12_dest.to_string_lossy().to_string());
     config::save_config(&cfg)?;
 
     Ok(p12_dest.to_string_lossy().to_string())

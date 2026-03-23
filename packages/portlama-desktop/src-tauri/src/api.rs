@@ -9,7 +9,7 @@ struct CurlConfigFile {
 }
 
 impl CurlConfigFile {
-    fn new(cfg: &config::AgentConfig) -> Result<Self, String> {
+    fn new(p12_path: &str, p12_password: &str) -> Result<Self, String> {
         use std::io::Write;
 
         let random_suffix: u64 = {
@@ -25,15 +25,15 @@ impl CurlConfigFile {
         // could inject additional curl config directives. In curl's config file format,
         // newlines terminate a directive, so embedded newlines/carriage returns/null bytes
         // in the value would allow injection of arbitrary curl options.
-        if cfg.p12_password.contains('\n')
-            || cfg.p12_password.contains('\r')
-            || cfg.p12_password.contains('\0')
+        if p12_password.contains('\n')
+            || p12_password.contains('\r')
+            || p12_password.contains('\0')
         {
             return Err("P12 password contains invalid characters".to_string());
         }
-        if cfg.p12_path.contains('\n')
-            || cfg.p12_path.contains('\r')
-            || cfg.p12_path.contains('\0')
+        if p12_path.contains('\n')
+            || p12_path.contains('\r')
+            || p12_path.contains('\0')
         {
             return Err("P12 path contains invalid characters".to_string());
         }
@@ -48,8 +48,8 @@ impl CurlConfigFile {
         // Curl config files use \"  for literal quote and \\ for literal backslash.
         let content = format!(
             "cert = \"{}:{}\"\ncert-type = \"P12\"\n",
-            cfg.p12_path.replace('\\', "\\\\").replace('"', "\\\""),
-            cfg.p12_password.replace('\\', "\\\\").replace('"', "\\\""),
+            p12_path.replace('\\', "\\\\").replace('"', "\\\""),
+            p12_password.replace('\\', "\\\\").replace('"', "\\\""),
         );
 
         // Create file atomically with restrictive permissions and O_EXCL
@@ -91,6 +91,42 @@ impl Drop for CurlConfigFile {
 
 // --- Shared curl helpers ---
 
+/// Build auth-specific curl args. For P12, creates a temp config file (RAII).
+/// For Keychain, returns --cert <identity> args directly.
+enum CurlAuth {
+    P12(CurlConfigFile),
+    Keychain(String),
+}
+
+impl CurlAuth {
+    fn new(cfg: &config::AgentConfig) -> Result<Self, String> {
+        if cfg.auth_method == "keychain" {
+            let identity = cfg.keychain_identity.as_deref()
+                .ok_or("Keychain identity not configured")?;
+            Ok(CurlAuth::Keychain(identity.to_string()))
+        } else {
+            let p12_path = cfg.p12_path.as_deref()
+                .ok_or("P12 path not configured")?;
+            let p12_password = cfg.p12_password.as_deref()
+                .ok_or("P12 password not configured")?;
+            Ok(CurlAuth::P12(CurlConfigFile::new(p12_path, p12_password)?))
+        }
+    }
+
+    fn auth_args(&self) -> Vec<String> {
+        match self {
+            CurlAuth::P12(cfg_file) => vec![
+                "-K".to_string(),
+                cfg_file.path.to_string_lossy().to_string(),
+            ],
+            CurlAuth::Keychain(identity) => vec![
+                "--cert".to_string(),
+                identity.clone(),
+            ],
+        }
+    }
+}
+
 pub(crate) fn curl_panel(
     cfg: &config::AgentConfig,
     method: &str,
@@ -98,16 +134,15 @@ pub(crate) fn curl_panel(
     body: Option<&str>,
 ) -> Result<String, String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
-    let curl_cfg = CurlConfigFile::new(cfg)?;
+    let auth = CurlAuth::new(cfg)?;
 
-    let mut args = vec![
-        "-s".to_string(),
-        "-K".to_string(),
-        curl_cfg.path.to_string_lossy().to_string(),
+    let mut args = vec!["-s".to_string()];
+    args.extend(auth.auth_args());
+    args.extend([
         "-k".to_string(),
         "-X".to_string(),
         method.to_string(),
-    ];
+    ]);
 
     if let Some(json_body) = body {
         args.push("-H".to_string());
@@ -123,7 +158,7 @@ pub(crate) fn curl_panel(
         .output()
         .map_err(|e| format!("Failed to run curl: {}", e))?;
 
-    // curl_cfg is dropped here (or on early return), cleaning up the temp file
+    // auth is dropped here (or on early return), cleaning up temp files if P12
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -148,20 +183,23 @@ pub(crate) fn curl_panel_binary(
     output_path: &std::path::Path,
 ) -> Result<(), String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
-    let curl_cfg = CurlConfigFile::new(cfg)?;
+    let auth = CurlAuth::new(cfg)?;
+
+    let mut args = vec!["-s".to_string()];
+    args.extend(auth.auth_args());
+    args.extend([
+        "-k".to_string(),
+        "-o".to_string(),
+        output_path.to_string_lossy().to_string(),
+        url,
+    ]);
 
     let output = std::process::Command::new("curl")
-        .args([
-            "-s",
-            "-K", &curl_cfg.path.to_string_lossy(),
-            "-k",
-            "-o", &output_path.to_string_lossy(),
-            &url,
-        ])
+        .args(&args)
         .output()
         .map_err(|e| format!("Failed to run curl: {}", e))?;
 
-    // curl_cfg is dropped here, cleaning up the temp file
+    // auth is dropped here, cleaning up temp files if P12
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

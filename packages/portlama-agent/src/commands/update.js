@@ -25,14 +25,10 @@ export async function runUpdate() {
       {
         title: 'Fetching updated tunnel configuration',
         task: async (_ctx, task) => {
-          const data = await fetchPlist(config.panelUrl, config.p12Path, config.p12Password);
+          const data = await fetchPlist(config);
           ctx.plistXml = data.plist;
 
-          const tunnelData = await fetchTunnels(
-            config.panelUrl,
-            config.p12Path,
-            config.p12Password,
-          );
+          const tunnelData = await fetchTunnels(config);
           ctx.tunnels = tunnelData.tunnels || [];
           task.output = `${ctx.tunnels.length} tunnel(s) configured`;
         },

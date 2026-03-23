@@ -107,6 +107,23 @@ async function downloadAgentP12(label) {
   URL.revokeObjectURL(url);
 }
 
+async function generateEnrollmentToken({ label, capabilities, allowedSites }) {
+  const res = await fetch('/api/certs/agent/enroll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label, capabilities, allowedSites }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to generate enrollment token');
+  return data;
+}
+
+async function fetchAdminAuthMode() {
+  const res = await fetch('/api/certs/admin/auth-mode');
+  if (!res.ok) return { adminAuthMode: 'p12' };
+  return res.json();
+}
+
 // --- Sub-components ---
 
 function TypeBadge({ type }) {
@@ -270,9 +287,10 @@ function CertTable({ certs, onRenew, renewingDomain }) {
   );
 }
 
-function MtlsSection({ certs, onRotate }) {
+function MtlsSection({ certs, onRotate, adminAuthMode }) {
   const caCert = certs.find((c) => c.type === 'mtls-ca');
   const clientCert = certs.find((c) => c.type === 'mtls-client');
+  const isHardwareBound = adminAuthMode === 'hardware-bound';
 
   if (!caCert && !clientCert) return null;
 
@@ -282,6 +300,11 @@ function MtlsSection({ certs, onRotate }) {
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <ShieldCheck size={18} className="text-purple-400" />
           mTLS Certificates
+          {isHardwareBound && (
+            <span className="text-xs px-2 py-0.5 rounded-full border text-emerald-400 bg-emerald-500/10 border-emerald-500/20">
+              hardware-bound
+            </span>
+          )}
         </h2>
 
         <div className="space-y-4">
@@ -318,15 +341,23 @@ function MtlsSection({ certs, onRotate }) {
                     <DaysIndicator days={clientCert.daysUntilExpiry} />
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={onRotate}
-                  className="flex items-center gap-1.5 rounded bg-amber-600 px-3 py-1.5 text-xs text-white hover:bg-amber-500"
-                >
-                  <RefreshCw size={12} />
-                  Rotate
-                </button>
+                {!isHardwareBound && (
+                  <button
+                    type="button"
+                    onClick={onRotate}
+                    className="flex items-center gap-1.5 rounded bg-amber-600 px-3 py-1.5 text-xs text-white hover:bg-amber-500"
+                  >
+                    <RefreshCw size={12} />
+                    Rotate
+                  </button>
+                )}
               </div>
+              {isHardwareBound && (
+                <p className="text-xs text-emerald-400/70 mt-3">
+                  Admin uses a hardware-bound certificate. P12 download and rotation are disabled.
+                  To revert, run <code className="bg-zinc-800 px-1 py-0.5 rounded">sudo portlama-reset-admin</code> on the server.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -352,6 +383,21 @@ function AgentStatusBadge({ status }) {
       className={`text-xs px-2 py-0.5 rounded-full border ${styles[status] || 'text-zinc-500 bg-zinc-800 border-zinc-700'}`}
     >
       {labels[status] || status}
+    </span>
+  );
+}
+
+function EnrollmentMethodBadge({ method }) {
+  if (method === 'hardware-bound') {
+    return (
+      <span className="text-xs px-2 py-0.5 rounded-full border text-emerald-400 bg-emerald-500/10 border-emerald-500/20">
+        hardware-bound
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full border text-zinc-500 bg-zinc-800 border-zinc-700">
+      p12
     </span>
   );
 }
@@ -864,11 +910,250 @@ function AgentEditSitesModal({ agent, onClose }) {
   );
 }
 
+function AgentEnrollTokenModal({ onClose }) {
+  const queryClient = useQueryClient();
+  const [label, setLabel] = useState('');
+  const [capabilities, setCapabilities] = useState(['tunnels:read']);
+  const [allowedSites, setAllowedSites] = useState([]);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
+
+  const { data: sitesData } = useQuery({
+    queryKey: ['sites'],
+    queryFn: () => fetch('/api/sites').then((r) => r.json()),
+  });
+
+  const enrollMutation = useMutation({
+    mutationFn: generateEnrollmentToken,
+    onSuccess: (data) => {
+      setResult(data);
+      queryClient.invalidateQueries({ queryKey: ['agent-certs'] });
+    },
+    onError: (err) => {
+      setError(err.message);
+    },
+  });
+
+  const isValidLabel = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label);
+
+  const handleGenerate = () => {
+    setError(null);
+    enrollMutation.mutate({ label, capabilities, allowedSites });
+  };
+
+  const handleCopyToken = async () => {
+    if (result?.token) {
+      try {
+        await navigator.clipboard.writeText(result.token);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard API may fail if page is not focused
+      }
+    }
+  };
+
+  const setupCommand = result
+    ? `npx @lamalibre/portlama-agent setup --token ${result.token} --panel-url <PANEL_URL>`
+    : '';
+
+  const handleCopyCmd = async () => {
+    try {
+      await navigator.clipboard.writeText(setupCommand);
+      setCopiedCmd(true);
+      setTimeout(() => setCopiedCmd(false), 2000);
+    } catch {
+      // Clipboard API may fail if page is not focused
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="w-full max-w-lg rounded-xl bg-zinc-900 border border-zinc-700 p-6 shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white">
+            {result ? 'Enrollment Token' : 'Generate Enrollment Token'}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-zinc-400 hover:text-white"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {!result ? (
+          <>
+            <p className="text-sm text-zinc-400 mb-4">
+              Generate a one-time token for hardware-bound agent enrollment.
+              The agent will generate a non-exportable keypair in macOS Keychain.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Agent Label</label>
+                <input
+                  type="text"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value.toLowerCase())}
+                  placeholder="e.g. macbook-pro"
+                  className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-cyan-500 focus:outline-none"
+                />
+              </div>
+
+              <CapabilityCheckboxes capabilities={capabilities} onChange={setCapabilities} />
+
+              {(capabilities.includes('sites:read') || capabilities.includes('sites:write')) &&
+                sitesData?.sites?.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-300 mb-2">
+                      Allowed Sites
+                    </label>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {sitesData.sites.map((site) => (
+                        <label key={site.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={allowedSites.includes(site.name)}
+                            onChange={() =>
+                              setAllowedSites((prev) =>
+                                prev.includes(site.name)
+                                  ? prev.filter((s) => s !== site.name)
+                                  : [...prev, site.name],
+                              )
+                            }
+                            className="accent-cyan-500"
+                          />
+                          <span className="text-zinc-300">{site.name}</span>
+                          {site.fqdn && (
+                            <span className="text-zinc-500 text-xs">{site.fqdn}</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {error && (
+                <div className="rounded bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={!isValidLabel || enrollMutation.isPending}
+                className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {enrollMutation.isPending ? (
+                  <Loader2 size={14} className="animate-spin inline mr-1" />
+                ) : null}
+                Generate Token
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Agent Label
+                </label>
+                <p className="text-sm text-cyan-400 font-mono">{result.label}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Enrollment Token
+                </label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 block rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs text-yellow-300 font-mono break-all">
+                    {result.token}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={handleCopyToken}
+                    className="rounded bg-zinc-700 p-2 text-zinc-300 hover:bg-zinc-600"
+                    title="Copy token"
+                  >
+                    {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Expires
+                </label>
+                <p className="text-sm text-zinc-400">
+                  {new Date(result.expiresAt).toLocaleString()} (10 minutes)
+                </p>
+              </div>
+
+              <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2">
+                <p className="text-sm text-amber-300">
+                  This token is single-use and expires in 10 minutes. Copy and send it to the agent machine now.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Setup Command
+                </label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 block rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs text-zinc-300 font-mono break-all">
+                    {setupCommand}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={handleCopyCmd}
+                    className="rounded bg-zinc-700 p-2 text-zinc-300 hover:bg-zinc-600"
+                    title="Copy command"
+                  >
+                    {copiedCmd ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Replace &lt;PANEL_URL&gt; with your panel address (e.g. https://1.2.3.4:9292)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end mt-6">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600"
+              >
+                Done
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AgentCertsSection() {
   const queryClient = useQueryClient();
   const addToast = useToast();
 
   const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [editCapsTarget, setEditCapsTarget] = useState(null);
   const [editSitesTarget, setEditSitesTarget] = useState(null);
@@ -912,14 +1197,26 @@ function AgentCertsSection() {
             <Key size={18} className="text-cyan-400" />
             Agent Certificates
           </h2>
-          <button
-            type="button"
-            onClick={() => setShowGenerateModal(true)}
-            className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
-          >
-            <Plus size={14} />
-            Generate
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowEnrollModal(true)}
+              className="flex items-center gap-2 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+              title="Generate a one-time token for hardware-bound enrollment"
+            >
+              <Key size={14} />
+              Enrollment Token
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowGenerateModal(true)}
+              className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500"
+              title="Generate a P12 certificate file"
+            >
+              <Plus size={14} />
+              Generate P12
+            </button>
+          </div>
         </div>
 
         {agentQuery.isLoading ? (
@@ -963,6 +1260,9 @@ function AgentCertsSection() {
                     Capabilities
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                    Type
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
                     Status
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">
@@ -997,6 +1297,9 @@ function AgentCertsSection() {
                       )}
                     </td>
                     <td className="px-4 py-3">
+                      <EnrollmentMethodBadge method={cert.enrollmentMethod} />
+                    </td>
+                    <td className="px-4 py-3">
                       <AgentStatusBadge status={cert.status} />
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -1021,7 +1324,7 @@ function AgentCertsSection() {
                             <Globe size={12} />
                           </button>
                         )}
-                        {cert.status !== 'revoked' && (
+                        {cert.status !== 'revoked' && cert.enrollmentMethod !== 'hardware-bound' && (
                           <button
                             type="button"
                             onClick={() => downloadAgentP12(cert.label)}
@@ -1051,8 +1354,11 @@ function AgentCertsSection() {
         )}
       </div>
 
-      {/* Generate modal */}
+      {/* Generate P12 modal */}
       {showGenerateModal && <AgentGenerateModal onClose={() => setShowGenerateModal(false)} />}
+
+      {/* Generate Enrollment Token modal */}
+      {showEnrollModal && <AgentEnrollTokenModal onClose={() => setShowEnrollModal(false)} />}
 
       {/* Revoke confirmation */}
       {revokeTarget && (
@@ -1362,6 +1668,13 @@ export default function Certificates() {
     queryFn: fetchAutoRenewStatus,
   });
 
+  const adminAuthQuery = useQuery({
+    queryKey: ['admin-auth-mode'],
+    queryFn: fetchAdminAuthMode,
+  });
+
+  const adminAuthMode = adminAuthQuery.data?.adminAuthMode || 'p12';
+
   const renewMutation = useMutation({
     mutationFn: renewCert,
     onSuccess: (data) => {
@@ -1414,7 +1727,7 @@ export default function Certificates() {
       ) : (
         <>
           <CertTable certs={certs} onRenew={handleRenew} renewingDomain={renewingDomain} />
-          <MtlsSection certs={certs} onRotate={() => setShowRotationModal(true)} />
+          <MtlsSection certs={certs} onRotate={() => setShowRotationModal(true)} adminAuthMode={adminAuthMode} />
           <AgentCertsSection />
         </>
       )}

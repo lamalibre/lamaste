@@ -14,6 +14,7 @@ import onboardingRoutes from './routes/onboarding/index.js';
 import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
 import inviteRoutes from './routes/invite.js';
+import enrollmentRoutes from './routes/enrollment.js';
 import { getPluginCapabilities } from './lib/plugins.js';
 import { setPluginCapabilities } from './lib/mtls.js';
 
@@ -68,6 +69,7 @@ async function start() {
   server.register(async function publicContext(app) {
     app.register(errorHandler);
     app.register(inviteRoutes, { prefix: '/api/invite' });
+    app.register(enrollmentRoutes, { prefix: '/api/enroll' });
   });
 
   // --- Protected routes (mTLS + onboarding guard) ---

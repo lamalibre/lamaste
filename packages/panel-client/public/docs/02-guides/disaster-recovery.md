@@ -264,7 +264,25 @@ scp root@203.0.113.42:/etc/portlama/pki/client.p12 .
 
 6. **Import into your browser** following the steps in [Certificate Management](certificate-management.md).
 
-### Scenario 6: SSH Fallback (Last Resort)
+### Scenario 6: Admin Certificate Lost (Hardware-Bound)
+
+**Symptoms:** You use hardware-bound admin authentication and have lost access due to machine failure, Keychain corruption, or macOS reinstall. The panel rejects your requests because the private key no longer exists.
+
+**Recovery:**
+
+1. **Access the server via DigitalOcean console.** In the droplet dashboard, click "Access", then "Launch Droplet Console".
+
+2. **Run the admin reset command:**
+
+```bash
+sudo portlama-reset-admin
+```
+
+This generates a new P12 admin certificate, reverts the panel to P12 auth mode, and prints the new certificate password. Download the `.p12` file via SCP and import it into your browser.
+
+3. **Optionally re-enroll with hardware-bound auth** from the panel once you have access again.
+
+### Scenario 7: SSH Fallback (Last Resort)
 
 If the panel is completely unreachable (both IP-based and domain-based), SSH is the last resort. The installer hardens SSH but does not disable it — key-based authentication always works.
 
@@ -358,14 +376,15 @@ When multiple things are broken, fix in this order:
 
 ## Quick Reference
 
-| Scenario          | First Step                        | SSH Needed? |
-| ----------------- | --------------------------------- | ----------- |
-| Domain lost       | Access via `https://<ip>:9292`    | No          |
-| LE cert expired   | Renew from Certificates page      | No          |
-| Service crashed   | Restart from Services page        | No          |
-| Memory issues     | Check Dashboard, restart services | Maybe       |
-| mTLS cert expired | Generate new cert via SSH         | Yes         |
-| Panel unreachable | SSH in, check systemd status      | Yes         |
+| Scenario              | First Step                            | SSH Needed? |
+| --------------------- | ------------------------------------- | ----------- |
+| Domain lost           | Access via `https://<ip>:9292`        | No          |
+| LE cert expired       | Renew from Certificates page          | No          |
+| Service crashed       | Restart from Services page            | No          |
+| Memory issues         | Check Dashboard, restart services     | Maybe       |
+| mTLS cert expired     | Generate new cert via SSH             | Yes         |
+| HW-bound admin lost   | `sudo portlama-reset-admin` via DO console | Yes    |
+| Panel unreachable     | SSH in, check systemd status          | Yes         |
 
 | Emergency Command                    | What It Does                         |
 | ------------------------------------ | ------------------------------------ |

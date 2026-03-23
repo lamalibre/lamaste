@@ -65,6 +65,8 @@ The admin panel requires a client certificate at the TLS layer. Without the cert
 
 **P12 password security:** The agent never passes the P12 password as a command-line argument. Curl calls use a temporary config file (created with mode `0600`, deleted after use), and openssl calls use the `PORTLAMA_P12_PASS` environment variable. This prevents the password from being visible in process listings (`ps aux`).
 
+**Hardware-bound certificates:** Agents can enroll using a one-time token and a locally generated CSR, binding the private key to the macOS Keychain so it is non-extractable. The public `POST /api/enroll` endpoint uses the token as its sole authentication gate — no mTLS is required for enrollment itself, since the agent does not yet have a certificate. After enrollment, the agent authenticates with the Keychain-backed identity just like any other mTLS client. Admins can optionally upgrade their own authentication to hardware-bound mode (set `adminAuthMode` to `"hardware-bound"` in `panel.json`), which disables P12 download and certificate rotation through the panel UI. If the admin Keychain identity is lost, recovery is possible by running `portlama-reset-admin` on the server, which reverts to standard P12 authentication.
+
 Portlama supports two types of certificates with different access levels:
 
 - **Admin certificate** — full access to all panel endpoints (for browser-based management)

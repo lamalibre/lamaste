@@ -19,6 +19,16 @@ The Chisel client runs as a background service using macOS launchd. It starts au
 
 > **Do not use the admin certificate on Mac clients.** The admin certificate has unrestricted access to all panel endpoints. If the Mac is compromised, an attacker would have full admin control. Agent certificates limit access to only the capabilities the agent needs (e.g., listing tunnels and downloading the plist).
 
+## Alternative: Hardware-Bound Certificate Setup
+
+Instead of the P12 flow, you can set up an agent with a hardware-bound certificate using an enrollment token. The admin generates the token from the panel (**Certificates** page, **Enrollment Token** section), then the agent runs:
+
+```bash
+portlama-agent setup --token <token> --panel-url https://<ip>:9292
+```
+
+The agent generates a private key locally (it never leaves the machine), sends a CSR to the panel, and receives a signed certificate. No `.p12` file is transferred.
+
 ## Step-by-Step
 
 ### 1. Install Chisel

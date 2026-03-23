@@ -13,6 +13,7 @@ const ConfigSchema = z.object({
     .number()
     .optional()
     .default(500 * 1024 * 1024),
+  adminAuthMode: z.enum(['p12', 'hardware-bound']).optional().default('p12'),
   onboarding: z.object({
     status: z.enum(['FRESH', 'DOMAIN_SET', 'DNS_READY', 'PROVISIONING', 'COMPLETED']),
   }),

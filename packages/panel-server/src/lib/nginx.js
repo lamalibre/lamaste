@@ -39,7 +39,10 @@ async function writeVhostFile(name, content) {
  */
 export async function writePanelVhost(domain) {
   const fqdn = `panel.${domain}`;
-  const config = `server {
+  const config = `# Rate limit zone for public enrollment endpoint (5 requests/minute per IP)
+limit_req_zone $binary_remote_addr zone=enroll_domain:1m rate=5r/m;
+
+server {
     listen 443 ssl;
     server_name ${fqdn};
 
@@ -54,7 +57,11 @@ export async function writePanelVhost(domain) {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
+    # Default location (mTLS required — reject if cert missing or invalid)
     location / {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
         proxy_pass http://127.0.0.1:3100;
 
         # Client cert headers — set from nginx TLS variables, never passed through from client
@@ -69,8 +76,41 @@ export async function writePanelVhost(domain) {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # API paths with WebSocket upgrade support
+    # Public API paths (no mTLS verification check)
+    location /api/enroll {
+        limit_req zone=enroll_domain burst=5 nodelay;
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/invite {
+        proxy_pass http://127.0.0.1:3100;
+        proxy_http_version 1.1;
+
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # API paths with WebSocket upgrade support (mTLS required)
     location /api {
+        if ($ssl_client_verify != SUCCESS) {
+            return 496;
+        }
         proxy_pass http://127.0.0.1:3100;
         proxy_http_version 1.1;
 

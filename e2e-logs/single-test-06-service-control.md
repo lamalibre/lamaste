@@ -1,6 +1,6 @@
 # Portlama E2E: 06 — Service Control
 
-> Started at `2026-03-22 18:24:45 UTC`
+> Started at `2026-03-23 12:09:12 UTC`
 
 
 ## Pre-flight: check onboarding is complete
@@ -8,39 +8,39 @@
 
 ## List services
 
-✅ `18:24:45` GET /api/services returns 4 services  
-✅ `18:24:45` Service 'nginx' is in the service list  
-✅ `18:24:45` Service 'chisel' is in the service list  
-✅ `18:24:45` Service 'authelia' is in the service list  
-✅ `18:24:45` Service 'portlama-panel' is in the service list  
-✅ `18:24:45` nginx status is 'active'  
+✅ `12:09:12` GET /api/services returns 4 services  
+✅ `12:09:12` Service 'nginx' is in the service list  
+✅ `12:09:12` Service 'chisel' is in the service list  
+✅ `12:09:12` Service 'authelia' is in the service list  
+✅ `12:09:12` Service 'portlama-panel' is in the service list  
+✅ `12:09:12` nginx status is 'active'  
 
 ## Restart nginx
 
-✅ `18:24:50` nginx restart request accepted  
-✅ `18:24:53` nginx is active after restart  
+✅ `12:09:17` nginx restart request accepted  
+✅ `12:09:20` nginx is active after restart  
 
 ## Reload nginx
 
-✅ `18:24:54` nginx reload returned ok: true  
+✅ `12:09:20` nginx reload returned ok: true  
 
 ## Cannot stop portlama-panel
 
-✅ `18:24:54` Cannot stop portlama-panel (HTTP 400)  
-✅ `18:24:54` Error message explains why panel cannot be stopped  
+✅ `12:09:20` Cannot stop portlama-panel (HTTP 400)  
+✅ `12:09:20` Error message explains why panel cannot be stopped  
 
 ## Restart portlama-panel is allowed
 
-✅ `18:24:54` portlama-panel restart request accepted  
-✅ `18:24:57` Panel is responsive after restart  
+✅ `12:09:20` portlama-panel restart request accepted  
+✅ `12:09:23` Panel is responsive after restart  
 
 ## Invalid service name
 
-✅ `18:24:57` Unknown service rejected (HTTP 400)  
+✅ `12:09:23` Unknown service rejected (HTTP 400)  
 
 ## Invalid action
 
-✅ `18:24:57` Invalid action 'destroy' rejected (HTTP 400)  
+✅ `12:09:23` Invalid action 'destroy' rejected (HTTP 400)  
 
 ---
 

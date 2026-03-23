@@ -5,12 +5,29 @@ use std::path::PathBuf;
 #[serde(rename_all = "camelCase")]
 pub struct AgentConfig {
     pub panel_url: String,
-    pub p12_path: String,
-    pub p12_password: String,
+    /// Authentication method: "p12" (default) or "keychain"
+    #[serde(default = "default_auth_method")]
+    pub auth_method: String,
+    /// Path to P12 file (used when auth_method is "p12")
+    #[serde(default)]
+    pub p12_path: Option<String>,
+    /// P12 password (used when auth_method is "p12")
+    #[serde(default)]
+    pub p12_password: Option<String>,
+    /// Keychain identity name (used when auth_method is "keychain")
+    #[serde(default)]
+    pub keychain_identity: Option<String>,
+    /// Agent label (used when auth_method is "keychain")
+    #[serde(default)]
+    pub agent_label: Option<String>,
     pub domain: Option<String>,
     pub chisel_version: Option<String>,
     pub setup_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+fn default_auth_method() -> String {
+    "p12".to_string()
 }
 
 pub fn agent_dir() -> PathBuf {

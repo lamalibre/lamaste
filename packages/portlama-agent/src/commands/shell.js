@@ -20,6 +20,13 @@ export async function runShell(args) {
   console.log('');
   console.log(chalk.dim(`  Connecting to agent ${chalk.bold(agentLabel)}...`));
 
+  // WebSocket requires PEM cert/key — not available with Keychain-bound keys
+  if (config.authMethod === 'keychain') {
+    console.error(chalk.red('\n  Shell access is not yet supported with hardware-bound (Keychain) certificates.'));
+    console.error(chalk.dim('  Use a P12-enrolled agent for shell access.\n'));
+    process.exit(1);
+  }
+
   // Extract PEM certificates from p12
   let pem;
   try {

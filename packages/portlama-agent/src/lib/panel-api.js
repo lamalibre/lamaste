@@ -127,21 +127,89 @@ async function curlWithConfig(p12Path, p12Password, extraArgs) {
 }
 
 /**
+ * Execute a curl command using a macOS Keychain identity for mTLS.
+ * curl on macOS natively supports Keychain identities via --cert.
+ *
+ * @param {string} keychainIdentity - Keychain identity name (e.g. "Portlama Agent (macbook-pro)")
+ * @param {string[]} extraArgs - Additional curl arguments (must end with the URL)
+ * @returns {Promise<import('execa').ExecaReturnValue>}
+ */
+async function curlWithKeychain(keychainIdentity, extraArgs) {
+  return execa('curl', [
+    '--cert',
+    keychainIdentity,
+    '-s',           // silent
+    '-f',           // fail on HTTP errors
+    '--max-time',
+    '30',
+    '-k',           // skip server TLS verification (self-signed server cert)
+    ...extraArgs,
+  ]);
+}
+
+/**
+ * Execute an authenticated curl command, dispatching to the correct auth
+ * method based on the config.
+ *
+ * Supports two calling conventions:
+ * 1. Config object: `curlAuthenticated(config, extraArgs)`
+ * 2. Legacy positional args: `curlAuthenticated(p12Path, p12Password, extraArgs)`
+ *
+ * @param {object|string} configOrP12Path - Config object or P12 path (legacy)
+ * @param {string[]|string} extraArgsOrP12Password - Extra args or P12 password (legacy)
+ * @param {string[]} [legacyExtraArgs] - Extra args (legacy calling convention)
+ * @returns {Promise<import('execa').ExecaReturnValue>}
+ */
+async function curlAuthenticated(configOrP12Path, extraArgsOrP12Password, legacyExtraArgs) {
+  // Legacy calling convention: curlAuthenticated(p12Path, p12Password, extraArgs)
+  if (typeof configOrP12Path === 'string') {
+    return curlWithConfig(configOrP12Path, extraArgsOrP12Password, legacyExtraArgs);
+  }
+
+  // New calling convention: curlAuthenticated(config, extraArgs)
+  const config = configOrP12Path;
+  const extraArgs = extraArgsOrP12Password;
+
+  if (config.authMethod === 'keychain') {
+    return curlWithKeychain(config.keychainIdentity, extraArgs);
+  }
+
+  // Default to P12
+  return curlWithConfig(config.p12Path, config.p12Password, extraArgs);
+}
+
+/**
+ * Resolve panel URL from arguments.
+ * Accepts either a config object (with panelUrl) or a string.
+ * @param {object|string} configOrUrl
+ * @returns {string}
+ */
+function resolvePanelUrl(configOrUrl) {
+  if (typeof configOrUrl === 'object' && configOrUrl !== null) {
+    return configOrUrl.panelUrl;
+  }
+  return configOrUrl;
+}
+
+/**
  * Check panel connectivity by hitting /api/health.
- * @param {string} panelUrl - e.g. "https://1.2.3.4:9292"
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig - Panel URL string or config object
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<object>}
  */
-export async function fetchHealth(panelUrl, p12Path, p12Password) {
+export async function fetchHealth(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/health`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
       `Cannot reach panel at ${url}. ` +
-        `Check the URL and that your client.p12 is valid. ` +
+        `Check the URL and that your certificate is valid. ` +
         `Details: ${err.stderr || err.message}`,
     );
   }
@@ -149,15 +217,18 @@ export async function fetchHealth(panelUrl, p12Path, p12Password) {
 
 /**
  * Fetch the plist XML and metadata from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ plist: string, instructions: object }>}
  */
-export async function fetchPlist(panelUrl, p12Path, p12Password) {
+export async function fetchPlist(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/tunnels/mac-plist?format=json`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to fetch plist from panel. ` + `Details: ${err.stderr || err.message}`);
@@ -166,15 +237,18 @@ export async function fetchPlist(panelUrl, p12Path, p12Password) {
 
 /**
  * Fetch the tunnel list from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ tunnels: Array<{ id: string, subdomain: string, port: number }> }>}
  */
-export async function fetchTunnels(panelUrl, p12Path, p12Password) {
+export async function fetchTunnels(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/tunnels`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -185,15 +259,18 @@ export async function fetchTunnels(panelUrl, p12Path, p12Password) {
 
 /**
  * Fetch the list of static sites from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ sites: Array }>}
  */
-export async function fetchSites(panelUrl, p12Path, p12Password) {
+export async function fetchSites(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/sites`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to fetch sites from panel. ` + `Details: ${err.stderr || err.message}`);
@@ -202,24 +279,30 @@ export async function fetchSites(panelUrl, p12Path, p12Password) {
 
 /**
  * Create a new static site on the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {object} body - Site creation payload
  * @returns {Promise<object>}
  */
-export async function createSite(panelUrl, p12Path, p12Password, body) {
+export async function createSite(panelUrlOrConfig, p12Path, p12Password, body) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  // Support config object: createSite(config, body)
+  const actualBody = typeof panelUrlOrConfig === 'object' ? p12Path : body;
   const url = `${panelUrl}/api/sites`;
+  const curlArgs = [
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify(actualBody),
+    url,
+  ];
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [
-      '-X',
-      'POST',
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify(body),
-      url,
-    ]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+      : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to create site on panel. ` + `Details: ${err.stderr || err.message}`);
@@ -228,16 +311,21 @@ export async function createSite(panelUrl, p12Path, p12Password, body) {
 
 /**
  * Delete a static site from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} siteId - Site UUID
  * @returns {Promise<object>}
  */
-export async function deleteSite(panelUrl, p12Path, p12Password, siteId) {
-  const url = `${panelUrl}/api/sites/${encodeURIComponent(siteId)}`;
+export async function deleteSite(panelUrlOrConfig, p12Path, p12Password, siteId) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  const actualSiteId = typeof panelUrlOrConfig === 'object' ? p12Path : siteId;
+  const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}`;
+  const curlArgs = ['-X', 'DELETE', url];
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, ['-X', 'DELETE', url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+      : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to delete site from panel. ` + `Details: ${err.stderr || err.message}`);
@@ -246,17 +334,28 @@ export async function deleteSite(panelUrl, p12Path, p12Password, siteId) {
 
 /**
  * Fetch the file listing for a static site directory.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} siteId - Site UUID
  * @param {string} [dirPath='.'] - Directory path to list
  * @returns {Promise<{ files: Array }>}
  */
-export async function fetchSiteFiles(panelUrl, p12Path, p12Password, siteId, dirPath = '.') {
-  const url = `${panelUrl}/api/sites/${encodeURIComponent(siteId)}/files?path=${encodeURIComponent(dirPath)}`;
+export async function fetchSiteFiles(panelUrlOrConfig, p12Path, p12Password, siteId, dirPath = '.') {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualSiteId, actualDirPath;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualSiteId = p12Path;
+    actualDirPath = p12Password || '.';
+  } else {
+    actualSiteId = siteId;
+    actualDirPath = dirPath;
+  }
+  const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}/files?path=${encodeURIComponent(actualDirPath)}`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -267,26 +366,40 @@ export async function fetchSiteFiles(panelUrl, p12Path, p12Password, siteId, dir
 
 /**
  * Upload files to a static site directory.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} siteId - Site UUID
  * @param {string} dirPath - Target directory path
  * @param {string[]} localFilePaths - Array of absolute local file paths
  * @returns {Promise<object>}
  */
 export async function uploadSiteFiles(
-  panelUrl,
+  panelUrlOrConfig,
   p12Path,
   p12Password,
   siteId,
   dirPath,
   localFilePaths,
 ) {
-  const url = `${panelUrl}/api/sites/${encodeURIComponent(siteId)}/files?path=${encodeURIComponent(dirPath)}`;
-  const fileArgs = localFilePaths.flatMap((fp) => ['-F', `file=@${fp}`]);
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualSiteId, actualDirPath, actualLocalFilePaths;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualSiteId = p12Path;
+    actualDirPath = p12Password;
+    actualLocalFilePaths = siteId;
+  } else {
+    actualSiteId = siteId;
+    actualDirPath = dirPath;
+    actualLocalFilePaths = localFilePaths;
+  }
+  const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}/files?path=${encodeURIComponent(actualDirPath)}`;
+  const fileArgs = actualLocalFilePaths.flatMap((fp) => ['-F', `file=@${fp}`]);
+  const curlArgs = ['-X', 'POST', ...fileArgs, url];
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, ['-X', 'POST', ...fileArgs, url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+      : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to upload files to site. ` + `Details: ${err.stderr || err.message}`);
@@ -295,15 +408,18 @@ export async function uploadSiteFiles(
 
 /**
  * Fetch shell configuration for this agent.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ enabled: boolean, label: string, blocklist?: string[], timeWindow?: object }>}
  */
-export async function fetchShellConfig(panelUrl, p12Path, p12Password) {
+export async function fetchShellConfig(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/shell/config`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -315,15 +431,18 @@ export async function fetchShellConfig(panelUrl, p12Path, p12Password) {
 /**
  * Fetch the agent's own status from the panel.
  * The server derives the agent label from the mTLS client certificate CN.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ label: string }>}
  */
-export async function fetchAgentStatus(panelUrl, p12Path, p12Password) {
+export async function fetchAgentStatus(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/shell/agent-status`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -334,15 +453,18 @@ export async function fetchAgentStatus(panelUrl, p12Path, p12Password) {
 
 /**
  * Fetch shell session list from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @returns {Promise<{ sessions: Array }>}
  */
-export async function fetchShellSessions(panelUrl, p12Path, p12Password) {
+export async function fetchShellSessions(panelUrlOrConfig, p12Path, p12Password) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/shell/sessions`;
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, [url])
+      : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -353,25 +475,41 @@ export async function fetchShellSessions(panelUrl, p12Path, p12Password) {
 
 /**
  * Download a shell session recording from the panel.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} agentLabel - The agent label that owns the recording
  * @param {string} sessionId
  * @param {string} outputPath - Local path to write the recording to
  * @returns {Promise<void>}
  */
 export async function downloadShellRecording(
-  panelUrl,
+  panelUrlOrConfig,
   p12Path,
   p12Password,
   agentLabel,
   sessionId,
   outputPath,
 ) {
-  const url = `${panelUrl}/api/shell/recordings/${encodeURIComponent(agentLabel)}/${encodeURIComponent(sessionId)}`;
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualAgentLabel, actualSessionId, actualOutputPath;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualAgentLabel = p12Path;
+    actualSessionId = p12Password;
+    actualOutputPath = agentLabel;
+  } else {
+    actualAgentLabel = agentLabel;
+    actualSessionId = sessionId;
+    actualOutputPath = outputPath;
+  }
+  const url = `${panelUrl}/api/shell/recordings/${encodeURIComponent(actualAgentLabel)}/${encodeURIComponent(actualSessionId)}`;
+  const curlArgs = ['-o', actualOutputPath, url];
   try {
-    await curlWithConfig(p12Path, p12Password, ['-o', outputPath, url]);
+    if (typeof panelUrlOrConfig === 'object') {
+      await curlAuthenticated(panelUrlOrConfig, curlArgs);
+    } else {
+      await curlWithConfig(p12Path, p12Password, curlArgs);
+    }
   } catch (err) {
     throw new Error(
       `Failed to download shell recording from panel. ` + `Details: ${err.stderr || err.message}`,
@@ -381,28 +519,44 @@ export async function downloadShellRecording(
 
 /**
  * Download a file from a remote agent via the panel relay.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} agentLabel
  * @param {string} remotePath - Absolute path on the remote agent
  * @param {string} outputPath - Local path to write the file to
  * @returns {Promise<void>}
  */
 export async function downloadRemoteFile(
-  panelUrl,
+  panelUrlOrConfig,
   p12Path,
   p12Password,
   agentLabel,
   remotePath,
   outputPath,
 ) {
-  const url = `${panelUrl}/api/shell/file/${encodeURIComponent(agentLabel)}?path=${encodeURIComponent(remotePath)}`;
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualAgentLabel, actualRemotePath, actualOutputPath;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualAgentLabel = p12Path;
+    actualRemotePath = p12Password;
+    actualOutputPath = agentLabel;
+  } else {
+    actualAgentLabel = agentLabel;
+    actualRemotePath = remotePath;
+    actualOutputPath = outputPath;
+  }
+  const url = `${panelUrl}/api/shell/file/${encodeURIComponent(actualAgentLabel)}?path=${encodeURIComponent(actualRemotePath)}`;
+  const curlArgs = ['-o', actualOutputPath, url];
   try {
-    await curlWithConfig(p12Path, p12Password, ['-o', outputPath, url]);
+    if (typeof panelUrlOrConfig === 'object') {
+      await curlAuthenticated(panelUrlOrConfig, curlArgs);
+    } else {
+      await curlWithConfig(p12Path, p12Password, curlArgs);
+    }
   } catch (err) {
     throw new Error(
-      `Failed to download file from agent ${agentLabel}. ` +
+      `Failed to download file from agent ${actualAgentLabel}. ` +
         `Details: ${err.stderr || err.message}`,
     );
   }
@@ -410,64 +564,143 @@ export async function downloadRemoteFile(
 
 /**
  * Upload a local file to a remote agent via the panel relay.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} agentLabel
  * @param {string} remotePath - Absolute path on the remote agent
  * @param {string} localFilePath - Local file to upload
  * @returns {Promise<object>}
  */
 export async function uploadRemoteFile(
-  panelUrl,
+  panelUrlOrConfig,
   p12Path,
   p12Password,
   agentLabel,
   remotePath,
   localFilePath,
 ) {
-  const url = `${panelUrl}/api/shell/file/${encodeURIComponent(agentLabel)}?path=${encodeURIComponent(remotePath)}`;
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualAgentLabel, actualRemotePath, actualLocalFilePath;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualAgentLabel = p12Path;
+    actualRemotePath = p12Password;
+    actualLocalFilePath = agentLabel;
+  } else {
+    actualAgentLabel = agentLabel;
+    actualRemotePath = remotePath;
+    actualLocalFilePath = localFilePath;
+  }
+  const url = `${panelUrl}/api/shell/file/${encodeURIComponent(actualAgentLabel)}?path=${encodeURIComponent(actualRemotePath)}`;
+  const curlArgs = [
+    '-X',
+    'POST',
+    '-F',
+    `file=@${actualLocalFilePath}`,
+    url,
+  ];
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [
-      '-X',
-      'POST',
-      '-F',
-      `file=@${localFilePath}`,
-      url,
-    ]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+      : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
-      `Failed to upload file to agent ${agentLabel}. ` + `Details: ${err.stderr || err.message}`,
+      `Failed to upload file to agent ${actualAgentLabel}. ` + `Details: ${err.stderr || err.message}`,
     );
   }
 }
 
 /**
  * Delete a file from a static site.
- * @param {string} panelUrl
- * @param {string} p12Path
- * @param {string} p12Password
+ * @param {string|object} panelUrlOrConfig
+ * @param {string} [p12Path]
+ * @param {string} [p12Password]
  * @param {string} siteId - Site UUID
  * @param {string} filePath - Path of the file to delete
  * @returns {Promise<object>}
  */
-export async function deleteSiteFile(panelUrl, p12Path, p12Password, siteId, filePath) {
-  const url = `${panelUrl}/api/sites/${encodeURIComponent(siteId)}/files`;
+export async function deleteSiteFile(panelUrlOrConfig, p12Path, p12Password, siteId, filePath) {
+  const panelUrl = resolvePanelUrl(panelUrlOrConfig);
+  let actualSiteId, actualFilePath;
+  if (typeof panelUrlOrConfig === 'object') {
+    actualSiteId = p12Path;
+    actualFilePath = p12Password;
+  } else {
+    actualSiteId = siteId;
+    actualFilePath = filePath;
+  }
+  const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}/files`;
+  const curlArgs = [
+    '-X',
+    'DELETE',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ path: actualFilePath }),
+    url,
+  ];
   try {
-    const { stdout } = await curlWithConfig(p12Path, p12Password, [
-      '-X',
-      'DELETE',
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify({ path: filePath }),
-      url,
-    ]);
+    const { stdout } = typeof panelUrlOrConfig === 'object'
+      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+      : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
       `Failed to delete site file from panel. ` + `Details: ${err.stderr || err.message}`,
+    );
+  }
+}
+
+/**
+ * Execute an unauthenticated curl POST to a panel URL.
+ * Used for the enrollment endpoint which doesn't require mTLS.
+ *
+ * @param {string} url - Full URL
+ * @param {object} body - JSON body
+ * @returns {Promise<object>}
+ */
+export async function curlPostUnauthenticated(url, body) {
+  try {
+    // Do NOT use -f flag — it swallows the response body on 4xx/5xx errors.
+    // We need to read the JSON error message from the server.
+    const { stdout } = await execa('curl', [
+      '-s',
+      '--max-time',
+      '30',
+      '-k',
+      '-w',
+      '\n%{http_code}',
+      '-X',
+      'POST',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify(body),
+      url,
+    ]);
+    // stdout ends with \n<status_code>
+    const lines = stdout.trimEnd().split('\n');
+    const httpCode = parseInt(lines.pop(), 10);
+    const responseBody = lines.join('\n');
+
+    if (!responseBody) {
+      throw new Error(`Empty response from ${url} (HTTP ${httpCode})`);
+    }
+
+    const parsed = JSON.parse(responseBody);
+
+    if (httpCode >= 400) {
+      throw new Error(parsed.error || `HTTP ${httpCode}`);
+    }
+
+    return parsed;
+  } catch (err) {
+    if (err.message && !err.message.startsWith('Request to')) {
+      throw err;
+    }
+    throw new Error(
+      `Request to ${url} failed. Details: ${err.stderr || err.message}`,
     );
   }
 }

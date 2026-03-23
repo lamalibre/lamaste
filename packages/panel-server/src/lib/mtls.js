@@ -325,7 +325,7 @@ export async function saveAgentRegistry(data) {
   const tmpPath = `${filePath}.tmp`;
 
   const content = JSON.stringify(data, null, 2) + '\n';
-  await writeFile(tmpPath, content, 'utf-8');
+  await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o640 });
 
   const fd = await open(tmpPath, 'r');
   await fd.sync();
@@ -490,18 +490,19 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
       await execa('chmod', ['644', certPath]);
       await execa('chmod', ['600', p12Path]);
 
-      // 11. Add to registry atomically (portlama owns AGENTS_DIR, no sudo needed)
-      const freshRegistry = await loadAgentRegistry();
-      freshRegistry.agents.push({
+      // 11. Add to registry (reuse the registry loaded at the top of withRegistryLock —
+      // the mutex guarantees no concurrent modifications)
+      registry.agents.push({
         label,
         serial,
         capabilities: capabilities || ['tunnels:read'],
         allowedSites: allowedSites || [],
+        enrollmentMethod: 'p12',
         createdAt: new Date().toISOString(),
         expiresAt,
         revoked: false,
       });
-      await saveAgentRegistry(freshRegistry);
+      await saveAgentRegistry(registry);
 
       return { label, p12Password, serial, expiresAt };
     } catch (err) {
@@ -537,6 +538,7 @@ export async function listAgentCerts() {
     return {
       ...agent,
       capabilities: agent.capabilities || ['tunnels:read'],
+      enrollmentMethod: agent.enrollmentMethod || 'p12',
       expiringSoon,
     };
   });

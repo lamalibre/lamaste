@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-03-23
+
+### Added
+
+- Add hardware-bound certificate enrollment for agents — private keys generated in macOS Keychain as non-extractable, enrolled via one-time tokens and CSR signing
+- Add `POST /api/certs/agent/enroll` admin endpoint to generate enrollment tokens (10-minute expiry, single-use)
+- Add `POST /api/enroll` public endpoint for agents to enroll with token + CSR (no mTLS required)
+- Add `portlama-agent setup --token <token> --panel-url <url>` for hardware-bound agent enrollment
+- Add admin hardware-bound certificate upgrade via `POST /api/certs/admin/upgrade-to-hardware-bound`
+- Add `GET /api/certs/admin/auth-mode` endpoint to check admin authentication mode
+- Add `portlama-reset-admin` CLI tool for emergency admin cert recovery (root-only, server console)
+- Add `@lamalibre/install-portlama-admin` package for admin hardware-bound certificate upgrade via npx
+- Add enrollment method badge (P12 / Hardware-Bound) to agent certificate list in panel UI
+- Add "Enrollment Token" button to panel UI with token display, copy, and setup command
+- Add `enrollmentMethod` field to agent registry and certificate list API response
+- Add nginx rate limiting on public `/api/enroll` endpoint (5 requests/minute per IP)
+
+### Changed
+
+- Update nginx mTLS snippet to `ssl_verify_client optional` with per-location enforcement, enabling public endpoints alongside mTLS-protected routes
+- Update all agent CLI commands to support both P12 and Keychain authentication via config object dispatch
+- Update Tauri desktop app config and API layer to support optional P12 fields and Keychain identity
+- Hide P12 download button for hardware-bound agents in panel UI
+- Block P12 download and rotation with 410 Gone when admin uses hardware-bound authentication
+
+### Security
+
+- Add timing-safe token comparison (`crypto.timingSafeEqual`) for enrollment tokens on public endpoint
+- Add mutex (`withTokenLock`) to serialize token creation and consumption, preventing TOCTOU races
+- Add CSR structural validation (`openssl req -verify`) before signing in both agent and admin paths
+- Add CSR size limit (8192 bytes) to prevent resource exhaustion on the public enrollment endpoint
+- Add enrollment token file permissions (`mode: 0o600`) and agent registry permissions (`mode: 0o640`)
+- Add label re-validation in CSR signing as defense-in-depth against DN injection
+- Add error message sanitization on public enrollment endpoint (5xx errors return generic message)
+- Add keychain auth guard for shell commands with clear error message instead of crash
+
+**Affected packages:**
+
+- `@lamalibre/create-portlama` 1.0.27 → 1.0.28
+- `@lamalibre/portlama-panel-server` 0.1.3 → 0.1.4
+- `@lamalibre/portlama-panel-client` 0.1.2 → 0.1.3
+- `@lamalibre/portlama-agent` 1.0.5 → 1.0.6
+- `@lamalibre/portlama-desktop` 0.1.2 → 0.1.3
+- `@lamalibre/install-portlama-admin` — → 1.0.0 (new)
+
 ## [Unreleased] - 2026-03-22
 
 ### Added

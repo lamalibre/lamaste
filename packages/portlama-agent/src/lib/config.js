@@ -4,12 +4,29 @@ import { CONFIG_PATH, AGENT_DIR } from './platform.js';
 /**
  * Load the agent config from ~/.portlama/agent.json.
  * Returns null if the file does not exist.
+ *
+ * Config fields:
+ * - panelUrl: string — Panel URL
+ * - authMethod: 'p12' | 'keychain' — Authentication method (defaults to 'p12' if missing)
+ * - p12Path: string — Path to P12 file (when authMethod is 'p12')
+ * - p12Password: string — P12 password (when authMethod is 'p12')
+ * - keychainIdentity: string — Keychain identity name (when authMethod is 'keychain')
+ * - agentLabel: string — Agent label (when authMethod is 'keychain')
+ * - domain?: string
+ * - chiselVersion?: string
+ * - setupAt?: string
+ *
  * @returns {Promise<object | null>}
  */
 export async function loadAgentConfig() {
   try {
     const raw = await readFile(CONFIG_PATH, 'utf8');
-    return JSON.parse(raw);
+    const config = JSON.parse(raw);
+    // Default authMethod to 'p12' for backwards compatibility
+    if (config && !config.authMethod) {
+      config.authMethod = 'p12';
+    }
+    return config;
   } catch {
     return null;
   }
