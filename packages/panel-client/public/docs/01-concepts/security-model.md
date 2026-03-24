@@ -84,8 +84,6 @@ Agent certificates are generated from the panel UI and should be used instead of
 | `sites:read`     | List assigned sites and browse their files |
 | `sites:write`    | Upload and delete files on assigned sites  |
 
-Shell management endpoints (enable/disable, policies, session audit) are admin-only at the route level and do not use a capability. Agents provide shell access by running `shell-server`, but cannot initiate or manage shell sessions.
-
 Capabilities are stored server-side and can be updated without reissuing the certificate. Plugins can declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` format); these are merged with base capabilities dynamically and available for assignment to agent certificates. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
 
 In addition to capabilities, agent certificates support **per-site scoping** via `allowedSites`. Each agent has a list of site names it is permitted to access. When an agent calls `GET /api/sites`, it only sees sites in its `allowedSites` list. File operations (upload, list, delete) require both the relevant capability and the site name in the agent's `allowedSites`. The admin manages site assignments from **Panel** > **Certificates** > edit agent > **Site Access**, or via the `PATCH /api/certs/agent/:label/allowed-sites` endpoint.
@@ -99,38 +97,11 @@ mTLS is stronger than a login page because:
 - There is no login endpoint to discover or attack
 - The rejection happens before any application code runs
 
-#### 6. Remote shell access control
-
-Remote shell provides terminal access from admin to agent machines over the existing WebSocket tunnel. Because this grants direct command execution on agent machines, it is protected by a 5-gate authentication chain — every gate must pass before a shell session can start:
-
-| Gate | Check                 | Blocks                                        |
-| ---- | --------------------- | --------------------------------------------- |
-| 1    | Global toggle enabled | Shell disabled system-wide                    |
-| 2    | Agent cert valid      | Revoked or unknown agents                     |
-| 3    | Time window active    | Expired or never-enabled shell access         |
-| 4    | IP allow/deny list    | Connections from unauthorized IP addresses    |
-| 5    | Admin certificate     | Non-admin users attempting to start a session |
-
-**Shell policies** define the access constraints for each agent session:
-
-- **IP allow/deny lists** — restrict which IPs can initiate a shell connection. Deny takes precedence over allow. An empty allow list permits all IPs.
-- **Command blocklist** — hard-blocked patterns (e.g., `rm -rf /`, `mkfs`, fork bombs) are rejected outright. Restricted commands (e.g., `sudo`, `systemctl`, `diskutil`) can be individually toggled.
-- **Inactivity timeout** — sessions are terminated after a configurable idle period (default: 10 minutes).
-- **File transfer size limit** — caps the maximum file size for `portlama-agent cp` transfers.
-
-**Session recording** — every shell session is recorded via tmux pipe-pane on the agent machine (`~/.portlama/shell-recordings/<session-id>.log`). An audit log of all sessions (start time, end time, duration, source IP) is maintained on the server in `shell-sessions.json`.
-
-**Restricted shell wrapper** — the agent runs commands through `portlama-shell.sh`, a bash wrapper that checks every command against the blocklist before execution. Hard-blocked and restricted commands are rejected with a `BLOCKED` message and logged.
-
-> **Note:** The command blocklist is an advisory guard rail, not a security boundary. A determined user with shell access can bypass it. The primary security controls are the 5-gate auth chain, session recording, and time-limited access windows.
-
-See the [Remote Shell guide](../02-guides/remote-shell.md) for setup and usage instructions.
-
-#### 7. TOTP 2FA for app access
+#### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.
 
-#### 8. Service isolation
+#### 7. Service isolation
 
 Every internal service binds to `127.0.0.1` (localhost) only. Even if an attacker somehow reaches your VPS's internal network, they cannot connect to these services from outside:
 
@@ -446,7 +417,6 @@ The `mv` command is atomic on the same filesystem — the file appears at its fi
 | SSH hardening        | sshd_config                 | Password-based SSH access          |
 | TLS encryption       | Let's Encrypt / self-signed | Traffic interception and tampering |
 | Admin auth           | mTLS client certificates    | Unauthorized admin access          |
-| Remote shell         | 5-gate auth chain           | Unauthorized shell sessions        |
 | App auth             | Authelia TOTP 2FA           | Unauthorized app access            |
 | Service isolation    | `127.0.0.1` binding         | Direct access to internal services |
 | File permissions     | `chmod 600`                 | Unauthorized secret access         |
@@ -506,4 +476,3 @@ sudo fail2ban-client set sshd unbanip 1.2.3.4
 - [nginx Reverse Proxy](nginx-reverse-proxy.md) — nginx as the security gateway
 - [Certificates](certificates.md) — TLS certificate management
 - [Tunneling](tunneling.md) — secure tunnel architecture
-- [Remote Shell](../02-guides/remote-shell.md) — remote shell setup and usage

@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-24 08:10:22 UTC`
+> Run at `2026-03-24 09:37:16 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-24 08:10:22 UTC
+  Date:           2026-03-24 09:37:16 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 23 08:09:22 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 23 09:36:22 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: f3149b81-4d36-470c-92c0-a76e9821ac7a
+  [INFO] Created tunnel ID: 01934675-a03f-4662-9b62-a102c2172f1b
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774339823
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774345037
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=F6:1E:9E:72:BA:0B:80:43:8D:1B:8F:B0:6B:B9:F5:21:B0:D6:E9:C7:71:7D:C8:46:B0:F8:07:7F:B6:96:72:78
+  [INFO] Current cert fingerprint: sha256 Fingerprint=D0:3F:4D:F8:82:52:EE:A3:41:4D:81:85:0B:93:C4:4C:D8:14:C0:20:97:90:88:9A:74:92:39:BE:DF:0E:0B:98
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-23T08:10:52.000Z
+  [PASS] Rotation response contains expiry: 2028-03-23T09:37:46.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=74:20:91:F3:B2:2D:D9:5A:32:9C:57:3B:A0:AC:6E:FB:BF:FB:06:25:9D:BD:10:24:65:1E:4D:BF:71:F8:DA:71
+  [INFO] New cert fingerprint: sha256 Fingerprint=1B:29:89:12:0D:87:4D:C7:2D:C9:C4:09:45:0E:0A:DA:BD:13:56:50:8C:AD:2B:15:1A:4B:C0:85:C7:D4:B0:5F
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.206
+  [INFO] Server IP: 192.168.2.217
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: ffc10e66-aed1-4f1f-a69c-e10686afc3df)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 1c960bde-1790-40cb-8de6-a25db598930c)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -571,97 +571,6 @@
 
 ============================================================================
   Results: 26 passed, 0 failed, 0 skipped (26 total)
-============================================================================
-
-  Running: 14-shell-lifecycle.sh
-
-============================================================================
- Portlama E2E: 14 — Shell Lifecycle
-============================================================================
-
-
---- Pre-flight: check onboarding is complete ---
-  [PASS] Onboarding is complete
-
---- Shell config defaults ---
-  [PASS] Shell is disabled by default
-  [PASS] Default policy ID is 'default'
-  [PASS] At least one policy exists (count: 1)
-  [PASS] Default policy has name 'Default'
-
---- Enable shell globally ---
-  [PASS] PATCH shell/config returned ok: true
-  [PASS] Shell is now enabled
-
---- Create a shell policy ---
-  [PASS] Policy creation returned ok: true
-  [PASS] Policy ID matches
-  [PASS] Policy name matches
-  [PASS] Inactivity timeout is 300
-
---- Verify policy in listing ---
-  [PASS] Created policy appears in listing
-
---- Update the policy ---
-  [PASS] Policy update returned ok: true
-  [PASS] Inactivity timeout updated to 600
-  [PASS] Description updated
-  [PASS] Updated timeout persisted in listing
-
---- Cannot delete the default policy ---
-  [PASS] Cannot delete the default policy (HTTP 400)
-
---- Delete the e2e-test-policy ---
-  [PASS] Policy deletion returned ok: true
-  [PASS] Deleted policy no longer in listing
-
---- Policy validation ---
-  [PASS] POST policy with empty name rejected (HTTP 400)
-  [PASS] POST policy with invalid CIDR /99 rejected (HTTP 400)
-  [PASS] POST policy with duplicate ID rejected (HTTP 409)
-
---- Enable shell for agent ---
-  [INFO] Found agent: test-agent
-  [PASS] Shell enable for agent returned ok: true
-  [PASS] shellEnabledUntil is set
-  [PASS] shellEnabledUntil has a value: 2026-03-24T08:16:12.437Z
-  [PASS] Shell disable for agent returned ok: true
-
---- Shell enable without global toggle ---
-  [PASS] Cannot enable shell for agent when globally disabled (HTTP 400)
-
---- Session audit log ---
-  [PASS] GET shell/sessions returns a sessions array
-
---- File transfer endpoints (not yet implemented) ---
-  [PASS] GET shell/file/:label returns 501 (not implemented)
-  [PASS] POST shell/file/:label returns 501 (not implemented)
-
---- Recordings listing ---
-  [PASS] GET shell/recordings/:label returns a recordings array
-  [PASS] Recording download for non-existent session returns 404
-
---- Input validation ---
-  [PASS] PATCH config with non-existent defaultPolicy rejected (HTTP 400)
-  [PASS] POST enable with durationMinutes: 0 rejected (HTTP 400)
-  [PASS] POST enable with durationMinutes: 9999 rejected (HTTP 400)
-  [PASS] POST policy with name > 100 chars rejected (HTTP 400)
-  [PASS] POST policy with invalid ID characters rejected (HTTP 400)
-  [PASS] PATCH non-existent policy returns 404
-  [PASS] DELETE non-existent policy returns 404
-  [PASS] POST enable for non-existent agent returns 404
-  [PASS] DELETE enable for non-existent agent returns 404
-  [PASS] POST enable with invalid label format rejected (HTTP 400)
-  [PASS] GET shell/file without path query rejected (HTTP 400)
-  [PASS] Recording with invalid session ID rejected (HTTP 400)
-
---- Cleanup ---
-  [PASS] Shell disabled globally for cleanup
-  [PASS] Shell is disabled after cleanup
-  [PASS] Cleanup complete — shell state restored
-
-============================================================================
-  Results: 47 passed, 0 failed, 0 skipped (47 total)
 ============================================================================
 
   Running: 15-plugin-lifecycle.sh
@@ -834,10 +743,9 @@
   [PASS] 11-input-validation.sh
   [PASS] 12-user-invitations.sh
   [PASS] 13-site-lifecycle.sh
-  [PASS] 14-shell-lifecycle.sh
   [PASS] 15-plugin-lifecycle.sh
   [PASS] 16-enrollment-tokens.sh
 
-  Total: 16 tests — 16 passed, 0 failed
+  Total: 15 tests — 15 passed, 0 failed
 
   SUITE PASSED

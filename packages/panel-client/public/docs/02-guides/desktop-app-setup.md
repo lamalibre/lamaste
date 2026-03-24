@@ -99,17 +99,6 @@ The marketplace-style service discovery page:
 
 Docker containers with exposed ports are also detected and can be individually exposed.
 
-### Shell
-
-Manage remote shell access for your agents:
-
-- **Global toggle** — enable or disable remote shell access across all agents
-- **Shell policies** — create named policies with IP allow/deny lists, command blocklists, inactivity timeouts, and file transfer size limits
-- **Per-agent control** — enable shell access for individual agents with a time window (5 minutes to 8 hours) and an assigned policy
-- **Session audit log** — view past shell sessions with start/end times, duration, and status
-
-The Shell tab is an admin-only feature. Agents provide shell access by running `portlama-agent shell-server` on the agent machine. See the [Remote Shell guide](remote-shell.md) for the full setup walkthrough.
-
 ### Logs
 
 View Chisel client stdout and stderr logs.

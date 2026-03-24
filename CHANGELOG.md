@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update plugin management UI to show `displayName` as primary label with package name as subtitle
 - Update plugin management UI to show page count for multi-page plugins
 
+### Removed
+
+- Remove built-in shell (remote tmux) feature — extracted to standalone plugin at `@lamalibre/shell`
+- Remove `shell-server`, `shell`, `shell-log`, and `cp` commands from portlama-agent CLI
+- Remove all `/api/shell/*` endpoints (12 REST + 2 WebSocket) from panel-server
+- Remove Shell tab and Tauri shell commands from desktop app
+- Remove `shell` from plugin RESERVED_NAMES to allow shell plugin registration
+
 ### Security
 
 - Add path regex constraint on plugin page paths (`/^\/[a-z0-9-/]*$/`) to prevent route traversal

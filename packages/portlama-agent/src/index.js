@@ -24,10 +24,6 @@ ${b('COMMANDS')}
   ${c('logs')}            Stream Chisel log output (tail -f)
   ${c('sites')}           List, create, or delete static sites
   ${c('deploy')}          Deploy a local directory to a static site
-  ${c('shell-server')}    Run the shell gateway (background service)
-  ${c('shell')}           Connect to a remote agent shell
-  ${c('cp')}              Copy files to/from a remote agent
-  ${c('shell-log')}       List or download shell session recordings
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
 
 ${b('EXAMPLES')}
@@ -49,18 +45,6 @@ ${b('EXAMPLES')}
 
   ${d('# Deploy local build to a site')}
   ${c('portlama-agent deploy blog ./dist')}
-
-  ${d('# Start the shell gateway (runs as background service)')}
-  ${c('portlama-agent shell-server')}
-
-  ${d('# Connect to a remote agent shell')}
-  ${c('portlama-agent shell myagent')}
-
-  ${d('# Copy a file from a remote agent')}
-  ${c('portlama-agent cp myagent:/var/log/app.log ./app.log')}
-
-  ${d('# List shell session recordings')}
-  ${c('portlama-agent shell-log myagent')}
 
   ${d('# Manage plugins')}
   ${c('portlama-agent plugin status')}
@@ -121,26 +105,6 @@ export async function main() {
     case 'deploy': {
       const { runDeploy } = await import('./commands/deploy.js');
       await runDeploy(args.slice(1));
-      break;
-    }
-    case 'shell-server': {
-      const { runShellServer } = await import('./commands/shell-server.js');
-      await runShellServer();
-      break;
-    }
-    case 'shell': {
-      const { runShell } = await import('./commands/shell.js');
-      await runShell(args.slice(1));
-      break;
-    }
-    case 'cp': {
-      const { runCp } = await import('./commands/cp.js');
-      await runCp(args.slice(1));
-      break;
-    }
-    case 'shell-log': {
-      const { runShellLog } = await import('./commands/shell-log.js');
-      await runShellLog(args.slice(1));
       break;
     }
     case 'plugin': {

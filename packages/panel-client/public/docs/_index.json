@@ -80,11 +80,6 @@
         },
         { "title": "Static Sites", "slug": "static-sites", "file": "02-guides/static-sites.md" },
         {
-          "title": "Remote Shell",
-          "slug": "remote-shell",
-          "file": "02-guides/remote-shell.md"
-        },
-        {
           "title": "Disaster Recovery",
           "slug": "disaster-recovery",
           "file": "02-guides/disaster-recovery.md"

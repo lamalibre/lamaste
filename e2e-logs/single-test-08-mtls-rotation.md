@@ -1,6 +1,6 @@
 # Portlama E2E: 08 — mTLS Rotation
 
-> Started at `2026-03-24 08:10:51 UTC`
+> Started at `2026-03-24 09:37:45 UTC`
 
 
 ## Pre-flight: check onboarding is complete
@@ -8,24 +8,24 @@
 
 ## Current cert fingerprint (before rotation)
 
-ℹ️ `08:10:51` Current cert fingerprint: sha256 Fingerprint=F6:1E:9E:72:BA:0B:80:43:8D:1B:8F:B0:6B:B9:F5:21:B0:D6:E9:C7:71:7D:C8:46:B0:F8:07:7F:B6:96:72:78  
+ℹ️ `09:37:45` Current cert fingerprint: sha256 Fingerprint=D0:3F:4D:F8:82:52:EE:A3:41:4D:81:85:0B:93:C4:4C:D8:14:C0:20:97:90:88:9A:74:92:39:BE:DF:0E:0B:98  
 
 ## Rotate mTLS certificate
 
-✅ `08:10:52` Rotation response contains p12 password  
-✅ `08:10:52` Rotation response contains expiry: 2028-03-23T08:10:52.000Z  
-ℹ️ `08:10:52` Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.  
+✅ `09:37:46` Rotation response contains p12 password  
+✅ `09:37:46` Rotation response contains expiry: 2028-03-23T09:37:46.000Z  
+ℹ️ `09:37:46` Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.  
 
 ## Download rotated certificate
 
-✅ `08:10:52` Downloaded client.p12 (HTTP 200)  
-✅ `08:10:52` Downloaded file is a valid PKCS12  
-ℹ️ `08:10:52` New cert fingerprint: sha256 Fingerprint=74:20:91:F3:B2:2D:D9:5A:32:9C:57:3B:A0:AC:6E:FB:BF:FB:06:25:9D:BD:10:24:65:1E:4D:BF:71:F8:DA:71  
-✅ `08:10:52` New cert has different fingerprint than old cert  
+✅ `09:37:46` Downloaded client.p12 (HTTP 200)  
+✅ `09:37:46` Downloaded file is a valid PKCS12  
+ℹ️ `09:37:46` New cert fingerprint: sha256 Fingerprint=1B:29:89:12:0D:87:4D:C7:2D:C9:C4:09:45:0E:0A:DA:BD:13:56:50:8C:AD:2B:15:1A:4B:C0:85:C7:D4:B0:5F  
+✅ `09:37:46` New cert has different fingerprint than old cert  
 
 ## Verify API access with current credentials
 
-✅ `08:10:52` API still accessible after rotation  
+✅ `09:37:46` API still accessible after rotation  
 
 ---
 

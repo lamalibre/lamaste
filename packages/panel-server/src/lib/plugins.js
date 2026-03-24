@@ -240,7 +240,7 @@ export function installPlugin(packageName, logger) {
     // Reject names that collide with core API route prefixes
     const RESERVED_NAMES = [
       'health', 'onboarding', 'invite', 'tunnels', 'sites', 'system',
-      'services', 'logs', 'users', 'certs', 'invitations', 'shell', 'plugins',
+      'services', 'logs', 'users', 'certs', 'invitations', 'plugins',
     ];
     if (RESERVED_NAMES.includes(manifest.name)) {
       await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});

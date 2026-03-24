@@ -1,6 +1,6 @@
 # setup-visitor
 
-> Started at `2026-03-24 08:10:11 UTC` — log level **1**
+> Started at `2026-03-24 09:37:09 UTC` — log level **1**
 
 
 ---
@@ -10,12 +10,12 @@
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.206` |
+| **Host IP** | `192.168.2.217` |
 | **Test Domain** | `test.portlama.local` |
 
-🔵 `08:10:12` **[1/3] Installing dependencies...**  
+🔵 `09:37:09` **[1/3] Installing dependencies...**  
 <details>
-<summary>✅ <code>08:10:14</code> apt-get update</summary>
+<summary>✅ <code>09:37:11</code> apt-get update</summary>
 
 ```
 $ apt-get update -qq
@@ -24,7 +24,7 @@ $ apt-get update -qq
 </details>
 
 <details>
-<summary>✅ <code>08:10:18</code> Install curl, jq, oathtool</summary>
+<summary>✅ <code>09:37:15</code> Install curl, jq, oathtool</summary>
 
 ```
 $ apt-get install -y -qq curl jq oathtool
@@ -65,12 +65,12 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 ```
 </details>
 
-✅ `08:10:18` curl, jq, oathtool installed  
-🔵 `08:10:18` **[2/3] Configuring /etc/hosts...**  
-✅ `08:10:18` /etc/hosts configured with test.portlama.local entries  
-🔵 `08:10:18` **[3/3] Verifying connectivity to host...**  
-✅ `08:10:18` Host VM reachable at 192.168.2.206:9292 (HTTP 400 — mTLS correctly rejects unauthenticated client)  
-✅ `08:10:18` Domain panel.test.portlama.local resolves correctly (HTTP 400)  
+✅ `09:37:15` curl, jq, oathtool installed  
+🔵 `09:37:15` **[2/3] Configuring /etc/hosts...**  
+✅ `09:37:15` /etc/hosts configured with test.portlama.local entries  
+🔵 `09:37:15` **[3/3] Verifying connectivity to host...**  
+✅ `09:37:15` Host VM reachable at 192.168.2.217:9292 (HTTP 400 — mTLS correctly rejects unauthenticated client)  
+✅ `09:37:15` Domain panel.test.portlama.local resolves correctly (HTTP 400)  
 
 ---
 
@@ -79,11 +79,11 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.206` |
+| **Host IP** | `192.168.2.217` |
 | **Test Domain** | `test.portlama.local` |
 | **Dependencies** | `curl, jq, oathtool` |
 | **mTLS certs** | `NONE (intentionally — simulates external visitor)` |
 | **/etc/hosts** | `configured for test.portlama.local subdomains` |
 | **Log file** | `/tmp/setup-visitor.md` |
 
-✅ `08:10:18` The visitor VM is ready for E2E tests.  
+✅ `09:37:15` The visitor VM is ready for E2E tests.  

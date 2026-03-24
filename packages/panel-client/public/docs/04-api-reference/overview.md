@@ -193,8 +193,6 @@ Two endpoints use WebSocket for real-time streaming:
 | ------------------------------------- | ------------------------ | ------------- |
 | `WS /api/onboarding/provision/stream` | Provisioning progress    | JSON messages |
 | `WS /api/services/:name/logs`         | Live service log tailing | JSON messages |
-| `WS /api/shell/connect/:label`        | Admin shell relay        | JSON messages |
-| `WS /api/shell/agent/:label`          | Agent shell relay        | JSON messages |
 
 WebSocket connections follow the standard upgrade handshake over the same HTTPS connection. The `wss://` protocol is used in production since all traffic goes through nginx with TLS.
 
@@ -310,21 +308,6 @@ There is no application-level rate limiting. The mTLS requirement means only aut
 | GET    | `/api/services`                           | Management | List service statuses                  |
 | POST   | `/api/services/:name/:action`             | Management | Control a service (start/stop/restart) |
 | WS     | `/api/services/:name/logs`                | Management | Stream service logs                    |
-| GET    | `/api/shell/config`                       | Management | Get shell configuration                |
-| PATCH  | `/api/shell/config`                       | Management | Update shell configuration             |
-| GET    | `/api/shell/policies`                     | Management | List shell policies                    |
-| POST   | `/api/shell/policies`                     | Management | Create shell policy                    |
-| PATCH  | `/api/shell/policies/:policyId`           | Management | Update shell policy                    |
-| DELETE | `/api/shell/policies/:policyId`           | Management | Delete shell policy                    |
-| POST   | `/api/shell/enable/:label`                | Management | Enable shell access for an agent       |
-| DELETE | `/api/shell/enable/:label`                | Management | Disable shell access for an agent      |
-| GET    | `/api/shell/sessions`                     | Management | List shell session audit log           |
-| GET    | `/api/shell/recordings/:label`            | Management | List session recordings for an agent   |
-| GET    | `/api/shell/recordings/:label/:sessionId` | Management | Download a session recording           |
-| GET    | `/api/shell/file/:label`                  | Management | Download file from agent               |
-| POST   | `/api/shell/file/:label`                  | Management | Upload file to agent                   |
-| WS     | `/api/shell/connect/:label`               | Management | Admin WebSocket for shell relay        |
-| WS     | `/api/shell/agent/:label`                 | Management | Agent WebSocket for shell relay        |
 | GET    | `/api/plugins`                            | Management | List installed plugins                 |
 | GET    | `/api/plugins/:name`                      | Management | Get plugin details                     |
 | POST   | `/api/plugins/install`                    | Management | Install a plugin                       |

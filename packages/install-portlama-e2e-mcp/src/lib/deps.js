@@ -79,7 +79,6 @@ export const SINGLE_VM_DEPS = {
   11: [3], // input-validation
   12: [3], // user-invitations
   13: [3], // site-lifecycle
-  14: [3], // shell-lifecycle
   15: [3], // plugin-lifecycle
   16: [3], // enrollment-tokens
 };
@@ -99,7 +98,6 @@ export const THREE_VM_DEPS = {
   7: [1], // site-visitor-journey
   8: [1], // invitation-journey
   9: [1], // agent-site-deploy
-  10: [1], // shell-lifecycle
   11: [1], // plugin-lifecycle
   12: [1], // enrollment-lifecycle
 };

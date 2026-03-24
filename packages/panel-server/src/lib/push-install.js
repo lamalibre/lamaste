@@ -2,7 +2,7 @@ import { readFile, writeFile, rename, open } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { loadAgentRegistry, saveAgentRegistry, withRegistryLock } from './mtls.js';
-import { isIpAllowed } from './shell.js';
+import { isIpAllowed } from './ip-utils.js';
 
 const STATE_DIR = process.env.PORTLAMA_STATE_DIR || '/etc/portlama';
 

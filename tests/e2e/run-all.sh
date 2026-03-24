@@ -65,7 +65,6 @@ TEST_SCRIPTS=(
   "11-input-validation.sh"
   "12-user-invitations.sh"
   "13-site-lifecycle.sh"
-  "14-shell-lifecycle.sh"
   "15-plugin-lifecycle.sh"
   "16-enrollment-tokens.sh"
 )

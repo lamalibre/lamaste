@@ -125,7 +125,7 @@ export default async function pluginRouter(fastify, _opts) {
     // Skip known non-plugin prefixes
     const reservedPrefixes = [
       'health', 'onboarding', 'invite', 'tunnels', 'sites', 'system',
-      'services', 'logs', 'users', 'certs', 'invitations', 'shell', 'plugins',
+      'services', 'logs', 'users', 'certs', 'invitations', 'plugins',
     ];
     if (reservedPrefixes.includes(pluginName)) return;
 

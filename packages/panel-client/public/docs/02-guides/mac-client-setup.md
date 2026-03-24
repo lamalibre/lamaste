@@ -210,17 +210,6 @@ npx serve -l 3000
 
 If your agent certificate includes `sites:read` and `sites:write` capabilities, you can also manage static sites and deploy files directly from the command line. See the [Static Sites guide](static-sites.md) for details.
 
-## Remote Shell
-
-The agent CLI includes commands for remote shell access:
-
-- **`portlama-agent shell-server`** — runs the shell gateway as a background service on the agent machine. This process polls the panel for shell access configuration and, when enabled, connects to the WebSocket relay and spawns a tmux session for the admin to interact with. Requires tmux (`brew install tmux`).
-- **`portlama-agent shell <agent-label>`** — connects from an admin machine to a remote agent's shell via the panel relay. Requires an admin certificate.
-- **`portlama-agent cp <source> <destination>`** — copies files between admin and agent machines. Use `agent-label:/path` syntax for remote paths (e.g., `portlama-agent cp myagent:/var/log/app.log ./app.log`).
-- **`portlama-agent shell-log [agent-label]`** — lists shell session audit logs, optionally filtered by agent.
-
-See the [Remote Shell guide](remote-shell.md) for the full setup walkthrough.
-
 ## Troubleshooting
 
 ### Connection refused or timeout

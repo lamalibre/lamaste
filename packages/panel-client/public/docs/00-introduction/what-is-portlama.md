@@ -24,7 +24,6 @@ Portlama solves the problem of exposing local services to the internet securely.
 - Protects each app with TOTP two-factor authentication (Google Authenticator, Authy, etc.)
 - Manages TLS certificates automatically via Let's Encrypt
 - Provides a browser-based admin panel for everything — no SSH needed after setup
-- Offers secure remote shell access to agent machines with policy-based access control, command blocklists, and session recording
 
 **What you need:**
 

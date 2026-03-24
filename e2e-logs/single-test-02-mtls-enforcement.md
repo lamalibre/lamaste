@@ -1,25 +1,25 @@
 # Portlama E2E: 02 — mTLS Enforcement
 
-> Started at `2026-03-24 08:10:22 UTC`
+> Started at `2026-03-24 09:37:16 UTC`
 
 
 ## Request without client certificate
 
-✅ `08:10:22` Request without cert rejected (HTTP 400)  
+✅ `09:37:16` Request without cert rejected (HTTP 400)  
 
 ## Request with valid client certificate
 
-✅ `08:10:22` Request with valid cert returns HTTP 200  
-✅ `08:10:22` Health endpoint returns ok with valid cert  
+✅ `09:37:16` Request with valid cert returns HTTP 200  
+✅ `09:37:16` Health endpoint returns ok with valid cert  
 
 ## Request with invalid certificate
 
-✅ `08:10:23` Request with untrusted cert rejected (HTTP 400)  
+✅ `09:37:17` Request with untrusted cert rejected (HTTP 400)  
 
 ## Certificate validity check
 
-✅ `08:10:23` Client certificate has valid expiry: notAfter=Mar 23 08:09:22 2028 GMT  
-✅ `08:10:23` Client certificate is signed by the CA  
+✅ `09:37:17` Client certificate has valid expiry: notAfter=Mar 23 09:36:22 2028 GMT  
+✅ `09:37:17` Client certificate is signed by the CA  
 
 ---
 

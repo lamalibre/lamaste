@@ -1,6 +1,6 @@
 # setup-agent
 
-> Started at `2026-03-24 08:10:10 UTC` — log level **1**
+> Started at `2026-03-24 09:37:07 UTC` — log level **1**
 
 
 ---
@@ -10,40 +10,40 @@
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.206` |
+| **Host IP** | `192.168.2.217` |
 | **Test Domain** | `test.portlama.local` |
 
-🔵 `08:10:10` **[1/5] Configuring /etc/hosts...**  
-✅ `08:10:10` /etc/hosts configured with test.portlama.local entries  
-🔵 `08:10:10` **[2/5] Installing Chisel...**  
-ℹ️ `08:10:11` Downloading Chisel v1.11.5...  
+🔵 `09:37:07` **[1/5] Configuring /etc/hosts...**  
+✅ `09:37:07` /etc/hosts configured with test.portlama.local entries  
+🔵 `09:37:07` **[2/5] Installing Chisel...**  
+ℹ️ `09:37:08` Downloading Chisel v1.11.5...  
 <details>
-<summary>✅ <code>08:10:11</code> Download Chisel v1.11.5</summary>
+<summary>✅ <code>09:37:08</code> Download Chisel v1.11.5</summary>
 
 ```
-$ curl -sL -o /tmp/chisel-Pf7oao.gz https://github.com/jpillora/chisel/releases/download/v1.11.5/chisel_1.11.5_linux_arm64.gz
+$ curl -sL -o /tmp/chisel-qj1Kle.gz https://github.com/jpillora/chisel/releases/download/v1.11.5/chisel_1.11.5_linux_arm64.gz
 
 ```
 </details>
 
 <details>
-<summary>✅ <code>08:10:11</code> Extract Chisel archive</summary>
+<summary>✅ <code>09:37:08</code> Extract Chisel archive</summary>
 
 ```
-$ gunzip -f /tmp/chisel-Pf7oao.gz
+$ gunzip -f /tmp/chisel-qj1Kle.gz
 
 ```
 </details>
 
-✅ `08:10:11` Chisel installed: 1.11.5  
-🔵 `08:10:11` **[3/5] Setting up agent P12 certificate...**  
-✅ `08:10:11` Agent P12 installed at ~/.portlama/client.p12  
-✅ `08:10:11` PEM files extracted to ~/.portlama/  
-🔵 `08:10:11` **[4/5] Verifying panel connectivity...**  
-✅ `08:10:11` Panel is reachable via agent P12 certificate  
-✅ `08:10:11` Panel is reachable via domain: panel.test.portlama.local  
-🔵 `08:10:11` **[5/5] Installing Python 3...**  
-✅ `08:10:11` Python 3 already installed: Python 3.12.3  
+✅ `09:37:08` Chisel installed: 1.11.5  
+🔵 `09:37:08` **[3/5] Setting up agent P12 certificate...**  
+✅ `09:37:08` Agent P12 installed at ~/.portlama/client.p12  
+✅ `09:37:08` PEM files extracted to ~/.portlama/  
+🔵 `09:37:08` **[4/5] Verifying panel connectivity...**  
+✅ `09:37:08` Panel is reachable via agent P12 certificate  
+✅ `09:37:08` Panel is reachable via domain: panel.test.portlama.local  
+🔵 `09:37:08` **[5/5] Installing Python 3...**  
+✅ `09:37:08` Python 3 already installed: Python 3.12.3  
 
 ---
 
@@ -52,7 +52,7 @@ $ gunzip -f /tmp/chisel-Pf7oao.gz
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.206` |
+| **Host IP** | `192.168.2.217` |
 | **Test Domain** | `test.portlama.local` |
 | **Chisel** | `1.11.5` |
 | **Python** | `Python 3.12.3` |
@@ -61,4 +61,4 @@ $ gunzip -f /tmp/chisel-Pf7oao.gz
 | **Agent PEM Key** | `~/.portlama/client.key` |
 | **Panel reachable** | `yes` |
 
-✅ `08:10:11` The agent VM is ready for E2E tests.  
+✅ `09:37:08` The agent VM is ready for E2E tests.  

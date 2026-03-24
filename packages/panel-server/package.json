@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-panel-server",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Portlama management panel backend",
   "private": true,
   "type": "module",

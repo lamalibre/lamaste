@@ -17,7 +17,6 @@ The desktop agent provides a native GUI for managing Portlama tunnels with:
 - **mTLS authentication** — connects to the panel using agent-scoped certificates
 - **Tunnel management** — start, stop, and monitor Chisel tunnels
 - **Service discovery** — auto-detects local services (Ollama, ComfyUI, PostgreSQL, Redis, etc.) and Docker containers, with one-click tunnel creation
-- **Remote shell management** — enable/disable shell access for agents, create and manage shell policies (IP allow/deny, command blocklists, timeouts), and view session audit logs
 - **Custom services** — user-defined service definitions persisted in `~/.portlama/services.json`
 - **System tray** — background operation with status indicator
 - **IPC** — Rust backend handles mTLS and Chisel; React frontend handles UI
