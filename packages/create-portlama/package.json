@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/create-portlama",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "description": "One-command setup for secure reverse tunnels with a management dashboard",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",
