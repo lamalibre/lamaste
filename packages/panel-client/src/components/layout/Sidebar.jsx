@@ -1,28 +1,79 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Activity,
+  BarChart3,
   BookOpen,
+  Box,
+  Cpu,
+  Database,
   FileText,
+  Folder,
+  GitBranch,
   Globe,
+  HardDrive,
+  Heart,
+  Layers,
   LayoutDashboard,
+  List,
+  Map,
   Menu,
   Package,
   Server,
+  Settings,
+  Shield,
   ShieldCheck,
+  Terminal,
+  Truck,
   Users,
+  Wifi,
   X,
+  Zap,
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
 
+const iconMap = {
+  activity: Activity,
+  'bar-chart-3': BarChart3,
+  'book-open': BookOpen,
+  box: Box,
+  cpu: Cpu,
+  database: Database,
+  'file-text': FileText,
+  folder: Folder,
+  'git-branch': GitBranch,
+  globe: Globe,
+  'hard-drive': HardDrive,
+  heart: Heart,
+  layers: Layers,
+  'layout-dashboard': LayoutDashboard,
+  list: List,
+  map: Map,
+  package: Package,
+  server: Server,
+  settings: Settings,
+  shield: Shield,
+  'shield-check': ShieldCheck,
+  terminal: Terminal,
+  truck: Truck,
+  users: Users,
+  wifi: Wifi,
+  zap: Zap,
+};
+
+function resolveIcon(iconName) {
+  return (iconName && Object.hasOwn(iconMap, iconName) && iconMap[iconName]) || Package;
+}
+
 const baseNavItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/tunnels', icon: Globe, label: 'Tunnels' },
-  { to: '/sites', icon: FileText, label: 'Static Sites' },
-  { to: '/users', icon: Users, label: 'Users' },
-  { to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
-  { to: '/services', icon: Server, label: 'Services' },
-  { to: '/plugins', icon: Package, label: 'Plugins' },
-  { to: '/docs', icon: BookOpen, label: 'Documentation' },
+  { type: 'link', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { type: 'link', to: '/tunnels', icon: Globe, label: 'Tunnels' },
+  { type: 'link', to: '/sites', icon: FileText, label: 'Static Sites' },
+  { type: 'link', to: '/users', icon: Users, label: 'Users' },
+  { type: 'link', to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
+  { type: 'link', to: '/services', icon: Server, label: 'Services' },
+  { type: 'link', to: '/plugins', icon: Package, label: 'Plugins' },
+  { type: 'link', to: '/docs', icon: BookOpen, label: 'Documentation' },
 ];
 
 async function fetchEnabledPlugins() {
@@ -31,7 +82,7 @@ async function fetchEnabledPlugins() {
     if (!res.ok) return [];
     const data = await res.json();
     return (data.plugins || []).filter(
-      (p) => p.status === 'enabled' && p.panel?.label,
+      (p) => p.status === 'enabled' && (p.panel?.label || p.panel?.pages?.length),
     );
   } catch {
     return [];
@@ -46,11 +97,29 @@ function SidebarContent({ onLinkClick }) {
     staleTime: 15000,
   });
 
-  const pluginNavItems = (enabledPlugins || []).map((p) => ({
-    to: `/plugins/${p.name}`,
-    icon: Package,
-    label: p.panel.label,
-  }));
+  const pluginNavItems = (enabledPlugins || []).flatMap((p) => {
+    if (p.panel?.pages?.length) {
+      const groupLabel = p.displayName || p.name;
+      return [
+        { type: 'section-header', label: groupLabel, key: `section-${p.name}` },
+        ...p.panel.pages.map((page) => ({
+          type: 'link',
+          to: `/plugins/${p.name}${page.path}`,
+          icon: resolveIcon(page.icon),
+          label: page.title,
+        })),
+      ];
+    }
+    if (p.panel?.label) {
+      return [{
+        type: 'link',
+        to: `/plugins/${p.name}`,
+        icon: resolveIcon(p.panel?.icon),
+        label: p.panel.label,
+      }];
+    }
+    return [];
+  });
 
   const navItems = [...baseNavItems, ...pluginNavItems];
 
@@ -61,9 +130,17 @@ function SidebarContent({ onLinkClick }) {
       </div>
 
       <nav className="flex-1 space-y-1 px-2 py-4">
-        {navItems.map((item) => (
-          <SidebarLink key={item.to} {...item} onClick={onLinkClick} />
-        ))}
+        {navItems.map((item) =>
+          item.type === 'section-header' ? (
+            <div key={item.key} className="px-3 pt-4 pb-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-600">
+                {item.label}
+              </span>
+            </div>
+          ) : (
+            <SidebarLink key={item.to} to={item.to} icon={item.icon} label={item.label} onClick={onLinkClick} />
+          ),
+        )}
       </nav>
 
       <div className="border-t border-zinc-800 px-4 py-3">

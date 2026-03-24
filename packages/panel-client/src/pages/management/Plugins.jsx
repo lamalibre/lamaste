@@ -71,11 +71,15 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Package size={16} className="text-cyan-400" />
-          <span className="text-white font-semibold">{plugin.name}</span>
+          <span className="text-white font-semibold">{plugin.displayName || plugin.name}</span>
           <span className="text-zinc-500 text-xs">v{plugin.version}</span>
         </div>
         <StatusBadge status={plugin.status} />
       </div>
+
+      {plugin.displayName && (
+        <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>
+      )}
 
       {plugin.description && (
         <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>
@@ -85,6 +89,9 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
         {plugin.packageName}
         {plugin.installedAt && (
           <span> &middot; Installed {new Date(plugin.installedAt).toLocaleDateString()}</span>
+        )}
+        {plugin.panel?.pages?.length > 0 && (
+          <span> &middot; {plugin.panel.pages.length} page{plugin.panel.pages.length > 1 ? 's' : ''}</span>
         )}
       </p>
 

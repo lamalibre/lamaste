@@ -20,27 +20,44 @@ function withPluginLock(fn) {
 
 // --- Plugin manifest schema ---
 
+const CapabilityStringSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(
+    /^[a-z0-9-]+:[a-z0-9-]+$/,
+    'Capabilities must follow the format "scope:action" (lowercase, hyphens allowed)',
+  );
+
+const PanelPageSchema = z.object({
+  path: z.string().min(1).max(200).regex(/^\/[a-z0-9-/]*$/, 'Page path must start with / and contain only lowercase letters, numbers, hyphens, and slashes'),
+  title: z.string().min(1).max(100),
+  icon: z.string().max(50).optional(),
+  description: z.string().max(500).optional(),
+});
+
 const ManifestSchema = z.object({
   name: z
     .string()
     .min(1)
     .max(100)
     .regex(/^[a-z0-9-]+$/, 'Plugin name must contain only lowercase letters, numbers, and hyphens'),
+  displayName: z.string().min(1).max(100).regex(/^[\x20-\x7E]+$/, 'Display name must contain only printable ASCII characters').optional(),
   version: z.string().min(1).max(50),
   description: z.string().max(500).optional().default(''),
   capabilities: z
-    .array(
-      z
-        .string()
-        .min(1)
-        .max(100)
-        .regex(
-          /^[a-z0-9-]+:[a-z0-9-]+$/,
-          'Capabilities must follow the format "scope:action" (lowercase, hyphens allowed)',
-        ),
-    )
+    .union([
+      z.array(CapabilityStringSchema),
+      z.object({
+        agent: z.array(CapabilityStringSchema).optional().default([]),
+      }),
+    ])
     .optional()
-    .default([]),
+    .default([])
+    .transform((val) => {
+      if (val && typeof val === 'object' && !Array.isArray(val)) return val.agent ?? [];
+      return val;
+    }),
   packages: z
     .object({
       server: z.string().min(1).regex(/^@lamalibre\//, 'Server package must be in the @lamalibre/ scope').optional(),
@@ -49,13 +66,44 @@ const ManifestSchema = z.object({
     .optional()
     .default({}),
   panel: z
-    .object({
-      label: z.string().min(1).max(100).optional(),
-      icon: z.string().max(50).optional(),
-      route: z.string().max(200).optional(),
-    })
+    .union([
+      z.object({
+        label: z.string().min(1).max(100).optional(),
+        icon: z.string().max(50).optional(),
+        route: z.string().max(200).optional(),
+      }),
+      z.object({
+        pages: z.array(PanelPageSchema).min(1).max(50).refine(
+          (pages) => new Set(pages.map((p) => p.path)).size === pages.length,
+          'Page paths must be unique within a plugin',
+        ),
+        apiPrefix: z.string().max(200).regex(/^\/api\/[a-z0-9-]+$/).optional(),
+      }),
+    ])
     .optional()
     .default({}),
+  config: z
+    .record(
+      z.string().min(1).max(100).regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/, 'Config key must start with a letter and contain only letters, numbers, hyphens, and underscores'),
+      z.object({
+        type: z.enum(['string', 'number', 'boolean']),
+        default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+        description: z.string().max(500).optional(),
+        enum: z.array(z.union([z.string(), z.number()])).max(100).optional(),
+      }).refine(
+        (entry) => {
+          if (entry.default === undefined) return true;
+          return typeof entry.default === entry.type;
+        },
+        { message: 'Config default value must match declared type' },
+      ),
+    )
+    .optional()
+    .default({})
+    .refine(
+      (val) => Object.keys(val).length <= 50,
+      { message: 'Config must have at most 50 keys' },
+    ),
 });
 
 // --- Plugin registry persistence ---
@@ -202,6 +250,30 @@ export function installPlugin(packageName, logger) {
       );
     }
 
+    // Reject displayName that matches reserved navigation labels
+    if (manifest.displayName) {
+      const RESERVED_LABELS = [
+        'dashboard', 'tunnels', 'static sites', 'users', 'certificates',
+        'services', 'plugins', 'documentation',
+      ];
+      if (RESERVED_LABELS.includes(manifest.displayName.toLowerCase())) {
+        await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
+        throw Object.assign(
+          new Error(`Plugin display name "${manifest.displayName}" conflicts with a core navigation label`),
+          { statusCode: 400 },
+        );
+      }
+    }
+
+    // Validate apiPrefix matches plugin name if specified
+    if (manifest.panel?.apiPrefix && manifest.panel.apiPrefix !== `/api/${manifest.name}`) {
+      await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
+      throw Object.assign(
+        new Error(`Plugin apiPrefix must be "/api/${manifest.name}" but got "${manifest.panel.apiPrefix}"`),
+        { statusCode: 400 },
+      );
+    }
+
     // Create the plugin state directory
     const pluginDir = path.join(PLUGINS_DIR, manifest.name);
     await mkdir(pluginDir, { recursive: true, mode: 0o700 });
@@ -209,12 +281,14 @@ export function installPlugin(packageName, logger) {
     // Add to registry
     const entry = {
       name: manifest.name,
+      displayName: manifest.displayName,
       packageName,
       version: manifest.version,
       description: manifest.description,
       capabilities: manifest.capabilities,
       packages: manifest.packages,
       panel: manifest.panel,
+      config: manifest.config,
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };

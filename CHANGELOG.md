@@ -5,7 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-03-23
+## [Unreleased] - 2026-03-24
+
+### Added
+
+- Add multi-page plugin manifest support — plugins can declare multiple panel pages with per-page icons and titles, rendered as grouped sidebar entries
+- Add `displayName` field to plugin manifest for human-friendly sidebar section headers
+- Add `config` field to plugin manifest for declarative plugin configuration schemas (type, default, enum, description)
+- Add nested capabilities format (`{ agent: [...] }`) alongside existing flat array, normalized to flat array internally
+- Add `apiPrefix` field to multi-page plugin manifest for declaring the plugin's API route prefix
+- Update `/run-e2e` skill to use MCP E2E tools (`mcp__e2e__*`) as preferred method with orchestrate.sh as fallback
+
+### Changed
+
+- Update plugin management UI to show `displayName` as primary label with package name as subtitle
+- Update plugin management UI to show page count for multi-page plugins
+
+### Security
+
+- Add path regex constraint on plugin page paths (`/^\/[a-z0-9-/]*$/`) to prevent route traversal
+- Add config key regex constraint (`/^[a-zA-Z][a-zA-Z0-9_-]*$/`) to prevent prototype pollution via `__proto__` or `constructor` keys
+- Add config default type validation — default value must match declared type
+- Add config record size limits (max 50 keys, max 100 enum values per key) to prevent registry bloat on 512MB droplets
+- Add `displayName` reserved label check — rejects names matching core navigation items (Dashboard, Tunnels, etc.)
+- Add `displayName` printable ASCII constraint to prevent Unicode control character UI spoofing
+- Add `apiPrefix` enforcement — must match `/api/{pluginName}` to prevent core route shadowing
+- Add pages array bounds (max 50 pages) and uniqueness constraint on page paths within a plugin
+- Add `Object.hasOwn()` guard on sidebar icon resolution to prevent prototype chain lookups
+
+## 2026-03-23
 
 ### Added
 

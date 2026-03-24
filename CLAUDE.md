@@ -112,7 +112,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
   - `system:read` — system stats
   - `sites:read` / `sites:write` — static site file browsing and deployment (site CRUD is admin-only)
   - `allowedSites: string[]` — per-site scoping; agent sees and can deploy to only listed sites
-- Plugins declare additional capabilities in their manifest; these are merged with base capabilities dynamically via `getValidCapabilities()`
+- Plugins declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` — normalized to flat array internally); these are merged with base capabilities dynamically via `getValidCapabilities()`
 - Shell management endpoints (enable/disable, policies, sessions) are admin-only at the route level — there is no `shell:admin` capability
 - Plugin management endpoints (install, enable, push install) are admin-only at the route level
 - Revoked certs tracked in `revoked.json`, rejected by middleware
@@ -120,7 +120,9 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 
 **Plugin system:**
 
-- Plugins are `@lamalibre/`-scoped npm packages with a `portlama-plugin.json` manifest
+- Plugins are `@lamalibre/`-scoped npm packages with a `portlama-plugin.json` manifest (`name`, optional `displayName`, `version`, `description`, `capabilities`, `packages`, `panel`, `config`)
+- Manifest `panel` field: flat format (`{ label, icon, route }`) for single-page plugins, or multi-page format (`{ pages: [{ path, title, icon?, description? }], apiPrefix? }`) — sidebar renders one entry per page with section header
+- Manifest `config` field: declarative schema for plugin settings (`{ key: { type, default?, description?, enum? } }`) — stored in registry, used by plugin's settings UI
 - Server-side plugin code runs unsandboxed in the panel process — `@lamalibre/` scope is the trust boundary
 - All `npm install` calls use `--ignore-scripts` to block postinstall script execution
 - Plugin names matching core API prefixes (`tunnels`, `plugins`, `health`, etc.) are rejected

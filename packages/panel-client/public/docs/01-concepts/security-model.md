@@ -86,7 +86,7 @@ Agent certificates are generated from the panel UI and should be used instead of
 
 Shell management endpoints (enable/disable, policies, session audit) are admin-only at the route level and do not use a capability. Agents provide shell access by running `shell-server`, but cannot initiate or manage shell sessions.
 
-Capabilities are stored server-side and can be updated without reissuing the certificate. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
+Capabilities are stored server-side and can be updated without reissuing the certificate. Plugins can declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` format); these are merged with base capabilities dynamically and available for assignment to agent certificates. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
 
 In addition to capabilities, agent certificates support **per-site scoping** via `allowedSites`. Each agent has a list of site names it is permitted to access. When an agent calls `GET /api/sites`, it only sees sites in its `allowedSites` list. File operations (upload, list, delete) require both the relevant capability and the site name in the agent's `allowedSites`. The admin manages site assignments from **Panel** > **Certificates** > edit agent > **Site Access**, or via the `PATCH /api/certs/agent/:label/allowed-sites` endpoint.
 

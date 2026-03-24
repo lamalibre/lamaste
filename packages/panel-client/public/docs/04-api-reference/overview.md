@@ -359,4 +359,4 @@ Agent certificates use capability-based access control. Base capabilities are al
 | `sites:read`     | List sites and browse files                                     |
 | `sites:write`    | Upload and delete files on assigned sites                       |
 
-**Plugin-declared capabilities:** Plugins can declare additional capabilities in their `portlama-plugin.json` manifest. These are merged with base capabilities and available for assignment to agent certificates. Capabilities are validated dynamically via `getValidCapabilities()`.
+**Plugin-declared capabilities:** Plugins can declare additional capabilities in their `portlama-plugin.json` manifest using either a flat array (`"capabilities": ["scope:action"]`) or a nested object (`"capabilities": { "agent": ["scope:action"] }`). Both formats are normalized to a flat array internally. These are merged with base capabilities and available for assignment to agent certificates. Capabilities are validated dynamically via `getValidCapabilities()`.
