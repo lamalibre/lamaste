@@ -562,18 +562,17 @@ export async function requestTicket(config, scope, instanceId, target) {
 }
 
 /**
- * Report a session creation to the panel.
+ * Report a session creation to the panel. Session ID is generated server-side.
  * @param {object} config - Agent config object
  * @param {string} ticketId - The ticket ID
- * @param {string} sessionId - The session ID
- * @returns {Promise<object>}
+ * @returns {Promise<{ ok: boolean, session: object }>}
  */
-export async function reportSessionCreation(config, ticketId, sessionId) {
+export async function reportSessionCreation(config, ticketId) {
   const url = `${config.panelUrl}/api/tickets/sessions`;
   const curlArgs = [
     '-X', 'POST',
     '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ ticketId, sessionId }),
+    '-d', JSON.stringify({ ticketId }),
     url,
   ];
   try {
@@ -613,7 +612,7 @@ export async function updateSessionStatus(config, sessionId, status) {
   const curlArgs = [
     '-X', 'PATCH',
     '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ status, lastActivityAt: new Date().toISOString() }),
+    '-d', JSON.stringify({ status }),
     url,
   ];
   try {

@@ -74,31 +74,36 @@ portlama ALL=(root) NOPASSWD: /usr/bin/systemctl restart portlama-panel
 # --- nginx config test ---
 portlama ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 
-# --- certbot: restrict certonly to --nginx (code always passes --non-interactive) ---
-# Note: trailing wildcard allows additional flags; trust boundary is @lamalibre/ scope
-portlama ALL=(root) NOPASSWD: /usr/bin/certbot certonly --nginx *
-portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew
-portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name *
-portlama ALL=(root) NOPASSWD: /usr/bin/certbot certificates
+# --- certbot: restrict to exact flag patterns used by the application ---
+portlama ALL=(root) NOPASSWD: /usr/bin/certbot certonly --nginx -d * --email * --agree-tos --non-interactive
+portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew --non-interactive
+portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name * --non-interactive
+portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name * --force-renewal --non-interactive
+portlama ALL=(root) NOPASSWD: /usr/bin/certbot certificates --non-interactive
 
-# --- openssl: restricted to PKI and Let's Encrypt paths ---
-portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/portlama/pki/* *
-portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/letsencrypt/live/* *
+# --- openssl: read-only operations (no trailing wildcards) ---
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/portlama/pki/* -serial -noout
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/portlama/pki/* -enddate -noout
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -checkend 86400 -noout -in /etc/letsencrypt/live/*
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -enddate -noout -in /etc/letsencrypt/live/*
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/letsencrypt/live/* -enddate -noout
+# --- openssl: PKI generation and signing (trailing * for variable -subj CN) ---
+# Trust boundary: only @lamalibre/ scoped code runs as portlama user
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -req -in /etc/portlama/pki/* *
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl genrsa -out /etc/portlama/pki/* *
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl req -new -key /etc/portlama/pki/* *
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -out /etc/portlama/pki/*
 
-# --- mv: restrict source to /tmp/ or known config paths ---
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /var/www/portlama/*
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/nginx/sites-available/*
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/systemd/system/chisel.service
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/systemd/system/authelia.service
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/systemd/system/portlama-panel.service
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/portlama/pki/*
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /usr/local/bin/chisel
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /usr/local/bin/authelia
-portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /etc/authelia/*
+# --- mv: restrict source to known temp-file prefixes (no bare /tmp/*) ---
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/site-index-* /var/www/portlama/*
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/site-upload-* /var/www/portlama/*
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/invite-page-* /var/www/portlama/*
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/nginx-* /etc/nginx/sites-available/*
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/chisel-service-* /etc/systemd/system/chisel.service
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/authelia-service-* /etc/systemd/system/authelia.service
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/chisel-* /usr/local/bin/chisel
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/authelia-* /usr/local/bin/authelia
+portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/portlama-authelia-* /etc/authelia/*
 portlama ALL=(root) NOPASSWD: /usr/bin/mv /etc/portlama/pki/*.new /etc/portlama/pki/*
 portlama ALL=(root) NOPASSWD: /usr/bin/mv /etc/nginx/sites-available/*.bak /etc/nginx/sites-available/*
 

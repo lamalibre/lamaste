@@ -14,10 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add ticket API endpoints: scope CRUD, instance registration/heartbeat/deregister, assignment management, ticket request/validate/inbox, session lifecycle
 - Add instance liveness tracking with automatic cleanup — active → stale (5 min) → dead (1 hr)
 - Add agent panel-api functions for ticket operations (scope registration, instance management, ticket request/validate, session lifecycle)
+- Add `@lamalibre/portlama-tickets` TypeScript SDK for client-side ticket lifecycle — `TicketClient`, `TicketInstanceManager` (source side), `TicketSessionManager` (target side)
+- Add instance deregistration on SDK shutdown — `TicketInstanceManager.stop()` calls `DELETE /api/tickets/instances/:id` for immediate cleanup
+- Add `certbot renew` force-renewal option — `renewCert(domain, { forceRenewal: true })` in certbot library
 
 ### Changed
 
 - Extract reserved API prefixes into shared `constants.js` module — single source of truth for plugin and ticket scope name validation
+- Use `renewCert()` library function in cert renewal route instead of raw `execa` call
+- Add `--non-interactive` flag to `certbot certificates` invocations
 
 ### Security
 
@@ -28,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `tickets` and `settings` to plugin reserved display labels — prevents sidebar navigation confusion
 - Add self-ticket rejection — source agent cannot issue tickets targeting itself
 - Add rate limit interval cleanup on graceful shutdown
+- Replace raw `timingSafeEqual` with HMAC-SHA256 comparison — eliminates length-leak side channel using per-process random key and fixed-length digests
+- Generate session IDs server-side via `crypto.randomBytes(16)` — prevents client-chosen ID collisions
+- Enforce server-side `lastActivityAt` timestamps — prevents clients from extending session lifetime
+- Add host validation on `transport.direct.host` — rejects private IPs, loopback, link-local, and cloud metadata endpoints (SSRF prevention)
+- Tighten sudoers `mv` rules with specific temp-file prefixes — `portlama-authelia-*` for authelia configs, `chisel-*` for chisel binary (was `chisel_*`), remove dead `portlama-service-*` and `portlama-pki-*` rules
+- Remove certbot stderr from HTTP error responses in cert renewal endpoint — details logged server-side only
 
 **Affected packages:**
 
@@ -35,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/portlama-panel-server` 0.1.8 → 0.1.9
 - `@lamalibre/portlama-panel-client` 0.1.6 → 0.1.7
 - `@lamalibre/portlama-agent` 1.0.8 → 1.0.9
+- `@lamalibre/portlama-tickets` 0.1.0 (new package)
 
 ## [Unreleased] - 2026-03-25
 

@@ -100,7 +100,7 @@ export async function issueAppCert(subdomain, domain, email) {
 export async function listCerts() {
   let stdout;
   try {
-    const result = await execa('sudo', ['certbot', 'certificates']);
+    const result = await execa('sudo', ['certbot', 'certificates', '--non-interactive']);
     stdout = result.stdout;
   } catch (err) {
     // certbot certificates returns non-zero if no certs exist
@@ -165,10 +165,15 @@ export async function listCerts() {
  * Renew a specific certificate by name.
  *
  * @param {string} domain - Certificate name (usually the domain)
+ * @param {{ forceRenewal?: boolean }} [options]
  */
-export async function renewCert(domain) {
+export async function renewCert(domain, options = {}) {
+  const args = ['certbot', 'renew', '--cert-name', domain];
+  if (options.forceRenewal) args.push('--force-renewal');
+  args.push('--non-interactive');
+
   try {
-    await execa('sudo', ['certbot', 'renew', '--cert-name', domain]);
+    await execa('sudo', args);
     return { renewed: true, domain };
   } catch (err) {
     throw new Error(`Failed to renew certificate for ${domain}: ${err.stderr || err.message}`);
@@ -180,7 +185,7 @@ export async function renewCert(domain) {
  */
 export async function renewAll() {
   try {
-    const { stdout } = await execa('sudo', ['certbot', 'renew']);
+    const { stdout } = await execa('sudo', ['certbot', 'renew', '--non-interactive']);
     return { renewed: true, output: stdout };
   } catch (err) {
     throw new Error(`Failed to renew certificates: ${err.stderr || err.message}`);

@@ -464,10 +464,13 @@ Agent-to-agent authorization with scopes, instances, tickets, and sessions. Prov
 - **Scope registry** — register/unregister capability sets with transport configuration
 - **Instance management** — register, heartbeat, deregister with liveness tracking (active → stale → dead)
 - **Assignment management** — link agents to instances (admin-only)
-- **Ticket operations** — request, validate (timing-safe), revoke with rate limiting (10/agent/min) and hard caps (200 instances, 1000 tickets, 500 sessions)
-- **Session management** — create from validated ticket, heartbeat with multi-layer re-validation, status updates
+- **Ticket operations** — request, validate (HMAC-SHA256 + `timingSafeEqual` with per-process random key), revoke with rate limiting (10/agent/min) and hard caps (200 instances, 1000 tickets, 500 sessions)
+- **Session management** — create from validated ticket (server-generated session IDs via `crypto.randomBytes(16)`, server-enforced timestamps), heartbeat with multi-layer re-validation, status updates
+- **Host validation** — `transport.direct.host` rejects private/reserved IPs and cloud metadata endpoints (SSRF prevention)
 - **Periodic cleanup** — stale/dead instances, expired tickets, dead sessions
 - **Concurrency** — promise-chain mutex with atomic file writes (temp → fsync → rename)
+
+Client SDK: `@lamalibre/portlama-tickets` (TypeScript, undici) provides `TicketClient`, `TicketInstanceManager` (source side), and `TicketSessionManager` (target side) for plugin integration.
 
 State files: `/etc/portlama/ticket-scopes.json` (scopes, instances, assignments) and `/etc/portlama/tickets.json` (tickets, sessions).
 

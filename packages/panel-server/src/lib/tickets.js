@@ -90,13 +90,32 @@ export const RegisterScopeSchema = z.object({
   transport: TransportSchema,
 });
 
+// Hostname/IP validation: reject private, loopback, link-local, and metadata IPs
+const HostnameSchema = z.string().min(1).max(255).refine((host) => {
+  // Block metadata endpoint (AWS/GCP/Azure)
+  if (host === '169.254.169.254' || host === 'metadata.google.internal') return false;
+  // Block loopback
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+  // Block IPv4 private ranges and link-local
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number);
+    if (a === 10) return false;                         // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return false;  // 172.16.0.0/12
+    if (a === 192 && b === 168) return false;            // 192.168.0.0/16
+    if (a === 169 && b === 254) return false;            // 169.254.0.0/16 link-local
+    if (a === 0) return false;                           // 0.0.0.0/8
+  }
+  return true;
+}, { message: 'Host must be a public hostname or IP address' });
+
 export const RegisterInstanceSchema = z.object({
   scope: CapabilityStringSchema,
   transport: z.object({
     strategies: z.array(TransportStrategySchema).min(1),
     preferred: TransportStrategySchema.optional(),
     direct: z.object({
-      host: z.string().min(1).max(255),
+      host: HostnameSchema,
       port: z.number().int().min(1024).max(65535),
     }).optional(),
   }),
@@ -114,12 +133,10 @@ export const ValidateTicketSchema = z.object({
 
 export const CreateSessionSchema = z.object({
   ticketId: z.string().min(1).max(128).regex(/^[a-f0-9]+$/),
-  sessionId: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/),
 });
 
 export const UpdateSessionSchema = z.object({
   status: z.enum(['active', 'grace']),
-  lastActivityAt: z.string().datetime().optional(),
 });
 
 export const AssignmentSchema = z.object({
@@ -213,10 +230,15 @@ function cleanTickets(store) {
 
 // --- Timing-safe comparison ---
 
+// Per-process random key prevents pre-computation if source is read
+const COMPARE_KEY = crypto.randomBytes(32);
+
 function safeCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  // HMAC both values to get fixed-length digests, avoiding length-leak in timingSafeEqual.
+  const ha = crypto.createHmac('sha256', COMPARE_KEY).update(a).digest();
+  const hb = crypto.createHmac('sha256', COMPARE_KEY).update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
 }
 
 // --- Rate limiting ---
@@ -817,7 +839,7 @@ export function revokeTicket(ticketId, logger) {
 
 // --- Session management ---
 
-export function createSession(ticketId, sessionId, callerLabel, logger) {
+export function createSession(ticketId, callerLabel, logger) {
   return withTicketLock(async () => {
     const store = await loadTicketStore();
 
@@ -836,6 +858,8 @@ export function createSession(ticketId, sessionId, callerLabel, logger) {
       throw Object.assign(new Error('Session limit reached'), { statusCode: 503 });
     }
 
+    // Generate session ID server-side for uniqueness guarantee
+    const sessionId = crypto.randomBytes(16).toString('hex');
     const now = new Date().toISOString();
     const session = {
       sessionId,
@@ -936,7 +960,7 @@ export function sessionHeartbeat(sessionId, callerLabel) {
   });
 }
 
-export function updateSession(sessionId, status, lastActivityAt, callerLabel) {
+export function updateSession(sessionId, status, callerLabel) {
   return withTicketLock(async () => {
     const store = await loadTicketStore();
     const session = store.sessions.find(
@@ -988,7 +1012,8 @@ export function updateSession(sessionId, status, lastActivityAt, callerLabel) {
     }
 
     session.status = status;
-    if (lastActivityAt) session.lastActivityAt = lastActivityAt;
+    // Always set server-side timestamp to prevent clients from extending session lifetime
+    session.lastActivityAt = new Date().toISOString();
     await saveTicketStore(store);
 
     return { ok: true };

@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import prettierConfig from 'eslint-config-prettier';
@@ -110,6 +111,24 @@ export default [
     },
   },
 
-  // 6. Prettier compat — must be last to disable formatting rules
+  // 6. TypeScript config for portlama-tickets
+  ...tseslint.configs.recommended.map((config) => ({
+    ...config,
+    files: ['packages/portlama-tickets/src/**/*.ts'],
+  })),
+  {
+    files: ['packages/portlama-tickets/src/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+
+  // 7. Prettier compat — must be last to disable formatting rules
   prettierConfig,
 ];

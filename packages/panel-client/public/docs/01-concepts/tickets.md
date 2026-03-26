@@ -93,13 +93,13 @@ Source Agent                    Panel                     Target Agent
      │                           │  POST /tickets/validate    │
      │                           │  {ticketId}                │
      │                           │◀───────────────────────────│
-     │                           │ ── timing-safe compare     │
+     │                           │ ── HMAC timing-safe compare │
      │                           │ ── mark as used            │
      │                           │  { valid, transport }      │
      │                           │───────────────────────────▶│
      │                           │                            │
      │                           │  POST /tickets/sessions    │
-     │                           │  {ticketId, sessionId}     │
+     │                           │  {ticketId}                │
      │                           │◀───────────────────────────│
      │                           │  { session }               │
      │                           │───────────────────────────▶│
@@ -119,9 +119,15 @@ Source Agent                    Panel                     Target Agent
 2. **Multi-stage validation** — panel checks: source has capability, target has capability, source owns instance, instance is active (not stale/dead), source is not targeting itself, target is assigned to instance
 3. **Issuance** — 256-bit random ticket ID (`crypto.randomBytes(32)`), 30-second expiry
 4. **Delivery** — ticket appears in target's inbox (`GET /api/tickets/inbox`)
-5. **Validation** — target calls `POST /api/tickets/validate` with the ticket ID; timing-safe comparison marks it as used atomically
-6. **Session** — target creates a session (`POST /api/tickets/sessions`); panel tracks with heartbeat re-validation
+5. **Validation** — target calls `POST /api/tickets/validate` with the ticket ID; HMAC-based timing-safe comparison marks it as used atomically
+6. **Session** — target reports session creation (`POST /api/tickets/sessions`) with only the ticket ID; the panel generates the session ID server-side (`crypto.randomBytes(16)`) and sets all timestamps server-side, then tracks with heartbeat re-validation
 7. **Cleanup** — tickets expire after 1 hour (removed from store); dead sessions cleaned after 24 hours
+
+### Server-Generated Session IDs and Timestamps
+
+Session IDs are always generated server-side via `crypto.randomBytes(16).toString('hex')`. The client sends only the `ticketId` when creating a session; the server generates and returns the session ID. This guarantees uniqueness without trusting client input.
+
+Similarly, `lastActivityAt` timestamps are always set server-side. The client cannot influence when a session was last active; heartbeats update the timestamp on the server when they arrive, not when the client claims to have sent them.
 
 ### Session Heartbeat Re-validation
 
@@ -144,7 +150,19 @@ Security-sensitive endpoints use generic error responses:
 - `POST /api/tickets/validate` — returns 401 "Invalid ticket" for all failures (expired, used, wrong target, not found)
 - `DELETE /api/tickets/instances/:id` — returns 404 for unauthorized deregistration attempts
 
-Ticket validation uses `crypto.timingSafeEqual` to prevent timing attacks.
+Ticket validation uses HMAC-based timing-safe comparison to prevent timing attacks. Both the submitted and stored ticket IDs are HMAC-SHA256'd with a per-process random key before being compared with `crypto.timingSafeEqual`. The HMAC step produces fixed-length digests, eliminating the length-leak that raw `timingSafeEqual` would expose if inputs differed in length, and the per-process key prevents pre-computation attacks if an attacker gains read access to the source code.
+
+### Host Validation (SSRF Prevention)
+
+When an instance registers with a `direct` transport strategy, the `host` field is validated against a deny list of private, reserved, and metadata IP ranges. The following are rejected:
+
+- Loopback: `localhost`, `127.0.0.1`, `::1`
+- Private IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- Link-local: `169.254.0.0/16`
+- Cloud metadata endpoints: `169.254.169.254`, `metadata.google.internal`
+- Zero network: `0.0.0.0/8`
+
+This prevents agents from using the ticket system to probe internal services on the panel's network (SSRF).
 
 ### Capability Integration
 
@@ -184,6 +202,7 @@ The integration flow:
         "port": 9000,
         "protocol": "wss"
       },
+      "hooks": {},              // Reserved for future hook configuration
       "installedAt": "2026-03-26T10:00:00.000Z"
     }
   ],
@@ -201,7 +220,7 @@ The integration flow:
   "assignments": [
     {
       "agentLabel": "linux-agent",
-      "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4",
+      "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "assignedAt": "2026-03-26T10:10:00.000Z",
       "assignedBy": "admin"
     }
@@ -217,7 +236,7 @@ The integration flow:
     {
       "id": "64-hex-char-ticket-id",
       "scope": "shell:connect",
-      "instanceId": "a7f3b2c9d1e2f3a4",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "source": "macbook-pro",
       "target": "linux-agent",
       "createdAt": "2026-03-26T10:15:00.000Z",
@@ -230,10 +249,10 @@ The integration flow:
   ],
   "sessions": [
     {
-      "sessionId": "session-id",
+      "sessionId": "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
       "ticketId": "64-hex-char-ticket-id",
       "scope": "shell:connect",
-      "instanceId": "a7f3b2c9d1e2f3a4",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "source": "macbook-pro",
       "target": "linux-agent",
       "createdAt": "2026-03-26T10:15:30.000Z",
@@ -245,6 +264,20 @@ The integration flow:
 }
 ```
 
+### Client SDK (`@lamalibre/portlama-tickets`)
+
+The `@lamalibre/portlama-tickets` package is a TypeScript SDK that provides the client-side ticket lifecycle for plugins and agents. It uses `undici` for HTTP with mTLS dispatcher support and has no other runtime dependencies.
+
+The SDK exports three main classes:
+
+- **`TicketClient`** — low-level HTTP client for all ticket API endpoints. Handles mTLS authentication, response validation (`assertObject`/`assertField` checks before type assertions), and structured error reporting via `TicketHttpError` (carries the HTTP status code for retriable vs. permanent error distinction).
+
+- **`TicketInstanceManager`** (source side) — manages the full instance lifecycle: creates the mTLS dispatcher, registers an instance for a scope, heartbeats it every 60 seconds, requests tickets with a per-agent cooldown (default 120 seconds) to avoid exhausting the global ticket cap, and auto-re-registers on 404 (instance expired). On `stop()`, it deregisters the instance from the panel immediately rather than waiting for the heartbeat timeout.
+
+- **`TicketSessionManager`** (target side) — manages the session lifecycle: polls the ticket inbox for matching tickets (filtering by scope, discarding tickets with less than 5 seconds remaining TTL, picking the freshest), validates them, creates sessions, heartbeats every 60 seconds, transitions through `waiting` / `authorized` / `grace` / `terminated` / `stopped` states, and notifies the consuming plugin via an `onStateChange` callback.
+
+The dispatcher factory (`createTicketDispatcher`) supports both PEM (cert + key + CA files) and P12 (single .p12 bundle) certificate configurations.
+
 ### Source Files
 
 | File                                                    | Purpose                                   |
@@ -253,6 +286,10 @@ The integration flow:
 | `packages/panel-server/src/routes/management/tickets.js` | HTTP route handlers                       |
 | `packages/panel-client/src/pages/management/Tickets.jsx` | Admin UI (5-tab interface)               |
 | `packages/portlama-agent/src/lib/panel-api.js`          | Agent-side API functions                  |
+| `packages/portlama-tickets/src/client.ts`               | SDK: mTLS HTTP client for ticket API      |
+| `packages/portlama-tickets/src/instance-manager.ts`     | SDK: source-side instance lifecycle       |
+| `packages/portlama-tickets/src/session-manager.ts`      | SDK: target-side session lifecycle        |
+| `packages/portlama-tickets/src/types.ts`                | SDK: shared type definitions              |
 
 ## Quick Reference
 
@@ -263,7 +300,7 @@ The integration flow:
 | ID length   | 64 hex characters (256-bit)       |
 | Expiry      | 30 seconds                        |
 | Usage       | Single-use                        |
-| Comparison  | Timing-safe (`crypto.timingSafeEqual`) |
+| Comparison  | HMAC-SHA256 + `crypto.timingSafeEqual` (per-process random key) |
 | Rate limit  | 10 per agent per minute           |
 
 ### Instance lifecycle
@@ -274,7 +311,7 @@ The integration flow:
 | Heartbeat       | stays active     | `lastHeartbeat` updated                |
 | 5 min no beat   | → stale          | New tickets rejected                   |
 | 1 hr no beat    | → dead           | Removed; assignments, tickets, sessions cleaned |
-| Deregistration  | removed          | Same cleanup as dead                   |
+| Deregistration  | removed          | Same cleanup as dead; SDK calls `DELETE` on `stop()` |
 
 ### Session states
 

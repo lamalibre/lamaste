@@ -124,7 +124,7 @@ for script in "${TEST_SCRIPTS[@]}"; do
   # Both steps are necessary: the DB must be cleared while Authelia is stopped
   # to avoid lock conflicts, and Authelia must be restarted to clear its
   # in-memory regulation cache.
-  # All commands use --max-time to prevent multipass exec from hanging.
+  # Combined into a single multipass exec to avoid race conditions between steps.
   multipass exec portlama-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia' 2>/dev/null || true
   sleep 3
 

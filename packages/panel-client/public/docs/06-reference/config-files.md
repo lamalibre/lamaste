@@ -222,6 +222,7 @@ Stores the ticket scope registry: registered scopes, active instances, and agent
       "description": "Remote shell access",
       "scopes": [{ "name": "shell:connect", "description": "Connect to shell", "instanceScoped": true }],
       "transport": { "strategies": ["tunnel"], "preferred": "tunnel", "port": 9000, "protocol": "wss" },
+      "hooks": {},              // Reserved for future hook configuration
       "installedAt": "2026-03-26T10:00:00.000Z"
     }
   ],
@@ -239,13 +240,29 @@ Stores the ticket scope registry: registered scopes, active instances, and agent
   "assignments": [
     {
       "agentLabel": "linux-agent",
-      "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4",
+      "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "assignedAt": "2026-03-26T10:10:00.000Z",
       "assignedBy": "admin"
     }
   ]
 }
 ```
+
+**Instance transport sub-schema:**
+
+The instance `transport` object may include a `direct` sub-object when the `direct` strategy is listed:
+
+| Field                      | Type     | Required | Description                                                     |
+| -------------------------- | -------- | -------- | --------------------------------------------------------------- |
+| `transport.strategies`     | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"`                      |
+| `transport.preferred`      | string   | No       | Preferred strategy (must be in `strategies`)                    |
+| `transport.direct`         | object   | No       | Direct connection details (required when using `direct` strategy) |
+| `transport.direct.host`    | string   | Yes*     | Public hostname or IP (1-255 chars). Private/reserved IPs rejected (SSRF prevention) |
+| `transport.direct.port`    | number   | Yes*     | Port number (1024-65535)                                        |
+
+\* Required when `transport.direct` is provided.
+
+**Host validation:** The `transport.direct.host` field rejects private and reserved addresses: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, loopback (`localhost`, `127.0.0.1`, `::1`), cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`), and the zero network (`0.0.0.0/8`).
 
 **Write pattern:** Atomic — temp file, `fsync()`, `rename()`. Concurrency controlled by promise-chain mutex.
 
@@ -260,7 +277,7 @@ Stores active tickets and sessions for agent-to-agent authorization. Created aut
 | Field      | Type  | Description                                                    |
 | ---------- | ----- | -------------------------------------------------------------- |
 | `tickets`  | array | Issued tickets (id, scope, instanceId, source, target, expiry) |
-| `sessions` | array | Active sessions (sessionId, ticketId, status, heartbeat)       |
+| `sessions` | array | Active sessions (server-generated sessionId, ticketId, status, heartbeat) |
 
 **Example:**
 
@@ -270,7 +287,7 @@ Stores active tickets and sessions for agent-to-agent authorization. Created aut
     {
       "id": "64-hex-char-ticket-id",
       "scope": "shell:connect",
-      "instanceId": "a7f3b2c9d1e2f3a4",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "source": "macbook-pro",
       "target": "linux-agent",
       "createdAt": "2026-03-26T10:15:00.000Z",
@@ -283,10 +300,10 @@ Stores active tickets and sessions for agent-to-agent authorization. Created aut
   ],
   "sessions": [
     {
-      "sessionId": "session-1",
+      "sessionId": "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
       "ticketId": "64-hex-char-ticket-id",
       "scope": "shell:connect",
-      "instanceId": "a7f3b2c9d1e2f3a4",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "source": "macbook-pro",
       "target": "linux-agent",
       "createdAt": "2026-03-26T10:15:30.000Z",

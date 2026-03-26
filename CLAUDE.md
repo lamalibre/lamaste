@@ -14,7 +14,8 @@ portlama/
 │   ├── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop agent (service discovery, tunnel management)
 │   ├── install-portlama-desktop/ @lamalibre/install-portlama-desktop — npx installer for the desktop app
 │   ├── install-portlama-admin/ @lamalibre/install-portlama-admin — npx admin cert upgrade to hardware-bound
-│   └── install-portlama-e2e-mcp/ @lamalibre/install-portlama-e2e-mcp — npx installer + MCP server for E2E test infrastructure
+│   ├── install-portlama-e2e-mcp/ @lamalibre/install-portlama-e2e-mcp — npx installer + MCP server for E2E test infrastructure
+│   └── portlama-tickets/      @lamalibre/portlama-tickets — SDK for ticket system (agent-to-agent authorization)
 ├── tests/
 │   ├── e2e/                   Single-VM end-to-end tests
 │   └── e2e-three-vm/          Three-VM integration tests (Multipass)
@@ -44,6 +45,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 | Reverse proxy  | nginx (TLS termination, mTLS, forward auth) |
 | TLS            | Let's Encrypt / certbot                     |
 | Panel auth     | mTLS client certificates                    |
+| Ticket SDK     | TypeScript, undici (mTLS HTTP client)        |
 | State          | JSON files + YAML (no database)             |
 | Target OS      | Ubuntu 24.04 LTS                            |
 
@@ -72,6 +74,13 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - `tokio::task::spawn_blocking` for subprocess calls — never block the Tauri event loop
 - Service registry persisted as JSON at `~/.portlama/services.json`
 - Atomic file writes (temp → rename) for registry and config
+
+**TypeScript (Ticket SDK):**
+
+- Strict mode, ES2022 target, ESM output (`verbatimModuleSyntax`, `isolatedModules`)
+- undici for HTTP — use undici's `fetch` export (not global) for type-safe `dispatcher` support
+- Response shape validation — `assertObject` checks before type assertions
+- No runtime dependencies beyond `undici`
 
 **Installer:**
 
@@ -133,29 +142,30 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 
 **Ticket system (agent-to-agent authorization):**
 
-- Scopes registered via `POST /api/tickets/scopes` (admin). Future: `@lamalibre/`-scoped npm installer packages with `portlama-tickets.json` manifest
+- Scopes registered via `POST /api/tickets/scopes` (admin). Client SDK: `@lamalibre/portlama-tickets` (TypeScript, undici mTLS). Future: `portlama-tickets.json` manifest for declarative scope registration
 - Two-layer isolation (panel-enforced): cert capability check → ticket binding (source/target). Self-tickets rejected (source cannot be target). Third layer (plugin transport CA) is plugin-side, not panel-enforced
 - Instance IDs stored in `/etc/portlama/ticket-scopes.json`, NOT on agent certificates — admin assigns instance scopes via panel UI/API
-- Tickets: single-use, 30-second expiry, `crypto.randomBytes(32)` (256-bit), timing-safe comparison, stored at `/etc/portlama/tickets.json`
+- Tickets: single-use, 30-second expiry, `crypto.randomBytes(32)` (256-bit), HMAC-based timing-safe comparison (per-process random key, fixed-length digests via HMAC-SHA256 before `timingSafeEqual`), stored at `/etc/portlama/tickets.json`
 - Ticket delivery: panel inbox per agent (`GET /api/tickets/inbox`), polling
 - Sessions: heartbeat every 60s re-validates authorization (source cert not revoked, capability still present, assignment still valid); stale after 10 min (no activity), cleaned up after 24 hours
 - Instance liveness: heartbeat every 60s (re-validates agent capability), stale after 5 min (no heartbeat), dead after 1 hour (removed with assignments)
 - Rate limiting: 10 tickets per agent per minute
 - Hard caps (DoS protection): 200 instances, 1000 tickets, 500 active sessions — returns 503 when exceeded
-- Transport strategies: schema accepts `tunnel`, `relay`, `direct` — actual transport negotiation is plugin-side (panel stores preference only)
+- Transport strategies: schema accepts `tunnel`, `relay`, `direct` — actual transport negotiation is plugin-side (panel stores preference only). `transport.direct.host` validates against a deny list (private/reserved IPs, loopback, link-local, cloud metadata endpoints) to prevent SSRF
 - Scope registry: `POST /api/tickets/scopes` (admin), `GET /api/tickets/scopes` (admin), `DELETE /api/tickets/scopes/:name` (admin)
 - Instance registration: `POST /api/tickets/instances` (admin/agent — requires certLabel, idempotent), `DELETE /api/tickets/instances/:instanceId` (admin/agent, owner or admin), `POST /api/tickets/instances/:instanceId/heartbeat` (admin/agent — requires certLabel)
 - Instance assignment: `POST /api/tickets/assignments` (admin), `DELETE /api/tickets/assignments/:agentLabel/:instanceScope` (admin), `GET /api/tickets/assignments` (admin)
 - Ticket operations: `POST /api/tickets` (admin/agent, request — requires certLabel), `GET /api/tickets/inbox` (admin/agent — requires certLabel), `POST /api/tickets/validate` (admin/agent — requires certLabel), `GET /api/tickets` (admin, list), `DELETE /api/tickets/:ticketId` (admin, revoke)
-- Session management: `POST /api/tickets/sessions` (admin/agent — requires certLabel), `POST /api/tickets/sessions/:sessionId/heartbeat` (admin/agent — requires certLabel), `PATCH /api/tickets/sessions/:sessionId` (admin/agent — requires certLabel), `DELETE /api/tickets/sessions/:sessionId` (admin, kill), `GET /api/tickets/sessions` (admin, list)
+- Session management: `POST /api/tickets/sessions` (admin/agent — requires certLabel; session ID is server-generated via `crypto.randomBytes(16)`), `POST /api/tickets/sessions/:sessionId/heartbeat` (admin/agent — requires certLabel), `PATCH /api/tickets/sessions/:sessionId` (admin/agent — requires certLabel), `DELETE /api/tickets/sessions/:sessionId` (admin, kill), `GET /api/tickets/sessions` (admin, list)
 - Error responses use same error message for all failure conditions in security-sensitive paths (ticket validation, deregistration — no information leakage); admin-facing endpoints return descriptive errors
 - Concurrency: promise-chain mutex (same pattern as enrollment tokens)
 - State files: atomic writes (temp → fsync → rename)
 
 **File operations:**
 
-- YAML writes: atomic (temp → rename) — Authelia reads `users.yml` live
+- YAML writes: atomic (temp → rename) — Authelia reads `users.yml` live. Temp files use `portlama-authelia-` prefix (sudoers restricts `mv` to this prefix for `/etc/authelia/` targets)
 - After `users.yml` change: `systemctl restart authelia`
+- Certbot library (`lib/certbot.js`): `renewCert(domain, { forceRenewal })` accepts an options object; `forceRenewal: true` passes `--force-renewal` to certbot. `listCerts()` uses `certbot certificates --non-interactive`
 - Before nginx reload: `nginx -t` — rollback on failure
 - Never delete the last Authelia user
 

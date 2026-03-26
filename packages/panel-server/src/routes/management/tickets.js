@@ -155,6 +155,14 @@ export default async function ticketRoutes(fastify, _opts) {
         if (!agentLabel) {
           return reply.code(400).send({ error: 'Agent label required' });
         }
+        // Defense-in-depth: reject agents with no capabilities before acquiring
+        // the lock. The library's instanceHeartbeat verifies the specific scope.
+        if (request.certRole === 'agent') {
+          const caps = request.certCapabilities || [];
+          if (caps.length === 0) {
+            return reply.code(404).send({ error: 'Not found' });
+          }
+        }
         const result = await instanceHeartbeat(instanceId, agentLabel);
         return result;
       } catch (err) {
@@ -342,7 +350,7 @@ export default async function ticketRoutes(fastify, _opts) {
         if (!callerLabel) {
           return reply.code(400).send({ error: 'Agent label required' });
         }
-        const result = await createSession(body.ticketId, body.sessionId, callerLabel, request.log);
+        const result = await createSession(body.ticketId, callerLabel, request.log);
         return reply.code(201).send(result);
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -386,7 +394,6 @@ export default async function ticketRoutes(fastify, _opts) {
         const result = await updateSession(
           sessionId,
           body.status,
-          body.lastActivityAt,
           callerLabel,
         );
         return result;

@@ -60,7 +60,7 @@ async function getInstalledVersion() {
  * Write content to a system path using a temp file and sudo mv.
  */
 async function sudoWriteFile(destPath, content, mode = '644') {
-  const tmpFile = path.join(tmpdir(), `portlama-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpFile = path.join(tmpdir(), `portlama-authelia-${crypto.randomBytes(4).toString('hex')}`);
   await fsWriteFile(tmpFile, content, 'utf-8');
   await execa('sudo', ['mv', tmpFile, destPath]);
   await execa('sudo', ['chmod', mode, destPath]);

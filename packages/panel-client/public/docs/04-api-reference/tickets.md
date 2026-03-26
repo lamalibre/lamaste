@@ -111,11 +111,23 @@ Register an instance offering a specific scope. Idempotent: re-registration with
 
 | Field                     | Type     | Required | Description                                |
 | ------------------------- | -------- | -------- | ------------------------------------------ |
-| `scope`                   | string   | Yes      | Capability name (e.g., `shell:connect`)    |
+| `scope`                   | string   | Yes      | Capability name in `scope:action` format (e.g., `shell:connect`) |
 | `transport`               | object   | Yes      | Transport configuration                    |
 | `transport.strategies`    | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"` |
 | `transport.preferred`     | string   | No       | Preferred strategy                         |
-| `transport.direct`        | object   | No       | Direct connection details (host, port)     |
+| `transport.direct`        | object   | No       | Direct connection details                  |
+| `transport.direct.host`   | string   | Yes*     | Public hostname or IP (1-255 chars). Private/reserved IPs are rejected (see below) |
+| `transport.direct.port`   | number   | Yes*     | Port number (1024-65535)                   |
+
+\* Required when `transport.direct` is provided.
+
+**Host validation:** The `transport.direct.host` field rejects private and reserved addresses to prevent SSRF. The following are rejected with a 400 error:
+
+- Private IPv4 ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- Link-local: `169.254.0.0/16`
+- Loopback: `localhost`, `127.0.0.1`, `::1`
+- Metadata endpoints: `169.254.169.254`, `metadata.google.internal`
+- Zero network: `0.0.0.0/8`
 
 **Response (201 new, 200 re-registration):**
 
@@ -127,7 +139,7 @@ Register an instance offering a specific scope. Idempotent: re-registration with
 }
 ```
 
-**Errors:** 403 (insufficient capability), 404 (scope not found), 503 (hard cap: 200 instances)
+**Errors:** 400 (missing agent label, or private/reserved IP in `transport.direct.host`), 403 (insufficient capability), 404 (scope not found), 503 (hard cap: 200 instances)
 
 ---
 
@@ -164,7 +176,7 @@ POST /api/tickets/instances/:instanceId/heartbeat
 
 **Auth:** Admin or owning Agent
 
-Updates the instance's `lastHeartbeat` timestamp and maintains active status.
+Updates the instance's `lastHeartbeat` timestamp and resets status to active. Re-validates that the owning agent still has the scope capability — returns 404 if the agent is revoked or the capability has been removed.
 
 **Response (200):**
 
@@ -174,7 +186,7 @@ Updates the instance's `lastHeartbeat` timestamp and maintains active status.
 }
 ```
 
-**Errors:** 404 (not found)
+**Errors:** 400 (missing agent label), 404 (not found, or agent revoked/lacks capability)
 
 ---
 
@@ -209,7 +221,7 @@ Assign an agent to an instance scope, granting it permission to receive tickets 
   "ok": true,
   "assignment": {
     "agentLabel": "linux-agent",
-    "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4",
+    "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
     "assignedAt": "2026-03-26T10:10:00.000Z",
     "assignedBy": "admin"
   }
@@ -296,7 +308,7 @@ Request a ticket to authorize communication with a target agent.
   "ticket": {
     "id": "64-hex-char-ticket-id",
     "scope": "shell:connect",
-    "instanceId": "a7f3b2c9d1e2f3a4",
+    "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
     "source": "macbook-pro",
     "target": "linux-agent",
     "expiresAt": "2026-03-26T10:15:30.000Z"
@@ -326,7 +338,7 @@ Returns non-expired, unused tickets where the caller is the target.
     {
       "id": "...",
       "scope": "shell:connect",
-      "instanceId": "a7f3b2c9d1e2f3a4",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
       "source": "macbook-pro",
       "expiresAt": "2026-03-26T10:15:30.000Z",
       "transport": {}
@@ -361,7 +373,7 @@ Validate and consume a ticket. This is an atomic operation — the ticket is mar
 {
   "valid": true,
   "scope": "shell:connect",
-  "instanceId": "a7f3b2c9d1e2f3a4",
+  "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
   "source": "macbook-pro",
   "target": "linux-agent",
   "transport": {}
@@ -424,14 +436,13 @@ POST /api/tickets/sessions
 
 **Auth:** Admin or Agent (requires `certLabel`)
 
-Create a session from a validated (used) ticket. The caller must be the ticket's target.
+Create a session from a validated (used) ticket. The caller must be the ticket's target. The server generates the `sessionId` — clients do not provide it.
 
 **Request body:**
 
 | Field       | Type   | Required | Description                                    |
 | ----------- | ------ | -------- | ---------------------------------------------- |
 | `ticketId`  | string | Yes      | Hex ticket ID (1-128 chars)                    |
-| `sessionId` | string | Yes      | Caller-chosen session ID (1-128 chars, alphanumeric + `-_`) |
 
 **Response (201):**
 
@@ -442,7 +453,7 @@ Create a session from a validated (used) ticket. The caller must be the ticket's
     "sessionId": "...",
     "ticketId": "...",
     "scope": "shell:connect",
-    "instanceId": "a7f3b2c9d1e2f3a4",
+    "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
     "source": "macbook-pro",
     "target": "linux-agent",
     "createdAt": "2026-03-26T10:15:30.000Z",
@@ -483,7 +494,7 @@ Re-validates the session's authorization and updates activity timestamp.
 }
 ```
 
-Or if authorization failed:
+Or if authorization failed (session is terminated):
 
 ```json
 {
@@ -492,7 +503,9 @@ Or if authorization failed:
 }
 ```
 
-**Errors:** 404 (session not found)
+Possible `reason` values: `admin_killed`, `source_revoked`, `capability_removed`, `target_revoked`, `assignment_removed`.
+
+**Errors:** 400 (missing certLabel), 404 (session not found)
 
 ---
 
@@ -502,16 +515,17 @@ Or if authorization failed:
 PATCH /api/tickets/sessions/:sessionId
 ```
 
-**Auth:** Admin or Agent (requires `certLabel`)
+**Auth:** Admin or Agent (requires `certLabel` — caller can be either the session's source or target)
 
-Update session status (e.g., entering grace period for reconnection).
+Update session status (e.g., entering grace period for reconnection). Re-validates authorization on every status transition: checks that the source certificate is not revoked, source still has the scope capability, and the target's assignment is still valid. If any check fails, the session is terminated and the endpoint returns 409.
 
 **Request body:**
 
 | Field            | Type   | Required | Description                        |
 | ---------------- | ------ | -------- | ---------------------------------- |
 | `status`         | string | Yes      | `"active"` or `"grace"`           |
-| `lastActivityAt` | string | No       | ISO 8601 datetime                  |
+
+The server sets `lastActivityAt` automatically — clients cannot provide or override this field.
 
 **Response (200):**
 
@@ -521,7 +535,7 @@ Update session status (e.g., entering grace period for reconnection).
 }
 ```
 
-**Errors:** 404 (session not found), 409 (cannot reactivate dead session)
+**Errors:** 400 (missing certLabel), 404 (session not found), 409 (session is terminated — dead, or authorization re-validation failed)
 
 ---
 

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { execa } from 'execa';
-import { listCerts } from '../../lib/certbot.js';
+import { listCerts, renewCert } from '../../lib/certbot.js';
 import {
   getMtlsCerts,
   readCertExpiry,
@@ -577,21 +577,17 @@ export default async function certsRoutes(fastify, _opts) {
       const { domain } = params;
 
       try {
-        // Force renewal via certbot
-        await execa('sudo', ['certbot', 'renew', '--cert-name', domain, '--force-renewal'], {
-          timeout: 90000,
-        });
+        await renewCert(domain, { forceRenewal: true });
       } catch (err) {
-        const stderr = err.stderr || err.message;
+        const msg = err.message || '';
 
-        if (stderr.includes('No certificate found') || stderr.includes('not found')) {
+        if (msg.includes('No certificate found') || msg.includes('not found')) {
           return reply.code(404).send({ error: 'Certificate not found' });
         }
 
         request.log.error({ err, domain }, 'Certificate renewal failed');
         return reply.code(500).send({
           error: 'Certificate renewal failed',
-          details: stderr,
         });
       }
 
