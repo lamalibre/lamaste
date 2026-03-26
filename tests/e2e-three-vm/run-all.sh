@@ -77,9 +77,7 @@ echo ""
 # Failed attempts from previous test runs accumulate in the SQLite database and
 # can cause spurious "Authentication failed, please retry later" errors.
 log_step "Clearing Authelia regulation state..."
-multipass exec portlama-host -- sudo systemctl stop authelia 2>/dev/null || true
-multipass exec portlama-host -- sudo sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null || true
-multipass exec portlama-host -- sudo systemctl start authelia 2>/dev/null || true
+multipass exec portlama-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia' 2>/dev/null || true
 sleep 3
 log_ok "Authelia regulation state cleared"
 
@@ -126,9 +124,8 @@ for script in "${TEST_SCRIPTS[@]}"; do
   # Both steps are necessary: the DB must be cleared while Authelia is stopped
   # to avoid lock conflicts, and Authelia must be restarted to clear its
   # in-memory regulation cache.
-  multipass exec portlama-host -- sudo systemctl stop authelia 2>/dev/null || true
-  multipass exec portlama-host -- sudo sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null || true
-  multipass exec portlama-host -- sudo systemctl start authelia 2>/dev/null || true
+  # All commands use --max-time to prevent multipass exec from hanging.
+  multipass exec portlama-host -- sudo bash -c 'systemctl stop authelia; sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;" 2>/dev/null; systemctl start authelia' 2>/dev/null || true
   sleep 3
 
   export _LOG_FILE="${LOG_DIR}/test-${script%.sh}.md"

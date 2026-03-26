@@ -273,6 +273,12 @@ const BASE_CAPABILITIES = [
 let pluginCapabilities = [];
 
 /**
+ * Ticket-scope-contributed capabilities, loaded at startup.
+ * @type {string[]}
+ */
+let ticketScopeCapabilities = [];
+
+/**
  * Set plugin-contributed capabilities.
  * Called at startup after loading plugin manifests.
  *
@@ -283,12 +289,22 @@ export function setPluginCapabilities(caps) {
 }
 
 /**
- * Get the full list of valid capabilities (base + plugin).
+ * Set ticket-scope-contributed capabilities.
+ * Called at startup after loading ticket scope registry.
+ *
+ * @param {string[]} caps - Capability strings from ticket scopes
+ */
+export function setTicketScopeCapabilitiesOnMtls(caps) {
+  ticketScopeCapabilities = [...new Set(caps)];
+}
+
+/**
+ * Get the full list of valid capabilities (base + plugin + ticket scope).
  *
  * @returns {string[]}
  */
 export function getValidCapabilities() {
-  return [...BASE_CAPABILITIES, ...pluginCapabilities];
+  return [...BASE_CAPABILITIES, ...pluginCapabilities, ...ticketScopeCapabilities];
 }
 
 

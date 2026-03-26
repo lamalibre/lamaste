@@ -45,6 +45,11 @@
           "title": "Security Model",
           "slug": "security-model",
           "file": "01-concepts/security-model.md"
+        },
+        {
+          "title": "Tickets (Agent-to-Agent)",
+          "slug": "tickets",
+          "file": "01-concepts/tickets.md"
         }
       ]
     },
@@ -165,7 +170,8 @@
         { "title": "Settings API", "slug": "api-settings", "file": "04-api-reference/settings.md" },
         { "title": "Services API", "slug": "api-services", "file": "04-api-reference/services.md" },
         { "title": "Sites API", "slug": "api-sites", "file": "04-api-reference/sites.md" },
-        { "title": "System API", "slug": "api-system", "file": "04-api-reference/system.md" }
+        { "title": "System API", "slug": "api-system", "file": "04-api-reference/system.md" },
+        { "title": "Tickets API", "slug": "api-tickets", "file": "04-api-reference/tickets.md" }
       ]
     },
     {

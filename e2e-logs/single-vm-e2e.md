@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-25 18:02:33 UTC`
+> Run at `2026-03-26 10:46:06 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-25 18:02:33 UTC
+  Date:           2026-03-26 10:46:06 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 24 18:01:15 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 25 10:44:44 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: 54ff055e-017f-4376-97b6-f3f4666c8c2a
+  [INFO] Created tunnel ID: dab670ce-9661-464f-b2f8-781923a39d22
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774461754
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774521967
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=D3:04:73:AB:E6:13:51:83:8D:BD:DE:69:75:AB:BA:22:8E:73:0E:C9:72:C4:F6:C9:9D:94:9B:88:8B:F1:60:E7
+  [INFO] Current cert fingerprint: sha256 Fingerprint=D2:40:A3:D2:54:D8:AD:D2:32:7B:29:B1:37:7E:E7:7A:CE:78:51:29:32:97:AE:DB:E5:D9:2A:87:7E:AE:28:EF
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-24T18:03:04.000Z
+  [PASS] Rotation response contains expiry: 2028-03-25T10:46:36.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=0A:9A:6E:F4:97:81:34:84:1D:3A:C0:C3:75:96:3F:4C:CF:2A:FB:83:66:1B:D2:73:6B:34:BE:FD:09:FF:F9:41
+  [INFO] New cert fingerprint: sha256 Fingerprint=9E:F6:AC:C6:D9:B3:7D:BB:53:52:A7:06:94:F3:E3:B7:EC:48:F8:7F:65:31:7C:15:32:7F:D6:2B:90:B4:42:EF
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.8
+  [INFO] Server IP: 192.168.2.2
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 88e6afca-8fbe-454f-8d14-40d940b85ab6)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 820ccc8f-cd6c-4acc-8394-22f4ba8cd20b)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -745,7 +745,7 @@
 
 --- Confirm 2FA with valid code ---
   [PASS] Generated TOTP code
-  [INFO] Generated TOTP code: 804530
+  [INFO] Generated TOTP code: 234254
   [PASS] 2FA is now enabled
   [PASS] Session cookie received on confirm
   [PASS] Status shows enabled after confirm
@@ -760,7 +760,7 @@
   [PASS] Authenticated request with session cookie returns system stats
 
 --- Disable 2FA ---
-  [INFO] Waiting 29s for next TOTP window...
+  [INFO] Waiting 28s for next TOTP window...
   [PASS] 2FA disabled successfully
 
 --- IP vhost re-enabled after disabling 2FA ---

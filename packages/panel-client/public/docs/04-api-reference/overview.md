@@ -253,7 +253,10 @@ The server accepts multipart file uploads up to 50 MB per file, used by the stat
 
 There is no general application-level rate limiting. The mTLS requirement means only authenticated administrators can reach the API, and the expected number of concurrent users is one or two. If you are self-hosting and want rate limits, configure them in nginx.
 
-The exception is the **2FA endpoints** (`/confirm`, `/verify`, `/disable`), which enforce per-IP rate limiting: 5 attempts per 2-minute window, with a 5-minute ban once the limit is exceeded. This protects against brute-force TOTP guessing even though the caller already holds a valid mTLS certificate.
+There are two exceptions:
+
+- **2FA endpoints** (`/confirm`, `/verify`, `/disable`) enforce per-IP rate limiting: 5 attempts per 2-minute window, with a 5-minute ban once the limit is exceeded. This protects against brute-force TOTP guessing even though the caller already holds a valid mTLS certificate.
+- **Ticket requests** (`POST /api/tickets`) enforce per-agent rate limiting: 10 tickets per minute per agent. This protects against resource exhaustion from automated ticket generation.
 
 ## Quick Reference
 
@@ -283,6 +286,7 @@ The exception is the **2FA endpoints** (`/confirm`, `/verify`, `/disable`), whic
 | POST   | `/api/invite/:token/accept`               | Public     | Accept invitation                      |
 | POST   | `/api/enroll`                             | Public     | Enroll agent with token (hardware-bound)|
 | GET    | `/api/system/stats`                       | Management | System statistics                      |
+| GET    | `/api/tunnels/agent-config`               | Management | Get agent tunnel configuration         |
 | GET    | `/api/tunnels`                            | Management | List tunnels                           |
 | POST   | `/api/tunnels`                            | Management | Create tunnel                          |
 | PATCH  | `/api/tunnels/:id`                        | Management | Toggle tunnel enabled/disabled         |
@@ -341,8 +345,27 @@ The exception is the **2FA endpoints** (`/confirm`, `/verify`, `/disable`), whic
 | POST   | `/api/plugins/push-install/enable/:label` | Management | Enable push install for agent          |
 | DELETE | `/api/plugins/push-install/enable/:label` | Management | Disable push install for agent         |
 | GET    | `/api/plugins/push-install/agent-status`  | Management | Agent checks own push install status   |
-| POST   | `/api/plugins/push-install/command/:label`| Management | Send push install command to agent     |
+| POST   | `/api/plugins/push-install/:label`        | Management | Send push install command to agent     |
 | GET    | `/api/plugins/push-install/sessions`      | Management | List push install audit log            |
+| POST   | `/api/tickets/scopes`                     | Management | Register ticket scope                  |
+| GET    | `/api/tickets/scopes`                     | Management | List scopes, instances, assignments    |
+| DELETE | `/api/tickets/scopes/:name`               | Management | Delete ticket scope                    |
+| POST   | `/api/tickets/instances`                  | Management | Register instance                      |
+| DELETE | `/api/tickets/instances/:instanceId`      | Management | Deregister instance                    |
+| POST   | `/api/tickets/instances/:instanceId/heartbeat` | Management | Instance heartbeat                |
+| POST   | `/api/tickets/assignments`                | Management | Assign agent to instance               |
+| DELETE | `/api/tickets/assignments/:agentLabel/:instanceScope` | Management | Remove assignment        |
+| GET    | `/api/tickets/assignments`                | Management | List assignments                       |
+| POST   | `/api/tickets`                            | Management | Request ticket                         |
+| GET    | `/api/tickets/inbox`                      | Management | Check ticket inbox                     |
+| POST   | `/api/tickets/validate`                   | Management | Validate and consume ticket            |
+| GET    | `/api/tickets`                            | Management | List all tickets (admin)               |
+| DELETE | `/api/tickets/:ticketId`                  | Management | Revoke ticket                          |
+| POST   | `/api/tickets/sessions`                   | Management | Create session from ticket             |
+| POST   | `/api/tickets/sessions/:sessionId/heartbeat` | Management | Session heartbeat                  |
+| PATCH  | `/api/tickets/sessions/:sessionId`        | Management | Update session status                  |
+| DELETE | `/api/tickets/sessions/:sessionId`        | Management | Kill session                           |
+| GET    | `/api/tickets/sessions`                   | Management | List sessions                          |
 
 ### Agent Capabilities
 
@@ -361,3 +384,5 @@ Agent certificates use capability-based access control. Base capabilities are al
 | `sites:write`    | Upload and delete files on assigned sites                       |
 
 **Plugin-declared capabilities:** Plugins can declare additional capabilities in their `portlama-plugin.json` manifest using either a flat array (`"capabilities": ["scope:action"]`) or a nested object (`"capabilities": { "agent": ["scope:action"] }`). Both formats are normalized to a flat array internally. These are merged with base capabilities and available for assignment to agent certificates. Capabilities are validated dynamically via `getValidCapabilities()`.
+
+**Ticket scope capabilities:** Ticket scopes (registered via `POST /api/tickets/scopes`) declare capabilities that are dynamically merged with base and plugin capabilities. For example, a scope named `shell` declaring `scopes: [{ name: "shell:connect" }]` makes `shell:connect` available for assignment to agent certificates. See the [Tickets API](tickets.md) for details.

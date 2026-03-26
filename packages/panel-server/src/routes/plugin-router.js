@@ -1,4 +1,5 @@
 import { readPlugins } from '../lib/plugins.js';
+import { RESERVED_API_PREFIXES } from '../lib/constants.js';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { managementOnly } from '../middleware/onboarding-guard.js';
@@ -123,11 +124,7 @@ export default async function pluginRouter(fastify, _opts) {
     const pluginName = match[1];
 
     // Skip known non-plugin prefixes
-    const reservedPrefixes = [
-      'health', 'onboarding', 'invite', 'tunnels', 'sites', 'system',
-      'services', 'logs', 'users', 'certs', 'invitations', 'plugins',
-    ];
-    if (reservedPrefixes.includes(pluginName)) return;
+    if (RESERVED_API_PREFIXES.includes(pluginName)) return;
 
     const disabled = await getDisabledPlugins();
     if (disabled.has(pluginName)) {

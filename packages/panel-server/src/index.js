@@ -19,6 +19,7 @@ import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import { getPluginCapabilities } from './lib/plugins.js';
 import { setPluginCapabilities } from './lib/mtls.js';
+import { loadTicketScopeCapabilities, checkInstanceLiveness, clearRateLimitInterval } from './lib/tickets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +35,13 @@ async function start() {
     setPluginCapabilities(pluginCaps);
   } catch {
     // Plugin registry may not exist yet — ignore on first boot
+  }
+
+  // Load ticket scope capabilities so they are included in valid capabilities
+  try {
+    await loadTicketScopeCapabilities();
+  } catch {
+    // Ticket scope registry may not exist yet — ignore on first boot
   }
 
   const server = Fastify({
@@ -103,9 +111,19 @@ async function start() {
   // --- Start ---
   await server.listen({ host: '127.0.0.1', port: 3100 });
 
+  // --- Periodic ticket instance liveness check (every 60s) ---
+  const livenessInterval = setInterval(() => {
+    checkInstanceLiveness(server.log).catch((err) => {
+      server.log.warn({ err }, 'Instance liveness check failed');
+    });
+  }, 60_000);
+  livenessInterval.unref();
+
   // --- Graceful shutdown ---
   const shutdown = async (signal) => {
     server.log.info({ signal }, 'Received signal, shutting down gracefully');
+    clearInterval(livenessInterval);
+    clearRateLimitInterval();
     await server.close();
     process.exit(0);
   };

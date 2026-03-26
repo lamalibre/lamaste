@@ -84,11 +84,26 @@ Agent certificates are generated from the panel UI and should be used instead of
 | `sites:read`     | List assigned sites and browse their files |
 | `sites:write`    | Upload and delete files on assigned sites  |
 
-Capabilities are stored server-side and can be updated without reissuing the certificate. Plugins can declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` format); these are merged with base capabilities dynamically and available for assignment to agent certificates. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
+Capabilities are stored server-side and can be updated without reissuing the certificate. Plugins can declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` format); these are merged with base capabilities dynamically and available for assignment to agent certificates. Ticket scopes also contribute capabilities dynamically: when a scope like `shell` declares `scopes: [{ name: 'shell:connect' }]`, the capability `shell:connect` becomes available for assignment alongside base and plugin capabilities. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
 
 In addition to capabilities, agent certificates support **per-site scoping** via `allowedSites`. Each agent has a list of site names it is permitted to access. When an agent calls `GET /api/sites`, it only sees sites in its `allowedSites` list. File operations (upload, list, delete) require both the relevant capability and the site name in the agent's `allowedSites`. The admin manages site assignments from **Panel** > **Certificates** > edit agent > **Site Access**, or via the `PATCH /api/certs/agent/:label/allowed-sites` endpoint.
 
 This two-level model (capabilities + site scoping) means that even if a machine is compromised, the attacker is limited to whichever capabilities and sites were assigned to that agent — and the admin can revoke or reduce them immediately.
+
+#### 5b. Tickets for agent-to-agent authorization
+
+When agents need to communicate with each other (e.g., remote shell, file transfer), the ticket system adds two more layers of isolation on top of certificate capabilities:
+
+1. **Certificate capability check** — both source and target agents must have the relevant scope capability on their certificates
+2. **Ticket binding** — the source must own the instance, and the target must be explicitly assigned to it by the admin
+
+Tickets are 256-bit random tokens, valid for 30 seconds, single-use, and validated with timing-safe comparison. After a ticket is consumed, a session tracks the connection with heartbeat re-validation every 60 seconds — checking that both certificates are still valid, capabilities still present, and the assignment still exists. If any condition fails, the session is immediately terminated.
+
+A third isolation layer (transport CA) is available plugin-side for end-to-end verification, but is not enforced by the panel.
+
+Rate limiting (10 tickets/agent/minute) and hard caps (200 instances, 1000 tickets, 500 sessions) protect against resource exhaustion on the 512 MB server.
+
+See [Tickets](tickets.md) for the full model.
 
 mTLS is stronger than a login page because:
 
@@ -435,6 +450,7 @@ The `mv` command is atomic on the same filesystem — the file appears at its fi
 | TLS encryption       | Let's Encrypt / self-signed | Traffic interception and tampering |
 | Admin auth           | mTLS client certificates    | Unauthorized admin access          |
 | Admin 2FA (optional) | Built-in TOTP               | Stolen certificate abuse           |
+| Agent-to-agent auth  | Tickets (time-limited, single-use) | Unauthorized cross-agent access |
 | App auth             | Authelia TOTP 2FA           | Unauthorized app access            |
 | Service isolation    | `127.0.0.1` binding         | Direct access to internal services |
 | File permissions     | `chmod 600`                 | Unauthorized secret access         |

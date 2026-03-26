@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { z } from 'zod';
 import { execa } from 'execa';
+import { RESERVED_API_PREFIXES } from './constants.js';
 
 const STATE_DIR = process.env.PORTLAMA_STATE_DIR || '/etc/portlama';
 const PLUGINS_DIR = path.join(STATE_DIR, 'plugins');
@@ -238,11 +239,7 @@ export function installPlugin(packageName, logger) {
     }
 
     // Reject names that collide with core API route prefixes
-    const RESERVED_NAMES = [
-      'health', 'onboarding', 'invite', 'tunnels', 'sites', 'system',
-      'services', 'logs', 'users', 'certs', 'invitations', 'plugins',
-    ];
-    if (RESERVED_NAMES.includes(manifest.name)) {
+    if (RESERVED_API_PREFIXES.includes(manifest.name)) {
       await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
       throw Object.assign(
         new Error(`Plugin name "${manifest.name}" is reserved`),
@@ -254,7 +251,7 @@ export function installPlugin(packageName, logger) {
     if (manifest.displayName) {
       const RESERVED_LABELS = [
         'dashboard', 'tunnels', 'static sites', 'users', 'certificates',
-        'services', 'plugins', 'documentation',
+        'services', 'plugins', 'documentation', 'tickets', 'settings',
       ];
       if (RESERVED_LABELS.includes(manifest.displayName.toLowerCase())) {
         await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});

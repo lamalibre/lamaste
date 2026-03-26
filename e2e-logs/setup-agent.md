@@ -1,6 +1,6 @@
 # setup-agent
 
-> Started at `2026-03-25 18:02:00 UTC` — log level **2**
+> Started at `2026-03-26 10:45:32 UTC` — log level **2**
 
 
 ---
@@ -10,28 +10,25 @@
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.8` |
+| **Host IP** | `192.168.2.2` |
 | **Test Domain** | `test.portlama.local` |
 
-🔵 `18:02:00` **[1/5] Configuring /etc/hosts...**  
-✅ `18:02:00` /etc/hosts configured with test.portlama.local entries  
-🔵 `18:02:00` **[2/5] Installing Node.js 20...**  
+🔵 `10:45:32` **[1/5] Configuring /etc/hosts...**  
+✅ `10:45:32` /etc/hosts configured with test.portlama.local entries  
+🔵 `10:45:32` **[2/5] Installing Node.js 20...**  
 <details>
-<summary>✅ <code>18:02:09</code> Install Node.js 20 via NodeSource</summary>
+<summary>✅ <code>10:45:41</code> Install Node.js 20 via NodeSource</summary>
 
 ```
 $ bash -c curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-[38;5;79m2026-03-25 21:02:00 - Installing pre-requisites[0m
+[38;5;79m2026-03-26 13:45:33 - Installing pre-requisites[0m
 
 WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
 
 Hit:1 http://ports.ubuntu.com/ubuntu-ports noble InRelease
 Hit:2 http://ports.ubuntu.com/ubuntu-ports noble-updates InRelease
 Hit:3 http://ports.ubuntu.com/ubuntu-ports noble-backports InRelease
-Get:4 http://ports.ubuntu.com/ubuntu-ports noble-security InRelease [126 kB]
-Get:5 http://ports.ubuntu.com/ubuntu-ports noble-security/main arm64 Packages [1682 kB]
-Get:6 http://ports.ubuntu.com/ubuntu-ports noble-security/universe arm64 Packages [1167 kB]
-Fetched 2975 kB in 1s (2253 kB/s)
+Hit:4 http://ports.ubuntu.com/ubuntu-ports noble-security InRelease
 Reading package lists...
 Building dependency tree...
 Reading state information...
@@ -61,7 +58,7 @@ debconf: unable to initialize frontend: Readline
 debconf: (This frontend requires a controlling tty.)
 debconf: falling back to frontend: Teletype
 dpkg-preconfigure: unable to re-open stdin: 
-Fetched 3970 B in 0s (29.3 kB/s)
+Fetched 3970 B in 0s (14.1 kB/s)
 Selecting previously unselected package apt-transport-https.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 77711 files and directories currently installed.)
 Preparing to unpack .../apt-transport-https_2.8.3_all.deb ...
@@ -87,26 +84,26 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
 
 Hit:1 http://ports.ubuntu.com/ubuntu-ports noble InRelease
-Hit:2 http://ports.ubuntu.com/ubuntu-ports noble-updates InRelease
-Get:3 https://deb.nodesource.com/node_20.x nodistro InRelease [12.1 kB]
-Hit:4 http://ports.ubuntu.com/ubuntu-ports noble-backports InRelease
-Get:5 https://deb.nodesource.com/node_20.x nodistro/main arm64 Packages [13.9 kB]
+Get:2 https://deb.nodesource.com/node_20.x nodistro InRelease [12.1 kB]
+Hit:3 http://ports.ubuntu.com/ubuntu-ports noble-updates InRelease
+Get:4 https://deb.nodesource.com/node_20.x nodistro/main arm64 Packages [13.9 kB]
+Hit:5 http://ports.ubuntu.com/ubuntu-ports noble-backports InRelease
 Hit:6 http://ports.ubuntu.com/ubuntu-ports noble-security InRelease
-Fetched 26.1 kB in 0s (67.7 kB/s)
+Fetched 26.1 kB in 0s (55.6 kB/s)
 Reading package lists...
 Building dependency tree...
 Reading state information...
 16 packages can be upgraded. Run 'apt list --upgradable' to see them.
-[1;34m2026-03-25 21:02:09 - Repository configured successfully.[0m
-[38;5;79m2026-03-25 21:02:09 - To install Node.js, run: apt install nodejs -y[0m
-[38;5;79m2026-03-25 21:02:09 - You can use N|solid Runtime as a node.js alternative[0m
-[1;32m2026-03-25 21:02:09 - To install N|solid Runtime, run: apt install nsolid -y 
+[1;34m2026-03-26 13:45:41 - Repository configured successfully.[0m
+[38;5;79m2026-03-26 13:45:41 - To install Node.js, run: apt install nodejs -y[0m
+[38;5;79m2026-03-26 13:45:41 - You can use N|solid Runtime as a node.js alternative[0m
+[1;32m2026-03-26 13:45:41 - To install N|solid Runtime, run: apt install nsolid -y 
 [0m
 ```
 </details>
 
 <details>
-<summary>✅ <code>18:02:16</code> Install nodejs package</summary>
+<summary>✅ <code>10:45:49</code> Install nodejs package</summary>
 
 ```
 $ apt-get install -y nodejs
@@ -126,7 +123,7 @@ debconf: unable to initialize frontend: Readline
 debconf: (This frontend requires a controlling tty.)
 debconf: falling back to frontend: Teletype
 dpkg-preconfigure: unable to re-open stdin: 
-Fetched 31.3 MB in 1s (30.9 MB/s)
+Fetched 31.3 MB in 2s (18.0 MB/s)
 Selecting previously unselected package nodejs.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 77715 files and directories currently installed.)
 Preparing to unpack .../nodejs_20.20.2-1nodesource1_arm64.deb ...
@@ -152,15 +149,15 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 ```
 </details>
 
-✅ `18:02:16` Node.js installed: v20.20.2  
-🔵 `18:02:16` **[3/5] Installing portlama-agent from tarball...**  
+✅ `10:45:49` Node.js installed: v20.20.2  
+🔵 `10:45:49` **[3/5] Installing portlama-agent from tarball...**  
 <details>
-<summary>✅ <code>18:02:21</code> Install portlama-agent globally</summary>
+<summary>✅ <code>10:45:55</code> Install portlama-agent globally</summary>
 
 ```
 $ npm install -g /tmp/portlama-agent.tgz
 
-added 49 packages in 5s
+added 49 packages in 6s
 
 34 packages are looking for funding
   run `npm fund` for details
@@ -172,13 +169,13 @@ npm notice
 ```
 </details>
 
-✅ `18:02:21` portlama-agent installed:   
-🔵 `18:02:21` **[4/5] Running portlama-agent setup with enrollment token...**  
-✅ `18:02:24` portlama-agent setup completed  
-❌ `18:02:24` **systemd service portlama-chisel is inactive
+✅ `10:45:55` portlama-agent installed:   
+🔵 `10:45:55` **[4/5] Running portlama-agent setup with enrollment token...**  
+✅ `10:45:58` portlama-agent setup completed  
+❌ `10:45:58` **systemd service portlama-chisel is inactive
 inactive**  
-🔵 `18:02:24` **[5/5] Installing Python 3...**  
-✅ `18:02:24` Python 3 already installed: Python 3.12.3  
+🔵 `10:45:58` **[5/5] Installing Python 3...**  
+✅ `10:45:58` Python 3 already installed: Python 3.12.3  
 
 ---
 
@@ -187,7 +184,7 @@ inactive**
 
 | Key | Value |
 |-----|-------|
-| **Host IP** | `192.168.2.8` |
+| **Host IP** | `192.168.2.2` |
 | **Test Domain** | `test.portlama.local` |
 | **Node.js** | `v20.20.2` |
 | **portlama-agent** | `installed` |
@@ -196,4 +193,4 @@ unknown` |
 | **Python** | `Python 3.12.3` |
 | **Panel reachable** | `yes (enrolled via token)` |
 
-✅ `18:02:24` The agent VM is ready for E2E tests.  
+✅ `10:45:58` The agent VM is ready for E2E tests.  

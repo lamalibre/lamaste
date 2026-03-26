@@ -103,7 +103,7 @@ export function redeployTasks(ctx, task) {
 
         subtask.output = 'Installing production dependencies...';
         try {
-          await execa('npm', ['install', '--production'], {
+          await execa('npm', ['install', '--production', '--ignore-scripts'], {
             cwd: serverDest,
           });
         } catch (err) {
@@ -113,6 +113,15 @@ export function redeployTasks(ctx, task) {
         }
 
         await execa('chown', ['-R', 'portlama:portlama', serverDest]);
+
+        // Ensure CLI symlink for portlama-reset-admin
+        const resetAdminSrc = join(serverDest, 'src', 'cli', 'reset-admin.js');
+        const resetAdminDest = '/usr/local/bin/portlama-reset-admin';
+        if (existsSync(resetAdminSrc)) {
+          await execa('chmod', ['+x', resetAdminSrc]);
+          await execa('ln', ['-sf', resetAdminSrc, resetAdminDest]);
+        }
+
         subtask.output = 'Panel server updated';
       },
       rendererOptions: { persistentOutput: true },

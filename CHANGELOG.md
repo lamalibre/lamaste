@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-03-26
+
+### Added
+
+- Add ticket system for agent-to-agent authorization — scopes, instances, assignments, tickets, and sessions
+- Add Tickets management page in panel UI with tabs for scopes, instances, assignments, tickets, and sessions
+- Add ticket API endpoints: scope CRUD, instance registration/heartbeat/deregister, assignment management, ticket request/validate/inbox, session lifecycle
+- Add instance liveness tracking with automatic cleanup — active → stale (5 min) → dead (1 hr)
+- Add agent panel-api functions for ticket operations (scope registration, instance management, ticket request/validate, session lifecycle)
+
+### Changed
+
+- Extract reserved API prefixes into shared `constants.js` module — single source of truth for plugin and ticket scope name validation
+
+### Security
+
+- Constrain sudoers `openssl pkcs12 -export` rule to `-out /etc/portlama/pki/*` with required encryption flags — prevents arbitrary file writes
+- Narrow sudoers `authelia storage *` to `authelia storage user totp generate *` — limits to the single subcommand actually used
+- Add `--ignore-scripts` to `npm install --production` in installer and redeploy — blocks postinstall script execution from dependencies
+- Add `enroll` to plugin reserved names — prevents plugin from shadowing the public enrollment endpoint
+- Add `tickets` and `settings` to plugin reserved display labels — prevents sidebar navigation confusion
+- Add self-ticket rejection — source agent cannot issue tickets targeting itself
+- Add rate limit interval cleanup on graceful shutdown
+
+**Affected packages:**
+
+- `@lamalibre/create-portlama` 1.0.32 → 1.0.33
+- `@lamalibre/portlama-panel-server` 0.1.8 → 0.1.9
+- `@lamalibre/portlama-panel-client` 0.1.6 → 0.1.7
+- `@lamalibre/portlama-agent` 1.0.8 → 1.0.9
+
 ## [Unreleased] - 2026-03-25
 
 ### Added

@@ -84,10 +84,28 @@ wait_for_next_totp_window() {
 }
 
 # ---------------------------------------------------------------------------
-# Cleanup: always restore state at end
+# Cleanup: restore state at end (only armed after 2FA is enabled)
 # ---------------------------------------------------------------------------
+_2FA_CLEANUP_ARMED=false
 cleanup_2fa() {
-  multipass exec portlama-host -- sudo portlama-reset-admin >/dev/null 2>&1 || true
+  if [ "$_2FA_CLEANUP_ARMED" = "false" ]; then
+    return
+  fi
+  # Background the multipass exec and kill it after 30s if it hangs.
+  # Multipass exec can spin at 100% CPU on SSH connection failures.
+  multipass exec portlama-host -- sudo bash -c '
+    if command -v portlama-reset-admin >/dev/null 2>&1; then
+      portlama-reset-admin
+    else
+      node /opt/portlama/panel-server/src/cli/reset-admin.js 2>/dev/null
+    fi
+  ' >/dev/null 2>&1 &
+  local pid=$!
+  ( sleep 30; kill "$pid" 2>/dev/null ) &
+  local watchdog=$!
+  wait "$pid" 2>/dev/null || true
+  kill "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
   sleep 1
 }
 trap cleanup_2fa EXIT
@@ -133,6 +151,7 @@ TOTP_CODE=$(generate_totp_code "$MANUAL_KEY")
 
 CONFIRM_RESPONSE=$(host_api_post "settings/2fa/confirm" "{\"code\":\"${TOTP_CODE}\"}")
 assert_json_field "$CONFIRM_RESPONSE" '.enabled' 'true' "2FA enabled after confirm" || true
+_2FA_CLEANUP_ARMED=true
 
 # Wait for nginx reload
 sleep 2

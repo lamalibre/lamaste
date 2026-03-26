@@ -110,7 +110,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
   - `system:read` — system stats
   - `sites:read` / `sites:write` — static site file browsing and deployment (site CRUD is admin-only)
   - `allowedSites: string[]` — per-site scoping; agent sees and can deploy to only listed sites
-- Plugins declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` — normalized to flat array internally); these are merged with base capabilities dynamically via `getValidCapabilities()`
+- Plugins and ticket scopes declare additional capabilities; these are merged with base capabilities dynamically via `getValidCapabilities()` (base + plugin + ticket scope). Plugin capabilities come from manifest (flat array or nested `{ agent: [...] }` — normalized to flat array internally); ticket scope capabilities come from scope declarations registered via `/api/tickets/scopes`
 - Plugin management endpoints (install, enable, push install) are admin-only at the route level
 - Revoked certs tracked in `revoked.json`, rejected by middleware
 - Never give admin cert to agents — generate scoped agent certs
@@ -122,7 +122,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Manifest `config` field: declarative schema for plugin settings (`{ key: { type, default?, description?, enum? } }`) — stored in registry, used by plugin's settings UI
 - Server-side plugin code runs unsandboxed in the panel process — `@lamalibre/` scope is the trust boundary
 - All `npm install` calls use `--ignore-scripts` to block postinstall script execution
-- Plugin names matching core API prefixes (`tunnels`, `plugins`, `health`, etc.) are rejected
+- Plugin names and ticket scope names matching core API prefixes are rejected — single source of truth in `lib/constants.js`: `health`, `onboarding`, `invite`, `enroll`, `tunnels`, `sites`, `system`, `services`, `logs`, `users`, `certs`, `invitations`, `plugins`, `tickets`, `settings`
 - Plugin server routes are mounted with two-level Fastify encapsulation: auth guard on outer scope (plugin cannot override), plugin code on inner scope
 - Plugin panel bundles served at `/{pluginName}/panel.js` with runtime `@lamalibre/` scope check
 - Disabled plugins return 503 via `onRequest` hook (Fastify cannot remove routes at runtime — clean state requires restart)
@@ -130,6 +130,27 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Push install policies: IP allow/deny lists, allowed plugins (`@lamalibre/` scope enforced via Zod), allowed actions
 - Plugin state: `/etc/portlama/plugins.json` (registry), `/etc/portlama/plugins/` (per-plugin data directories)
 - Agent plugin state: `~/.portlama/plugins.json`, `~/.portlama/plugins/` directories
+
+**Ticket system (agent-to-agent authorization):**
+
+- Scopes registered via `POST /api/tickets/scopes` (admin). Future: `@lamalibre/`-scoped npm installer packages with `portlama-tickets.json` manifest
+- Two-layer isolation (panel-enforced): cert capability check → ticket binding (source/target). Self-tickets rejected (source cannot be target). Third layer (plugin transport CA) is plugin-side, not panel-enforced
+- Instance IDs stored in `/etc/portlama/ticket-scopes.json`, NOT on agent certificates — admin assigns instance scopes via panel UI/API
+- Tickets: single-use, 30-second expiry, `crypto.randomBytes(32)` (256-bit), timing-safe comparison, stored at `/etc/portlama/tickets.json`
+- Ticket delivery: panel inbox per agent (`GET /api/tickets/inbox`), polling
+- Sessions: heartbeat every 60s re-validates authorization (source cert not revoked, capability still present, assignment still valid); stale after 10 min (no activity), cleaned up after 24 hours
+- Instance liveness: heartbeat every 60s (re-validates agent capability), stale after 5 min (no heartbeat), dead after 1 hour (removed with assignments)
+- Rate limiting: 10 tickets per agent per minute
+- Hard caps (DoS protection): 200 instances, 1000 tickets, 500 active sessions — returns 503 when exceeded
+- Transport strategies: schema accepts `tunnel`, `relay`, `direct` — actual transport negotiation is plugin-side (panel stores preference only)
+- Scope registry: `POST /api/tickets/scopes` (admin), `GET /api/tickets/scopes` (admin), `DELETE /api/tickets/scopes/:name` (admin)
+- Instance registration: `POST /api/tickets/instances` (admin/agent — requires certLabel, idempotent), `DELETE /api/tickets/instances/:instanceId` (admin/agent, owner or admin), `POST /api/tickets/instances/:instanceId/heartbeat` (admin/agent — requires certLabel)
+- Instance assignment: `POST /api/tickets/assignments` (admin), `DELETE /api/tickets/assignments/:agentLabel/:instanceScope` (admin), `GET /api/tickets/assignments` (admin)
+- Ticket operations: `POST /api/tickets` (admin/agent, request — requires certLabel), `GET /api/tickets/inbox` (admin/agent — requires certLabel), `POST /api/tickets/validate` (admin/agent — requires certLabel), `GET /api/tickets` (admin, list), `DELETE /api/tickets/:ticketId` (admin, revoke)
+- Session management: `POST /api/tickets/sessions` (admin/agent — requires certLabel), `POST /api/tickets/sessions/:sessionId/heartbeat` (admin/agent — requires certLabel), `PATCH /api/tickets/sessions/:sessionId` (admin/agent — requires certLabel), `DELETE /api/tickets/sessions/:sessionId` (admin, kill), `GET /api/tickets/sessions` (admin, list)
+- Error responses use same error message for all failure conditions in security-sensitive paths (ticket validation, deregistration — no information leakage); admin-facing endpoints return descriptive errors
+- Concurrency: promise-chain mutex (same pattern as enrollment tokens)
+- State files: atomic writes (temp → fsync → rename)
 
 **File operations:**
 

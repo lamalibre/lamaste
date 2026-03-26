@@ -50,19 +50,22 @@ Fastify Server (127.0.0.1:3100)
 The server entry point follows a straightforward initialization sequence:
 
 ```
-1. loadConfig()          → Read and validate /etc/portlama/panel.json
-2. Register plugins      → CORS, cookie, multipart, websocket, static files
-3. Register publicContext → Error handler + invite routes (no mTLS)
-4. Register protectedContext → mTLS + 2FA session + role-guard + error handler + health/onboarding/management routes
-5. Set 404 handler       → SPA fallback for non-API routes
-6. Listen on 127.0.0.1:3100
-7. Register shutdown handlers (SIGTERM, SIGINT)
+1. loadConfig()                    → Read and validate /etc/portlama/panel.json
+2. Load plugin capabilities        → getPluginCapabilities() → setPluginCapabilities()
+3. Load ticket scope capabilities  → loadTicketScopeCapabilities()
+4. Register Fastify plugins        → CORS, cookie, multipart, websocket, static files
+5. Register publicContext           → Error handler + invite + enrollment routes (no mTLS)
+6. Register protectedContext        → mTLS + 2FA session + role-guard + error handler + health/onboarding/management/plugin routes
+7. Set 404 handler                 → SPA fallback for non-API routes
+8. Listen on 127.0.0.1:3100
+9. Start instance liveness interval → checkInstanceLiveness() every 60s
+10. Register shutdown handlers       → SIGTERM, SIGINT
 ```
 
 **Route registration contexts:** The server separates routes into two Fastify encapsulated contexts:
 
-- **`publicContext`** — registers invite routes (`/api/invite/*`) without mTLS middleware, allowing unauthenticated users to accept invitations
-- **`protectedContext`** — registers mTLS middleware, role-guard, and all other routes (health, onboarding, management), requiring a valid client certificate
+- **`publicContext`** — registers invite routes (`/api/invite/*`) and enrollment routes (`/api/enroll`) without mTLS middleware, allowing unauthenticated users to accept invitations and agents to enroll with one-time tokens
+- **`protectedContext`** — registers mTLS middleware, 2FA session guard, role-guard, and all other routes (health, onboarding, management, plugins), requiring a valid client certificate
 
 **Static file serving** resolves the panel-client `dist/` directory through a fallback chain:
 
@@ -112,7 +115,7 @@ Registered as a Fastify plugin in the protected context, runs after mTLS verific
 - Session cookies are issued by the `POST /api/settings/2fa/verify` endpoint after a valid TOTP code is presented
 - Sessions are managed by `lib/session.js` using signed cookies (secret from `sessionSecret` in `panel.json`)
 
-The Fastify constructor sets `trustProxy: true` so that `X-Forwarded-*` headers from nginx are respected for secure cookie delivery.
+The Fastify constructor sets `trustProxy: 1` so that exactly one proxy hop (nginx) is trusted for `X-Forwarded-*` headers. This is more secure than `trustProxy: true` (which trusts all hops) and matches the documented deployment model where nginx is the sole reverse proxy.
 
 ### Onboarding Guard (`middleware/onboarding-guard.js`)
 
@@ -195,6 +198,8 @@ publicContext (no mTLS):
   server.register(inviteRoutes, { prefix: '/api/invite' })
     ├── GET  /api/invite/:token           ← Get invitation details
     └── POST /api/invite/:token/accept    ← Accept invitation, set password
+  server.register(enrollmentRoutes, { prefix: '/api/enroll' })
+    └── POST /api/enroll                  ← Enroll agent with token + CSR
 
 protectedContext (mTLS + role-guard):
   server.register(healthRoutes, { prefix: '/api' })
@@ -212,12 +217,14 @@ protectedContext (mTLS + role-guard):
     └── [guarded: managementOnly()]
         ├── GET    /api/tunnels
         ├── POST   /api/tunnels
+        ├── PATCH  /api/tunnels/:id
         ├── DELETE  /api/tunnels/:id
         ├── GET    /api/tunnels/mac-plist
         ├── GET    /api/sites
         ├── POST   /api/sites
-        ├── PUT    /api/sites/:id
+        ├── PATCH  /api/sites/:id
         ├── DELETE  /api/sites/:id
+        ├── POST   /api/sites/:id/verify-dns
         ├── GET    /api/sites/:id/files
         ├── POST   /api/sites/:id/files
         ├── DELETE  /api/sites/:id/files
@@ -231,17 +238,68 @@ protectedContext (mTLS + role-guard):
         ├── DELETE  /api/users/:username
         ├── POST   /api/users/:username/reset-totp
         ├── GET    /api/certs
+        ├── GET    /api/certs/auto-renew-status
         ├── POST   /api/certs/:domain/renew
         ├── POST   /api/certs/mtls/rotate
         ├── GET    /api/certs/mtls/download
+        ├── POST   /api/certs/admin/upgrade-to-hardware-bound
+        ├── GET    /api/certs/admin/auth-mode
+        ├── POST   /api/certs/agent
+        ├── POST   /api/certs/agent/enroll
+        ├── GET    /api/certs/agent
+        ├── GET    /api/certs/agent/:label/download
+        ├── DELETE /api/certs/agent/:label
+        ├── PATCH  /api/certs/agent/:label/capabilities
+        ├── PATCH  /api/certs/agent/:label/allowed-sites
         ├── GET    /api/invitations
         ├── POST   /api/invitations
         ├── DELETE  /api/invitations/:id
+        ├── GET    /api/plugins
+        ├── GET    /api/plugins/:name
+        ├── POST   /api/plugins/install
+        ├── POST   /api/plugins/:name/enable
+        ├── POST   /api/plugins/:name/disable
+        ├── DELETE /api/plugins/:name
+        ├── GET    /api/plugins/push-install/config
+        ├── PATCH  /api/plugins/push-install/config
+        ├── GET    /api/plugins/push-install/policies
+        ├── POST   /api/plugins/push-install/policies
+        ├── PATCH  /api/plugins/push-install/policies/:id
+        ├── DELETE /api/plugins/push-install/policies/:id
+        ├── POST   /api/plugins/push-install/enable/:label
+        ├── DELETE /api/plugins/push-install/enable/:label
+        ├── POST   /api/plugins/push-install/:label
+        ├── GET    /api/plugins/push-install/sessions
+        ├── GET    /api/plugins/push-install/agent-status
         ├── GET    /api/settings/2fa
         ├── POST   /api/settings/2fa/setup
         ├── POST   /api/settings/2fa/confirm
         ├── POST   /api/settings/2fa/verify
-        └── POST   /api/settings/2fa/disable
+        ├── POST   /api/settings/2fa/disable
+        ├── POST   /api/tickets/scopes
+        ├── GET    /api/tickets/scopes
+        ├── DELETE /api/tickets/scopes/:name
+        ├── POST   /api/tickets/instances
+        ├── DELETE /api/tickets/instances/:instanceId
+        ├── POST   /api/tickets/instances/:instanceId/heartbeat
+        ├── POST   /api/tickets/assignments
+        ├── DELETE /api/tickets/assignments/:agentLabel/:instanceScope
+        ├── GET    /api/tickets/assignments
+        ├── POST   /api/tickets
+        ├── GET    /api/tickets/inbox
+        ├── POST   /api/tickets/validate
+        ├── GET    /api/tickets
+        ├── DELETE /api/tickets/:ticketId
+        ├── POST   /api/tickets/sessions
+        ├── POST   /api/tickets/sessions/:sessionId/heartbeat
+        ├── PATCH  /api/tickets/sessions/:sessionId
+        ├── DELETE /api/tickets/sessions/:sessionId
+        └── GET    /api/tickets/sessions
+
+  server.register(pluginRouter, { prefix: '/api' })
+    └── [guarded: managementOnly() + per-plugin admin-only auth scope]
+        ├── /api/<pluginName>/*              ← Dynamic plugin server routes
+        └── GET /api/<pluginName>/panel.js   ← Plugin panel bundle
 ```
 
 ### Onboarding Routes
@@ -286,7 +344,9 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(usersRoutes);
   await fastify.register(certsRoutes);
   await fastify.register(invitationRoutes);
+  await fastify.register(pluginRoutes);
   await fastify.register(settingsRoutes);
+  await fastify.register(ticketRoutes);
 }
 ```
 
@@ -390,8 +450,26 @@ See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 ### mtls.js — mTLS Certificate Operations
 
 - Reads certificate expiry dates via `openssl x509 -enddate`
-- Rotates client certificates: generate new key → CSR → sign with CA → PKCS12 → backup old → swap
+- Rotates admin client certificates: generate new key → CSR → sign with CA → PKCS12 → backup old → swap
+- Generates agent-scoped client certificates with capability-based access
+- Manages the agent registry: create, list, revoke, update capabilities and allowed sites
 - Provides the PKCS12 download path for the certs API
+- Manages dynamic capability sets: base capabilities + plugin capabilities + ticket scope capabilities via `getValidCapabilities()`
+- Base capabilities: `tunnels:read`, `tunnels:write`, `services:read`, `services:write`, `system:read`, `sites:read`, `sites:write`
+
+### tickets.js — Ticket System
+
+Agent-to-agent authorization with scopes, instances, tickets, and sessions. Provides:
+
+- **Scope registry** — register/unregister capability sets with transport configuration
+- **Instance management** — register, heartbeat, deregister with liveness tracking (active → stale → dead)
+- **Assignment management** — link agents to instances (admin-only)
+- **Ticket operations** — request, validate (timing-safe), revoke with rate limiting (10/agent/min) and hard caps (200 instances, 1000 tickets, 500 sessions)
+- **Session management** — create from validated ticket, heartbeat with multi-layer re-validation, status updates
+- **Periodic cleanup** — stale/dead instances, expired tickets, dead sessions
+- **Concurrency** — promise-chain mutex with atomic file writes (temp → fsync → rename)
+
+State files: `/etc/portlama/ticket-scopes.json` (scopes, instances, assignments) and `/etc/portlama/tickets.json` (tickets, sessions).
 
 ### services.js — Service Management
 
@@ -453,12 +531,14 @@ The server registers handlers for `SIGTERM` and `SIGINT`:
 ```javascript
 const shutdown = async (signal) => {
   server.log.info({ signal }, 'Received signal, shutting down gracefully');
+  clearInterval(livenessInterval);
+  clearRateLimitInterval();
   await server.close();
   process.exit(0);
 };
 ```
 
-`server.close()` waits for active connections to finish before shutting down, ensuring in-flight requests complete cleanly.
+The shutdown sequence stops the periodic instance liveness check (`livenessInterval`), clears the ticket rate-limit cleanup interval (`clearRateLimitInterval()`), and then calls `server.close()` which waits for active connections to finish before shutting down, ensuring in-flight requests complete cleanly.
 
 ## Key Files
 
@@ -473,9 +553,13 @@ const shutdown = async (signal) => {
 | `packages/panel-server/src/routes/onboarding/index.js`       | Onboarding route registration + guard                          |
 | `packages/panel-server/src/routes/onboarding/provision.js`   | Provisioning POST + WebSocket stream                           |
 | `packages/panel-server/src/routes/invite.js`                 | Public invite acceptance routes (no mTLS)                      |
+| `packages/panel-server/src/routes/enrollment.js`             | Public enrollment route (token + CSR, no mTLS)                 |
 | `packages/panel-server/src/routes/management.js`             | Management route registration + guard                          |
+| `packages/panel-server/src/routes/management/certs.js`       | Certificate management (mTLS, agent certs, admin auth mode)    |
+| `packages/panel-server/src/routes/management/plugins.js`     | Plugin management + push install (admin-only)                  |
 | `packages/panel-server/src/routes/management/invitations.js` | Invitation CRUD (admin-only)                                   |
 | `packages/panel-server/src/routes/management/settings.js`    | 2FA settings: setup, confirm, verify, disable (admin-only)     |
+| `packages/panel-server/src/routes/plugin-router.js`          | Dynamic plugin route mounting + disabled-plugin 503 handler    |
 | `packages/panel-server/src/lib/config.js`                    | Config loading, validation (Zod), atomic update                |
 | `packages/panel-server/src/lib/state.js`                     | tunnels.json + sites.json + invitations.json atomic read/write |
 | `packages/panel-server/src/lib/revocation.js`                | Certificate revocation list management (revoked.json)          |
@@ -484,13 +568,20 @@ const shutdown = async (signal) => {
 | `packages/panel-server/src/lib/chisel.js`                    | Chisel install, service management, config update              |
 | `packages/panel-server/src/lib/authelia.js`                  | Authelia install, config, user CRUD, TOTP                      |
 | `packages/panel-server/src/lib/certbot.js`                   | Let's Encrypt issuance, renewal, listing                       |
-| `packages/panel-server/src/lib/mtls.js`                      | mTLS cert info, client cert rotation                           |
+| `packages/panel-server/src/lib/mtls.js`                      | mTLS cert info, client cert rotation, agent registry, capability management |
+| `packages/panel-server/src/lib/plugins.js`                   | Plugin manifest validation, install/uninstall, registry CRUD   |
+| `packages/panel-server/src/lib/push-install.js`              | Push install policies, sessions, agent enablement              |
+| `packages/panel-server/src/lib/enrollment.js`                | Enrollment token creation, validation, consumption             |
+| `packages/panel-server/src/lib/csr-signing.js`               | CSR signing for hardware-bound agent enrollment                |
+| `packages/panel-server/src/lib/constants.js`                 | Reserved API prefixes shared across plugins and tickets        |
 | `packages/panel-server/src/lib/services.js`                  | systemctl wrapper with allowlists                              |
 | `packages/panel-server/src/lib/system-stats.js`              | CPU, memory, disk stats (cached)                               |
 | `packages/panel-server/src/lib/files.js`                     | Static site file operations with path validation               |
 | `packages/panel-server/src/lib/plist.js`                     | macOS launchd plist generator                                  |
 | `packages/panel-server/src/lib/totp.js`                      | TOTP code generation and verification                          |
 | `packages/panel-server/src/lib/session.js`                   | Signed session cookie creation and validation                  |
+| `packages/panel-server/src/lib/tickets.js`                   | Ticket system: scopes, instances, assignments, sessions        |
+| `packages/panel-server/src/routes/management/tickets.js`     | Ticket management HTTP route handlers                          |
 | `packages/panel-server/src/lib/app-error.js`                 | Operational error class                                        |
 
 ## Design Decisions

@@ -289,7 +289,53 @@ Download the `.p12` file via SCP and import it into your browser.
 
 3. **Optionally re-enroll with hardware-bound auth and/or re-enable panel 2FA** from the panel once you have access again.
 
-### Scenario 7: SSH Fallback (Last Resort)
+### Scenario 7: Ticket System State Corruption
+
+**Symptoms:** The Tickets page shows errors, agents cannot register instances or request tickets, or the panel log shows JSON parse errors for ticket state files.
+
+**Why this happens:** A crash during a state file write (extremely rare due to atomic writes), disk full, or manual file editing.
+
+**Recovery:**
+
+1. **Access the panel via IP** (if accessible).
+
+2. **Check panel logs** for errors mentioning `ticket-scopes.json` or `tickets.json`:
+   - From the Services page, view the `portlama-panel` logs
+   - Or via SSH: `journalctl -u portlama-panel -n 50`
+
+3. **If the files are corrupt, reset them.** SSH into the server:
+
+```bash
+ssh root@203.0.113.42
+```
+
+Reset the scope registry (removes all scopes, instances, and assignments):
+
+```bash
+echo '{"scopes":[],"instances":[],"assignments":[]}' | sudo tee /etc/portlama/ticket-scopes.json
+sudo chown portlama:portlama /etc/portlama/ticket-scopes.json
+sudo chmod 600 /etc/portlama/ticket-scopes.json
+```
+
+Reset the ticket store (removes all tickets and sessions):
+
+```bash
+echo '{"tickets":[],"sessions":[]}' | sudo tee /etc/portlama/tickets.json
+sudo chown portlama:portlama /etc/portlama/tickets.json
+sudo chmod 600 /etc/portlama/tickets.json
+```
+
+4. **Restart the panel server:**
+
+```bash
+sudo systemctl restart portlama-panel
+```
+
+5. **Re-register scopes and instances.** Agents will re-register their instances automatically on their next heartbeat cycle. Assignments must be re-created by the admin from the Tickets page.
+
+**Key point:** Ticket state is ephemeral by design — scopes can be re-registered, instances re-registered by agents, and assignments re-created by the admin. No long-lived data is lost.
+
+### Scenario 8: SSH Fallback (Last Resort)
 
 If the panel is completely unreachable (both IP-based and domain-based), SSH is the last resort. The installer hardens SSH but does not disable it — key-based authentication always works.
 
@@ -355,7 +401,7 @@ Portlama is architected for recovery:
 
 - **IP:9292 always works (unless panel 2FA is enabled).** The IP-based panel vhost uses a self-signed certificate with 10-year validity and is independent of DNS or Let's Encrypt. Even if every domain-based service fails, the admin panel is accessible. When the optional panel 2FA is enabled, the IP vhost is disabled (domain-only access). Running `sudo portlama-reset-admin` clears 2FA and re-enables the IP vhost.
 - **Systemd restarts.** All services (`portlama-panel`, `chisel`, `authelia`) have `Restart=always` and `RestartSec=5` in their systemd units. A single crash is invisible to the user.
-- **Atomic writes.** Configuration files (`panel.json`, `tunnels.json`, `sites.json`, `users.yml`) are written atomically (write to temp file, fsync, rename). A crash during write leaves the previous version intact.
+- **Atomic writes.** Configuration files (`panel.json`, `tunnels.json`, `sites.json`, `users.yml`, `ticket-scopes.json`, `tickets.json`) are written atomically (write to temp file, fsync, rename). A crash during write leaves the previous version intact.
 - **State in flat files.** No database means no database corruption. JSON files and YAML files are human-readable and easy to repair manually.
 - **1 GB swap.** The swap file provides a safety net against brief memory spikes. OOM kills are the last line of defense, not the first.
 
@@ -376,6 +422,8 @@ When multiple things are broken, fix in this order:
 | `/etc/portlama/panel.json`              | Panel configuration, onboarding state | JSON         |
 | `/etc/portlama/tunnels.json`            | Tunnel records                        | JSON array   |
 | `/etc/portlama/sites.json`              | Static site records                   | JSON array   |
+| `/etc/portlama/ticket-scopes.json`      | Ticket scopes, instances, assignments | JSON         |
+| `/etc/portlama/tickets.json`            | Active tickets and sessions           | JSON         |
 | `/etc/authelia/users.yml`               | Authelia user database                | YAML         |
 | `/etc/authelia/configuration.yml`       | Authelia config                       | YAML         |
 | `/etc/nginx/sites-available/portlama-*` | nginx vhosts                          | nginx config |
@@ -392,6 +440,7 @@ When multiple things are broken, fix in this order:
 | mTLS cert expired     | Generate new cert via SSH             | Yes         |
 | HW-bound admin lost   | `sudo portlama-reset-admin` via DO console | Yes    |
 | Panel 2FA locked out  | `sudo portlama-reset-admin` via DO console | Yes    |
+| Ticket state corrupt  | Reset JSON files, restart panel       | Yes         |
 | Panel unreachable     | SSH in, check systemd status          | Yes         |
 
 | Emergency Command                    | What It Does                         |

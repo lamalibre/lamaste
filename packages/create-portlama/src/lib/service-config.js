@@ -74,7 +74,8 @@ portlama ALL=(root) NOPASSWD: /usr/bin/systemctl restart portlama-panel
 # --- nginx config test ---
 portlama ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 
-# --- certbot: restrict certonly to --nginx only (prevents --manual-auth-hook) ---
+# --- certbot: restrict certonly to --nginx (code always passes --non-interactive) ---
+# Note: trailing wildcard allows additional flags; trust boundary is @lamalibre/ scope
 portlama ALL=(root) NOPASSWD: /usr/bin/certbot certonly --nginx *
 portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew
 portlama ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name *
@@ -86,7 +87,7 @@ portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/letsencrypt/live/* 
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl x509 -req -in /etc/portlama/pki/* *
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl genrsa -out /etc/portlama/pki/* *
 portlama ALL=(root) NOPASSWD: /usr/bin/openssl req -new -key /etc/portlama/pki/* *
-portlama ALL=(root) NOPASSWD: /usr/bin/openssl pkcs12 -export *
+portlama ALL=(root) NOPASSWD: /usr/bin/openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -out /etc/portlama/pki/*
 
 # --- mv: restrict source to /tmp/ or known config paths ---
 portlama ALL=(root) NOPASSWD: /usr/bin/mv /tmp/* /var/www/portlama/*
@@ -111,7 +112,7 @@ portlama ALL=(root) NOPASSWD: /usr/bin/mkdir -p /etc/authelia/*
 portlama ALL=(root) NOPASSWD: /usr/bin/mkdir -p /var/log/authelia
 portlama ALL=(root) NOPASSWD: /usr/bin/mkdir -p /var/log/authelia/*
 portlama ALL=(root) NOPASSWD: /usr/bin/cat /etc/authelia/*
-portlama ALL=(root) NOPASSWD: /usr/local/bin/authelia storage *
+portlama ALL=(root) NOPASSWD: /usr/local/bin/authelia storage user totp generate *
 
 # --- Static site file operations under /var/www/portlama/ ---
 portlama ALL=(root) NOPASSWD: /usr/bin/mkdir -p /var/www/portlama/*

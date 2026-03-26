@@ -18,7 +18,7 @@
 - Only nginx listens on public interfaces (`0.0.0.0`)
 - All backend services bind to `127.0.0.1` — they are never directly accessible from the internet
 - Port 9292 is the emergency fallback — it works even if your domain is lost or DNS breaks
-- The UFW firewall only allows ports 22, 443, and 9292
+- The UFW firewall only allows ports 22, 80, 443, and 9292 (port 80 is for Let's Encrypt HTTP-01 challenges)
 
 ## Systemd Units
 
@@ -76,6 +76,8 @@ All services start after `network.target` and are independent of each other. If 
 | `/etc/portlama/panel.json`               | Panel server configuration                  |
 | `/etc/portlama/tunnels.json`             | Tunnel definitions                          |
 | `/etc/portlama/sites.json`               | Static site definitions                     |
+| `/etc/portlama/ticket-scopes.json`       | Ticket scope registry (scopes, instances, assignments) |
+| `/etc/portlama/tickets.json`             | Ticket and session store                    |
 | `/etc/authelia/configuration.yml`        | Authelia server configuration               |
 | `/etc/authelia/users.yml`                | Authelia user database                      |
 | `/etc/authelia/.secrets.json`            | Authelia secrets (JWT, session, encryption) |

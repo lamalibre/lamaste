@@ -14,6 +14,7 @@ import Certificates from './pages/management/Certificates.jsx';
 import Services from './pages/management/Services.jsx';
 import Plugins from './pages/management/Plugins.jsx';
 import Settings from './pages/management/Settings.jsx';
+import Tickets from './pages/management/Tickets.jsx';
 import PluginLoader from './components/PluginLoader.jsx';
 import DocsPage from './pages/docs/DocsPage.jsx';
 import { TwoFaProvider } from './context/TwoFaContext.jsx';
@@ -51,6 +52,7 @@ function AppRoutes() {
         <Route path="/users" element={<Users />} />
         <Route path="/certificates" element={<Certificates />} />
         <Route path="/services" element={<Services />} />
+        <Route path="/tickets" element={<Tickets />} />
         <Route path="/plugins" element={<Plugins />} />
         <Route path="/plugins/:pluginName/*" element={<PluginLoader />} />
         <Route path="/settings" element={<Settings />} />

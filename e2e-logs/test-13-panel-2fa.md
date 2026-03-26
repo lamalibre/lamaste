@@ -1,11 +1,11 @@
 # Portlama E2E: 13 — Panel Built-in TOTP 2FA (Three-VM)
 
-> Started at `2026-03-25 18:07:35 UTC`
+> Started at `2026-03-26 10:51:01 UTC`
 
 
 ## Pre-flight: check onboarding is complete
 
-⏭️ `18:07:35` Onboarding not complete — skipping 2FA tests  
+⏭️ `10:51:01` Onboarding not complete — skipping 2FA tests  
 
 ---
 

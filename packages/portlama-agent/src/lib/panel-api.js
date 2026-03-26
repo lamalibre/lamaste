@@ -451,6 +451,179 @@ export async function deleteSiteFile(panelUrlOrConfig, p12Path, p12Password, sit
   }
 }
 
+// ---------------------------------------------------------------------------
+// Ticket system API functions
+// ---------------------------------------------------------------------------
+
+// --- Ticket API functions ---
+// These use config-object only (no dual positional args). The ticket system is new
+// and only called from code that already uses config objects, so the legacy positional
+// calling convention used by older functions above is not needed here.
+
+/**
+ * Fetch pending tickets from the agent's inbox.
+ * @param {object} config - Agent config object
+ * @returns {Promise<{ tickets: Array }>}
+ */
+export async function fetchTicketInbox(config) {
+  const url = `${config.panelUrl}/api/tickets/inbox`;
+  try {
+    const { stdout } = await curlAuthenticated(config, [url]);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to fetch ticket inbox. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Validate a ticket from the inbox.
+ * @param {object} config - Agent config object
+ * @param {string} ticketId - The ticket ID to validate
+ * @returns {Promise<object>}
+ */
+export async function validateTicket(config, ticketId) {
+  const url = `${config.panelUrl}/api/tickets/validate`;
+  const curlArgs = [
+    '-X', 'POST',
+    '-H', 'Content-Type: application/json',
+    '-d', JSON.stringify({ ticketId }),
+    url,
+  ];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to validate ticket. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Register an instance for a ticket scope.
+ * @param {object} config - Agent config object
+ * @param {string} scope - The scope capability (e.g. "shell:connect")
+ * @param {object} transport - Transport configuration
+ * @returns {Promise<object>}
+ */
+export async function registerTicketInstance(config, scope, transport) {
+  const url = `${config.panelUrl}/api/tickets/instances`;
+  const curlArgs = [
+    '-X', 'POST',
+    '-H', 'Content-Type: application/json',
+    '-d', JSON.stringify({ scope, transport }),
+    url,
+  ];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to register ticket instance. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Send an instance heartbeat.
+ * @param {object} config - Agent config object
+ * @param {string} instanceId - The instance ID
+ * @returns {Promise<object>}
+ */
+export async function sendInstanceHeartbeat(config, instanceId) {
+  const url = `${config.panelUrl}/api/tickets/instances/${encodeURIComponent(instanceId)}/heartbeat`;
+  const curlArgs = ['-X', 'POST', url];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to send instance heartbeat. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Request a ticket for a target agent.
+ * @param {object} config - Agent config object
+ * @param {string} scope - Capability scope
+ * @param {string} instanceId - The instance ID
+ * @param {string} target - Target agent label
+ * @returns {Promise<object>}
+ */
+export async function requestTicket(config, scope, instanceId, target) {
+  const url = `${config.panelUrl}/api/tickets`;
+  const curlArgs = [
+    '-X', 'POST',
+    '-H', 'Content-Type: application/json',
+    '-d', JSON.stringify({ scope, instanceId, target }),
+    url,
+  ];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to request ticket. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Report a session creation to the panel.
+ * @param {object} config - Agent config object
+ * @param {string} ticketId - The ticket ID
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<object>}
+ */
+export async function reportSessionCreation(config, ticketId, sessionId) {
+  const url = `${config.panelUrl}/api/tickets/sessions`;
+  const curlArgs = [
+    '-X', 'POST',
+    '-H', 'Content-Type: application/json',
+    '-d', JSON.stringify({ ticketId, sessionId }),
+    url,
+  ];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to report session creation. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Send a session heartbeat to the panel for re-validation.
+ * @param {object} config - Agent config object
+ * @param {string} sessionId - The session ID
+ * @returns {Promise<{ authorized: boolean, reason?: string }>}
+ */
+export async function sendSessionHeartbeat(config, sessionId) {
+  const url = `${config.panelUrl}/api/tickets/sessions/${encodeURIComponent(sessionId)}/heartbeat`;
+  const curlArgs = ['-X', 'POST', url];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to send session heartbeat. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Update session status on the panel.
+ * @param {object} config - Agent config object
+ * @param {string} sessionId - The session ID
+ * @param {string} status - New status: 'active' or 'grace'
+ * @returns {Promise<object>}
+ */
+export async function updateSessionStatus(config, sessionId, status) {
+  const url = `${config.panelUrl}/api/tickets/sessions/${encodeURIComponent(sessionId)}`;
+  const curlArgs = [
+    '-X', 'PATCH',
+    '-H', 'Content-Type: application/json',
+    '-d', JSON.stringify({ status, lastActivityAt: new Date().toISOString() }),
+    url,
+  ];
+  try {
+    const { stdout } = await curlAuthenticated(config, curlArgs);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to update session status. Details: ${err.stderr || err.message}`);
+  }
+}
+
 /**
  * Execute an unauthenticated curl POST to a panel URL.
  * Used for the enrollment endpoint which doesn't require mTLS.

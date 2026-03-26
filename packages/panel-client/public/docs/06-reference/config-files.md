@@ -12,6 +12,8 @@
 | `/etc/authelia/configuration.yml`        | YAML       | root:root         | 0600 | Authelia server configuration |
 | `/etc/authelia/users.yml`                | YAML       | root:root         | 0600 | User database                 |
 | `/etc/authelia/.secrets.json`            | JSON       | root:root         | 0600 | Authelia secrets              |
+| `/etc/portlama/ticket-scopes.json`       | JSON       | portlama:portlama | 0600 | Ticket scope registry         |
+| `/etc/portlama/tickets.json`             | JSON       | portlama:portlama | 0600 | Ticket and session store      |
 | `/etc/nginx/sites-available/portlama-*`  | nginx conf | root:root         | 0644 | Vhost configurations          |
 | `/etc/nginx/snippets/portlama-mtls.conf` | nginx conf | root:root         | 0644 | mTLS snippet                  |
 
@@ -194,6 +196,111 @@ Stores the array of static sites hosted through Portlama.
 ```
 
 **Write pattern:** Same as `tunnels.json` — atomic with `fsync()`.
+
+---
+
+## `/etc/portlama/ticket-scopes.json`
+
+Stores the ticket scope registry: registered scopes, active instances, and agent-to-instance assignments. Created automatically on first use.
+
+**Schema:**
+
+| Field         | Type  | Description                                              |
+| ------------- | ----- | -------------------------------------------------------- |
+| `scopes`      | array | Registered scope definitions (name, version, transport)  |
+| `instances`   | array | Active instances (scope, instanceId, agentLabel, status) |
+| `assignments` | array | Agent-to-instance assignments                            |
+
+**Example:**
+
+```json
+{
+  "scopes": [
+    {
+      "name": "shell",
+      "version": "1.0.0",
+      "description": "Remote shell access",
+      "scopes": [{ "name": "shell:connect", "description": "Connect to shell", "instanceScoped": true }],
+      "transport": { "strategies": ["tunnel"], "preferred": "tunnel", "port": 9000, "protocol": "wss" },
+      "installedAt": "2026-03-26T10:00:00.000Z"
+    }
+  ],
+  "instances": [
+    {
+      "scope": "shell:connect",
+      "instanceId": "a7f3b2c9d1e2f3a4b5c6d7e8f9a0b1c2",
+      "agentLabel": "macbook-pro",
+      "registeredAt": "2026-03-26T10:05:00.000Z",
+      "lastHeartbeat": "2026-03-26T10:15:30.000Z",
+      "status": "active",
+      "transport": { "strategies": ["tunnel"], "preferred": "tunnel" }
+    }
+  ],
+  "assignments": [
+    {
+      "agentLabel": "linux-agent",
+      "instanceScope": "shell:connect:a7f3b2c9d1e2f3a4",
+      "assignedAt": "2026-03-26T10:10:00.000Z",
+      "assignedBy": "admin"
+    }
+  ]
+}
+```
+
+**Write pattern:** Atomic — temp file, `fsync()`, `rename()`. Concurrency controlled by promise-chain mutex.
+
+---
+
+## `/etc/portlama/tickets.json`
+
+Stores active tickets and sessions for agent-to-agent authorization. Created automatically on first use.
+
+**Schema:**
+
+| Field      | Type  | Description                                                    |
+| ---------- | ----- | -------------------------------------------------------------- |
+| `tickets`  | array | Issued tickets (id, scope, instanceId, source, target, expiry) |
+| `sessions` | array | Active sessions (sessionId, ticketId, status, heartbeat)       |
+
+**Example:**
+
+```json
+{
+  "tickets": [
+    {
+      "id": "64-hex-char-ticket-id",
+      "scope": "shell:connect",
+      "instanceId": "a7f3b2c9d1e2f3a4",
+      "source": "macbook-pro",
+      "target": "linux-agent",
+      "createdAt": "2026-03-26T10:15:00.000Z",
+      "expiresAt": "2026-03-26T10:15:30.000Z",
+      "used": false,
+      "usedAt": null,
+      "sessionId": null,
+      "transport": {}
+    }
+  ],
+  "sessions": [
+    {
+      "sessionId": "session-1",
+      "ticketId": "64-hex-char-ticket-id",
+      "scope": "shell:connect",
+      "instanceId": "a7f3b2c9d1e2f3a4",
+      "source": "macbook-pro",
+      "target": "linux-agent",
+      "createdAt": "2026-03-26T10:15:30.000Z",
+      "lastActivityAt": "2026-03-26T10:20:00.000Z",
+      "status": "active",
+      "reconnectGraceSeconds": 60
+    }
+  ]
+}
+```
+
+**Write pattern:** Same as `ticket-scopes.json` — atomic with mutex.
+
+**Cleanup:** Tickets older than 1 hour are removed. Dead sessions older than 24 hours are removed.
 
 ---
 
@@ -460,6 +567,8 @@ This enables client certificate verification at the TLS level. The `optional` se
 | `/etc/portlama/pki/.p12-password`       | root:root         | 0600 | PKCS12 password      |
 | `/etc/portlama/pki/self-signed.pem`     | root:root         | 0644 | Self-signed TLS cert |
 | `/etc/portlama/pki/self-signed-key.pem` | root:root         | 0600 | Self-signed TLS key  |
+| `/etc/portlama/ticket-scopes.json`     | portlama:portlama | 0600 | Ticket scope registry |
+| `/etc/portlama/tickets.json`           | portlama:portlama | 0600 | Ticket/session store  |
 | `/etc/authelia/configuration.yml`       | root:root         | 0600 | Auth config          |
 | `/etc/authelia/users.yml`               | root:root         | 0600 | User database        |
 | `/etc/authelia/.secrets.json`           | root:root         | 0600 | Auth secrets         |
@@ -475,6 +584,8 @@ This enables client certificate verification at the TLS level. The `optional` se
 | `panel.json`        | panel-server | panel-server (atomic write)         | No (hot reload)                            |
 | `tunnels.json`      | panel-server | panel-server (atomic write + fsync) | No                                         |
 | `sites.json`        | panel-server | panel-server (atomic write + fsync) | No                                         |
+| `ticket-scopes.json` | panel-server | panel-server (atomic write + mutex) | No                                        |
+| `tickets.json`      | panel-server | panel-server (atomic write + mutex) | No                                         |
 | `configuration.yml` | authelia     | onboarding provisioning             | Yes (`systemctl restart authelia`)         |
 | `users.yml`         | authelia     | panel-server (via sudo)             | Yes (`systemctl restart authelia`)         |
 | `portlama-*` vhosts | nginx        | panel-server (via sudo)             | Yes (`nginx -t && systemctl reload nginx`) |
