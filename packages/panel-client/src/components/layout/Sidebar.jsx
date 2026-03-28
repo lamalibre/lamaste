@@ -32,7 +32,7 @@ import {
   Zap,
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
-import { apiFetch } from '../../lib/api.js';
+import { useAdminClient } from '@lamalibre/portlama-admin-panel';
 
 const iconMap = {
   activity: Activity,
@@ -81,21 +81,21 @@ const baseNavItems = [
   { type: 'link', to: '/docs', icon: BookOpen, label: 'Documentation' },
 ];
 
-async function fetchEnabledPlugins() {
-  try {
-    const data = await apiFetch('/api/plugins');
-    return (data.plugins || []).filter(
-      (p) => p.status === 'enabled' && (p.panel?.label || p.panel?.pages?.length),
-    );
-  } catch {
-    return [];
-  }
-}
-
 function SidebarContent({ onLinkClick }) {
+  const client = useAdminClient();
+
   const { data: enabledPlugins } = useQuery({
     queryKey: ['sidebar-plugins'],
-    queryFn: fetchEnabledPlugins,
+    queryFn: async () => {
+      try {
+        const data = await client.getPlugins();
+        return (data.plugins || []).filter(
+          (p) => p.status === 'enabled' && (p.panel?.label || p.panel?.pages?.length),
+        );
+      } catch {
+        return [];
+      }
+    },
     refetchInterval: 30000,
     staleTime: 15000,
   });

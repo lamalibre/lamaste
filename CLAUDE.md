@@ -11,7 +11,8 @@ portlama/
 │   ├── panel-server/          @lamalibre/portlama-panel-server — Fastify REST API
 │   ├── panel-client/          @lamalibre/portlama-panel-client — React + Vite + Tailwind UI
 │   ├── portlama-agent/        @lamalibre/portlama-agent — tunnel agent CLI (macOS & Linux)
-│   ├── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop app (service discovery, tunnel management, multi-server & cloud provisioning)
+│   ├── portlama-admin-panel/   @lamalibre/portlama-admin-panel — shared React admin UI (pages, context, components) used by panel-client and portlama-desktop
+│   ├── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop app (dual-mode: agent management + server admin panel)
 │   ├── install-portlama-desktop/ @lamalibre/install-portlama-desktop — npx installer for the desktop app
 │   ├── install-portlama-admin/ @lamalibre/install-portlama-admin — npx admin cert upgrade to hardware-bound
 │   ├── install-portlama-e2e-mcp/ @lamalibre/install-portlama-e2e-mcp — npx installer + MCP server for E2E test infrastructure

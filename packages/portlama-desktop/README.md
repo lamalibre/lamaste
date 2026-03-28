@@ -1,6 +1,6 @@
 # @lamalibre/portlama-desktop
 
-Tauri v2 desktop application for managing Portlama servers and tunnels on macOS and Ubuntu. Supports multi-server management, cloud provisioning (DigitalOcean), and service discovery.
+Tauri v2 desktop application for managing Portlama servers and tunnels on macOS and Ubuntu. Supports dual-mode operation (Agent and Server), multi-server management, cloud provisioning (DigitalOcean), and service discovery.
 
 ## Install
 
@@ -12,9 +12,22 @@ Downloads the latest release from GitHub, installs to `/Applications` (macOS) or
 
 ## What It Does
 
-The desktop app provides a native GUI for managing Portlama with:
+The desktop app provides a native GUI for managing Portlama with two operating modes:
 
-- **mTLS authentication** — connects to the panel using agent-scoped certificates
+### Dual Mode
+
+The sidebar features an Agents/Servers pill toggle (visible when an admin certificate is detected for the active server):
+
+- **Agent mode** (default) — local agent management: Dashboard, Tunnels, Services, Servers, Logs, Settings
+- **Server mode** — full admin panel: Dashboard, Tunnels, Services, Static Sites, Users, Certificates, Tickets, Plugins, Logs, Settings
+
+Server mode pages are imported from `@lamalibre/portlama-admin-panel`, a shared React package also consumed by `panel-client` (web). An `AdminClientContext` abstraction lets each host provide its own data client — the web uses browser `fetch`, the desktop uses Tauri `invoke` commands with the Rust backend handling mTLS.
+
+Cloud-provisioned servers automatically include an admin certificate, so Server mode is available immediately. For servers added via `portlama-agent setup`, an admin certificate must be imported manually.
+
+### Features
+
+- **mTLS authentication** — connects to the panel using agent-scoped or admin certificates
 - **Tunnel management** — start, stop, and monitor Chisel tunnels
 - **Service discovery** — auto-detects local services (Ollama, ComfyUI, PostgreSQL, Redis, etc.) and Docker containers, with one-click tunnel creation
 - **Custom services** — user-defined service definitions persisted in `~/.portlama/services.json`

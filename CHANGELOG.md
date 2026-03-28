@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add dual-mode desktop app — sidebar toggle switches between Agents (local agent management) and Servers (per-server admin panel with drill-down from server list)
+- Add `@lamalibre/portlama-admin-panel` shared React package — admin UI pages, `AdminClientContext` abstraction, and components consumed by both web panel and desktop app
+- Add per-server admin panel in desktop app — Dashboard, Tunnels, Services, Static Sites, Users, Certificates, Tickets, Plugins, and Settings pages via `portlama-admin-panel`
+- Add "Manage" button on server cards — drills into that server's admin panel with back navigation to server list
+- Add admin certificate detection and import — cloud-provisioned servers auto-detected, manual P12 import for agent-setup servers
+- Add 2FA session support in desktop app — TOTP verification modal with in-memory session cookie storage (12h expiry)
+- Add admin log streaming via HTTP polling — `admin_start_log_stream`/`admin_stop_log_stream` Tauri commands with per-service event filtering
+- Add 50+ Tauri admin commands bridging desktop UI to panel-server API via admin mTLS (users, sites, certs, services, tickets, plugins, tunnels)
+- Add `AdminClientContext` data client implementations — web via `apiFetch()`, desktop via Tauri `invoke()`
 - Add cloud provisioning via DigitalOcean — create, monitor, and destroy servers directly from the desktop app without SSH or terminal commands
 - Add `@lamalibre/portlama-cloud` package — cloud provider abstraction with DigitalOcean implementation, token scope validation, SSH provisioning, and NDJSON progress protocol
 - Add Create Server wizard with 6-step flow: Overview → Token → Region → Size → Label → Create
@@ -30,6 +39,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Extract admin pages from `panel-client` into shared `portlama-admin-panel` package — web panel now imports from the shared package
+- Update desktop app server list from agent-only tab to Servers mode landing page with drill-down navigation
+- Update desktop sidebar to show mode-contextual navigation — agent tabs, server list, or per-server admin tabs
+
+### Security
+
+- Add path traversal validation on agent labels and server IDs in Rust filesystem operations
+- Add cookie value allowlist validation before passing 2FA session cookies to curl
+- Add file upload path validation — rejects symlinks, non-regular files, and curl metacharacters
+- Add response body truncation in error messages — prevents server internals leaking to UI (max 200 chars, UTF-8 boundary safe)
+- Add service action allowlist — only `start`, `stop`, `restart` accepted by `admin_service_action`
+- Add max concurrent log stream limit (5) to prevent resource exhaustion
+- Add `files` field to `portlama-admin-panel` package.json to prevent artifact leakage on npm publish
+
+### Changed
+
 - Update app icon to llama-only silhouette on transparent background (removed white square and "CODELAMA" text)
 - Update tray icon to match new llama silhouette
 - Remove duplicate tray icon caused by both `tauri.conf.json` and `tray.rs` creating separate instances
@@ -46,9 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Affected packages:**
 
-- `@lamalibre/portlama-desktop` 0.1.3 → 0.1.5
-- `@lamalibre/portlama-cloud` 0.1.0 (new package)
-- `@lamalibre/portlama-panel-client` 0.1.8 (docs only)
+- `@lamalibre/portlama-admin-panel` 0.1.0 (new package)
+- `@lamalibre/portlama-desktop` 0.1.3 → 0.1.6
+- `@lamalibre/portlama-panel-client` 0.1.8 → 0.1.9
+- `@lamalibre/portlama-cloud` 0.1.0 → 0.1.1
+- `@lamalibre/create-portlama` 1.0.34 → 1.0.35
 
 ## [Unreleased] - 2026-03-26
 

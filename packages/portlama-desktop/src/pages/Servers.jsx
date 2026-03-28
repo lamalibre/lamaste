@@ -6,7 +6,7 @@ import ServerCard from '../components/ServerCard.jsx';
 import CreateServerWizard from '../components/CreateServerWizard.jsx';
 import AddManagedServer from '../components/AddManagedServer.jsx';
 
-export default function Servers() {
+export default function Servers({ onManage }) {
   const queryClient = useQueryClient();
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showAddManaged, setShowAddManaged] = useState(false);
@@ -115,6 +115,7 @@ export default function Servers() {
               key={server.id}
               server={server}
               onSetActive={(id) => setActiveMutation.mutate(id)}
+              onManage={onManage}
             />
           ))}
         </div>

@@ -80,7 +80,38 @@ export default [
     },
   },
 
-  // 5. React/Browser config for portlama-desktop
+  // 5. React config for portlama-admin-panel (shared component library)
+  {
+    files: ['packages/portlama-admin-panel/**/*.{js,jsx}'],
+    plugins: {
+      react: reactPlugin,
+      'react-hooks': reactHooksPlugin,
+    },
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+    },
+    settings: {
+      react: {
+        version: 'detect',
+      },
+    },
+    rules: {
+      ...reactPlugin.configs.recommended.rules,
+      ...reactHooksPlugin.configs.recommended.rules,
+      'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+
+  // 6. React/Browser config for portlama-desktop
   {
     files: ['packages/portlama-desktop/**/*.{js,jsx}'],
     plugins: {
@@ -111,7 +142,7 @@ export default [
     },
   },
 
-  // 6. TypeScript config for portlama-tickets
+  // 7. TypeScript config for portlama-tickets
   ...tseslint.configs.recommended.map((config) => ({
     ...config,
     files: ['packages/portlama-tickets/src/**/*.ts'],
@@ -129,6 +160,6 @@ export default [
     },
   },
 
-  // 7. Prettier compat — must be last to disable formatting rules
+  // 8. Prettier compat — must be last to disable formatting rules
   prettierConfig,
 ];

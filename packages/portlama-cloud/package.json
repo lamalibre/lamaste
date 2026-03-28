@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-cloud",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cloud provider abstraction for Portlama server provisioning",
   "type": "module",
   "exports": {

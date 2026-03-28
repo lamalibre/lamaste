@@ -8,6 +8,17 @@ The panel client is what you see in your browser when you open the Portlama admi
 
 The client has two modes. On first visit, it shows an onboarding wizard that walks you through domain setup and stack provisioning. After onboarding is complete, it switches to the full management interface with a sidebar navigation, dashboard, and pages for managing tunnels, users, certificates, services, and static sites.
 
+## Shared Admin Panel Package
+
+The management-mode admin pages (Dashboard, Tunnels, Sites, Users, Certificates, Services, Plugins, Tickets, Logs, Settings) are extracted into a shared package: `@lamalibre/portlama-admin-panel`. This package is consumed by both `panel-client` (web) and `portlama-desktop` (Tauri app).
+
+The shared package exposes an `AdminClientContext` abstraction that decouples admin UI pages from their data transport. Each host provides its own client implementation:
+
+- **panel-client (web):** Uses `apiFetch` — standard browser `fetch` calls to `/api/*` endpoints, relying on the browser's mTLS client certificate for authentication.
+- **portlama-desktop (Tauri):** Uses Tauri `invoke` commands — the Rust backend handles mTLS, makes the API calls, and returns the data to the React frontend via IPC.
+
+This architecture means the admin pages themselves contain zero transport logic. They call context-provided functions like `client.getTunnels()` and the host decides how the data is fetched.
+
 ## Overview
 
 ```
@@ -39,13 +50,17 @@ Browser
               │           │     └── CompleteStep
               │           │
               │           └── [status === 'COMPLETED'] → Layout + Routes
-              │                 ├── /           → Dashboard
-              │                 ├── /tunnels    → Tunnels
-              │                 ├── /sites      → Sites
-              │                 ├── /users      → Users
-              │                 ├── /certificates → Certificates
-              │                 ├── /services   → Services
-              │                 └── /docs/*     → DocsPage
+              │                 ├── /              → DashboardPage
+              │                 ├── /tunnels       → TunnelsPage
+              │                 ├── /sites         → SitesPage
+              │                 ├── /users         → UsersPage
+              │                 ├── /certificates  → CertificatesPage
+              │                 ├── /services      → ServicesPage
+              │                 ├── /tickets       → TicketsPage
+              │                 ├── /plugins       → PluginsPage
+              │                 ├── /plugins/:pluginName/* → PluginLoaderRoute
+              │                 ├── /settings      → SettingsPage
+              │                 └── /docs/*        → DocsPage
 ```
 
 ## Mode Detection
@@ -101,17 +116,21 @@ The shell renders the appropriate step component and shows a progress indicator 
 
 ### Management Mode
 
-React Router handles navigation within the `Layout` component (sidebar + content area):
+React Router handles navigation within the `Layout` component (sidebar + content area). Management page components are imported from the shared `@lamalibre/portlama-admin-panel` package and wrapped with the `AdminClientProvider` (which supplies the web-specific data client):
 
-| Path            | Component      | Description                                                         |
-| --------------- | -------------- | ------------------------------------------------------------------- |
-| `/`             | `Dashboard`    | System stats (CPU, RAM, disk, uptime) + service health indicators   |
-| `/tunnels`      | `Tunnels`      | Tunnel CRUD table + create form + Mac plist download                |
-| `/sites`        | `Sites`        | Static site CRUD + file browser + upload                            |
-| `/users`        | `Users`        | Authelia user table + create/edit/delete + TOTP enrollment          |
-| `/certificates` | `Certificates` | Let's Encrypt + mTLS cert listing + renewal + rotation              |
-| `/services`     | `Services`     | Service status cards + start/stop/restart buttons + live log viewer |
-| `/docs/*`       | `DocsPage`     | Markdown documentation viewer with sidebar navigation               |
+| Path              | Component          | Description                                                         |
+| ----------------- | ------------------ | ------------------------------------------------------------------- |
+| `/`               | `DashboardPage`    | System stats (CPU, RAM, disk, uptime) + service health indicators   |
+| `/tunnels`        | `TunnelsPage`      | Tunnel CRUD table + create form + Mac plist download                |
+| `/sites`          | `SitesPage`        | Static site CRUD + file browser + upload                            |
+| `/users`          | `UsersPage`        | Authelia user table + create/edit/delete + TOTP enrollment          |
+| `/certificates`   | `CertificatesPage` | Let's Encrypt + mTLS cert listing + renewal + rotation              |
+| `/services`       | `ServicesPage`     | Service status cards + start/stop/restart buttons + live log viewer |
+| `/tickets`        | `TicketsPage`      | Agent-to-agent ticket system management                             |
+| `/plugins`        | `PluginsPage`      | Plugin install/enable/disable + push install management             |
+| `/plugins/:pluginName/*`| `PluginLoaderRoute` | Plugin micro-frontend loader (dynamic routes per plugin)           |
+| `/settings`       | `SettingsPage`     | Panel 2FA setup, certificate management, admin settings             |
+| `/docs/*`         | `DocsPage`         | Markdown documentation viewer with sidebar navigation               |
 
 ## Data Fetching Patterns
 
@@ -259,6 +278,9 @@ All icons come from the `lucide-react` package. Common icons used:
 | `Users`           | Users nav             |
 | `ShieldCheck`     | Certificates nav      |
 | `Server`          | Services nav          |
+| `Ticket`          | Tickets nav           |
+| `Package`         | Plugins nav + default plugin icon |
+| `Settings`        | Settings nav          |
 | `BookOpen`        | Documentation nav     |
 | `Menu` / `X`      | Mobile sidebar toggle |
 
@@ -289,36 +311,47 @@ The sidebar is a responsive component:
 Navigation items are defined as a simple array:
 
 ```javascript
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/tunnels', icon: Globe, label: 'Tunnels' },
-  { to: '/sites', icon: FileText, label: 'Static Sites' },
-  { to: '/users', icon: Users, label: 'Users' },
-  { to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
-  { to: '/services', icon: Server, label: 'Services' },
-  { to: '/docs', icon: BookOpen, label: 'Documentation' },
+const baseNavItems = [
+  { type: 'link', to: '/', icon: LayoutDashboard, label: 'Dashboard' },
+  { type: 'link', to: '/tunnels', icon: Globe, label: 'Tunnels' },
+  { type: 'link', to: '/sites', icon: FileText, label: 'Static Sites' },
+  { type: 'link', to: '/users', icon: Users, label: 'Users' },
+  { type: 'link', to: '/certificates', icon: ShieldCheck, label: 'Certificates' },
+  { type: 'link', to: '/services', icon: Server, label: 'Services' },
+  { type: 'link', to: '/tickets', icon: Ticket, label: 'Tickets' },
+  { type: 'link', to: '/plugins', icon: Package, label: 'Plugins' },
+  { type: 'link', to: '/settings', icon: Settings, label: 'Settings' },
+  { type: 'link', to: '/docs', icon: BookOpen, label: 'Documentation' },
 ];
 ```
+
+The sidebar dynamically appends navigation items for enabled plugins. Plugins with a `panel.pages` array get a section header followed by per-page links; plugins with a single `panel.label` get one link. Plugin nav items are fetched via the `AdminClientContext` and appended after the base items.
 
 Each item renders a `SidebarLink` component with active-state highlighting via React Router's `useLocation`.
 
 ## Provider Stack
 
-The app root wraps all content in three providers:
+The app root wraps all content in five providers:
 
 ```jsx
 <QueryClientProvider client={queryClient}>
-  <ToastProvider>
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
-  </ToastProvider>
+  <AdminClientProvider client={webAdminClient}>
+    <ToastProvider>
+      <TwoFaProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </TwoFaProvider>
+    </ToastProvider>
+  </AdminClientProvider>
 </QueryClientProvider>
 ```
 
 1. **QueryClientProvider** — react-query cache with global defaults (`retry: 1`, `refetchOnWindowFocus: false`)
-2. **ToastProvider** — custom context for displaying notification toasts
-3. **BrowserRouter** — React Router for client-side navigation
+2. **AdminClientProvider** — from `@lamalibre/portlama-admin-panel`, supplies the host-specific data client (`webAdminClient` for browser fetch, Tauri `invoke` for desktop)
+3. **ToastProvider** — from `@lamalibre/portlama-admin-panel`, notification toast system
+4. **TwoFaProvider** — from `@lamalibre/portlama-admin-panel`, handles 2FA verification prompts when the panel has 2FA enabled
+5. **BrowserRouter** — React Router for client-side navigation
 
 ## Documentation Viewer
 
@@ -352,12 +385,8 @@ The built `dist/` directory is served by the panel-server via `@fastify/static`.
 | `packages/panel-client/src/components/layout/Sidebar.jsx`        | Navigation sidebar (responsive)          |
 | `packages/panel-client/src/components/Toast.jsx`                 | Notification toast system                |
 | `packages/panel-client/src/pages/onboarding/OnboardingShell.jsx` | Onboarding wizard container              |
-| `packages/panel-client/src/pages/management/Dashboard.jsx`       | System stats + service health            |
-| `packages/panel-client/src/pages/management/Tunnels.jsx`         | Tunnel CRUD + plist download             |
-| `packages/panel-client/src/pages/management/Sites.jsx`           | Static site management + file browser    |
-| `packages/panel-client/src/pages/management/Services.jsx`        | Service control + live logs              |
-| `packages/panel-client/src/pages/management/Certificates.jsx`    | Certificate management                   |
-| `packages/panel-client/src/pages/Users.jsx`                      | Authelia user management                 |
+| `packages/portlama-admin-panel/src/index.js`                     | Shared package exports (all admin pages, contexts, components) |
+| `packages/panel-client/src/pages/management/`                    | Legacy standalone pages (dead code, kept for reference) |
 | `packages/panel-client/src/pages/docs/DocsPage.jsx`              | Documentation viewer                     |
 | `packages/panel-client/src/components/FileBrowser.jsx`           | File tree for static sites               |
 

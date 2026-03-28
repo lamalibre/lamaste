@@ -454,6 +454,11 @@ Stores the server registry for the desktop app's multi-server support. Created b
 | `authMethod`       | string         | `"p12"` or `"keychain"`                              |
 | `keychainIdentity` | string \| null | Keychain identity name (when `authMethod` is `"keychain"`) |
 | `p12Path`          | string \| null | Path to P12 file (when `authMethod` is `"p12"`)      |
+| `activeMode`       | string         | `"agent"` or `"admin"` — which UI mode the desktop app shows for this server. Defaults to `"agent"` |
+| `adminAuth`        | object \| null | Admin certificate details for Server mode access (see sub-fields below) |
+| `adminAuth.method` | string         | `"p12"` or `"keychain"` — how the admin cert is stored |
+| `adminAuth.p12Path` | string \| null | Path to admin P12 file (when method is `"p12"`)     |
+| `adminAuth.keychainIdentity` | string \| null | Keychain identity for admin cert (when method is `"keychain"`) |
 
 **Example:**
 
@@ -471,10 +476,18 @@ Stores the server registry for the desktop app's multi-server support. Created b
     "active": true,
     "authMethod": "p12",
     "p12Path": "/Users/admin/.portlama/servers/d4e5f6a7/client.p12",
-    "keychainIdentity": null
+    "keychainIdentity": null,
+    "activeMode": "admin",
+    "adminAuth": {
+      "method": "p12",
+      "p12Path": "/Users/admin/.portlama/servers/d4e5f6a7/admin.p12",
+      "keychainIdentity": null
+    }
   }
 ]
 ```
+
+**Notes on `adminAuth`:** When `adminAuth` is present and valid, the desktop app shows the Agents/Servers mode toggle in the sidebar. Cloud-provisioned servers populate `adminAuth` automatically (the admin certificate is downloaded during provisioning). For manually added servers, the user must import an admin certificate to enable Server mode.
 
 **P12 password:** Not stored in the JSON file. Retrieved from the OS credential store (`com.portlama.server` service, keyed by server UUID).
 

@@ -208,3 +208,282 @@ pub(crate) fn curl_panel_binary(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Admin API helpers — use admin certificate instead of agent certificate
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+use std::collections::HashMap;
+use std::time::Instant;
+
+/// In-process storage for 2FA session cookies (keyed by server ID).
+/// Value is (cookie_value, expiry_instant).
+static SESSION_STORE: std::sync::LazyLock<Mutex<HashMap<String, (String, Instant)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store a 2FA session cookie for a server.
+pub(crate) fn store_2fa_session(server_id: &str, cookie: &str, ttl_seconds: u64) {
+    let expiry = Instant::now() + std::time::Duration::from_secs(ttl_seconds);
+    let mut store = SESSION_STORE.lock().unwrap();
+    store.insert(server_id.to_string(), (cookie.to_string(), expiry));
+}
+
+/// Get the 2FA session cookie for a server, if still valid.
+pub(crate) fn get_2fa_session(server_id: &str) -> Option<String> {
+    let mut store = SESSION_STORE.lock().unwrap();
+    if let Some((cookie, expiry)) = store.get(server_id) {
+        if Instant::now() < *expiry {
+            return Some(cookie.clone());
+        }
+        store.remove(server_id);
+    }
+    None
+}
+
+/// Build a CurlAuth from an AdminApiConfig.
+fn admin_curl_auth(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
+    if cfg.auth_method == "keychain" {
+        let identity = cfg.keychain_identity.as_deref()
+            .ok_or("Admin keychain identity not configured")?;
+        Ok(CurlAuth::Keychain(identity.to_string()))
+    } else {
+        let p12_path = cfg.p12_path.as_deref()
+            .ok_or("Admin P12 path not configured")?;
+        let p12_password = cfg.p12_password.as_deref()
+            .ok_or("Admin P12 password not configured")?;
+        Ok(CurlAuth::P12(CurlConfigFile::new(p12_path, p12_password)?))
+    }
+}
+
+/// Make an admin API request to the panel.
+/// Includes the 2FA session cookie if one is stored for the active server.
+pub(crate) fn curl_panel_admin(
+    cfg: &config::AdminApiConfig,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let auth = admin_curl_auth(cfg)?;
+
+    let mut args = vec!["-s".to_string()];
+    args.extend(auth.auth_args());
+    args.extend([
+        "-k".to_string(),
+        "-X".to_string(),
+        method.to_string(),
+    ]);
+
+    // Include 2FA session cookie if available (validated against injection)
+    if let Ok(server_id) = config::get_active_server_id() {
+        if let Some(cookie) = get_2fa_session(&server_id) {
+            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
+                args.push("-b".to_string());
+                args.push(format!("portlama_2fa_session={}", cookie));
+            }
+        }
+    }
+
+    if let Some(json_body) = body {
+        args.push("-H".to_string());
+        args.push("Content-Type: application/json".to_string());
+        args.push("-d".to_string());
+        args.push(json_body.to_string());
+    }
+
+    args.push(url);
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Request failed: {}", stderr));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
+            return Err(error.to_string());
+        }
+    }
+
+    Ok(body)
+}
+
+/// Make an admin API request that captures response headers (for 2FA cookie extraction).
+/// Returns (body, headers) tuple.
+pub(crate) fn curl_panel_admin_with_headers(
+    cfg: &config::AdminApiConfig,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<(String, String), String> {
+    let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let auth = admin_curl_auth(cfg)?;
+
+    let mut args = vec!["-s".to_string(), "-D".to_string(), "-".to_string()];
+    args.extend(auth.auth_args());
+    args.extend([
+        "-k".to_string(),
+        "-X".to_string(),
+        method.to_string(),
+    ]);
+
+    // Include 2FA session cookie if available (validated against injection)
+    if let Ok(server_id) = config::get_active_server_id() {
+        if let Some(cookie) = get_2fa_session(&server_id) {
+            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
+                args.push("-b".to_string());
+                args.push(format!("portlama_2fa_session={}", cookie));
+            }
+        }
+    }
+
+    if let Some(json_body) = body {
+        args.push("-H".to_string());
+        args.push("Content-Type: application/json".to_string());
+        args.push("-d".to_string());
+        args.push(json_body.to_string());
+    }
+
+    args.push(url);
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Request failed: {}", stderr));
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // -D - dumps headers followed by body, separated by \r\n\r\n
+    let (headers, resp_body) = if let Some(pos) = raw.find("\r\n\r\n") {
+        (raw[..pos].to_string(), raw[pos + 4..].to_string())
+    } else {
+        ("".to_string(), raw)
+    };
+
+    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&resp_body) {
+        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
+            return Err(error.to_string());
+        }
+    }
+
+    Ok((resp_body, headers))
+}
+
+/// Download a binary file using the admin certificate.
+pub(crate) fn curl_panel_admin_binary(
+    cfg: &config::AdminApiConfig,
+    path: &str,
+    output_path: &std::path::Path,
+) -> Result<(), String> {
+    let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let auth = admin_curl_auth(cfg)?;
+
+    let mut args = vec!["-s".to_string()];
+    args.extend(auth.auth_args());
+    args.extend([
+        "-k".to_string(),
+        "-o".to_string(),
+        output_path.to_string_lossy().to_string(),
+    ]);
+
+    // Include 2FA session cookie if available (validated against injection)
+    if let Ok(server_id) = config::get_active_server_id() {
+        if let Some(cookie) = get_2fa_session(&server_id) {
+            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
+                args.push("-b".to_string());
+                args.push(format!("portlama_2fa_session={}", cookie));
+            }
+        }
+    }
+
+    args.push(url);
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Download failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Upload files via multipart/form-data using the admin certificate.
+pub(crate) fn curl_panel_admin_multipart(
+    cfg: &config::AdminApiConfig,
+    path: &str,
+    file_paths: &[String],
+    query: Option<&str>,
+) -> Result<String, String> {
+    let base_url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let url = if let Some(q) = query {
+        format!("{}?{}", base_url, q)
+    } else {
+        base_url
+    };
+    let auth = admin_curl_auth(cfg)?;
+
+    let mut args = vec!["-s".to_string()];
+    args.extend(auth.auth_args());
+    args.push("-k".to_string());
+
+    // Include 2FA session cookie if available (validated against injection)
+    if let Ok(server_id) = config::get_active_server_id() {
+        if let Some(cookie) = get_2fa_session(&server_id) {
+            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
+                args.push("-b".to_string());
+                args.push(format!("portlama_2fa_session={}", cookie));
+            }
+        }
+    }
+
+    for file_path in file_paths {
+        // Validate file path: must be a regular file, no curl -F special characters
+        let p = std::path::Path::new(&file_path);
+        if !p.is_file() {
+            return Err(format!("Not a regular file: {}", file_path));
+        }
+        if file_path.contains(';') || file_path.contains('<') || file_path.contains('>') {
+            return Err(format!("File path contains invalid characters: {}", file_path));
+        }
+        args.push("-F".to_string());
+        args.push(format!("files=@{}", file_path));
+    }
+
+    args.push(url);
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Upload failed: {}", stderr));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
+            return Err(error.to_string());
+        }
+    }
+
+    Ok(body)
+}

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
-export default function ServerCard({ server, onSetActive }) {
+export default function ServerCard({ server, onSetActive, onManage }) {
   const queryClient = useQueryClient();
   const [confirmDestroy, setConfirmDestroy] = useState(false);
 
@@ -82,6 +82,15 @@ export default function ServerCard({ server, onSetActive }) {
             className="text-xs px-2.5 py-1.5 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700"
           >
             Set Active
+          </button>
+        )}
+        {onManage && (
+          <button
+            onClick={() => onManage(server)}
+            className="text-xs px-2.5 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 flex items-center gap-1"
+          >
+            <Server size={10} />
+            Manage
           </button>
         )}
         <button

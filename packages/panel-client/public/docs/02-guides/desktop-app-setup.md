@@ -67,6 +67,36 @@ Click "Create a new server" on the setup screen. This opens the Servers tab wher
 
 ## Using the App
 
+The desktop app has two modes, toggled via a pill switch in the sidebar header. The mode toggle only appears when an admin certificate is detected for the active server.
+
+### Agent Mode (default)
+
+Agent mode provides local agent management — the pages you need for day-to-day tunnel and service operations on your machine:
+
+- **Dashboard** — connection status, Chisel version, start/stop/restart controls
+- **Tunnels** — tunnel CRUD with FQDNs, ports, and status
+- **Services** — marketplace-style service discovery with one-click expose
+- **Servers** — multi-server management and cloud provisioning
+- **Logs** — Chisel client stdout and stderr logs
+- **Settings** — certificate management, agent configuration
+
+### Server Mode
+
+Server mode provides the full admin panel — the same management pages available in the browser-based panel UI. These pages are imported from the shared `@lamalibre/portlama-admin-panel` package:
+
+- **Dashboard** — system stats (CPU, RAM, disk, uptime) + service health
+- **Tunnels** — tunnel CRUD + Mac plist download
+- **Services** — service control + live log viewer
+- **Static Sites** — site CRUD + file browser + upload
+- **Users** — Authelia user CRUD + TOTP enrollment
+- **Certificates** — Let's Encrypt + mTLS cert listing + renewal + rotation
+- **Tickets** — agent-to-agent authorization scope and session management
+- **Plugins** — plugin management + push install UI
+- **Logs** — live journald log streaming
+- **Settings** — panel configuration, 2FA, admin auth mode
+
+**Admin certificate requirements:** Cloud-provisioned servers automatically include an admin certificate, so Server mode is available immediately. For servers set up via `portlama-agent setup`, you need to manually import an admin certificate (P12 file) to unlock Server mode.
+
 ### Dashboard
 
 Shows connection status (connected/disconnected), Chisel version, and controls to start/stop/restart the tunnel client.

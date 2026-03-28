@@ -11,6 +11,9 @@ const CLOUD_SERVICE: &str = "com.portlama.cloud";
 /// Service name for per-server P12 passwords (keyed by server UUID).
 const SERVER_SERVICE: &str = "com.portlama.server";
 
+/// Service name for per-server admin P12 passwords (keyed by server UUID).
+const ADMIN_SERVICE: &str = "com.portlama.admin";
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -176,4 +179,24 @@ pub fn get_server_credential(server_id: &str) -> Result<Option<String>, String> 
 /// Delete a server's P12 password from the OS credential store.
 pub fn delete_server_credential(server_id: &str) -> Result<(), String> {
     delete_credential_impl(SERVER_SERVICE, server_id)
+}
+
+// ---------------------------------------------------------------------------
+// Admin P12 password API (service: com.portlama.admin)
+// ---------------------------------------------------------------------------
+
+/// Store an admin P12 password in the OS credential store (keyed by server UUID).
+pub fn store_admin_credential(server_id: &str, password: &str) -> Result<(), String> {
+    store_credential_impl(ADMIN_SERVICE, server_id, password)
+}
+
+/// Retrieve an admin P12 password from the OS credential store.
+/// Returns None if no credential is found.
+pub fn get_admin_credential(server_id: &str) -> Result<Option<String>, String> {
+    get_credential_impl(ADMIN_SERVICE, server_id)
+}
+
+/// Delete an admin P12 password from the OS credential store.
+pub fn delete_admin_credential(server_id: &str) -> Result<(), String> {
+    delete_credential_impl(ADMIN_SERVICE, server_id)
 }

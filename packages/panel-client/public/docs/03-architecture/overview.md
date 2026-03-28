@@ -119,7 +119,9 @@ Authelia is configured with bcrypt (cost factor 12) instead of argon2id. argon2i
 1. Admin opens https://203.0.113.42:9292 in browser
 
 2. nginx :9292 performs TLS handshake with self-signed server cert
-   └─ ssl_verify_client on → requests client certificate
+   └─ ssl_verify_client optional → requests client certificate
+   └─ Enforcement per-location: if ($ssl_client_verify != SUCCESS) { return 496; }
+   └─ Public endpoints (/api/enroll, /api/invite) skip the check
 
 3. Browser presents client.p12 certificate (imported during setup)
    └─ nginx validates against CA at /etc/portlama/pki/ca.crt
@@ -223,10 +225,12 @@ portlama/
 │   │       │   ├── mtls.js           ← Client cert verification + revocation + role parsing
 │   │       │   ├── role-guard.js     ← Role-based access control (admin vs agent capabilities)
 │   │       │   ├── onboarding-guard.js ← Route access control by onboarding state
+│   │       │   ├── twofa-session.js  ← 2FA session validation (runs after mTLS, before roleGuard)
 │   │       │   └── errors.js         ← Global error handler (Zod, AppError, 500)
 │   │       ├── routes/
 │   │       │   ├── health.js         ← GET /api/health
 │   │       │   ├── invite.js         ← Public invite acceptance routes (no mTLS)
+│   │       │   ├── enrollment.js    ← Public /api/enroll endpoint for agent certificate enrollment
 │   │       │   ├── onboarding/
 │   │       │   │   ├── index.js      ← Route registration + guard
 │   │       │   │   ├── status.js     ← GET /api/onboarding/status
@@ -243,7 +247,9 @@ portlama/
 │   │       │       ├── sites.js      ← Static site CRUD + file management
 │   │       │       ├── users.js      ← Authelia user CRUD + TOTP
 │   │       │       ├── certs.js      ← Certificate listing + renewal + mTLS rotation
-│   │       │       └── plugins.js    ← Plugin management + push install API
+│   │       │       ├── plugins.js    ← Plugin management + push install API
+│   │       │       ├── settings.js   ← 2FA and admin auth mode endpoints
+│   │       │       └── tickets.js    ← Agent-to-agent authorization endpoints
 │   │       ├── plugin-router.js      ← Dynamic plugin route mounting + disabled-plugin guard
 │   │       └── lib/
 │   │           ├── config.js         ← panel.json loading + Zod validation + atomic updates
@@ -262,6 +268,22 @@ portlama/
 │   │           ├── plist.js          ← macOS launchd plist generator
 │   │           ├── files.js          ← Static site file operations (upload, delete, list)
 │   │           └── app-error.js      ← Operational error class (AppError)
+│   │
+│   ├── portlama-admin-panel/          ← Shared React admin UI components (@lamalibre/portlama-admin-panel)
+│   │   └── src/
+│   │       ├── index.js              ← Package exports (pages, context, utilities)
+│   │       ├── context/
+│   │       │   ├── AdminClientContext.jsx ← Host-agnostic data client abstraction
+│   │       │   └── TwoFaContext.jsx      ← 2FA verification state management
+│   │       ├── components/
+│   │       │   ├── Toast.jsx         ← Toast notification system
+│   │       │   ├── TwoFaVerifyModal.jsx ← 2FA verification modal
+│   │       │   ├── FileBrowser.jsx   ← File tree for static site management
+│   │       │   └── PluginLoader.jsx  ← Plugin micro-frontend loader
+│   │       ├── lib/
+│   │       │   ├── cn.js             ← Class name utility
+│   │       │   └── formatters.js     ← Byte, uptime, relative time formatters
+│   │       └── pages/                ← Admin pages (Dashboard, Tunnels, Sites, Users, Certs, Services, Plugins, Tickets, Settings)
 │   │
 │   ├── portlama-tickets/              ← Agent-to-agent authorization SDK (mTLS, undici)
 │   │   └── src/
@@ -284,6 +306,11 @@ portlama/
 │       └── src/
 │           ├── App.jsx               ← Mode detection, routing, provider wrappers
 │           ├── main.jsx              ← React root mount
+│           ├── lib/
+│           │   ├── api.js            ← API fetch helper with 2FA detection
+│           │   ├── cn.js             ← className utility
+│           │   ├── formatters.js     ← Byte/time formatters
+│           │   └── web-admin-client.js ← AdminClient implementation via apiFetch
 │           ├── hooks/
 │           │   ├── useOnboardingStatus.js ← Determines onboarding vs management mode
 │           │   └── useProvisioningStream.js ← WebSocket hook for provisioning progress
@@ -294,14 +321,15 @@ portlama/
 │           │   │   ├── DnsStep.jsx        ← DNS record display + verification
 │           │   │   ├── ProvisioningStep.jsx ← Real-time progress + log viewer
 │           │   │   └── CompleteStep.jsx   ← Credentials + TOTP QR + next steps
-│           │   ├── management/
-│           │   │   ├── Dashboard.jsx      ← System stats + service health
-│           │   │   ├── Tunnels.jsx        ← Tunnel CRUD + Mac plist download
-│           │   │   ├── Sites.jsx          ← Static site management + file browser
-│           │   │   ├── Services.jsx       ← Service control + live logs
-│           │   │   ├── Certificates.jsx   ← Cert listing + renewal
-│           │   │   └── Plugins.jsx       ← Plugin management + push install UI
-│           │   ├── Users.jsx             ← Authelia user CRUD + TOTP enrollment
+│           │   ├── management/            ← Legacy standalone implementations (kept for reference)
+│           │   │   ├── Certificates.jsx   ← Standalone certificates page (dead code)
+│           │   │   ├── Dashboard.jsx      ← Standalone dashboard (not imported — App.jsx uses @lamalibre/portlama-admin-panel)
+│           │   │   ├── Plugins.jsx        ← Standalone plugins page (dead code)
+│           │   │   ├── Services.jsx       ← Standalone services page (dead code)
+│           │   │   ├── Settings.jsx       ← Standalone settings page (dead code)
+│           │   │   ├── Sites.jsx          ← Standalone sites page (dead code)
+│           │   │   ├── Tickets.jsx        ← Standalone tickets page (dead code)
+│           │   │   └── Tunnels.jsx        ← Standalone tunnels page (dead code)
 │           │   └── docs/
 │           │       └── DocsPage.jsx      ← Documentation viewer (markdown)
 │           └── components/
@@ -309,7 +337,8 @@ portlama/
 │               │   ├── Layout.jsx        ← Sidebar + content area
 │               │   ├── Sidebar.jsx       ← Navigation with mobile responsive
 │               │   └── SidebarLink.jsx   ← Active-state nav link
-│               ├── PluginLoader.jsx       ← Plugin micro-frontend loader
+│               ├── PluginLoaderRoute.jsx  ← Bridges React Router params to shared PluginLoader
+│               ├── PluginLoader.jsx       ← Legacy plugin loader (dead code — shared package version used)
 │               ├── Toast.jsx             ← Toast notification system
 │               ├── LoadingScreen.jsx     ← Full-page loading state
 │               ├── ErrorScreen.jsx       ← Full-page error with retry

@@ -56,8 +56,9 @@
 │  ┌───────────────────────────┴────────────────────────────────────┐  │
 │  │  Mac Studio (or any machine behind NAT/firewall)               │  │
 │  │                                                                │  │
-│  │   Portlama Desktop (Tauri v2)                                  │  │
-│  │    ├─ Service discovery + tunnel management UI                 │  │
+│  │   Portlama Desktop (Tauri v2) — dual mode                      │  │
+│  │    ├─ Agent mode: service discovery + tunnel management        │  │
+│  │    ├─ Server mode: full admin panel (via portlama-admin-panel) │  │
 │  │    ├─ Multi-server registry (~/.portlama/servers.json)         │  │
 │  │    ├─ Cloud provisioning (DigitalOcean via portlama-cloud)     │  │
 │  │    └─ Credential storage (macOS Keychain / Linux libsecret)   │  │
@@ -137,8 +138,8 @@
 
 ### mTLS (Panel Access)
 
-- nginx requires `ssl_verify_client on` — TLS handshake fails without valid client cert
-- No login page — connection is refused at TLS layer for invalid certs
+- nginx uses `ssl_verify_client optional` at the server level. Enforcement is per-location via `if ($ssl_client_verify != SUCCESS) { return 496; }` — public endpoints (`/api/enroll`, `/api/invite`) skip the check.
+- No login page — connection is refused at TLS layer for invalid certs on protected locations
 - On SSL errors (codes 495/496), nginx serves `cert-help.html` with certificate import instructions
 - Panel backend double-checks via `X-SSL-Client-Verify: SUCCESS` header
 - Agent certificates have capability-based access (capabilities stored in `agents/registry.json`)
