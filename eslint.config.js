@@ -80,9 +80,9 @@ export default [
     },
   },
 
-  // 5. React config for portlama-admin-panel (shared component library)
+  // 5. React config for shared component libraries (admin-panel, agent-panel)
   {
-    files: ['packages/portlama-admin-panel/**/*.{js,jsx}'],
+    files: ['packages/portlama-admin-panel/**/*.{js,jsx}', 'packages/portlama-agent-panel/**/*.{js,jsx}'],
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,

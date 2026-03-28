@@ -71,7 +71,7 @@ The desktop app has two modes, toggled via a pill switch in the sidebar header. 
 
 ### Agent Mode (default)
 
-Agent mode provides local agent management. The landing page is the **Agents** list, showing all configured agents with their connection status. Click an agent to drill into its management pages:
+Agent mode provides local agent management. The agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) are imported from the shared `@lamalibre/portlama-agent-panel` package. The landing page is the **Agents** list, showing all configured agents with their connection status. Click an agent to drill into its management pages:
 
 - **Agents** (landing) — list of all configured agents with start/stop controls and status
 - **Dashboard** — per-agent connection status, Chisel version, start/stop/restart controls

@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Loader2,
   RefreshCw,
@@ -16,6 +15,7 @@ import {
   Wrench,
   Trash2,
 } from 'lucide-react';
+import { useAgentClient } from '../context/AgentClientContext.jsx';
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: null },
@@ -53,6 +53,7 @@ function CategoryIcon({ category, size = 14 }) {
 }
 
 export default function Services() {
+  const client = useAgentClient();
   const queryClient = useQueryClient();
   const [activeCategory, setActiveCategory] = useState('all');
   const [showExposeModal, setShowExposeModal] = useState(null);
@@ -72,25 +73,25 @@ export default function Services() {
   const [removeError, setRemoveError] = useState(null);
 
   const servicesQuery = useQuery({
-    queryKey: ['services'],
-    queryFn: () => invoke('scan_services'),
+    queryKey: ['agent', 'services'],
+    queryFn: () => client.scanServices(),
     refetchInterval: 15000,
   });
 
   const exposeMutation = useMutation({
     mutationFn: async (data) => {
-      await invoke('create_tunnel', {
+      await client.createTunnel({
         subdomain: data.subdomain,
         port: parseInt(data.port, 10),
         description: data.description || '',
       });
-      await invoke('update_agent');
+      await client.updateAgent();
     },
     onSuccess: () => {
       setShowExposeModal(null);
       setExposeError(null);
-      queryClient.invalidateQueries({ queryKey: ['services'] });
-      queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'services'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'tunnels'] });
     },
     onError: (err) => {
       setExposeError(err?.message || String(err));
@@ -99,11 +100,11 @@ export default function Services() {
 
   const addCustomMutation = useMutation({
     mutationFn: (data) =>
-      invoke('add_custom_service', {
+      client.addCustomService({
         name: data.name,
         port: parseInt(data.port, 10),
-        binary: data.binary || null,
-        processName: data.processName || null,
+        binary: data.binary || undefined,
+        processName: data.processName || undefined,
         category: data.category,
         description: data.description || '',
       }),
@@ -118,7 +119,7 @@ export default function Services() {
         description: '',
       });
       setCustomError(null);
-      queryClient.invalidateQueries({ queryKey: ['services'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'services'] });
     },
     onError: (err) => {
       setCustomError(err?.message || String(err));
@@ -126,11 +127,11 @@ export default function Services() {
   });
 
   const removeCustomMutation = useMutation({
-    mutationFn: (id) => invoke('remove_custom_service', { id }),
+    mutationFn: (id) => client.removeCustomService(id),
     onSuccess: () => {
       setRemoveConfirm(null);
       setRemoveError(null);
-      queryClient.invalidateQueries({ queryKey: ['services'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'services'] });
     },
     onError: (err) => {
       setRemoveError(err?.message || String(err));
@@ -197,7 +198,7 @@ export default function Services() {
         <h1 className="text-lg font-bold text-white">Services</h1>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['services'] })}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['agent', 'services'] })}
             disabled={servicesQuery.isFetching}
             className="flex items-center gap-1.5 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
           >

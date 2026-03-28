@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-shell';
@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import {
   AdminClientProvider,
-  ToastProvider,
+  ToastProvider as AdminToastProvider,
   TwoFaProvider,
   DashboardPage,
   ServicesPage,
@@ -35,14 +35,19 @@ import {
   TunnelsPage,
   SettingsPage as AdminSettingsPage,
 } from '@lamalibre/portlama-admin-panel';
+import {
+  AgentClientProvider,
+  ToastProvider as AgentToastProvider,
+  AgentDashboardPage,
+  AgentTunnelsPage,
+  AgentServicesPage,
+  AgentLogsPage,
+  AgentSettingsPage,
+} from '@lamalibre/portlama-agent-panel';
 import { desktopAdminClient } from './lib/desktop-admin-client.js';
-import Dashboard from './pages/Dashboard.jsx';
-import Tunnels from './pages/Tunnels.jsx';
-import Services from './pages/Services.jsx';
+import { createDesktopAgentClient } from './lib/desktop-agent-client.js';
 import Servers from './pages/Servers.jsx';
 import Agents from './pages/Agents.jsx';
-import Logs from './pages/Logs.jsx';
-import SettingsPage from './pages/Settings.jsx';
 
 const AGENT_TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -154,6 +159,12 @@ export default function App() {
 
   const status = statusQuery.data;
 
+  // Create agent client bound to the currently managed agent
+  const agentClient = useMemo(
+    () => createDesktopAgentClient(managingAgent?.label),
+    [managingAgent?.label],
+  );
+
   // Derive domain from the server being managed
   const managingDomain = (() => {
     if (!managingServer?.panelUrl) return '';
@@ -229,11 +240,14 @@ export default function App() {
   };
 
   const handleManageAgent = useCallback((agent) => {
+    // Clear stale agent data from previous agent to prevent cross-agent cache leakage
+    queryClient.removeQueries({ queryKey: ['agent'] });
     setManagingAgent(agent);
     setActiveTab('dashboard');
-  }, []);
+  }, [queryClient]);
 
   const handleBackToAgentList = () => {
+    queryClient.removeQueries({ queryKey: ['agent'] });
     setManagingAgent(null);
     setActiveTab('agent-list');
   };
@@ -254,9 +268,13 @@ export default function App() {
   const handleOpenPanel = async () => {
     try {
       const url = await invoke('get_panel_url');
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return;
+      }
       await open(url);
     } catch {
-      // silently ignore if config not loaded
+      // silently ignore if config not loaded or URL invalid
     }
   };
 
@@ -266,21 +284,19 @@ export default function App() {
       return <Agents onManage={handleManageAgent} />;
     }
 
-    // Per-agent drill-down
-    const label = managingAgent.label;
+    // Per-agent drill-down — wrapped in shared package providers
     switch (activeTab) {
-      case 'dashboard':
-        return <Dashboard status={status} agentLabel={label} />;
       case 'tunnels':
-        return <Tunnels agentLabel={label} />;
+        return <AgentTunnelsPage />;
       case 'services':
-        return <Services agentLabel={label} />;
+        return <AgentServicesPage />;
       case 'logs':
-        return <Logs agentLabel={label} />;
+        return <AgentLogsPage />;
       case 'settings':
-        return <SettingsPage agentLabel={label} />;
+        return <AgentSettingsPage />;
+      case 'dashboard':
       default:
-        return <Dashboard status={status} agentLabel={label} />;
+        return <AgentDashboardPage />;
     }
   };
 
@@ -472,12 +488,18 @@ export default function App() {
       <div className="flex-1 overflow-y-auto">
         {mode === 'admin' ? (
           <AdminClientProvider client={desktopAdminClient}>
-            <ToastProvider>
+            <AdminToastProvider>
               <TwoFaProvider>
                 {renderServerPage()}
               </TwoFaProvider>
-            </ToastProvider>
+            </AdminToastProvider>
           </AdminClientProvider>
+        ) : managingAgent ? (
+          <AgentClientProvider client={agentClient}>
+            <AgentToastProvider>
+              {renderAgentPage()}
+            </AgentToastProvider>
+          </AgentClientProvider>
         ) : (
           renderAgentPage()
         )}

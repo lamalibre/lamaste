@@ -285,6 +285,8 @@ portlama/
 │   │       │   └── formatters.js     ← Byte, uptime, relative time formatters
 │   │       └── pages/                ← Admin pages (Dashboard, Tunnels, Sites, Users, Certs, Services, Plugins, Tickets, Settings)
 │   │
+│   ├── portlama-agent-panel/          ← Shared React agent UI (pages, context, components) (@lamalibre/portlama-agent-panel)
+│   │
 │   ├── portlama-tickets/              ← Agent-to-agent authorization SDK (mTLS, undici)
 │   │   └── src/
 │   │       ├── index.ts              ← Client + types

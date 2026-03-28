@@ -1,16 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef } from 'react';
 import { ScrollText, RefreshCw } from 'lucide-react';
+import { useAgentClient } from '../context/AgentClientContext.jsx';
 
-export default function Logs({ agentLabel }) {
+export default function Logs() {
+  const client = useAgentClient();
   const logsRef = useRef(null);
 
   const logsQuery = useQuery({
-    queryKey: ['logs', agentLabel],
-    queryFn: () => agentLabel
-      ? invoke('get_agent_logs', { label: agentLabel })
-      : invoke('get_logs'),
+    queryKey: ['agent', 'logs'],
+    queryFn: () => client.getLogs(),
     refetchInterval: 3000,
   });
 

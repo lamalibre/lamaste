@@ -12,6 +12,7 @@ portlama/
 │   ├── panel-client/          @lamalibre/portlama-panel-client — React + Vite + Tailwind UI
 │   ├── portlama-agent/        @lamalibre/portlama-agent — tunnel agent CLI (macOS & Linux)
 │   ├── portlama-admin-panel/   @lamalibre/portlama-admin-panel — shared React admin UI (pages, context, components) used by panel-client and portlama-desktop
+│   ├── portlama-agent-panel/  @lamalibre/portlama-agent-panel — shared React agent UI (pages, context, components) used by portlama-desktop and future web agent panel
 │   ├── portlama-desktop/      @lamalibre/portlama-desktop — Tauri v2 desktop app (dual-mode: agent management + server admin panel)
 │   ├── install-portlama-desktop/ @lamalibre/install-portlama-desktop — npx installer for the desktop app
 │   ├── install-portlama-admin/ @lamalibre/install-portlama-admin — npx admin cert upgrade to hardware-bound
@@ -69,6 +70,14 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Tailwind utility classes only — no CSS files
 - Dark terminal aesthetic: `zinc-950` bg, `zinc-900` cards, `cyan-400` accents
 - Icons from `lucide-react`
+
+**Shared Panel Packages (admin-panel, agent-panel):**
+
+- Host-agnostic React component libraries — pages use context hooks (`useAdminClient()`, `useAgentClient()`) instead of direct API/Tauri calls
+- Each consumer provides its own client implementation: desktop app via Tauri `invoke()`, web panel via `apiFetch()`
+- `AgentClientContext` interface: `getStatus`, `startAgent`, `stopAgent`, `restartAgent`, `updateAgent`, `getTunnels`, `createTunnel`, `deleteTunnel`, `toggleTunnel`, `scanServices`, `addCustomService`, `removeCustomService`, `getLogs`, `getConfig`, `getPanelUrl`, `rotateCertificate`, `downloadCertificate`, `uninstallAgent`, `openExternal`
+- Desktop agent client factory: `createDesktopAgentClient(label)` returns label-bound client (multi-agent support)
+- Pages exported with `Agent` prefix to avoid collision with admin-panel: `AgentDashboardPage`, `AgentTunnelsPage`, etc.
 
 **Rust / Tauri (Desktop):**
 

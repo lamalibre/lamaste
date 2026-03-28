@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
 import {
   Settings,
   Shield,
@@ -11,46 +9,48 @@ import {
   Download,
   RefreshCw,
 } from 'lucide-react';
+import { useAgentClient } from '../context/AgentClientContext.jsx';
+import { useToast } from '../components/Toast.jsx';
 
-export default function SettingsPage({ agentLabel }) {
+export default function SettingsPage() {
+  const client = useAgentClient();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [uninstallConfirm, setUninstallConfirm] = useState(false);
 
   const configQuery = useQuery({
-    queryKey: ['config', agentLabel],
-    queryFn: () => agentLabel
-      ? invoke('get_agent_config', { label: agentLabel })
-      : invoke('get_config'),
+    queryKey: ['agent', 'config'],
+    queryFn: () => client.getConfig(),
   });
 
   const rotateMutation = useMutation({
-    mutationFn: () => invoke('rotate_certificate'),
+    mutationFn: () => client.rotateCertificate(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['config'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'config'] });
     },
   });
 
   const downloadMutation = useMutation({
-    mutationFn: () => invoke('download_certificate'),
+    mutationFn: () => client.downloadCertificate(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['config'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'config'] });
     },
   });
 
   const uninstallMutation = useMutation({
-    mutationFn: () => invoke('uninstall_agent'),
+    mutationFn: () => client.uninstallAgent(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['status'] });
-      queryClient.invalidateQueries({ queryKey: ['config'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'status'] });
+      queryClient.invalidateQueries({ queryKey: ['agent', 'config'] });
     },
   });
 
   const handleOpenPanel = async () => {
     try {
-      const url = await invoke('get_panel_url');
-      await open(url);
-    } catch {
-      // ignore
+      const url = await client.getPanelUrl();
+      await client.openExternal(url);
+    } catch (err) {
+      toast(err?.message || 'Failed to open panel', 'error');
     }
   };
 

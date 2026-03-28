@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `@lamalibre/portlama-agent-panel` shared package — extract agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) into a host-agnostic React library with `AgentClientContext` abstraction
+- Add `createDesktopAgentClient(label)` factory in the desktop app — Tauri-backed implementation of the `AgentClient` interface with multi-agent label binding
+- Add URL scheme validation on all `openExternal` calls — only HTTP(S) URLs accepted
+- Add cross-agent cache isolation — agent query data is cleared when switching between agents
+
+### Changed
+
+- Update desktop app to consume agent pages from `@lamalibre/portlama-agent-panel` instead of local page components
+- Namespace all agent-panel React Query keys with `['agent', ...]` prefix to prevent collisions with admin-panel queries
+
+**Affected packages:**
+
+- `@lamalibre/portlama-agent-panel`: 0.1.0 (new)
+- `@lamalibre/portlama-desktop`: 0.1.8
+
+## [Unreleased] - 2026-03-29
+
+### Added
+
 - Add `--json` flag to `create-portlama` installer for NDJSON progress output, enabling programmatic consumption by desktop and CI tools
 - Add local server installation from the desktop app — install Portlama directly on the local Linux machine via `pkexec` privilege escalation
 - Add "Install on This Machine" option to the Servers page dropdown (disabled on macOS with "Linux only" indicator)

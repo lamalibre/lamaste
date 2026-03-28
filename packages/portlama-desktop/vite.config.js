@@ -11,7 +11,7 @@ export default defineConfig({
     preserveSymlinks: false,
   },
   optimizeDeps: {
-    include: ['@lamalibre/portlama-admin-panel'],
+    include: ['@lamalibre/portlama-admin-panel', '@lamalibre/portlama-agent-panel'],
   },
   clearScreen: false,
   server: {
@@ -21,7 +21,7 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     commonjsOptions: {
-      include: [/portlama-admin-panel/, /node_modules/],
+      include: [/portlama-admin-panel/, /portlama-agent-panel/, /node_modules/],
     },
   },
 });

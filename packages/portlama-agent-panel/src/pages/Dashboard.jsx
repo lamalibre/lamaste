@@ -1,47 +1,40 @@
 import { Activity, HardDrive, RefreshCw, Loader2, Play, Square, Download } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
+import { useAgentClient } from '../context/AgentClientContext.jsx';
 
-export default function Dashboard({ status, agentLabel }) {
+export default function Dashboard() {
+  const client = useAgentClient();
   const queryClient = useQueryClient();
 
   const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['status'] });
-    queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+    queryClient.invalidateQueries({ queryKey: ['agent', 'status'] });
+    queryClient.invalidateQueries({ queryKey: ['agent', 'tunnels'] });
     queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
 
-  // When managing a specific agent, use label-specific commands
-  const agentStatusQuery = useQuery({
-    queryKey: ['agent-status', agentLabel],
-    queryFn: () => invoke('get_agent_status', { label: agentLabel }),
+  const statusQuery = useQuery({
+    queryKey: ['agent', 'status'],
+    queryFn: () => client.getStatus(),
     refetchInterval: 3000,
-    enabled: !!agentLabel,
   });
 
   const stopMutation = useMutation({
-    mutationFn: () => agentLabel
-      ? invoke('stop_agent', { label: agentLabel })
-      : invoke('stop_chisel'),
+    mutationFn: () => client.stopAgent(),
     onSuccess: invalidateAll,
   });
 
   const startMutation = useMutation({
-    mutationFn: () => agentLabel
-      ? invoke('start_agent', { label: agentLabel })
-      : invoke('start_chisel'),
+    mutationFn: () => client.startAgent(),
     onSuccess: invalidateAll,
   });
 
   const restartMutation = useMutation({
-    mutationFn: () => agentLabel
-      ? invoke('restart_agent', { label: agentLabel })
-      : invoke('restart_chisel'),
+    mutationFn: () => client.restartAgent(),
     onSuccess: invalidateAll,
   });
 
   const updateMutation = useMutation({
-    mutationFn: () => invoke('update_agent'),
+    mutationFn: () => client.updateAgent(),
     onSuccess: invalidateAll,
   });
 
@@ -69,11 +62,7 @@ export default function Dashboard({ status, agentLabel }) {
                   ? { type: 'error', msg: restartMutation.error?.message || 'Restart failed' }
                   : null;
 
-  // Derive chisel status from agent-specific query or global status
-  const agentStatus = agentStatusQuery?.data;
-  const chisel = agentLabel
-    ? { running: agentStatus?.running, pid: agentStatus?.pid, installed: true, version: agentStatus?.chiselVersion }
-    : status?.chisel;
+  const chisel = statusQuery.data;
 
   return (
     <div className="p-6">
@@ -104,7 +93,7 @@ export default function Dashboard({ status, agentLabel }) {
             <span className="text-xs font-medium uppercase text-zinc-400">Chisel</span>
           </div>
           <p className="text-white font-semibold mb-1">
-            {chisel?.installed ? `v${chisel.version || '?'}` : 'Not installed'}
+            {chisel?.installed ? `v${chisel.chiselVersion || '?'}` : 'Not installed'}
           </p>
           <p className="text-xs text-zinc-500">
             {chisel?.installed ? 'Installed' : 'Run portlama-agent setup'}

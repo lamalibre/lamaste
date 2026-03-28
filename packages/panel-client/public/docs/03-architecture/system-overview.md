@@ -58,6 +58,7 @@
 │  │                                                                │  │
 │  │   Portlama Desktop (Tauri v2) — dual mode                      │  │
 │  │    ├─ Agent mode: service discovery + tunnel management        │  │
+│  │    │   (pages from @lamalibre/portlama-agent-panel)            │  │
 │  │    ├─ Server mode: full admin panel (via portlama-admin-panel) │  │
 │  │    ├─ Multi-server registry (~/.portlama/servers.json)         │  │
 │  │    ├─ Cloud provisioning (DigitalOcean via portlama-cloud)     │  │

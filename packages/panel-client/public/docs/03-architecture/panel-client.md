@@ -8,9 +8,11 @@ The panel client is what you see in your browser when you open the Portlama admi
 
 The client has two modes. On first visit, it shows an onboarding wizard that walks you through domain setup and stack provisioning. After onboarding is complete, it switches to the full management interface with a sidebar navigation, dashboard, and pages for managing tunnels, users, certificates, services, and static sites.
 
-## Shared Admin Panel Package
+## Shared Panel Packages
 
 The management-mode admin pages (Dashboard, Tunnels, Sites, Users, Certificates, Services, Plugins, Tickets, Logs, Settings) are extracted into a shared package: `@lamalibre/portlama-admin-panel`. This package is consumed by both `panel-client` (web) and `portlama-desktop` (Tauri app).
+
+The agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) are extracted into a separate shared package: `@lamalibre/portlama-agent-panel`. This package is consumed by `portlama-desktop` for agent mode.
 
 The shared package exposes an `AdminClientContext` abstraction that decouples admin UI pages from their data transport. Each host provides its own client implementation:
 
@@ -386,6 +388,7 @@ The built `dist/` directory is served by the panel-server via `@fastify/static`.
 | `packages/panel-client/src/components/Toast.jsx`                 | Notification toast system                |
 | `packages/panel-client/src/pages/onboarding/OnboardingShell.jsx` | Onboarding wizard container              |
 | `packages/portlama-admin-panel/src/index.js`                     | Shared package exports (all admin pages, contexts, components) |
+| `packages/portlama-agent-panel/src/index.js`                     | Shared package exports (all agent pages, contexts, components) |
 | `packages/panel-client/src/pages/management/`                    | Legacy standalone pages (dead code, kept for reference) |
 | `packages/panel-client/src/pages/docs/DocsPage.jsx`              | Documentation viewer                     |
 | `packages/panel-client/src/components/FileBrowser.jsx`           | File tree for static sites               |

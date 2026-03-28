@@ -72,6 +72,8 @@ Portlama is a monorepo with several packages:
 | `panel-client`             | React 18, Vite, Tailwind   | Management UI (SPA)                  |
 | `portlama-agent`           | Node.js ESM                | Tunnel agent CLI (macOS & Linux)     |
 | `portlama-desktop`         | Tauri v2 (Rust + React)    | Desktop app with service discovery, multi-server & cloud provisioning |
+| `portlama-admin-panel`     | React 18                   | Shared admin UI (pages, context, components) for panel-client and desktop |
+| `portlama-agent-panel`     | React 18                   | Shared agent UI (pages, context, components) for desktop agent mode |
 | `install-portlama-desktop` | Node.js ESM                | npx installer for the desktop app    |
 | `portlama-tickets`         | TypeScript, undici          | SDK for agent-to-agent authorization |
 | `portlama-cloud`           | TypeScript, undici          | Cloud provider abstraction for server provisioning |

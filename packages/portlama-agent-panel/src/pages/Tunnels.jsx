@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { invoke } from '@tauri-apps/api/core';
 import { Network, Loader2, Plus, Trash2, X, Power } from 'lucide-react';
+import { useAgentClient } from '../context/AgentClientContext.jsx';
 
-export default function Tunnels({ agentLabel }) {
+export default function Tunnels() {
+  const client = useAgentClient();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -11,27 +12,24 @@ export default function Tunnels({ agentLabel }) {
   const [formError, setFormError] = useState(null);
 
   const tunnelsQuery = useQuery({
-    queryKey: ['tunnels', agentLabel],
-    queryFn: () => agentLabel
-      ? invoke('get_agent_tunnels', { label: agentLabel })
-      : invoke('get_tunnels'),
+    queryKey: ['agent', 'tunnels'],
+    queryFn: () => client.getTunnels(),
     refetchInterval: 10000,
   });
 
   const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['tunnels'] });
-    queryClient.invalidateQueries({ queryKey: ['status'] });
+    queryClient.invalidateQueries({ queryKey: ['agent', 'tunnels'] });
+    queryClient.invalidateQueries({ queryKey: ['agent', 'status'] });
   };
 
   const createMutation = useMutation({
     mutationFn: async (data) => {
-      await invoke('create_tunnel', {
+      await client.createTunnel({
         subdomain: data.subdomain,
         port: parseInt(data.port, 10),
         description: data.description || '',
       });
-      // After creating, update the agent so chisel picks up the new tunnel
-      await invoke('update_agent');
+      await client.updateAgent();
     },
     onSuccess: () => {
       setShowForm(false);
@@ -46,8 +44,8 @@ export default function Tunnels({ agentLabel }) {
 
   const toggleMutation = useMutation({
     mutationFn: async ({ id, enabled }) => {
-      await invoke('toggle_tunnel', { id, enabled });
-      await invoke('update_agent');
+      await client.toggleTunnel(id, { enabled });
+      await client.updateAgent();
     },
     onSuccess: () => {
       invalidateAll();
@@ -56,8 +54,8 @@ export default function Tunnels({ agentLabel }) {
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
-      await invoke('delete_tunnel', { id });
-      await invoke('update_agent');
+      await client.deleteTunnel(id);
+      await client.updateAgent();
     },
     onSuccess: () => {
       setDeleteConfirm(null);
