@@ -40,6 +40,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Tunnels from './pages/Tunnels.jsx';
 import Services from './pages/Services.jsx';
 import Servers from './pages/Servers.jsx';
+import Agents from './pages/Agents.jsx';
 import Logs from './pages/Logs.jsx';
 import SettingsPage from './pages/Settings.jsx';
 
@@ -129,10 +130,12 @@ function ModeToggle({ mode, onModeChange }) {
 
 export default function App() {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('agent-list');
   const [skipSetup, setSkipSetup] = useState(false);
   // Server mode: null = server list, server object = managing that server
   const [managingServer, setManagingServer] = useState(null);
+  // Agent mode: null = agent list, agent object = managing that agent
+  const [managingAgent, setManagingAgent] = useState(null);
   const [mode, setMode] = useState('agent');
 
   const statusQuery = useQuery({
@@ -141,14 +144,15 @@ export default function App() {
     refetchInterval: 3000,
   });
 
-  const serversQuery = useQuery({
-    queryKey: ['servers'],
-    queryFn: () => invoke('get_servers'),
-    refetchInterval: 10000,
+  const agentsQuery = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => invoke('get_agents'),
+    refetchInterval: 5000,
   });
 
+  const agents = agentsQuery.data || [];
+
   const status = statusQuery.data;
-  const servers = serversQuery.data || [];
 
   // Derive domain from the server being managed
   const managingDomain = (() => {
@@ -168,27 +172,43 @@ export default function App() {
     !!managingServer.adminAuth || !!managingServer.provider
   );
 
-  // Sync tray icon with connection state
+  // Sync tray icon with aggregate agent connection state
   useEffect(() => {
-    if (!status) return;
-    let state, tooltip;
-    if (!status.configured) {
-      state = 'unconfigured';
-      tooltip = 'Portlama: Not configured';
-    } else if (status.chisel?.running) {
-      state = 'online';
-      tooltip = 'Portlama: Connected';
-    } else {
-      state = 'offline';
-      tooltip = 'Portlama: Disconnected';
+    if (agents.length > 0) {
+      const runningCount = agents.filter((a) => a.running).length;
+      let state, tooltip;
+      if (runningCount === agents.length) {
+        state = 'online';
+        tooltip = `Portlama: ${runningCount}/${agents.length} agents connected`;
+      } else if (runningCount > 0) {
+        state = 'checking';
+        tooltip = `Portlama: ${runningCount}/${agents.length} agents connected`;
+      } else {
+        state = 'offline';
+        tooltip = `Portlama: 0/${agents.length} agents connected`;
+      }
+      invoke('set_tray_state', { state, tooltip }).catch(() => {});
+    } else if (status) {
+      let state, tooltip;
+      if (!status.configured) {
+        state = 'unconfigured';
+        tooltip = 'Portlama: Not configured';
+      } else if (status.chisel?.running) {
+        state = 'online';
+        tooltip = 'Portlama: Connected';
+      } else {
+        state = 'offline';
+        tooltip = 'Portlama: Disconnected';
+      }
+      invoke('set_tray_state', { state, tooltip }).catch(() => {});
     }
-    invoke('set_tray_state', { state, tooltip }).catch(() => {});
-  }, [status?.configured, status?.chisel?.running]);
+  }, [agents, status?.configured, status?.chisel?.running]);
 
   const handleModeChange = (newMode) => {
     setMode(newMode);
     setManagingServer(null);
-    setActiveTab(newMode === 'admin' ? 'server-list' : 'dashboard');
+    setManagingAgent(null);
+    setActiveTab(newMode === 'admin' ? 'server-list' : 'agent-list');
   };
 
   const handleManageServer = useCallback(async (server) => {
@@ -208,7 +228,17 @@ export default function App() {
     setActiveTab('server-list');
   };
 
-  if (status && !status.configured && !skipSetup) {
+  const handleManageAgent = useCallback((agent) => {
+    setManagingAgent(agent);
+    setActiveTab('dashboard');
+  }, []);
+
+  const handleBackToAgentList = () => {
+    setManagingAgent(null);
+    setActiveTab('agent-list');
+  };
+
+  if (status && !status.configured && agents.length === 0 && !skipSetup) {
     return (
       <SetupRequired
         message={status.setupMessage}
@@ -231,19 +261,26 @@ export default function App() {
   };
 
   const renderAgentPage = () => {
+    // Agent list is the landing page
+    if (!managingAgent) {
+      return <Agents onManage={handleManageAgent} />;
+    }
+
+    // Per-agent drill-down
+    const label = managingAgent.label;
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard status={status} />;
+        return <Dashboard status={status} agentLabel={label} />;
       case 'tunnels':
-        return <Tunnels />;
+        return <Tunnels agentLabel={label} />;
       case 'services':
-        return <Services />;
+        return <Services agentLabel={label} />;
       case 'logs':
-        return <Logs />;
+        return <Logs agentLabel={label} />;
       case 'settings':
-        return <SettingsPage />;
+        return <SettingsPage agentLabel={label} />;
       default:
-        return <Dashboard status={status} />;
+        return <Dashboard status={status} agentLabel={label} />;
     }
   };
 
@@ -299,9 +336,11 @@ export default function App() {
 
   // Determine which tabs to show in sidebar
   const getSidebarTabs = () => {
-    if (mode === 'agent') return AGENT_TABS;
+    if (mode === 'agent') {
+      return managingAgent ? AGENT_TABS : []; // Agent list mode — no nav tabs
+    }
     if (managingServer && managingHasAdmin) return SERVER_ADMIN_TABS;
-    return []; // Server list mode — no nav tabs, content handles its own layout
+    return []; // Server list mode — no nav tabs
   };
 
   const currentTabs = getSidebarTabs();
@@ -319,6 +358,30 @@ export default function App() {
         </div>
 
         <nav className="flex-1 p-2 overflow-y-auto">
+          {/* Back button when managing a specific agent */}
+          {mode === 'agent' && managingAgent && (
+            <button
+              type="button"
+              onClick={handleBackToAgentList}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border-b border-zinc-800 pb-3"
+            >
+              <ChevronLeft size={14} />
+              <span className="truncate">{managingAgent.label}</span>
+            </button>
+          )}
+
+          {/* Agent list link when in Agents mode without managing */}
+          {mode === 'agent' && !managingAgent && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('agent-list')}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 bg-zinc-800 text-cyan-400"
+            >
+              <Terminal size={14} />
+              Agents
+            </button>
+          )}
+
           {/* Back button when managing a specific server */}
           {mode === 'admin' && managingServer && (
             <button
@@ -374,14 +437,33 @@ export default function App() {
         {/* Connection status */}
         <div className="p-3 border-t border-zinc-800">
           <div className="flex items-center gap-2 text-xs">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                status?.chisel?.running ? 'bg-green-400' : 'bg-red-400'
-              }`}
-            />
-            <span className="text-zinc-500">
-              {status?.chisel?.running ? 'Connected' : 'Disconnected'}
-            </span>
+            {agents.length > 0 ? (
+              <>
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    agents.every((a) => a.running)
+                      ? 'bg-green-400'
+                      : agents.some((a) => a.running)
+                        ? 'bg-amber-400'
+                        : 'bg-red-400'
+                  }`}
+                />
+                <span className="text-zinc-500">
+                  {agents.filter((a) => a.running).length}/{agents.length} agents
+                </span>
+              </>
+            ) : (
+              <>
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    status?.chisel?.running ? 'bg-green-400' : 'bg-red-400'
+                  }`}
+                />
+                <span className="text-zinc-500">
+                  {status?.chisel?.running ? 'Connected' : 'Disconnected'}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

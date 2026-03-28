@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { Network, Loader2, Plus, Trash2, X, Power } from 'lucide-react';
 
-export default function Tunnels() {
+export default function Tunnels({ agentLabel }) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -11,8 +11,10 @@ export default function Tunnels() {
   const [formError, setFormError] = useState(null);
 
   const tunnelsQuery = useQuery({
-    queryKey: ['tunnels'],
-    queryFn: () => invoke('get_tunnels'),
+    queryKey: ['tunnels', agentLabel],
+    queryFn: () => agentLabel
+      ? invoke('get_agent_tunnels', { label: agentLabel })
+      : invoke('get_tunnels'),
     refetchInterval: 10000,
   });
 

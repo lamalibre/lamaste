@@ -3,12 +3,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef } from 'react';
 import { ScrollText, RefreshCw } from 'lucide-react';
 
-export default function Logs() {
+export default function Logs({ agentLabel }) {
   const logsRef = useRef(null);
 
   const logsQuery = useQuery({
-    queryKey: ['logs'],
-    queryFn: () => invoke('get_logs'),
+    queryKey: ['logs', agentLabel],
+    queryFn: () => agentLabel
+      ? invoke('get_agent_logs', { label: agentLabel })
+      : invoke('get_logs'),
     refetchInterval: 3000,
   });
 

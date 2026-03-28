@@ -111,9 +111,24 @@ struct ServerRegistryEntry {
 
 /// Load the effective agent configuration.
 ///
-/// If `servers.json` exists and has an active entry, construct an `AgentConfig`
-/// from that entry. Otherwise, fall back to `agent.json` (backward compatible).
+/// Priority: agents.json (multi-agent) → servers.json (server mode) → agent.json (legacy).
 pub fn load_effective_config() -> Result<AgentConfig, String> {
+    // 1. Check agents.json (multi-agent registry)
+    if let Ok(Some(registry)) = crate::agents::load_agents_registry() {
+        // Find the current agent, or fall back to first
+        let agent = if let Some(ref label) = registry.current_label {
+            registry.agents.iter().find(|a| &a.label == label)
+        } else {
+            None
+        }
+        .or_else(|| registry.agents.first());
+
+        if let Some(entry) = agent {
+            return Ok(crate::agents::agent_entry_to_config(entry));
+        }
+    }
+
+    // 2. Check servers.json
     let registry_path = servers_registry_path();
     if registry_path.exists() {
         let content = std::fs::read_to_string(&registry_path)

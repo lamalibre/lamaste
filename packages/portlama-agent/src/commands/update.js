@@ -9,11 +9,12 @@ import { isAgentLoaded, unloadAgent, loadAgent, getAgentPid } from '../lib/servi
 /**
  * Re-fetch tunnel config from the panel and restart the agent.
  * Used after adding/removing tunnels on the panel.
+ * @param {{ label: string }} options
  */
-export async function runUpdate() {
+export async function runUpdate({ label }) {
   assertSupportedPlatform();
 
-  const config = await requireAgentConfig();
+  const config = await requireAgentConfig(label);
 
   const ctx = {
     serviceConfig: null,
@@ -26,7 +27,7 @@ export async function runUpdate() {
         title: 'Fetching updated tunnel configuration',
         task: async (_ctx, task) => {
           const agentConfig = await fetchAgentConfig(config);
-          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs);
+          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs, label);
 
           const tunnelData = await fetchTunnels(config);
           ctx.tunnels = tunnelData.tunnels || [];
@@ -37,34 +38,34 @@ export async function runUpdate() {
       {
         title: 'Writing service config',
         task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig);
+          await writeServiceConfigFile(ctx.serviceConfig, label);
         },
       },
       {
         title: 'Unloading agent',
         skip: async () => {
-          const loaded = await isAgentLoaded();
+          const loaded = await isAgentLoaded(label);
           return !loaded && 'Agent not currently loaded';
         },
         task: async () => {
-          await unloadAgent();
+          await unloadAgent(label);
         },
       },
       {
         title: 'Loading agent',
         task: async () => {
-          await loadAgent();
+          await loadAgent(label);
         },
       },
       {
         title: 'Verifying agent is running',
         task: async (_ctx, task) => {
           await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid();
+          const pid = await getAgentPid(label);
           if (pid) {
             task.output = `Agent running (PID ${pid})`;
           } else {
-            const loaded = await isAgentLoaded();
+            const loaded = await isAgentLoaded(label);
             if (loaded) {
               task.output = 'Agent loaded (process starting...)';
             } else {
@@ -77,7 +78,7 @@ export async function runUpdate() {
       {
         title: 'Saving configuration',
         task: async () => {
-          await saveAgentConfig({
+          await saveAgentConfig(label, {
             ...config,
             updatedAt: new Date().toISOString(),
           });
@@ -94,7 +95,7 @@ export async function runUpdate() {
   await tasks.run();
 
   console.log('');
-  console.log(chalk.green('  Agent updated successfully.'));
+  console.log(chalk.green(`  Agent "${label}" updated successfully.`));
   if (ctx.tunnels.length > 0) {
     console.log(chalk.dim(`  ${ctx.tunnels.length} tunnel(s) active.`));
   }

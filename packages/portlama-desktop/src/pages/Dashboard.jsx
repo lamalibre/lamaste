@@ -1,27 +1,42 @@
 import { Activity, HardDrive, RefreshCw, Loader2, Play, Square, Download } from 'lucide-react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 
-export default function Dashboard({ status }) {
+export default function Dashboard({ status, agentLabel }) {
   const queryClient = useQueryClient();
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ['status'] });
     queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+    queryClient.invalidateQueries({ queryKey: ['agents'] });
   };
 
+  // When managing a specific agent, use label-specific commands
+  const agentStatusQuery = useQuery({
+    queryKey: ['agent-status', agentLabel],
+    queryFn: () => invoke('get_agent_status', { label: agentLabel }),
+    refetchInterval: 3000,
+    enabled: !!agentLabel,
+  });
+
   const stopMutation = useMutation({
-    mutationFn: () => invoke('stop_chisel'),
+    mutationFn: () => agentLabel
+      ? invoke('stop_agent', { label: agentLabel })
+      : invoke('stop_chisel'),
     onSuccess: invalidateAll,
   });
 
   const startMutation = useMutation({
-    mutationFn: () => invoke('start_chisel'),
+    mutationFn: () => agentLabel
+      ? invoke('start_agent', { label: agentLabel })
+      : invoke('start_chisel'),
     onSuccess: invalidateAll,
   });
 
   const restartMutation = useMutation({
-    mutationFn: () => invoke('restart_chisel'),
+    mutationFn: () => agentLabel
+      ? invoke('restart_agent', { label: agentLabel })
+      : invoke('restart_chisel'),
     onSuccess: invalidateAll,
   });
 
@@ -54,7 +69,11 @@ export default function Dashboard({ status }) {
                   ? { type: 'error', msg: restartMutation.error?.message || 'Restart failed' }
                   : null;
 
-  const chisel = status?.chisel;
+  // Derive chisel status from agent-specific query or global status
+  const agentStatus = agentStatusQuery?.data;
+  const chisel = agentLabel
+    ? { running: agentStatus?.running, pid: agentStatus?.pid, installed: true, version: agentStatus?.chiselVersion }
+    : status?.chisel;
 
   return (
     <div className="p-6">

@@ -1,6 +1,24 @@
 import chalk from 'chalk';
 
 /**
+ * Parse --label flag from argv, removing it from the args array.
+ * @param {string[]} args
+ * @returns {{ label: string | undefined, args: string[] }}
+ */
+function extractLabelFlag(args) {
+  let label;
+  const filtered = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--label' && args[i + 1]) {
+      label = args[++i];
+    } else {
+      filtered.push(args[i]);
+    }
+  }
+  return { label, args: filtered };
+}
+
+/**
  * Print help message and exit.
  */
 function printHelp() {
@@ -13,7 +31,7 @@ ${b('portlama-agent')} — tunnel agent for Portlama (macOS & Linux)
 
 ${b('USAGE')}
 
-  ${c('portlama-agent')} ${d('<command>')}
+  ${c('portlama-agent')} ${d('[--label <name>] <command>')}
 
 ${b('COMMANDS')}
 
@@ -25,33 +43,41 @@ ${b('COMMANDS')}
   ${c('sites')}           List, create, or delete static sites
   ${c('deploy')}          Deploy a local directory to a static site
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
+  ${c('list')}            List all configured agents
+  ${c('switch')}          Set the default agent
+
+${b('GLOBAL FLAGS')}
+
+  ${c('--label <name>')}  Target a specific agent (overrides the current default)
 
 ${b('EXAMPLES')}
 
   ${d('# First-time setup (interactive)')}
   ${c('npx @lamalibre/portlama-agent setup')}
 
+  ${d('# Setup with a specific label')}
+  ${c('portlama-agent setup --label prod-server --panel-url https://1.2.3.4:9292')}
+
   ${d('# Token-based setup (non-interactive)')}
-  ${c('PORTLAMA_ENROLLMENT_TOKEN=<token> portlama-agent setup --panel-url https://1.2.3.4:9292')}
+  ${c('PORTLAMA_ENROLLMENT_TOKEN=<token> portlama-agent setup --label my-server --panel-url https://1.2.3.4:9292')}
+
+  ${d('# List all agents')}
+  ${c('portlama-agent list')}
+
+  ${d('# Switch default agent')}
+  ${c('portlama-agent switch my-server')}
 
   ${d('# After adding a tunnel on the panel')}
   ${c('portlama-agent update')}
 
-  ${d('# Check if the agent is running')}
-  ${c('portlama-agent status')}
+  ${d('# Check status of a specific agent')}
+  ${c('portlama-agent status --label my-server')}
 
-  ${d('# List static sites')}
-  ${c('portlama-agent sites')}
+  ${d('# Uninstall a specific agent')}
+  ${c('portlama-agent uninstall --label my-server')}
 
-  ${d('# Create a managed static site')}
-  ${c('portlama-agent sites create blog')}
-
-  ${d('# Deploy local build to a site')}
-  ${c('portlama-agent deploy blog ./dist')}
-
-  ${d('# Manage plugins')}
-  ${c('portlama-agent plugin status')}
-  ${c('portlama-agent plugin install @lamalibre/shell-agent')}
+  ${d('# Uninstall all agents')}
+  ${c('portlama-agent uninstall --all')}
 
 ${b('PREREQUISITES')}
 
@@ -67,7 +93,8 @@ ${b('PREREQUISITES')}
  * Parse command from argv and dispatch to the appropriate module.
  */
 export async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  const { label, args } = extractLabelFlag(rawArgs);
   const command = args[0];
 
   if (!command || command === '--help' || command === '-h') {
@@ -77,42 +104,64 @@ export async function main() {
   switch (command) {
     case 'setup': {
       const { runSetup } = await import('./commands/setup.js');
-      await runSetup();
+      await runSetup({ label });
       break;
     }
     case 'update': {
       const { runUpdate } = await import('./commands/update.js');
-      await runUpdate();
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runUpdate({ label: resolved });
       break;
     }
     case 'uninstall': {
       const { runUninstall } = await import('./commands/uninstall.js');
-      await runUninstall();
+      await runUninstall({ label, all: args.includes('--all') });
       break;
     }
     case 'status': {
       const { runStatus } = await import('./commands/status.js');
-      await runStatus();
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runStatus({ label: resolved });
       break;
     }
     case 'logs': {
       const { runLogs } = await import('./commands/logs.js');
-      await runLogs();
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runLogs({ label: resolved });
       break;
     }
     case 'sites': {
       const { runSites } = await import('./commands/sites.js');
-      await runSites(args.slice(1));
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runSites(args.slice(1), { label: resolved });
       break;
     }
     case 'deploy': {
       const { runDeploy } = await import('./commands/deploy.js');
-      await runDeploy(args.slice(1));
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runDeploy(args.slice(1), { label: resolved });
       break;
     }
     case 'plugin': {
       const { runPlugin } = await import('./commands/plugin.js');
-      await runPlugin(args.slice(1));
+      const { resolveLabel } = await import('./lib/registry.js');
+      const resolved = await resolveLabel(label);
+      await runPlugin(args.slice(1), { label: resolved });
+      break;
+    }
+    case 'list': {
+      const { runList } = await import('./commands/list.js');
+      await runList();
+      break;
+    }
+    case 'switch': {
+      const { runSwitch } = await import('./commands/switch.js');
+      await runSwitch(args[1]);
       break;
     }
     default:

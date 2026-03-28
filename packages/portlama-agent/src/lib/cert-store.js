@@ -8,10 +8,8 @@ import crypto from 'node:crypto';
 import { writeFile, access, constants } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
-import { isDarwin, AGENT_DIR } from './platform.js';
+import { isDarwin, agentDataDir } from './platform.js';
 import { secureDelete } from './keychain.js';
-
-const LINUX_P12_PATH = path.join(AGENT_DIR, 'client.p12');
 
 /**
  * Store an enrolled certificate using the platform-appropriate mechanism.
@@ -45,7 +43,7 @@ export async function enrolledCertExists(label) {
     const { keychainIdentityExists } = await import('./keychain.js');
     return keychainIdentityExists(label);
   }
-  return linuxP12Exists();
+  return linuxP12Exists(label);
 }
 
 /**
@@ -57,7 +55,7 @@ export async function removeEnrolledCert(label) {
     const { removeKeychainIdentity } = await import('./keychain.js');
     return removeKeychainIdentity(label);
   }
-  return removeLinuxP12();
+  return removeLinuxP12(label);
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +69,11 @@ export async function removeEnrolledCert(label) {
  * maximum curl compatibility.
  */
 async function storeP12Linux(keyPath, certPem, caCertPem, label, logger) {
+  const dataDir = agentDataDir(label);
+  const p12Path = path.join(dataDir, 'client.p12');
   const suffix = crypto.randomBytes(8).toString('hex');
-  const certPath = path.join(AGENT_DIR, `.tmp-cert-${suffix}.pem`);
-  const caPath = path.join(AGENT_DIR, `.tmp-ca-${suffix}.pem`);
+  const certPath = path.join(dataDir, `.tmp-cert-${suffix}.pem`);
+  const caPath = path.join(dataDir, `.tmp-ca-${suffix}.pem`);
   const p12Password = crypto.randomBytes(16).toString('hex');
 
   try {
@@ -94,7 +94,7 @@ async function storeP12Linux(keyPath, certPem, caCertPem, label, logger) {
       '-macalg',
       'sha1',
       '-out',
-      LINUX_P12_PATH,
+      p12Path,
       '-inkey',
       keyPath,
       '-in',
@@ -110,12 +110,12 @@ async function storeP12Linux(keyPath, certPem, caCertPem, label, logger) {
     });
 
     // Set restrictive permissions on the P12
-    await execa('chmod', ['600', LINUX_P12_PATH]);
+    await execa('chmod', ['600', p12Path]);
 
-    logger.info?.({ label, path: LINUX_P12_PATH }, 'P12 stored') ??
-      logger.log?.(`P12 stored at ${LINUX_P12_PATH}`);
+    logger.info?.({ label, path: p12Path }, 'P12 stored') ??
+      logger.log?.(`P12 stored at ${p12Path}`);
 
-    return { p12Path: LINUX_P12_PATH, p12Password };
+    return { p12Path, p12Password };
   } finally {
     // Securely delete temp files — the key is consumed here
     await secureDelete(keyPath);
@@ -124,18 +124,20 @@ async function storeP12Linux(keyPath, certPem, caCertPem, label, logger) {
   }
 }
 
-async function linuxP12Exists() {
+async function linuxP12Exists(label) {
   try {
-    await access(LINUX_P12_PATH, constants.F_OK);
+    const p12Path = path.join(agentDataDir(label), 'client.p12');
+    await access(p12Path, constants.F_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-async function removeLinuxP12() {
+async function removeLinuxP12(label) {
   try {
-    await secureDelete(LINUX_P12_PATH);
+    const p12Path = path.join(agentDataDir(label), 'client.p12');
+    await secureDelete(p12Path);
   } catch {
     // May not exist — this is fine
   }

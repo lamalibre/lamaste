@@ -56,10 +56,10 @@ After the app launches, it shows a setup screen with two options:
 Run the agent setup command:
 
 ```bash
-npx @lamalibre/portlama-agent setup
+npx @lamalibre/portlama-agent setup --label my-server
 ```
 
-This command connects to your VPS panel using the agent certificate and configures the local Chisel client. During setup, the client certificate and key are extracted from the P12 bundle for mTLS client authentication. Once setup completes, the app detects the configuration and switches to the main interface.
+The `--label` flag names this agent connection (used for multi-agent support). This command connects to your VPS panel using the agent certificate and configures the local Chisel client. During setup, the client certificate and key are extracted from the P12 bundle for mTLS client authentication. Once setup completes, the app detects the configuration and switches to the main interface.
 
 **Option B: Create a new server**
 
@@ -71,14 +71,14 @@ The desktop app has two modes, toggled via a pill switch in the sidebar header. 
 
 ### Agent Mode (default)
 
-Agent mode provides local agent management — the pages you need for day-to-day tunnel and service operations on your machine:
+Agent mode provides local agent management. The landing page is the **Agents** list, showing all configured agents with their connection status. Click an agent to drill into its management pages:
 
-- **Dashboard** — connection status, Chisel version, start/stop/restart controls
-- **Tunnels** — tunnel CRUD with FQDNs, ports, and status
+- **Agents** (landing) — list of all configured agents with start/stop controls and status
+- **Dashboard** — per-agent connection status, Chisel version, start/stop/restart controls
+- **Tunnels** — per-agent tunnel list with FQDNs, ports, and status
 - **Services** — marketplace-style service discovery with one-click expose
-- **Servers** — multi-server management and cloud provisioning
-- **Logs** — Chisel client stdout and stderr logs
-- **Settings** — certificate management, agent configuration
+- **Logs** — per-agent Chisel client stdout and stderr logs
+- **Settings** — per-agent certificate management, agent configuration
 
 ### Server Mode
 
@@ -198,13 +198,15 @@ rm -rf ~/.portlama/
 | -------------------- | ----------------------------------------- |
 | **Install**          | `npx @lamalibre/install-portlama-desktop` |
 | **Update**           | `npx @lamalibre/install-portlama-desktop` |
-| **Agent setup**      | `npx @lamalibre/portlama-agent setup`     |
+| **Agent setup**      | `npx @lamalibre/portlama-agent setup --label <name>` |
 | **App location**     | `/Applications/Portlama.app` (macOS)      |
+| **Agent registry**   | `~/.portlama/agents.json`                 |
+| **Per-agent data**   | `~/.portlama/agents/<label>/`             |
 | **Config (legacy)**  | `~/.portlama/agent.json`                  |
 | **Server registry**  | `~/.portlama/servers.json`                |
 | **Service registry** | `~/.portlama/services.json`               |
 | **Download cache**   | `~/.portlama/desktop/`                    |
-| **Chisel logs**      | `~/.portlama/logs/chisel.log`             |
+| **Chisel logs**      | `~/.portlama/agents/<label>/logs/chisel.log` |
 | **Cloud tokens**     | OS credential store (`com.portlama.cloud`) |
 | **P12 passwords**    | OS credential store (`com.portlama.server`) |
 | **npm package**      | `@lamalibre/install-portlama-desktop`     |

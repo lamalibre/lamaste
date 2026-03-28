@@ -1,15 +1,22 @@
 import chalk from 'chalk';
-import { assertSupportedPlatform, CHISEL_BIN_PATH, SERVICE_CONFIG_PATH, LOG_FILE, AGENT_DIR } from '../lib/platform.js';
+import { existsSync } from 'node:fs';
+import {
+  assertSupportedPlatform,
+  CHISEL_BIN_PATH,
+  serviceConfigPath,
+  agentLogFile,
+  agentDataDir,
+} from '../lib/platform.js';
 import { loadAgentConfig } from '../lib/config.js';
 import { isAgentLoaded, getAgentPid } from '../lib/service.js';
 import { getInstalledVersion } from '../lib/chisel.js';
 import { fetchTunnels } from '../lib/panel-api.js';
-import { existsSync } from 'node:fs';
 
 /**
  * Print formatted status information about the agent.
+ * @param {{ label: string }} options
  */
-export async function runStatus() {
+export async function runStatus({ label }) {
   assertSupportedPlatform();
 
   const b = chalk.bold;
@@ -20,20 +27,18 @@ export async function runStatus() {
   const y = chalk.yellow;
 
   console.log('');
-  console.log(b('  Portlama Agent Status'));
+  console.log(b(`  Portlama Agent Status — ${c(label)}`));
   console.log(d('  ─'.repeat(28)));
 
-  // Config
-  const config = await loadAgentConfig();
+  const config = await loadAgentConfig(label);
   if (!config) {
-    console.log(`  ${r('Not configured.')} Run ${c('portlama-agent setup')} first.`);
+    console.log(`  ${r('Not configured.')} Run ${c(`portlama-agent setup --label ${label}`)} first.`);
     console.log('');
     return;
   }
 
-  // Agent status
-  const loaded = await isAgentLoaded();
-  const pid = await getAgentPid();
+  const loaded = await isAgentLoaded(label);
+  const pid = await getAgentPid(label);
 
   console.log(
     `  ${b('Agent:')}     ${loaded ? g('loaded') : r('not loaded')}${pid ? ` (PID ${pid})` : ''}`,
@@ -44,17 +49,19 @@ export async function runStatus() {
     console.log(`  ${b('Domain:')}    ${c(config.domain)}`);
   }
 
-  // Chisel
   const chiselVersion = await getInstalledVersion();
   const chiselInstalled = existsSync(CHISEL_BIN_PATH);
   console.log(
     `  ${b('Chisel:')}    ${chiselInstalled ? g(chiselVersion || 'installed') : r('not installed')}`,
   );
 
-  // Files
-  console.log(`  ${b('Service:')}   ${existsSync(SERVICE_CONFIG_PATH) ? g('present') : y('missing')}`);
-  console.log(`  ${b('Config:')}    ${existsSync(AGENT_DIR) ? g('present') : y('missing')}`);
-  console.log(`  ${b('Logs:')}      ${d(LOG_FILE)}`);
+  const svcPath = serviceConfigPath(label);
+  const dataDir = agentDataDir(label);
+  const logFile = agentLogFile(label);
+
+  console.log(`  ${b('Service:')}   ${existsSync(svcPath) ? g('present') : y('missing')}`);
+  console.log(`  ${b('Config:')}    ${existsSync(dataDir) ? g('present') : y('missing')}`);
+  console.log(`  ${b('Logs:')}      ${d(logFile)}`);
 
   if (config.setupAt) {
     console.log(`  ${b('Setup at:')}  ${d(config.setupAt)}`);
@@ -63,7 +70,6 @@ export async function runStatus() {
     console.log(`  ${b('Updated:')}   ${d(config.updatedAt)}`);
   }
 
-  // Try to fetch tunnels from panel
   console.log('');
   console.log(b('  Tunnels'));
   console.log(d('  ─'.repeat(28)));

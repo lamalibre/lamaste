@@ -56,9 +56,9 @@ function parseFlags(args) {
  * Sites command dispatcher.
  * @param {string[]} args
  */
-export async function runSites(args) {
+export async function runSites(args, { label } = {}) {
   assertSupportedPlatform();
-  const config = await requireAgentConfig();
+  const config = await requireAgentConfig(label);
   const sub = args[0];
 
   if (sub === 'create') return runCreate(config, args.slice(1));

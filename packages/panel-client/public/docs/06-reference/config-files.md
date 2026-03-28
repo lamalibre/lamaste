@@ -17,6 +17,11 @@
 | `/etc/nginx/sites-available/portlama-*`  | nginx conf | root:root         | 0644 | Vhost configurations          |
 | `/etc/nginx/snippets/portlama-mtls.conf` | nginx conf | root:root         | 0644 | mTLS snippet                  |
 | `~/.portlama/servers.json`               | JSON       | user              | 0600 | Desktop app server registry   |
+| `~/.portlama/agents.json`               | JSON       | user              | 0600 | Multi-agent registry          |
+| `~/.portlama/agents/<label>/config.json` | JSON      | user              | 0600 | Per-agent configuration       |
+| `~/.portlama/agents/<label>/client.p12`  | PKCS#12   | user              | 0600 | Per-agent mTLS certificate    |
+| `~/.portlama/agents/<label>/ca.crt`      | PEM       | user              | 0644 | Per-agent CA certificate      |
+| `~/.portlama/agents/<label>/logs/`       | directory | user              | 0700 | Per-agent Chisel log files    |
 | `~/.portlama/agent.json`                | JSON       | user              | 0600 | Legacy single-server config   |
 
 ---
@@ -495,13 +500,55 @@ Stores the server registry for the desktop app's multi-server support. Created b
 
 **Write pattern:** Atomic — temp file with mode 0600, `fsync()`, then `rename()`.
 
-**Config resolution:** `load_effective_config()` checks `servers.json` first for an active entry, then falls back to `agent.json`.
+**Config resolution:** `load_effective_config()` checks `agents.json` first (multi-agent registry), then `servers.json` (active entry), then falls back to `agent.json` (legacy).
+
+---
+
+### `~/.portlama/agents.json`
+
+Multi-agent registry. Created by `portlama-agent setup`. Tracks all configured agents and the current default.
+
+```json
+{
+  "version": 1,
+  "currentLabel": "my-server",
+  "agents": [
+    {
+      "label": "my-server",
+      "panelUrl": "https://1.2.3.4:9292",
+      "authMethod": "p12",
+      "p12Path": "~/.portlama/agents/my-server/client.p12",
+      "keychainIdentity": null,
+      "agentLabel": "agent:my-machine",
+      "domain": "example.com",
+      "chiselVersion": "1.10.1",
+      "setupAt": "2026-03-28T10:00:00.000Z",
+      "updatedAt": null
+    }
+  ]
+}
+```
+
+**Write pattern:** Atomic — temp file with mode 0600, `fsync()`, then `rename()`.
+
+Per-agent data is stored at `~/.portlama/agents/<label>/`:
+- `config.json` — agent configuration (panelUrl, authMethod, credentials)
+- `client.p12` — mTLS certificate (mode 0600)
+- `ca.crt` — CA certificate (mode 0644)
+- `logs/chisel.log` — Chisel stdout log
+- `logs/chisel.error.log` — Chisel stderr log
+- `plugins.json` — agent plugin registry
+- `plugins/` — per-plugin data directories
+
+Service files use per-agent names:
+- macOS: `com.portlama.chisel-<label>` (plist label), `~/Library/LaunchAgents/com.portlama.chisel-<label>.plist`
+- Linux: `portlama-chisel-<label>` (unit name), `/etc/systemd/system/portlama-chisel-<label>.service`
 
 ---
 
 ### `~/.portlama/agent.json`
 
-Legacy single-server configuration. Created by `npx @lamalibre/portlama-agent setup`. If `servers.json` exists with an active entry, this file is not used.
+Legacy single-server configuration. Automatically migrated to the multi-agent registry on first use. After migration, renamed to `agent.json.backup`.
 
 ---
 

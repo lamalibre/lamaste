@@ -1,6 +1,6 @@
 # Portlama E2E: 05 — User Lifecycle
 
-> Started at `2026-03-26 10:46:16 UTC`
+> Started at `2026-03-28 16:08:11 UTC`
 
 
 ## Pre-flight: check onboarding is complete
@@ -8,58 +8,58 @@
 
 ## Create user
 
-✅ `10:46:19` User creation returned ok: true  
-✅ `10:46:19` Username matches  
-✅ `10:46:19` Display name matches  
-✅ `10:46:19` Email matches  
+✅ `16:08:13` User creation returned ok: true  
+✅ `16:08:13` Username matches  
+✅ `16:08:13` Display name matches  
+✅ `16:08:13` Email matches  
 
 ## Verify user in list
 
-✅ `10:46:19` User appears in GET /api/users  
-✅ `10:46:19` No password field in user list response  
-✅ `10:46:19` No bcrypt hash in user list response  
+✅ `16:08:13` User appears in GET /api/users  
+✅ `16:08:13` No password field in user list response  
+✅ `16:08:13` No bcrypt hash in user list response  
 
 ## Validation: duplicate username
 
-✅ `10:46:19` Duplicate username rejected (HTTP 409)  
+✅ `16:08:13` Duplicate username rejected (HTTP 409)  
 
 ## Validation: invalid input
 
-✅ `10:46:19` Incomplete user data rejected (HTTP 400)  
-✅ `10:46:19` Short password rejected (HTTP 400)  
+✅ `16:08:13` Incomplete user data rejected (HTTP 400)  
+✅ `16:08:13` Short password rejected (HTTP 400)  
 
 ## Reset TOTP
 
-✅ `10:46:19` TOTP reset returned ok: true  
-✅ `10:46:19` TOTP URI is a valid otpauth:// URI  
+✅ `16:08:13` TOTP reset returned ok: true  
+✅ `16:08:13` TOTP URI is a valid otpauth:// URI  
 
 ## TOTP for nonexistent user
 
-✅ `10:46:19` TOTP reset for nonexistent user returns 404  
+✅ `16:08:13` TOTP reset for nonexistent user returns 404  
 
 ## Update user
 
-✅ `10:46:21` User update returned ok: true  
-✅ `10:46:21` Display name updated  
-✅ `10:46:21` Display name persisted after update  
+✅ `16:08:15` User update returned ok: true  
+✅ `16:08:15` Display name updated  
+✅ `16:08:15` Display name persisted after update  
 
 ## Update nonexistent user
 
-✅ `10:46:21` Update nonexistent user returns 404  
+✅ `16:08:15` Update nonexistent user returns 404  
 
 ## Delete user
 
-✅ `10:46:23` User deletion returned ok: true  
-✅ `10:46:23` User no longer in list after deletion  
+✅ `16:08:17` User deletion returned ok: true  
+✅ `16:08:17` User no longer in list after deletion  
 
 ## Cannot delete last user
 
-ℹ️ `10:46:23` Cannot test last-user protection — 2 users exist (need exactly 1)  
-ℹ️ `10:46:23` This scenario is tested when only the admin user remains  
+ℹ️ `16:08:18` Cannot test last-user protection — 2 users exist (need exactly 1)  
+ℹ️ `16:08:18` This scenario is tested when only the admin user remains  
 
 ## Delete nonexistent user
 
-✅ `10:46:23` Delete nonexistent user returns 404  
+✅ `16:08:18` Delete nonexistent user returns 404  
 
 ---
 

@@ -6,7 +6,7 @@ on macOS (launchd) and Linux (systemd).
 ## Installation
 
 ```bash
-npx @lamalibre/portlama-agent setup
+npx @lamalibre/portlama-agent setup --label my-server
 ```
 
 The setup command downloads the Chisel binary, configures the tunnel connection,
@@ -14,19 +14,30 @@ installs a system service (launchd plist on macOS, systemd unit on Linux), and
 starts the agent. The panel provides the connection details and an agent-scoped
 mTLS certificate.
 
+Multiple agents can be configured simultaneously, each with its own label
+pointing to a different Portlama server. Per-agent data is stored at
+`~/.portlama/agents/<label>/`.
+
 ## Commands
+
+All commands accept the `--label <name>` flag to target a specific agent.
+Without `--label`, the current default agent is used.
 
 | Command                            | Description                                |
 | ---------------------------------- | ------------------------------------------ |
 | `setup`                            | Install Chisel and configure the tunnel    |
 | `update`                           | Re-fetch config from panel and restart     |
 | `uninstall`                        | Remove Chisel, service, and configuration  |
+| `uninstall --all`                  | Remove all agents and `~/.portlama`        |
 | `status`                           | Show tunnel connection status              |
 | `logs`                             | Display recent tunnel logs                 |
 | `sites`                            | List all static sites                      |
 | `sites create <name>`              | Create a new static site (admin cert only) |
 | `sites delete <name-or-id>`        | Delete a static site (admin cert only)     |
 | `deploy <name-or-id> <local-path>` | Deploy a local directory to a site         |
+| `plugin`                           | Manage agent plugins (install, uninstall, update, status) |
+| `list`                             | List all configured agents                 |
+| `switch <label>`                   | Set the default agent                      |
 
 ### Sites Command
 

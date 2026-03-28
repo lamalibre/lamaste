@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-26 10:46:06 UTC`
+> Run at `2026-03-28 16:08:00 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-26 10:46:06 UTC
+  Date:           2026-03-28 16:08:00 UTC
 
   Running: 01-fresh-install.sh
 
@@ -19,7 +19,7 @@
 
 
 --- Node.js installation ---
-  [PASS] Node.js installed: v20.20.2
+  [PASS] Node.js installed: v20.20.0
 
 --- Panel server service ---
   [PASS] portlama-panel service is active
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 25 10:44:44 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 27 16:06:41 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: dab670ce-9661-464f-b2f8-781923a39d22
+  [INFO] Created tunnel ID: 194a73a7-be4f-4095-a369-88be7907e2fa
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774521967
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774714081
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=D2:40:A3:D2:54:D8:AD:D2:32:7B:29:B1:37:7E:E7:7A:CE:78:51:29:32:97:AE:DB:E5:D9:2A:87:7E:AE:28:EF
+  [INFO] Current cert fingerprint: sha256 Fingerprint=54:57:04:6B:0C:4A:66:EF:B4:48:F1:79:69:BE:85:20:79:DF:6B:3F:84:CE:33:93:49:6D:67:AE:AD:EE:C8:02
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-25T10:46:36.000Z
+  [PASS] Rotation response contains expiry: 2028-03-27T16:08:30.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=9E:F6:AC:C6:D9:B3:7D:BB:53:52:A7:06:94:F3:E3:B7:EC:48:F8:7F:65:31:7C:15:32:7F:D6:2B:90:B4:42:EF
+  [INFO] New cert fingerprint: sha256 Fingerprint=11:D3:1B:DE:D2:38:16:F0:7D:C0:DC:C2:9E:82:27:E4:90:CF:F4:D8:49:73:A3:0B:2D:7E:75:2D:02:27:8C:9B
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.2
+  [INFO] Server IP: 192.168.2.9
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 820ccc8f-cd6c-4acc-8394-22f4ba8cd20b)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 5cac3bef-37f2-4d7c-91b2-6d9db25859d4)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -745,7 +745,7 @@
 
 --- Confirm 2FA with valid code ---
   [PASS] Generated TOTP code
-  [INFO] Generated TOTP code: 234254
+  [INFO] Generated TOTP code: 295970
   [PASS] 2FA is now enabled
   [PASS] Session cookie received on confirm
   [PASS] Status shows enabled after confirm
@@ -760,7 +760,7 @@
   [PASS] Authenticated request with session cookie returns system stats
 
 --- Disable 2FA ---
-  [INFO] Waiting 28s for next TOTP window...
+  [INFO] Waiting 4s for next TOTP window...
   [PASS] 2FA disabled successfully
 
 --- IP vhost re-enabled after disabling 2FA ---

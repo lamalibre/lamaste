@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add multi-agent support — configure multiple agents pointing to different Portlama servers, each with isolated config, certs, logs, and plugins at `~/.portlama/agents/<label>/`
+- Add `list` command to show all configured agents with connection status
+- Add `switch <label>` command to change the default agent
+- Add `--label` global flag to target a specific agent from any command
+- Add `plugin` command for local agent plugin management (install, uninstall, update, status)
+- Add `uninstall --all` with confirmation prompt to remove all agents and `~/.portlama`
+- Add Agents landing page in desktop app — list all agents with start/stop controls and per-agent drill-down into Dashboard, Tunnels, Logs, and Settings
+- Add `agents.rs` Tauri module — agent registry management with start/stop/restart/logs/tunnels/config commands
+- Add automatic migration from single-agent (`agent.json`) to multi-agent registry with legacy file cleanup
+- Add `upsertAgent` registry helper — idempotent add-or-update for agent entries
 - Add dual-mode desktop app — sidebar toggle switches between Agents (local agent management) and Servers (per-server admin panel with drill-down from server list)
 - Add `@lamalibre/portlama-admin-panel` shared React package — admin UI pages, `AdminClientContext` abstraction, and components consumed by both web panel and desktop app
 - Add per-server admin panel in desktop app — Dashboard, Tunnels, Services, Static Sites, Users, Certificates, Tickets, Plugins, and Settings pages via `portlama-admin-panel`
@@ -39,9 +49,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Update `load_effective_config()` to three-tier priority: `agents.json` → `servers.json` → `agent.json`
+- Update per-agent service names to include label: `portlama-chisel-<label>` (plist/systemd)
+- Update per-agent plugin state to `~/.portlama/agents/<label>/plugins.json` and `plugins/` directories
 - Extract admin pages from `panel-client` into shared `portlama-admin-panel` package — web panel now imports from the shared package
 - Update desktop app server list from agent-only tab to Servers mode landing page with drill-down navigation
 - Update desktop sidebar to show mode-contextual navigation — agent tabs, server list, or per-server admin tabs
+
+### Fixed
+
+- Fix `launchctl list` PID parsing — use exact column match instead of substring to prevent false positives between agents with similar labels
+- Fix `storeEnrolledCert` receiving enrollment CN instead of local agent label, causing writes to wrong directory
+- Fix `loadRegistry` silently swallowing JSON parse errors — now only returns null for missing file, throws on corruption
+- Fix `saveRegistry` and `saveAgentConfig` missing `fsync` before rename — prevents data loss on power failure
+- Fix agent log directories created with world-readable 0o755 instead of 0o700
+- Fix `uninstallLegacy` not unloading the running agent before removing files
 
 ### Security
 

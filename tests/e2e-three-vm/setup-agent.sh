@@ -123,16 +123,18 @@ log_step "[4/5] Running portlama-agent setup with enrollment token..."
 # - Fetch tunnel config and create systemd unit
 # - Start the agent service
 # Pass token via env var to keep it out of process listings
-PORTLAMA_ENROLLMENT_TOKEN="${ENROLLMENT_TOKEN}" portlama-agent setup --panel-url "https://${HOST_IP}:9292"
+AGENT_LABEL="e2e-agent"
+PORTLAMA_ENROLLMENT_TOKEN="${ENROLLMENT_TOKEN}" portlama-agent setup --label "${AGENT_LABEL}" --panel-url "https://${HOST_IP}:9292"
 
-log_ok "portlama-agent setup completed"
+log_ok "portlama-agent setup completed (label: ${AGENT_LABEL})"
 
-# Verify agent is running
-AGENT_STATUS=$(systemctl is-active portlama-chisel 2>/dev/null || echo "inactive")
+# Verify agent is running (multi-agent: service name includes the label)
+SERVICE_NAME="portlama-chisel-${AGENT_LABEL}"
+AGENT_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
 if [ "$AGENT_STATUS" = "active" ]; then
-  log_ok "systemd service portlama-chisel is active"
+  log_ok "systemd service ${SERVICE_NAME} is active"
 else
-  log_fail "systemd service portlama-chisel is ${AGENT_STATUS}"
+  log_fail "systemd service ${SERVICE_NAME} is ${AGENT_STATUS}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -158,7 +160,7 @@ log_kv "Host IP" "${HOST_IP}"
 log_kv "Test Domain" "${TEST_DOMAIN}"
 log_kv "Node.js" "$(node --version 2>/dev/null)"
 log_kv "portlama-agent" "installed"
-log_kv "systemd service" "$(systemctl is-active portlama-chisel 2>/dev/null || echo 'unknown')"
+log_kv "systemd service" "$(systemctl is-active portlama-chisel-e2e-agent 2>/dev/null || echo 'unknown')"
 log_kv "Python" "$(python3 --version 2>/dev/null)"
 log_kv "Panel reachable" "yes (enrolled via token)"
 log_ok "The agent VM is ready for E2E tests."

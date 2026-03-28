@@ -178,15 +178,16 @@ else
 fi
 
 # Verify systemd service is enabled (it may not be active if no tunnels are configured)
-SYSTEMD_ENABLED=$(agent_exec "systemctl is-enabled portlama-chisel 2>/dev/null || echo disabled")
+# Multi-agent: service name includes the label set during setup-agent.sh
+SYSTEMD_ENABLED=$(agent_exec "systemctl is-enabled portlama-chisel-e2e-agent 2>/dev/null || echo disabled")
 if [ "$SYSTEMD_ENABLED" = "enabled" ]; then
-  log_pass "systemd service portlama-chisel is enabled"
+  log_pass "systemd service portlama-chisel-e2e-agent is enabled"
 else
-  log_fail "systemd service portlama-chisel is $SYSTEMD_ENABLED (expected enabled)"
+  log_fail "systemd service portlama-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
 fi
 
-# Verify agent config file exists
-CONFIG_EXISTS=$(agent_exec "test -f ~/.portlama/agent.json && echo yes || echo no")
+# Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)
+CONFIG_EXISTS=$(agent_exec "test -f ~/.portlama/agents/e2e-agent/config.json && echo yes || echo no")
 assert_eq "$CONFIG_EXISTS" "yes" "Agent config file exists after setup" || true
 
 # ---------------------------------------------------------------------------

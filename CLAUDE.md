@@ -76,10 +76,12 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Service discovery in `services.rs` — detection via `which`/`pgrep`/`lsof`/TCP probe, Docker via `docker ps`
 - Cloud provisioning in `cloud.rs` — bridges React UI to `@lamalibre/portlama-cloud` Node.js CLI
 - OS credential storage in `credentials.rs` — macOS `security` CLI, Linux `secret-tool`
-- `config.rs` `load_effective_config()` — reads `servers.json` (active entry), falls back to `agent.json`
+- Multi-agent management in `agents.rs` — registry at `~/.portlama/agents.json`, per-agent data at `~/.portlama/agents/<label>/`, Tauri commands for agent start/stop/restart/logs/tunnels/config
+- `config.rs` `load_effective_config()` — checks `agents.json` (multi-agent registry) first, then `servers.json` (active entry), then falls back to `agent.json` (legacy)
 - `tokio::task::spawn_blocking` for subprocess calls and file I/O — never block the Tauri event loop
 - Service registry persisted as JSON at `~/.portlama/services.json`
 - Server registry persisted as JSON at `~/.portlama/servers.json`
+- Agent registry persisted as JSON at `~/.portlama/agents.json` — multi-agent support with per-agent data directories
 - Atomic file writes (temp → fsync → rename) for registry and config
 
 **TypeScript (Ticket SDK):**
@@ -160,7 +162,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Push install: admin enables a time-windowed session per agent, then sends install/update/uninstall commands
 - Push install policies: IP allow/deny lists, allowed plugins (`@lamalibre/` scope enforced via Zod), allowed actions
 - Plugin state: `/etc/portlama/plugins.json` (registry), `/etc/portlama/plugins/` (per-plugin data directories)
-- Agent plugin state: `~/.portlama/plugins.json`, `~/.portlama/plugins/` directories
+- Agent plugin state: `~/.portlama/agents/<label>/plugins.json`, `~/.portlama/agents/<label>/plugins/` directories (legacy paths `~/.portlama/plugins.json` and `~/.portlama/plugins/` used only during migration)
 
 **Ticket system (agent-to-agent authorization):**
 

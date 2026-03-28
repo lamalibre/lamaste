@@ -1,31 +1,31 @@
 # Portlama E2E: 01 — Fresh Install
 
-> Started at `2026-03-26 10:46:06 UTC`
+> Started at `2026-03-28 16:08:00 UTC`
 
 
 ## Node.js installation
 
-✅ `10:46:06` Node.js installed: v20.20.2  
+✅ `16:08:00` Node.js installed: v20.20.0  
 
 ## Panel server service
 
-✅ `10:46:06` portlama-panel service is active  
+✅ `16:08:00` portlama-panel service is active  
 
 ## Health endpoint
 
-✅ `10:46:06` Health endpoint returns status: ok  
-✅ `10:46:06` Health endpoint returns a version  
+✅ `16:08:00` Health endpoint returns status: ok  
+✅ `16:08:00` Health endpoint returns a version  
 
 ## Panel client static files
 
-✅ `10:46:06` Panel client served at / (HTTP 200)  
-✅ `10:46:06` Response contains HTML content  
-✅ `10:46:06` Response contains React root element  
+✅ `16:08:00` Panel client served at / (HTTP 200)  
+✅ `16:08:00` Response contains HTML content  
+✅ `16:08:00` Response contains React root element  
 
 ## nginx service
 
-✅ `10:46:06` nginx service is active  
-✅ `10:46:06` nginx configuration syntax is valid  
+✅ `16:08:00` nginx service is active  
+✅ `16:08:00` nginx configuration syntax is valid  
 
 ---
 

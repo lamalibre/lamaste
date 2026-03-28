@@ -2,6 +2,7 @@
  * Unified service config generation.
  *
  * Dispatches to plist (macOS) or systemd unit (Linux) based on process.platform.
+ * All functions accept a `label` parameter for per-agent service isolation.
  */
 
 import { writeFile, rename, mkdir } from 'node:fs/promises';
@@ -10,11 +11,12 @@ import { execa } from 'execa';
 import {
   isDarwin,
   CHISEL_BIN_PATH,
-  LOG_FILE,
-  ERROR_LOG_FILE,
-  PLIST_PATH,
-  SYSTEMD_UNIT_PATH,
-  LOGS_DIR,
+  plistLabel,
+  plistPath,
+  systemdUnitPath,
+  agentLogFile,
+  agentErrorLogFile,
+  agentLogsDir,
 } from './platform.js';
 
 /**
@@ -61,34 +63,36 @@ function validateChiselArgs(chiselArgs) {
 }
 
 /**
- * Generate service config text from chiselArgs.
- * @param {string[]} chiselArgs - Chisel client argument array (e.g. ['client', '--tls-skip-verify', ...])
+ * Generate service config text from chiselArgs for a specific agent.
+ * @param {string[]} chiselArgs - Chisel client argument array
+ * @param {string} label - Agent label
  * @returns {string} Config file content (plist XML on macOS, systemd unit on Linux)
  */
-export function generateServiceConfig(chiselArgs) {
+export function generateServiceConfig(chiselArgs, label) {
   validateChiselArgs(chiselArgs);
   if (isDarwin()) {
-    return generatePlistConfig(chiselArgs);
+    return generatePlistConfig(chiselArgs, label);
   }
-  return generateSystemdUnit(chiselArgs);
+  return generateSystemdUnit(chiselArgs, label);
 }
 
 /**
  * Write the service config file to the platform-appropriate location.
  * @param {string} content - Config file content
+ * @param {string} label - Agent label
  */
-export async function writeServiceConfigFile(content) {
+export async function writeServiceConfigFile(content, label) {
   if (isDarwin()) {
-    return writePlistConfigFile(content);
+    return writePlistConfigFile(content, label);
   }
-  return writeSystemdUnitFile(content);
+  return writeSystemdUnitFile(content, label);
 }
 
 // ---------------------------------------------------------------------------
 // macOS — plist
 // ---------------------------------------------------------------------------
 
-function generatePlistConfig(chiselArgs) {
+function generatePlistConfig(chiselArgs, label) {
   const xmlEsc = (str) =>
     String(str)
       .replace(/&/g, '&amp;')
@@ -103,12 +107,16 @@ function generatePlistConfig(chiselArgs) {
     ...chiselArgs.map((arg) => `        <string>${xmlEsc(arg)}</string>`),
   ];
 
+  const logFile = agentLogFile(label);
+  const errorLogFile = agentErrorLogFile(label);
+  const serviceLabel = plistLabel(label);
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.portlama.chisel</string>
+    <string>${xmlEsc(serviceLabel)}</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -122,10 +130,10 @@ ${programArgs.join('\n')}
     <true/>
 
     <key>StandardOutPath</key>
-    <string>${xmlEsc(LOG_FILE)}</string>
+    <string>${xmlEsc(logFile)}</string>
 
     <key>StandardErrorPath</key>
-    <string>${xmlEsc(ERROR_LOG_FILE)}</string>
+    <string>${xmlEsc(errorLogFile)}</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -137,25 +145,30 @@ ${programArgs.join('\n')}
 `;
 }
 
-async function writePlistConfigFile(content) {
-  const dir = path.dirname(PLIST_PATH);
+async function writePlistConfigFile(content, label) {
+  const filePath = plistPath(label);
+  const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
-  const tmp = PLIST_PATH + '.tmp';
+  const tmp = filePath + '.tmp';
   await writeFile(tmp, content, 'utf8');
-  await rename(tmp, PLIST_PATH);
+  await rename(tmp, filePath);
 }
 
 // ---------------------------------------------------------------------------
 // Linux — systemd
 // ---------------------------------------------------------------------------
 
-function generateSystemdUnit(chiselArgs) {
+function generateSystemdUnit(chiselArgs, label) {
   // Build ExecStart with proper systemd quoting (double-quote each argument)
   const systemdQuote = (s) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   const execStart = [CHISEL_BIN_PATH, ...chiselArgs].map(systemdQuote).join(' ');
 
+  const logFile = agentLogFile(label);
+  const errorLogFile = agentErrorLogFile(label);
+  const logsDir = agentLogsDir(label);
+
   return `[Unit]
-Description=Portlama Chisel Tunnel Client
+Description=Portlama Chisel Tunnel Client (${label})
 After=network-online.target
 Wants=network-online.target
 
@@ -164,25 +177,26 @@ Type=simple
 ExecStart=${execStart}
 Restart=always
 RestartSec=5
-StandardOutput=append:${LOG_FILE}
-StandardError=append:${ERROR_LOG_FILE}
+StandardOutput=append:${logFile}
+StandardError=append:${errorLogFile}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${LOGS_DIR}
+ReadWritePaths=${logsDir}
 
 [Install]
 WantedBy=multi-user.target
 `;
 }
 
-async function writeSystemdUnitFile(content) {
-  // Ensure logs directory exists
-  await mkdir(LOGS_DIR, { recursive: true });
+async function writeSystemdUnitFile(content, label) {
+  const logsDir = agentLogsDir(label);
+  await mkdir(logsDir, { recursive: true });
 
-  const tmp = SYSTEMD_UNIT_PATH + '.tmp';
+  const filePath = systemdUnitPath(label);
+  const tmp = filePath + '.tmp';
   await writeFile(tmp, content, { encoding: 'utf8', mode: 0o644 });
-  await rename(tmp, SYSTEMD_UNIT_PATH);
+  await rename(tmp, filePath);
 
   // Reload systemd so it picks up the new/changed unit file
   await execa('systemctl', ['daemon-reload']);

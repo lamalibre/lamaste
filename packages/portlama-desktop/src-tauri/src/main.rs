@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod admin_commands;
+mod agents;
 mod api;
 mod cloud;
 mod commands;
@@ -46,6 +47,15 @@ fn main() {
             plugins::enable_plugin,
             plugins::disable_plugin,
             plugins::uninstall_plugin,
+            // Multi-agent management
+            agents::get_agents,
+            agents::get_agent_status,
+            agents::start_agent,
+            agents::stop_agent,
+            agents::restart_agent,
+            agents::get_agent_tunnels,
+            agents::get_agent_logs,
+            agents::get_agent_config,
             cloud::store_cloud_token,
             cloud::get_cloud_token,
             cloud::delete_cloud_token,

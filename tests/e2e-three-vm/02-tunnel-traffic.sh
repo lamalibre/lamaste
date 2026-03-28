@@ -149,7 +149,7 @@ if [ "$CHISEL_READY" = "true" ]; then
   log_pass "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)"
 else
   log_fail "Chisel tunnel failed to establish within 15 seconds"
-  AGENT_LOG=$(agent_exec "tail -20 ~/.portlama/logs/chisel.log 2>/dev/null || echo 'no log'")
+  AGENT_LOG=$(agent_exec "tail -20 ~/.portlama/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'")
   log_info "Chisel agent log: $AGENT_LOG"
 fi
 

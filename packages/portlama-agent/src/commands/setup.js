@@ -5,8 +5,15 @@ import { resolve } from 'node:path';
 import path from 'node:path';
 import { Listr } from 'listr2';
 import chalk from 'chalk';
-import { assertSupportedPlatform, isDarwin, CHISEL_BIN_DIR, LOGS_DIR, AGENT_DIR } from '../lib/platform.js';
-import { loadAgentConfig, saveAgentConfig } from '../lib/config.js';
+import {
+  assertSupportedPlatform,
+  isDarwin,
+  CHISEL_BIN_DIR,
+  AGENT_DIR,
+  agentDataDir,
+  agentLogsDir,
+} from '../lib/platform.js';
+import { saveAgentConfig } from '../lib/config.js';
 import { fetchHealth, fetchAgentConfig, fetchTunnels, curlPostUnauthenticated } from '../lib/panel-api.js';
 import { extractPemFromP12, cleanupPemFiles } from '../lib/ws-helpers.js';
 import { installChisel } from '../lib/chisel.js';
@@ -14,6 +21,7 @@ import { generateServiceConfig, writeServiceConfigFile } from '../lib/service-co
 import { isAgentLoaded, unloadAgent, loadAgent, getAgentPid } from '../lib/service.js';
 import { generateKeypairAndCSR, secureDelete } from '../lib/keychain.js';
 import { storeEnrolledCert } from '../lib/cert-store.js';
+import { validateLabel, deriveLabel, upsertAgent, getAgent } from '../lib/registry.js';
 
 /**
  * Prompt for user input via readline.
@@ -38,10 +46,10 @@ function prompt(question, defaultValue) {
 }
 
 /**
- * Parse --token and --panel-url flags from argv.
+ * Parse --token, --panel-url, and --label flags from argv.
  * Token can also be provided via PORTLAMA_ENROLLMENT_TOKEN env var
  * to avoid exposure in process listings.
- * @returns {{ token?: string, panelUrl?: string }}
+ * @returns {{ token?: string, panelUrl?: string, label?: string }}
  */
 function parseSetupFlags() {
   const args = process.argv.slice(2);
@@ -51,6 +59,8 @@ function parseSetupFlags() {
       flags.token = args[++i];
     } else if (args[i] === '--panel-url' && args[i + 1]) {
       flags.panelUrl = args[++i];
+    } else if (args[i] === '--label' && args[i + 1]) {
+      flags.label = args[++i];
     }
   }
   // Prefer env var over CLI arg to keep token out of process listings
@@ -63,15 +73,18 @@ function parseSetupFlags() {
 /**
  * Run the interactive setup flow.
  * If --token is provided, uses the hardware-bound enrollment flow.
+ * @param {{ label?: string }} options
  */
-export async function runSetup() {
+export async function runSetup(options = {}) {
   const flags = parseSetupFlags();
+  // CLI --label from index.js takes precedence, then from parseSetupFlags
+  const explicitLabel = options.label || flags.label;
 
   if (flags.token) {
-    return runTokenSetup(flags);
+    return runTokenSetup({ ...flags, label: explicitLabel });
   }
 
-  return runP12Setup();
+  return runP12Setup({ label: explicitLabel });
 }
 
 /**
@@ -79,19 +92,22 @@ export async function runSetup() {
  * Generates a keypair locally, sends CSR to the panel, imports the signed
  * certificate into macOS Keychain as a non-extractable identity.
  *
- * @param {{ token: string, panelUrl?: string }} flags
+ * @param {{ token: string, panelUrl?: string, label?: string }} flags
  */
 async function runTokenSetup(flags) {
   // Step 1: Verify supported platform
   assertSupportedPlatform();
 
-  // Check for existing config
-  const existingConfig = await loadAgentConfig();
-  if (existingConfig) {
-    console.log('');
-    console.log(chalk.yellow('  An existing agent configuration was found.'));
-    console.log(chalk.yellow('  Running setup again will overwrite it.'));
-    console.log('');
+  // Validate explicit label early if provided
+  if (flags.label) {
+    validateLabel(flags.label);
+    const existing = await getAgent(flags.label);
+    if (existing) {
+      console.log('');
+      console.log(chalk.yellow(`  An agent with label "${flags.label}" already exists.`));
+      console.log(chalk.yellow('  Running setup again will overwrite it.'));
+      console.log('');
+    }
   }
 
   console.log('');
@@ -103,7 +119,7 @@ async function runTokenSetup(flags) {
 
   let panelUrl = flags.panelUrl;
   if (!panelUrl) {
-    panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)', existingConfig?.panelUrl);
+    panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)');
   }
   if (!panelUrl) {
     throw new Error('Panel URL is required. Pass --panel-url <url> or enter interactively.');
@@ -117,7 +133,9 @@ async function runTokenSetup(flags) {
   const ctx = {
     panelUrl: normalizedUrl,
     token: flags.token,
+    explicitLabel: flags.label,
     agentLabel: null,
+    resolvedLabel: null,
     keychainIdentity: null,
     p12Path: null,
     p12Password: null,
@@ -134,14 +152,12 @@ async function runTokenSetup(flags) {
         task: async () => {
           await mkdir(AGENT_DIR, { recursive: true, mode: 0o700 });
           await mkdir(CHISEL_BIN_DIR, { recursive: true });
-          await mkdir(LOGS_DIR, { recursive: true });
+          // Per-agent dirs created after we know the label (post-enrollment)
         },
       },
       {
         title: 'Generating keypair and CSR',
         task: async (_ctx, task) => {
-          // We use a temporary label placeholder — the actual label comes from the token
-          // We'll pass 'pending' and fix after enrollment
           ctx._keyData = await generateKeypairAndCSR('pending');
           task.output = 'Keypair generated (4096-bit RSA)';
         },
@@ -163,20 +179,32 @@ async function runTokenSetup(flags) {
           ctx.agentLabel = result.label;
           ctx._certPem = result.cert;
           ctx._caCertPem = result.caCert;
-          task.output = `Enrolled as "${result.label}" (serial: ${result.serial})`;
+
+          // Resolve label: explicit > derived from enrollment label > derived from panel URL
+          ctx.resolvedLabel = ctx.explicitLabel || deriveLabel(null, result.label);
+          validateLabel(ctx.resolvedLabel);
+
+          task.output = `Enrolled as "${result.label}" (label: ${ctx.resolvedLabel})`;
         },
         rendererOptions: { persistentOutput: true },
       },
       {
+        title: 'Creating agent directories',
+        task: async () => {
+          const dataDir = agentDataDir(ctx.resolvedLabel);
+          const logsDir = agentLogsDir(ctx.resolvedLabel);
+          await mkdir(dataDir, { recursive: true, mode: 0o700 });
+          await mkdir(logsDir, { recursive: true, mode: 0o700 });
+        },
+      },
+      {
         title: isDarwin() ? 'Importing certificate into Keychain' : 'Storing certificate',
         task: async (_ctx, task) => {
-          // The server overrides the CSR subject with the correct CN=agent:<label>
-          // during signing, so the CSR placeholder subject doesn't matter.
           const result = await storeEnrolledCert(
             ctx._keyData.keyPath,
             ctx._certPem,
             ctx._caCertPem,
-            ctx.agentLabel,
+            ctx.resolvedLabel,
             console,
           );
           if (result.identity) {
@@ -193,7 +221,7 @@ async function runTokenSetup(flags) {
       {
         title: 'Saving CA certificate',
         task: async () => {
-          const caPath = path.join(AGENT_DIR, 'ca.crt');
+          const caPath = path.join(agentDataDir(ctx.resolvedLabel), 'ca.crt');
           await writeFile(caPath, ctx._caCertPem, { mode: 0o644 });
         },
       },
@@ -230,7 +258,7 @@ async function runTokenSetup(flags) {
 
           const agentConfig = await fetchAgentConfig(authConfig);
           ctx.domain = agentConfig.domain;
-          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs);
+          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs, ctx.resolvedLabel);
 
           const tunnelData = await fetchTunnels(authConfig);
           ctx.tunnels = tunnelData.tunnels || [];
@@ -241,37 +269,36 @@ async function runTokenSetup(flags) {
       {
         title: 'Writing service config',
         task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig);
+          await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
         },
       },
       {
         title: 'Unloading previous agent',
         skip: async () => {
-          const loaded = await isAgentLoaded();
+          const loaded = await isAgentLoaded(ctx.resolvedLabel);
           return !loaded && 'No previous agent loaded';
         },
         task: async () => {
-          await unloadAgent();
+          await unloadAgent(ctx.resolvedLabel);
         },
       },
       {
         title: 'Loading agent',
         skip: () => ctx.tunnels.length === 0 && 'No tunnels configured — run portlama-agent update after creating tunnels',
         task: async () => {
-          await loadAgent();
+          await loadAgent(ctx.resolvedLabel);
         },
       },
       {
         title: 'Verifying agent is running',
         skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
         task: async (_ctx, task) => {
-          // Give the service manager a moment to start the process
           await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid();
+          const pid = await getAgentPid(ctx.resolvedLabel);
           if (pid) {
             task.output = `Agent running (PID ${pid})`;
           } else {
-            const loaded = await isAgentLoaded();
+            const loaded = await isAgentLoaded(ctx.resolvedLabel);
             if (loaded) {
               task.output = 'Agent loaded (process starting...)';
             } else {
@@ -301,7 +328,21 @@ async function runTokenSetup(flags) {
             configData.p12Password = ctx.p12Password;
           }
 
-          await saveAgentConfig(configData);
+          await saveAgentConfig(ctx.resolvedLabel, configData);
+
+          // Add or update registry entry
+          await upsertAgent({
+            label: ctx.resolvedLabel,
+            panelUrl: ctx.panelUrl,
+            authMethod: configData.authMethod,
+            p12Path: configData.p12Path || null,
+            keychainIdentity: configData.keychainIdentity || null,
+            agentLabel: ctx.agentLabel,
+            domain: ctx.domain,
+            chiselVersion: ctx.chiselVersion,
+            setupAt: configData.setupAt,
+            updatedAt: null,
+          });
         },
       },
     ],
@@ -315,35 +356,27 @@ async function runTokenSetup(flags) {
   try {
     await tasks.run();
   } catch (err) {
-    // Securely delete the temporary private key if it was generated but not
-    // yet consumed by storeEnrolledCert (which handles its own cleanup).
     if (ctx._keyData?.keyPath) {
       await secureDelete(ctx._keyData.keyPath).catch(() => {});
     }
     throw err;
   }
 
-  // Print summary
   printSetupSummary(ctx);
 }
 
 /**
  * Traditional P12-based setup flow.
+ * @param {{ label?: string }} options
  */
-async function runP12Setup() {
-  // Step 1: Verify supported platform
+async function runP12Setup(options = {}) {
   assertSupportedPlatform();
 
-  // Check for existing config
-  const existingConfig = await loadAgentConfig();
-  if (existingConfig) {
-    console.log('');
-    console.log(chalk.yellow('  An existing agent configuration was found.'));
-    console.log(chalk.yellow('  Running setup again will overwrite it.'));
-    console.log('');
+  // Validate explicit label early if provided
+  if (options.label) {
+    validateLabel(options.label);
   }
 
-  // Step 2: Prompt credentials
   console.log('');
   console.log(chalk.bold('  Portlama Agent Setup'));
   console.log(chalk.dim(isDarwin()
@@ -354,15 +387,14 @@ async function runP12Setup() {
   console.log(chalk.dim('    Panel → Certificates → Agent Certificates → Generate'));
   console.log('');
 
-  const panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)', existingConfig?.panelUrl);
+  const panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)');
   if (!panelUrl) {
     throw new Error('Panel URL is required.');
   }
 
-  // Normalize URL: strip trailing slash
   const normalizedUrl = panelUrl.replace(/\/+$/, '');
 
-  const defaultP12 = existingConfig?.p12Path || './agent.p12';
+  const defaultP12 = './agent.p12';
   const p12Input = await prompt('Path to agent certificate (.p12)', defaultP12);
   const p12Path = resolve(p12Input);
 
@@ -375,13 +407,16 @@ async function runP12Setup() {
     throw new Error('P12 password is required.');
   }
 
+  // Derive label if not explicitly provided
+  const agentLabel = options.label || deriveLabel(normalizedUrl.replace(/^https?:\/\//, '').split(':')[0]);
+
   console.log('');
 
-  // Context shared across tasks
   const ctx = {
     panelUrl: normalizedUrl,
     p12Path,
     p12Password,
+    resolvedLabel: agentLabel,
     chiselVersion: null,
     serviceConfig: null,
     domain: null,
@@ -393,8 +428,12 @@ async function runP12Setup() {
       {
         title: 'Creating directories',
         task: async () => {
+          await mkdir(AGENT_DIR, { recursive: true, mode: 0o700 });
           await mkdir(CHISEL_BIN_DIR, { recursive: true });
-          await mkdir(LOGS_DIR, { recursive: true });
+          const dataDir = agentDataDir(ctx.resolvedLabel);
+          const logsDir = agentLogsDir(ctx.resolvedLabel);
+          await mkdir(dataDir, { recursive: true, mode: 0o700 });
+          await mkdir(logsDir, { recursive: true, mode: 0o700 });
         },
       },
       {
@@ -406,7 +445,6 @@ async function runP12Setup() {
           } else {
             task.output = 'No CA certificate found in P12';
           }
-          // Clean up temporary PEM cert/key files — they are only needed transiently
           await cleanupPemFiles(pem);
         },
         rendererOptions: { persistentOutput: true },
@@ -437,9 +475,8 @@ async function runP12Setup() {
         task: async (_ctx, task) => {
           const agentConfig = await fetchAgentConfig(ctx.panelUrl, ctx.p12Path, ctx.p12Password);
           ctx.domain = agentConfig.domain;
-          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs);
+          ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs, ctx.resolvedLabel);
 
-          // Also fetch tunnel list for the summary
           const tunnelData = await fetchTunnels(ctx.panelUrl, ctx.p12Path, ctx.p12Password);
           ctx.tunnels = tunnelData.tunnels || [];
           task.output = `${ctx.tunnels.length} tunnel(s) configured`;
@@ -449,37 +486,36 @@ async function runP12Setup() {
       {
         title: 'Writing service config',
         task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig);
+          await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
         },
       },
       {
         title: 'Unloading previous agent',
         skip: async () => {
-          const loaded = await isAgentLoaded();
+          const loaded = await isAgentLoaded(ctx.resolvedLabel);
           return !loaded && 'No previous agent loaded';
         },
         task: async () => {
-          await unloadAgent();
+          await unloadAgent(ctx.resolvedLabel);
         },
       },
       {
         title: 'Loading agent',
         skip: () => ctx.tunnels.length === 0 && 'No tunnels configured — run portlama-agent update after creating tunnels',
         task: async () => {
-          await loadAgent();
+          await loadAgent(ctx.resolvedLabel);
         },
       },
       {
         title: 'Verifying agent is running',
         skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
         task: async (_ctx, task) => {
-          // Give the service manager a moment to start the process
           await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid();
+          const pid = await getAgentPid(ctx.resolvedLabel);
           if (pid) {
             task.output = `Agent running (PID ${pid})`;
           } else {
-            const loaded = await isAgentLoaded();
+            const loaded = await isAgentLoaded(ctx.resolvedLabel);
             if (loaded) {
               task.output = 'Agent loaded (process starting...)';
             } else {
@@ -492,7 +528,7 @@ async function runP12Setup() {
       {
         title: 'Saving configuration',
         task: async () => {
-          await saveAgentConfig({
+          const configData = {
             panelUrl: ctx.panelUrl,
             authMethod: 'p12',
             p12Path: ctx.p12Path,
@@ -500,6 +536,20 @@ async function runP12Setup() {
             domain: ctx.domain,
             chiselVersion: ctx.chiselVersion,
             setupAt: new Date().toISOString(),
+          };
+          await saveAgentConfig(ctx.resolvedLabel, configData);
+
+          await upsertAgent({
+            label: ctx.resolvedLabel,
+            panelUrl: ctx.panelUrl,
+            authMethod: 'p12',
+            p12Path: ctx.p12Path,
+            keychainIdentity: null,
+            agentLabel: null,
+            domain: ctx.domain,
+            chiselVersion: ctx.chiselVersion,
+            setupAt: configData.setupAt,
+            updatedAt: null,
           });
         },
       },
@@ -513,7 +563,6 @@ async function runP12Setup() {
 
   await tasks.run();
 
-  // Print summary
   printSetupSummary(ctx);
 }
 
@@ -533,6 +582,15 @@ function printSetupSummary(ctx) {
     c('  ║') + `  ${g.bold('Portlama Agent installed successfully!')}` + ' '.repeat(17) + c('║'),
   );
   console.log(c('  ╠══════════════════════════════════════════════════════════╣'));
+
+  if (ctx.resolvedLabel) {
+    console.log(
+      c('  ║') +
+        `  ${b('Label:')}   ${c(ctx.resolvedLabel)}` +
+        ' '.repeat(Math.max(0, 46 - ctx.resolvedLabel.length)) +
+        c('║'),
+    );
+  }
 
   if (ctx.domain) {
     console.log(
@@ -567,26 +625,32 @@ function printSetupSummary(ctx) {
   console.log(c('  ║') + `  ${b('Commands:')}` + ' '.repeat(47) + c('║'));
   console.log(
     c('  ║') +
-      `    ${d('portlama-agent status')}    ${d('— check agent health')}` +
+      `    ${d('portlama-agent list')}       ${d('— list all agents')}` +
+      ' '.repeat(13) +
+      c('║'),
+  );
+  console.log(
+    c('  ║') +
+      `    ${d('portlama-agent status')}     ${d('— check agent health')}` +
+      ' '.repeat(10) +
+      c('║'),
+  );
+  console.log(
+    c('  ║') +
+      `    ${d('portlama-agent logs')}       ${d('— stream chisel logs')}` +
+      ' '.repeat(10) +
+      c('║'),
+  );
+  console.log(
+    c('  ║') +
+      `    ${d('portlama-agent update')}     ${d('— refresh tunnel config')}` +
+      ' '.repeat(7) +
+      c('║'),
+  );
+  console.log(
+    c('  ║') +
+      `    ${d('portlama-agent uninstall')}  ${d('— remove everything')}` +
       ' '.repeat(11) +
-      c('║'),
-  );
-  console.log(
-    c('  ║') +
-      `    ${d('portlama-agent logs')}      ${d('— stream chisel logs')}` +
-      ' '.repeat(11) +
-      c('║'),
-  );
-  console.log(
-    c('  ║') +
-      `    ${d('portlama-agent update')}    ${d('— refresh tunnel config')}` +
-      ' '.repeat(8) +
-      c('║'),
-  );
-  console.log(
-    c('  ║') +
-      `    ${d('portlama-agent uninstall')} ${d('— remove everything')}` +
-      ' '.repeat(12) +
       c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));

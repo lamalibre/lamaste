@@ -23,6 +23,118 @@ export const SYSTEMD_UNIT_PATH = '/etc/systemd/system/portlama-chisel.service';
  */
 export const SERVICE_CONFIG_PATH = process.platform === 'darwin' ? PLIST_PATH : SYSTEMD_UNIT_PATH;
 
+// ---------------------------------------------------------------------------
+// Per-agent (label-parameterized) path helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-agent data directory.
+ * @param {string} label - Validated agent label
+ * @returns {string}
+ */
+export function agentDataDir(label) {
+  return path.join(AGENT_DIR, 'agents', label);
+}
+
+/**
+ * Per-agent config file path.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentConfigPath(label) {
+  return path.join(agentDataDir(label), 'config.json');
+}
+
+/**
+ * Per-agent logs directory.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentLogsDir(label) {
+  return path.join(agentDataDir(label), 'logs');
+}
+
+/**
+ * Per-agent chisel stdout log.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentLogFile(label) {
+  return path.join(agentLogsDir(label), 'chisel.log');
+}
+
+/**
+ * Per-agent chisel stderr log.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentErrorLogFile(label) {
+  return path.join(agentLogsDir(label), 'chisel.error.log');
+}
+
+/**
+ * Per-agent launchd plist label.
+ * @param {string} label
+ * @returns {string}
+ */
+export function plistLabel(label) {
+  return `com.portlama.chisel-${label}`;
+}
+
+/**
+ * Per-agent launchd plist file path.
+ * @param {string} label
+ * @returns {string}
+ */
+export function plistPath(label) {
+  return path.join(HOME, 'Library', 'LaunchAgents', `${plistLabel(label)}.plist`);
+}
+
+/**
+ * Per-agent systemd unit name.
+ * @param {string} label
+ * @returns {string}
+ */
+export function systemdUnitName(label) {
+  return `portlama-chisel-${label}`;
+}
+
+/**
+ * Per-agent systemd unit file path.
+ * @param {string} label
+ * @returns {string}
+ */
+export function systemdUnitPath(label) {
+  return `/etc/systemd/system/portlama-chisel-${label}.service`;
+}
+
+/**
+ * Per-agent service config path (platform-aware).
+ * @param {string} label
+ * @returns {string}
+ */
+export function serviceConfigPath(label) {
+  return process.platform === 'darwin' ? plistPath(label) : systemdUnitPath(label);
+}
+
+/**
+ * Per-agent plugins registry file.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentPluginsFile(label) {
+  return path.join(agentDataDir(label), 'plugins.json');
+}
+
+/**
+ * Per-agent plugins directory.
+ * @param {string} label
+ * @returns {string}
+ */
+export function agentPluginsDir(label) {
+  return path.join(agentDataDir(label), 'plugins');
+}
+
 /**
  * @returns {boolean} true if running on macOS
  */

@@ -39,9 +39,9 @@ async function scanDirectory(dir, base = '') {
  * Deploy a local directory to a static site on the panel.
  * @param {string[]} args
  */
-export async function runDeploy(args) {
+export async function runDeploy(args, { label } = {}) {
   assertSupportedPlatform();
-  const config = await requireAgentConfig();
+  const config = await requireAgentConfig(label);
 
   const target = args[0];
   const localPath = args[1];

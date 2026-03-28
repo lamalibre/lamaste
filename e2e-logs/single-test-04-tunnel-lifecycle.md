@@ -1,6 +1,6 @@
 # Portlama E2E: 04 — Tunnel Lifecycle
 
-> Started at `2026-03-26 10:46:07 UTC`
+> Started at `2026-03-28 16:08:01 UTC`
 
 
 ## Pre-flight: check onboarding is complete
@@ -8,73 +8,73 @@
 
 ## Create tunnel
 
-✅ `10:46:09` Tunnel creation returned ok: true  
-✅ `10:46:09` Tunnel subdomain matches  
-✅ `10:46:09` Tunnel port matches  
-✅ `10:46:09` Tunnel has an ID  
-✅ `10:46:09` Tunnel has an FQDN  
-✅ `10:46:09` Tunnel has a createdAt timestamp  
-ℹ️ `10:46:09` Created tunnel ID: dab670ce-9661-464f-b2f8-781923a39d22  
+✅ `16:08:03` Tunnel creation returned ok: true  
+✅ `16:08:03` Tunnel subdomain matches  
+✅ `16:08:03` Tunnel port matches  
+✅ `16:08:03` Tunnel has an ID  
+✅ `16:08:03` Tunnel has an FQDN  
+✅ `16:08:03` Tunnel has a createdAt timestamp  
+ℹ️ `16:08:03` Created tunnel ID: 194a73a7-be4f-4095-a369-88be7907e2fa  
 
 ## Verify tunnel in list
 
-✅ `10:46:09` Tunnel appears in GET /api/tunnels  
+✅ `16:08:03` Tunnel appears in GET /api/tunnels  
 
 ## Verify nginx configuration
 
-✅ `10:46:09` Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774521967  
-✅ `10:46:09` nginx -t passes after tunnel creation  
+✅ `16:08:03` Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774714081  
+✅ `16:08:03` nginx -t passes after tunnel creation  
 
 ## Validation: reserved subdomain
 
-✅ `10:46:09` Reserved subdomain 'panel' rejected (HTTP 400)  
+✅ `16:08:03` Reserved subdomain 'panel' rejected (HTTP 400)  
 
 ## Validation: duplicate subdomain
 
-✅ `10:46:09` Duplicate subdomain rejected (HTTP 400)  
+✅ `16:08:03` Duplicate subdomain rejected (HTTP 400)  
 
 ## Validation: duplicate port
 
-✅ `10:46:09` Duplicate port rejected (HTTP 400)  
+✅ `16:08:03` Duplicate port rejected (HTTP 400)  
 
 ## Validation: invalid port
 
-✅ `10:46:09` Port below 1024 rejected (HTTP 400)  
+✅ `16:08:03` Port below 1024 rejected (HTTP 400)  
 
 ## Mac plist endpoint
 
-✅ `10:46:09` Mac plist endpoint returns plist content  
+✅ `16:08:04` Mac plist endpoint returns plist content  
 
 ## Disable tunnel
 
-✅ `10:46:11` Tunnel disable returned ok: true  
-✅ `10:46:11` Tunnel shows as disabled in list  
-✅ `10:46:11` Nginx sites-enabled symlink removed for disabled tunnel  
-✅ `10:46:12` nginx -t passes after tunnel disable  
-✅ `10:46:12` Disabled tunnel excluded from plist  
+✅ `16:08:06` Tunnel disable returned ok: true  
+✅ `16:08:06` Tunnel shows as disabled in list  
+✅ `16:08:06` Nginx sites-enabled symlink removed for disabled tunnel  
+✅ `16:08:06` nginx -t passes after tunnel disable  
+✅ `16:08:06` Disabled tunnel excluded from plist  
 
 ## Re-enable tunnel
 
-✅ `10:46:14` Tunnel re-enable returned ok: true  
-✅ `10:46:14` Tunnel shows as enabled in list  
-✅ `10:46:14` Nginx vhost restored for re-enabled tunnel  
-✅ `10:46:14` nginx -t passes after tunnel re-enable  
-✅ `10:46:14` Re-enabled tunnel included in plist  
+✅ `16:08:08` Tunnel re-enable returned ok: true  
+✅ `16:08:08` Tunnel shows as enabled in list  
+✅ `16:08:08` Nginx vhost restored for re-enabled tunnel  
+✅ `16:08:08` nginx -t passes after tunnel re-enable  
+✅ `16:08:08` Re-enabled tunnel included in plist  
 
 ## Toggle nonexistent tunnel
 
-✅ `10:46:14` Toggle nonexistent tunnel returns 404  
+✅ `16:08:08` Toggle nonexistent tunnel returns 404  
 
 ## Delete tunnel
 
-✅ `10:46:16` Tunnel deletion returned ok: true  
-✅ `10:46:16` Tunnel no longer in list after deletion  
-✅ `10:46:16` Nginx vhost removed after tunnel deletion  
-✅ `10:46:16` nginx -t passes after tunnel deletion  
+✅ `16:08:11` Tunnel deletion returned ok: true  
+✅ `16:08:11` Tunnel no longer in list after deletion  
+✅ `16:08:11` Nginx vhost removed after tunnel deletion  
+✅ `16:08:11` nginx -t passes after tunnel deletion  
 
 ## Delete nonexistent tunnel
 
-✅ `10:46:16` Delete nonexistent tunnel returns 404  
+✅ `16:08:11` Delete nonexistent tunnel returns 404  
 
 ---
 

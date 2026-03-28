@@ -12,13 +12,15 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-export default function SettingsPage() {
+export default function SettingsPage({ agentLabel }) {
   const queryClient = useQueryClient();
   const [uninstallConfirm, setUninstallConfirm] = useState(false);
 
   const configQuery = useQuery({
-    queryKey: ['config'],
-    queryFn: () => invoke('get_config'),
+    queryKey: ['config', agentLabel],
+    queryFn: () => agentLabel
+      ? invoke('get_agent_config', { label: agentLabel })
+      : invoke('get_config'),
   });
 
   const rotateMutation = useMutation({

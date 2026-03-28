@@ -162,9 +162,20 @@ log_section "Agent API calls still work without 2FA session"
 
 # Agent uses its own cert (CN=agent:...) which bypasses 2FA
 # IP vhost is disabled when 2FA is on, so agent must use domain
+# Multi-agent: extract PEM from per-agent P12 for curl usage
+AGENT_P12="/home/ubuntu/.portlama/agents/e2e-agent/client.p12"
+AGENT_CERT="/tmp/agent-e2e.crt"
+AGENT_KEY="/tmp/agent-e2e.key"
+multipass exec portlama-agent -- sudo bash -c "
+  P12_PASS=\$(jq -r '.p12Password' /home/ubuntu/.portlama/agents/e2e-agent/config.json)
+  openssl pkcs12 -in ${AGENT_P12} -clcerts -nokeys -passin pass:\${P12_PASS} -out ${AGENT_CERT} 2>/dev/null
+  openssl pkcs12 -in ${AGENT_P12} -nocerts -nodes -passin pass:\${P12_PASS} -out ${AGENT_KEY} 2>/dev/null
+  chmod 600 ${AGENT_KEY}
+" 2>/dev/null || true
+
 AGENT_HEALTH_DOMAIN=$(multipass exec portlama-agent -- curl -sk --max-time 30 \
-  --cert /home/ubuntu/.portlama/agent.crt \
-  --key /home/ubuntu/.portlama/agent.key \
+  --cert "${AGENT_CERT}" \
+  --key "${AGENT_KEY}" \
   -H 'Accept: application/json' \
   "https://panel.${DOMAIN}/api/health" 2>/dev/null || echo '{}')
 
@@ -173,8 +184,8 @@ if echo "$AGENT_HEALTH_DOMAIN" | jq -e '.status' &>/dev/null; then
 else
   # Agent may still reach via IP if vhost removal is still propagating
   AGENT_HEALTH_IP=$(multipass exec portlama-agent -- curl -sk --max-time 30 \
-    --cert /home/ubuntu/.portlama/agent.crt \
-    --key /home/ubuntu/.portlama/agent.key \
+    --cert "${AGENT_CERT}" \
+    --key "${AGENT_KEY}" \
     -H 'Accept: application/json' \
     "https://${HOST_IP}:9292/api/health" 2>/dev/null || echo '{}')
 
@@ -184,6 +195,9 @@ else
     log_info "Agent cannot reach panel — agent cert may not be enrolled yet"
   fi
 fi
+
+# Clean up temp PEM files
+multipass exec portlama-agent -- rm -f "${AGENT_CERT}" "${AGENT_KEY}" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 log_section "Admin request without cookie returns 401"
