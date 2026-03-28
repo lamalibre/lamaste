@@ -1,6 +1,6 @@
 # setup-visitor
 
-> Started at `2026-03-28 16:07:52 UTC` — log level **2**
+> Started at `2026-03-28 22:38:14 UTC` — log level **1**
 
 
 ---
@@ -13,9 +13,9 @@
 | **Host IP** | `192.168.2.9` |
 | **Test Domain** | `test.portlama.local` |
 
-🔵 `16:07:52` **[1/3] Installing dependencies...**  
+🔵 `22:38:14` **[1/3] Installing dependencies...**  
 <details>
-<summary>✅ <code>16:07:54</code> apt-get update</summary>
+<summary>✅ <code>22:38:16</code> apt-get update</summary>
 
 ```
 $ apt-get update -qq
@@ -24,7 +24,7 @@ $ apt-get update -qq
 </details>
 
 <details>
-<summary>✅ <code>16:07:58</code> Install curl, jq, oathtool</summary>
+<summary>✅ <code>22:38:20</code> Install curl, jq, oathtool</summary>
 
 ```
 $ apt-get install -y -qq curl jq oathtool
@@ -65,12 +65,12 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 ```
 </details>
 
-✅ `16:07:58` curl, jq, oathtool installed  
-🔵 `16:07:58` **[2/3] Configuring /etc/hosts...**  
-✅ `16:07:58` /etc/hosts configured with test.portlama.local entries  
-🔵 `16:07:58` **[3/3] Verifying connectivity to host...**  
-✅ `16:07:58` Host VM reachable at 192.168.2.9:9292 (HTTP 400 — mTLS correctly rejects unauthenticated client)  
-✅ `16:07:58` Domain panel.test.portlama.local resolves correctly (HTTP 400)  
+✅ `22:38:20` curl, jq, oathtool installed  
+🔵 `22:38:20` **[2/3] Configuring /etc/hosts...**  
+✅ `22:38:20` /etc/hosts configured with test.portlama.local entries  
+🔵 `22:38:20` **[3/3] Verifying connectivity to host...**  
+✅ `22:38:20` Host VM reachable at 192.168.2.9:9292 (HTTP 400 — mTLS correctly rejects unauthenticated client)  
+✅ `22:38:20` Domain panel.test.portlama.local resolves correctly (HTTP 400)  
 
 ---
 
@@ -86,4 +86,4 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 | **/etc/hosts** | `configured for test.portlama.local subdomains` |
 | **Log file** | `/tmp/setup-visitor.md` |
 
-✅ `16:07:58` The visitor VM is ready for E2E tests.  
+✅ `22:38:20` The visitor VM is ready for E2E tests.  

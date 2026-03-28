@@ -154,7 +154,7 @@ const ALLOWED_PROVIDERS: &[&str] = &["digitalocean"];
 
 /// Validate a server label: lowercase alphanumeric + hyphens, 1-64 chars,
 /// must start and end with a letter or number.
-fn validate_label(label: &str) -> Result<(), String> {
+pub fn validate_label(label: &str) -> Result<(), String> {
     if label.is_empty() || label.len() > 64 {
         return Err("Label must be 1-64 characters".to_string());
     }
@@ -183,7 +183,7 @@ fn validate_provider(provider: &str) -> Result<(), String> {
 
 /// Atomically save the servers registry with fsync before rename.
 /// File permissions are set to 0600 (contains credentials).
-fn save_servers_registry(
+pub fn save_servers_registry(
     path: &std::path::Path,
     servers: &[ServerEntry],
 ) -> Result<(), String> {
@@ -593,7 +593,7 @@ fn redact_servers(mut servers: Vec<ServerEntry>) -> Vec<ServerEntry> {
 }
 
 /// Load servers from registry (blocking). Returns unredacted entries.
-fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
+pub fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
     let path = config::servers_registry_path();
     if !path.exists() {
         // Try migration from agent.json — ensure directory exists with 0700

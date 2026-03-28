@@ -1,15 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Cloud, Plus, Server, ChevronDown } from 'lucide-react';
+import { Cloud, Plus, Server, ChevronDown, HardDrive } from 'lucide-react';
 import ServerCard from '../components/ServerCard.jsx';
 import CreateServerWizard from '../components/CreateServerWizard.jsx';
 import AddManagedServer from '../components/AddManagedServer.jsx';
+import LocalInstallWizard from '../components/LocalInstallWizard.jsx';
 
 export default function Servers({ onManage }) {
   const queryClient = useQueryClient();
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showAddManaged, setShowAddManaged] = useState(false);
+  const [showLocalInstall, setShowLocalInstall] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const menuRef = useRef(null);
 
@@ -29,6 +31,12 @@ export default function Servers({ onManage }) {
     queryKey: ['servers'],
     queryFn: () => invoke('get_servers'),
     refetchInterval: 10000,
+  });
+
+  const localInstallQuery = useQuery({
+    queryKey: ['local-install-available'],
+    queryFn: () => invoke('check_local_install_available'),
+    staleTime: 60000,
   });
 
   const setActiveMutation = useMutation({
@@ -58,7 +66,7 @@ export default function Servers({ onManage }) {
           </button>
 
           {showAddMenu && (
-            <div className="absolute right-0 top-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden shadow-lg z-10 w-48">
+            <div className="absolute right-0 top-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden shadow-lg z-10 w-56">
               <button
                 onClick={() => {
                   setShowAddMenu(false);
@@ -79,6 +87,23 @@ export default function Servers({ onManage }) {
                 <Server size={12} />
                 Add Existing Server
               </button>
+              <button
+                onClick={() => {
+                  setShowAddMenu(false);
+                  setShowLocalInstall(true);
+                }}
+                disabled={!localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <HardDrive size={12} />
+                <span className="flex-1">Install on This Machine</span>
+                {localInstallQuery.data?.platform === 'macos' && (
+                  <span className="text-[9px] text-zinc-500">Linux only</span>
+                )}
+                {localInstallQuery.data?.alreadyInRegistry && (
+                  <span className="text-[9px] text-zinc-500">Installed</span>
+                )}
+              </button>
             </div>
           )}
         </div>
@@ -89,9 +114,9 @@ export default function Servers({ onManage }) {
           <Server size={48} className="text-zinc-700 mb-4" />
           <h2 className="text-sm font-medium text-zinc-400 mb-2">No servers yet</h2>
           <p className="text-xs text-zinc-500 mb-6 text-center max-w-sm">
-            Create a new server on DigitalOcean or connect to an existing Portlama installation.
+            Create a new server on DigitalOcean, connect to an existing installation, or install locally.
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-center">
             <button
               onClick={() => setShowCreateWizard(true)}
               className="text-xs px-4 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 flex items-center gap-1.5"
@@ -105,6 +130,14 @@ export default function Servers({ onManage }) {
             >
               <Plus size={12} />
               Add Existing
+            </button>
+            <button
+              onClick={() => setShowLocalInstall(true)}
+              disabled={!localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry}
+              className="text-xs px-4 py-2 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <HardDrive size={12} />
+              Install Locally
             </button>
           </div>
         </div>
@@ -126,6 +159,12 @@ export default function Servers({ onManage }) {
       )}
       {showAddManaged && (
         <AddManagedServer onClose={() => setShowAddManaged(false)} />
+      )}
+      {showLocalInstall && (
+        <LocalInstallWizard
+          existingInstall={localInstallQuery.data?.existingInstall}
+          onClose={() => setShowLocalInstall(false)}
+        />
       )}
     </div>
   );

@@ -15,7 +15,7 @@ import { redeployTasks } from './tasks/redeploy.js';
 
 /**
  * Parse minimal CLI flags from process.argv.
- * @returns {{ skipHarden: boolean, uninstall: boolean, dev: boolean, help: boolean, yes: boolean }}
+ * @returns {{ skipHarden: boolean, uninstall: boolean, dev: boolean, help: boolean, yes: boolean, json: boolean, forceFull: boolean }}
  */
 function parseFlags() {
   const args = process.argv.slice(2);
@@ -26,7 +26,17 @@ function parseFlags() {
     help: args.includes('--help') || args.includes('-h'),
     yes: args.includes('--yes') || args.includes('-y'),
     forceFull: args.includes('--force-full'),
+    json: args.includes('--json'),
   };
+}
+
+/**
+ * Emit a single NDJSON line to stdout. Used when --json mode is active
+ * so that callers (e.g. Tauri desktop app) can parse structured progress.
+ * @param {Record<string, unknown>} obj
+ */
+function emitJson(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
 /**
@@ -61,7 +71,7 @@ ${b('SYSTEM MODIFICATIONS')}
     • Creates a 1GB swap file
 
   ${y('Firewall & Security')}
-    • Resets UFW firewall (allows only ports 22, 443, 9292)
+    • Resets UFW firewall (allows only ports 22, 80, 443, 9292)
     • Installs fail2ban with SSH and nginx jails
     • Hardens SSH (disables password authentication)
 
@@ -94,6 +104,7 @@ ${b('FLAGS')}
   ${c('--yes')}, ${c('-y')}          Skip the confirmation prompt
   ${c('--skip-harden')}       Skip OS hardening (swap, UFW, fail2ban, SSH)
   ${c('--dev')}               Allow private/non-routable IP addresses
+  ${c('--json')}              Output NDJSON progress lines instead of terminal UI
   ${c('--force-full')}        Run full installation even on existing installs
   ${c('--uninstall')}         Show manual removal guide for Portlama
 `);
@@ -372,8 +383,36 @@ ${chalk.cyan.bold('└───────────────────�
 }
 
 /**
+ * Run a single Listr task step in JSON mode: emit running/complete/skipped
+ * NDJSON events around each step so the caller gets per-step progress.
+ * @param {Record<string, unknown>} ctx - Shared installer context.
+ * @param {{ key: string, title: string, fn: Function, skip?: () => boolean }} step
+ */
+async function runJsonStep(ctx, step) {
+  if (step.skip && step.skip()) {
+    emitJson({ event: 'step', step: step.key, status: 'skipped' });
+    return;
+  }
+  emitJson({ event: 'step', step: step.key, status: 'running' });
+  const taskList = new Listr(
+    [{ title: step.title, task: (_c, t) => step.fn(ctx, t) }],
+    { renderer: 'silent', exitOnError: true },
+  );
+  try {
+    await taskList.run();
+  } catch (error) {
+    emitJson({ event: 'step', step: step.key, status: 'failed' });
+    throw error;
+  }
+  emitJson({ event: 'step', step: step.key, status: 'complete' });
+}
+
+/**
  * Main installer orchestrator. Creates a shared context, runs all installation
  * tasks through Listr2, and prints a summary on completion.
+ *
+ * When --json is active, outputs NDJSON progress lines instead of the
+ * interactive Listr2 terminal UI. The --json flag implies --yes and --dev.
  */
 export async function main() {
   const flags = parseFlags();
@@ -385,6 +424,14 @@ export async function main() {
   if (flags.uninstall) {
     printUninstallGuide();
   }
+
+  // --json implies --yes (no interactive prompts) and --dev (accept private IPs)
+  if (flags.json) {
+    flags.yes = true;
+    flags.dev = true;
+  }
+
+  const renderer = flags.json ? 'silent' : 'default';
 
   const ctx = {
     ip: null,
@@ -437,44 +484,7 @@ export async function main() {
       },
     ],
     {
-      renderer: 'default',
-      rendererOptions: { collapseSubtasks: false },
-      exitOnError: true,
-    },
-  );
-
-  // Phase 2: Installation tasks
-  const installTasks = new Listr(
-    [
-      {
-        title: 'Hardening operating system',
-        task: (_ctx, task) => hardenTasks(ctx, task),
-      },
-      {
-        title: 'Installing Node.js 20',
-        task: (_ctx, task) => nodeTasks(ctx, task),
-      },
-      {
-        title: 'Generating mTLS certificates',
-        task: (_ctx, task) => mtlsTasks(ctx, task),
-      },
-      {
-        title: 'Configuring nginx',
-        task: (_ctx, task) => nginxTasks(ctx, task),
-      },
-      {
-        title: 'Deploying Portlama panel',
-        task: (_ctx, task) => panelTasks(ctx, task),
-      },
-      {
-        title: 'Installation complete',
-        task: async () => {
-          // Summary will be printed after Listr finishes
-        },
-      },
-    ],
-    {
-      renderer: 'default',
+      renderer,
       rendererOptions: { collapseSubtasks: false },
       exitOnError: true,
     },
@@ -482,7 +492,13 @@ export async function main() {
 
   try {
     // Run environment checks first
+    if (flags.json) {
+      emitJson({ event: 'step', step: 'check_environment', status: 'running' });
+    }
     await envTasks.run();
+    if (flags.json) {
+      emitJson({ event: 'step', step: 'check_environment', status: 'complete' });
+    }
 
     // Detect existing system state for the confirmation banner
     const existingState = await detectExistingState();
@@ -490,30 +506,96 @@ export async function main() {
     // Determine mode: redeploy (fast update) or full install
     const isRedeploy = existingState.portlamaExists && !flags.forceFull;
 
-    // Show confirmation banner and wait for user input
-    await confirmInstallation(flags, isRedeploy, existingState);
+    // Show confirmation banner and wait for user input (skipped in JSON mode)
+    if (!flags.json) {
+      await confirmInstallation(flags, isRedeploy, existingState);
+    }
 
     if (isRedeploy) {
-      // Fast path: only update panel files and restart
-      const redeployTaskList = new Listr(
+      if (flags.json) {
+        // JSON mode: emit step-level progress for redeploy
+        await runJsonStep(ctx, {
+          key: 'redeploy_panel',
+          title: 'Redeploying Portlama panel',
+          fn: redeployTasks,
+        });
+      } else {
+        // Fast path: only update panel files and restart
+        const redeployTaskList = new Listr(
+          [
+            {
+              title: 'Redeploying Portlama panel',
+              task: (_ctx, task) => redeployTasks(ctx, task),
+            },
+          ],
+          {
+            renderer,
+            rendererOptions: { collapseSubtasks: false },
+            exitOnError: true,
+          },
+        );
+        await redeployTaskList.run();
+      }
+    } else if (flags.json) {
+      // JSON mode: run each install step individually with NDJSON progress
+      const installSteps = [
+        { key: 'harden_system', title: 'Hardening operating system', fn: hardenTasks, skip: () => ctx.skipHarden },
+        { key: 'install_node', title: 'Installing Node.js 20', fn: nodeTasks },
+        { key: 'generate_certs', title: 'Generating mTLS certificates', fn: mtlsTasks },
+        { key: 'configure_nginx', title: 'Configuring nginx', fn: nginxTasks },
+        { key: 'deploy_panel', title: 'Deploying Portlama panel', fn: panelTasks },
+      ];
+      for (const step of installSteps) {
+        await runJsonStep(ctx, step);
+      }
+    } else {
+      // Full install path with interactive Listr2 rendering
+      const installTasks = new Listr(
         [
           {
-            title: 'Redeploying Portlama panel',
-            task: (_ctx, task) => redeployTasks(ctx, task),
+            title: 'Hardening operating system',
+            task: (_ctx, task) => hardenTasks(ctx, task),
+          },
+          {
+            title: 'Installing Node.js 20',
+            task: (_ctx, task) => nodeTasks(ctx, task),
+          },
+          {
+            title: 'Generating mTLS certificates',
+            task: (_ctx, task) => mtlsTasks(ctx, task),
+          },
+          {
+            title: 'Configuring nginx',
+            task: (_ctx, task) => nginxTasks(ctx, task),
+          },
+          {
+            title: 'Deploying Portlama panel',
+            task: (_ctx, task) => panelTasks(ctx, task),
+          },
+          {
+            title: 'Installation complete',
+            task: async () => {
+              // Summary will be printed after Listr finishes
+            },
           },
         ],
         {
-          renderer: 'default',
+          renderer,
           rendererOptions: { collapseSubtasks: false },
           exitOnError: true,
         },
       );
-      await redeployTaskList.run();
-    } else {
-      // Full install path
       await installTasks.run();
     }
   } catch (error) {
+    if (flags.json) {
+      emitJson({
+        event: 'error',
+        message: error.message || 'Unknown error',
+        recoverable: false,
+      });
+      process.exit(1);
+    }
     console.error('\n');
     console.error('  ┌─────────────────────────────────────────────┐');
     console.error('  │  Portlama installation failed.              │');
@@ -526,6 +608,18 @@ export async function main() {
     process.exit(1);
   }
 
-  // Print summary after Listr2 finishes rendering
-  await printSummary(ctx);
+  if (flags.json) {
+    emitJson({
+      event: 'complete',
+      server: {
+        ip: ctx.ip,
+        panelUrl: `https://${ctx.ip}:9292`,
+        p12Path: `${ctx.pkiDir}/client.p12`,
+        p12PasswordPath: `${ctx.pkiDir}/.p12-password`,
+      },
+    });
+  } else {
+    // Print summary after Listr2 finishes rendering
+    await printSummary(ctx);
+  }
 }

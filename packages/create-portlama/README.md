@@ -17,6 +17,26 @@ the full Portlama stack with zero prompts. When finished it prints:
 
 Import the certificate into your browser and open the URL to begin onboarding.
 
+### JSON Mode
+
+For programmatic use (e.g. from the Portlama desktop app), pass `--json` to
+replace the interactive Listr2 terminal UI with NDJSON progress lines on stdout:
+
+```bash
+npx @lamalibre/create-portlama --json
+```
+
+The `--json` flag implies `--yes` (no prompts) and `--dev` (accept private IPs).
+Each line is a JSON object with one of these shapes:
+
+```jsonl
+{"event":"step","step":"check_environment","status":"running"}
+{"event":"step","step":"harden_system","status":"complete"}
+{"event":"step","step":"install_node","status":"skipped"}
+{"event":"complete","server":{"ip":"...","panelUrl":"...","p12Path":"...","p12PasswordPath":"..."}}
+{"event":"error","message":"...","recoverable":false}
+```
+
 ## What It Provisions
 
 - **OS hardening** — swap, UFW, fail2ban, SSH lockdown

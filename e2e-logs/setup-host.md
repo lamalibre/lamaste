@@ -1,6 +1,6 @@
 # setup-host
 
-> Started at `2026-03-28 16:07:06 UTC` — log level **2**
+> Started at `2026-03-28 22:37:27 UTC` — log level **1**
 
 
 ---
@@ -14,9 +14,9 @@
 | **Test Domain** | `test.portlama.local` |
 | **Scripts** | `/tmp/e2e` |
 
-🔵 `16:07:06` **[1/10] Configuring system DNS...**  
+🔵 `22:37:27` **[1/10] Configuring system DNS...**  
 <details>
-<summary>✅ <code>16:07:06</code> Stop systemd-resolved</summary>
+<summary>✅ <code>22:37:27</code> Stop systemd-resolved</summary>
 
 ```
 $ systemctl stop systemd-resolved
@@ -25,7 +25,7 @@ $ systemctl stop systemd-resolved
 </details>
 
 <details>
-<summary>✅ <code>16:07:06</code> Disable systemd-resolved</summary>
+<summary>✅ <code>22:37:27</code> Disable systemd-resolved</summary>
 
 ```
 $ systemctl disable systemd-resolved
@@ -34,11 +34,11 @@ Removed "/etc/systemd/system/dbus-org.freedesktop.resolve1.service".
 ```
 </details>
 
-✅ `16:07:06` Disabled systemd-resolved  
-✅ `16:07:06` System DNS configured  
-🔵 `16:07:06` **[2/10] Installing dnsmasq...**  
+✅ `22:37:27` Disabled systemd-resolved  
+✅ `22:37:27` System DNS configured  
+🔵 `22:37:27` **[2/10] Installing dnsmasq...**  
 <details>
-<summary>✅ <code>16:07:08</code> apt-get update</summary>
+<summary>✅ <code>22:37:29</code> apt-get update</summary>
 
 ```
 $ apt-get update -qq
@@ -47,7 +47,7 @@ $ apt-get update -qq
 </details>
 
 <details>
-<summary>✅ <code>16:07:13</code> Install dnsmasq, jq, oathtool, and sqlite3</summary>
+<summary>✅ <code>22:37:35</code> Install dnsmasq, jq, oathtool, and sqlite3</summary>
 
 ```
 $ apt-get install -y -qq dnsmasq jq oathtool sqlite3
@@ -107,7 +107,7 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 </details>
 
 <details>
-<summary>✅ <code>16:07:13</code> Restart dnsmasq</summary>
+<summary>✅ <code>22:37:35</code> Restart dnsmasq</summary>
 
 ```
 $ systemctl restart dnsmasq
@@ -116,7 +116,7 @@ $ systemctl restart dnsmasq
 </details>
 
 <details>
-<summary>✅ <code>16:07:13</code> Enable dnsmasq</summary>
+<summary>✅ <code>22:37:35</code> Enable dnsmasq</summary>
 
 ```
 $ systemctl enable dnsmasq
@@ -125,12 +125,12 @@ Executing: /usr/lib/systemd/systemd-sysv-install enable dnsmasq
 ```
 </details>
 
-✅ `16:07:13` DNS verified: test.portlama.local -> 192.168.2.9  
-🔵 `16:07:13` **[3/10] Installing certbot shim...**  
-✅ `16:07:13` certbot shim installed at /usr/bin/certbot  
-🔵 `16:07:13` **[4/10] Creating dummy certbot.timer...**  
+✅ `22:37:35` DNS verified: test.portlama.local -> 192.168.2.9  
+🔵 `22:37:35` **[3/10] Installing certbot shim...**  
+✅ `22:37:35` certbot shim installed at /usr/bin/certbot  
+🔵 `22:37:35` **[4/10] Creating dummy certbot.timer...**  
 <details>
-<summary>✅ <code>16:07:14</code> Reload systemd daemon</summary>
+<summary>✅ <code>22:37:36</code> Reload systemd daemon</summary>
 
 ```
 $ systemctl daemon-reload
@@ -139,7 +139,7 @@ $ systemctl daemon-reload
 </details>
 
 <details>
-<summary>✅ <code>16:07:14</code> Enable certbot.timer</summary>
+<summary>✅ <code>22:37:36</code> Enable certbot.timer</summary>
 
 ```
 $ systemctl enable certbot.timer
@@ -148,7 +148,7 @@ $ systemctl enable certbot.timer
 </details>
 
 <details>
-<summary>✅ <code>16:07:14</code> Start certbot.timer</summary>
+<summary>✅ <code>22:37:36</code> Start certbot.timer</summary>
 
 ```
 $ systemctl start certbot.timer
@@ -156,23 +156,23 @@ $ systemctl start certbot.timer
 ```
 </details>
 
-✅ `16:07:14` certbot.timer created and started  
-🔵 `16:07:14` **[5/10] Waiting for panel server to be ready...**  
-✅ `16:07:14` Panel server is ready  
-🔵 `16:07:14` **[6/10] Running onboarding — setting domain...**  
-✅ `16:07:14` Domain set to test.portlama.local  
-ℹ️ `16:07:14` Verifying DNS...  
-✅ `16:07:14` DNS verified  
-ℹ️ `16:07:14` Starting provisioning...  
-ℹ️ `16:07:14` Provisioning started, polling for completion...  
-✅ `16:07:26` Provisioning completed  
-🔵 `16:07:26` **[7/10] Creating test user...**  
-✅ `16:07:29` Test user created (testuser / TestPassword-E2E-123)  
-🔵 `16:07:29` **[8/10] Generating agent certificate...**  
-✅ `16:07:30` Agent certificate generated (label: test-agent)  
-🔵 `16:07:30` **[9/10] Saving credentials...**  
-✅ `16:07:30` Credentials saved to /tmp/portlama-test-credentials.json  
-🔵 `16:07:30` **[10/10] Setup complete!**  
+✅ `22:37:36` certbot.timer created and started  
+🔵 `22:37:36` **[5/10] Waiting for panel server to be ready...**  
+✅ `22:37:36` Panel server is ready  
+🔵 `22:37:36` **[6/10] Running onboarding — setting domain...**  
+✅ `22:37:36` Domain set to test.portlama.local  
+ℹ️ `22:37:36` Verifying DNS...  
+✅ `22:37:36` DNS verified  
+ℹ️ `22:37:36` Starting provisioning...  
+ℹ️ `22:37:36` Provisioning started, polling for completion...  
+✅ `22:37:45` Provisioning completed  
+🔵 `22:37:45` **[7/10] Creating test user...**  
+✅ `22:37:48` Test user created (testuser / TestPassword-E2E-123)  
+🔵 `22:37:48` **[8/10] Generating agent certificate...**  
+✅ `22:37:50` Agent certificate generated (label: test-agent)  
+🔵 `22:37:50` **[9/10] Saving credentials...**  
+✅ `22:37:50` Credentials saved to /tmp/portlama-test-credentials.json  
+🔵 `22:37:50` **[10/10] Setup complete!**  
 
 ---
 
@@ -189,9 +189,9 @@ $ systemctl start certbot.timer
 | **Tunnel URL** | `https://tunnel.test.portlama.local` |
 | **Test User** | `testuser / TestPassword-E2E-123` |
 | **Agent Label** | `test-agent` |
-| **Agent P12 Pass** | `c6da872a5f81faca78108439f15db385` |
+| **Agent P12 Pass** | `60eba42437ac3c107831328262f5c4ed` |
 | **Credentials file** | `/tmp/portlama-test-credentials.json` |
 | **Agent P12 file** | `/etc/portlama/pki/agents/test-agent/client.p12` |
 | **Log file** | `/tmp/setup-host.md` |
 
-ℹ️ `16:07:30` Next: transfer agent P12 + credentials to the agent VM, then run setup-agent.sh on the agent VM.  
+ℹ️ `22:37:50` Next: transfer agent P12 + credentials to the agent VM, then run setup-agent.sh on the agent VM.  

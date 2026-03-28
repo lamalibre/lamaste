@@ -33,9 +33,10 @@ Cloud-provisioned servers automatically include an admin certificate, so Server 
 - **Custom services** — user-defined service definitions persisted in `~/.portlama/services.json`
 - **Multi-server support** — manage multiple Portlama servers from a single app, switch between them, persisted in `~/.portlama/servers.json`
 - **Cloud provisioning** — create DigitalOcean droplets with Portlama pre-installed directly from the app (token scope validation, region latency measurement, automatic certificate download)
+- **Local installation** — install a Portlama server directly on the local Linux machine via `pkexec` + `create-portlama --json` (NDJSON progress streaming, automatic certificate import, existing installation detection)
 - **Secure credential storage** — cloud API tokens and P12 passwords stored in the OS credential store (macOS Keychain via `security-framework` crate, Linux libsecret via `secret-tool`)
 - **System tray** — background operation with status indicator
-- **IPC** — Rust backend handles mTLS, Chisel, cloud provisioning, and credential storage; React frontend handles UI
+- **IPC** — Rust backend handles mTLS, Chisel, cloud provisioning, local installation, and credential storage; React frontend handles UI
 
 ## Tech Stack
 

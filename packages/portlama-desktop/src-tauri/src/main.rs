@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod chisel;
 mod credentials;
+mod local_install;
 mod mode;
 mod services;
 mod plugins;
@@ -69,6 +70,11 @@ fn main() {
             cloud::add_managed_server,
             cloud::remove_server,
             cloud::check_server_health,
+            // Local installation
+            local_install::check_local_install_available,
+            local_install::start_local_install,
+            local_install::import_existing_local_install,
+            local_install::check_local_server_health,
             // Mode switching
             mode::set_server_mode,
             mode::get_server_mode,

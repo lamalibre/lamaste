@@ -68,6 +68,7 @@ TEST_SCRIPTS=(
   "15-plugin-lifecycle.sh"
   "16-enrollment-tokens.sh"
   "17-panel-2fa.sh"
+  "18-json-installer.sh"
 )
 
 PASSED=0

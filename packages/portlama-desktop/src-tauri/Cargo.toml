@@ -1,6 +1,6 @@
 [package]
 name = "portlama-desktop"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 
 [dependencies]
@@ -16,6 +16,9 @@ dirs = "5"
 notify-rust = "4"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2"

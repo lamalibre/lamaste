@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-28 16:08:00 UTC`
+> Run at `2026-03-28 22:38:23 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-28 16:08:00 UTC
+  Date:           2026-03-28 22:38:23 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 27 16:06:41 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 27 22:37:03 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: 194a73a7-be4f-4095-a369-88be7907e2fa
+  [INFO] Created tunnel ID: b43f4e22-d1c9-42b5-a893-9abeaae1770e
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774714081
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774737503
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=54:57:04:6B:0C:4A:66:EF:B4:48:F1:79:69:BE:85:20:79:DF:6B:3F:84:CE:33:93:49:6D:67:AE:AD:EE:C8:02
+  [INFO] Current cert fingerprint: sha256 Fingerprint=86:76:FD:FC:3B:EE:D8:E5:6F:E1:06:C3:D6:03:4F:07:5D:9A:D6:88:B1:41:CC:1B:BB:AC:6D:95:DA:7B:F4:7B
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-27T16:08:30.000Z
+  [PASS] Rotation response contains expiry: 2028-03-27T22:38:53.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=11:D3:1B:DE:D2:38:16:F0:7D:C0:DC:C2:9E:82:27:E4:90:CF:F4:D8:49:73:A3:0B:2D:7E:75:2D:02:27:8C:9B
+  [INFO] New cert fingerprint: sha256 Fingerprint=34:7E:2C:E5:1B:C7:F5:3D:24:A3:8D:5D:93:09:4D:84:8F:9E:2E:BA:62:D6:27:90:3E:A9:BE:5E:54:3B:95:AA
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 5cac3bef-37f2-4d7c-91b2-6d9db25859d4)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 8bb484c8-aeab-41d6-b114-bb520c3e8e89)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -745,7 +745,7 @@
 
 --- Confirm 2FA with valid code ---
   [PASS] Generated TOTP code
-  [INFO] Generated TOTP code: 295970
+  [INFO] Generated TOTP code: 844303
   [PASS] 2FA is now enabled
   [PASS] Session cookie received on confirm
   [PASS] Status shows enabled after confirm
@@ -760,7 +760,7 @@
   [PASS] Authenticated request with session cookie returns system stats
 
 --- Disable 2FA ---
-  [INFO] Waiting 4s for next TOTP window...
+  [INFO] Waiting 11s for next TOTP window...
   [PASS] 2FA disabled successfully
 
 --- IP vhost re-enabled after disabling 2FA ---
@@ -784,6 +784,37 @@
   Results: 19 passed, 0 failed, 0 skipped (19 total)
 ============================================================================
 
+  Running: 18-json-installer.sh
+
+============================================================================
+ Portlama E2E: 18 — JSON Installer Output
+============================================================================
+
+
+--- create-portlama --json (redeploy mode) ---
+
+--- NDJSON line validation ---
+  [PASS] All 5 lines are valid JSON
+  [PASS] Step events emitted: 4
+
+--- Complete event validation ---
+  [PASS] Exactly one complete event emitted
+  [PASS] Server IP present: 192.168.2.9
+  [PASS] Panel URL present and uses HTTPS: https://192.168.2.9:9292
+  [PASS] P12 path within expected directory: /etc/portlama/pki/client.p12
+  [PASS] P12 password path within expected directory: /etc/portlama/pki/.p12-password
+
+--- Step status validation ---
+  [PASS] check_environment step present
+  [PASS] All step events have valid status values
+
+--- Panel health after redeploy ---
+  [PASS] Panel healthy after --json redeploy
+
+============================================================================
+  Results: 10 passed, 0 failed, 0 skipped (10 total)
+============================================================================
+
 
 ============================================================================
   Test Suite Summary
@@ -805,7 +836,8 @@
   [PASS] 15-plugin-lifecycle.sh
   [PASS] 16-enrollment-tokens.sh
   [PASS] 17-panel-2fa.sh
+  [PASS] 18-json-installer.sh
 
-  Total: 16 tests — 16 passed, 0 failed
+  Total: 17 tests — 17 passed, 0 failed
 
   SUITE PASSED

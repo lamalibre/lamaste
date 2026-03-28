@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-03-29
+
+### Added
+
+- Add `--json` flag to `create-portlama` installer for NDJSON progress output, enabling programmatic consumption by desktop and CI tools
+- Add local server installation from the desktop app — install Portlama directly on the local Linux machine via `pkexec` privilege escalation
+- Add "Install on This Machine" option to the Servers page dropdown (disabled on macOS with "Linux only" indicator)
+- Add `LocalInstallWizard` component with overview, progress streaming, and completion steps
+- Add existing installation detection and import — register a pre-existing `/etc/portlama/` installation without reinstalling
+- Add E2E tests for `--json` installer output in both single-VM and three-VM suites
+
+### Security
+
+- Validate NDJSON-supplied file paths against `/etc/portlama/pki/` prefix with symlink resolution to prevent path traversal
+- Use `libc::getuid()` for privilege operations instead of the `$USER` environment variable
+- Gate `CARGO_MANIFEST_DIR` dev paths to debug builds only to avoid leaking developer filesystem layout in release binaries
+- Bound NDJSON line reads to 64 KB to prevent memory exhaustion from a misbehaving child process
+- Inherit stderr from child process to avoid pipe deadlock on verbose installations
+
+**Affected packages:**
+
+- `@lamalibre/create-portlama`: 1.0.35 → 1.0.36
+- `@lamalibre/portlama-desktop`: 0.1.7 → 0.1.8 (package.json), 0.1.6 → 0.1.7 (Cargo.toml)
+
 ## [Unreleased] - 2026-03-28
 
 ### Added

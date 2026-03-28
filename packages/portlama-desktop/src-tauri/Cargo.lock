@@ -2854,10 +2854,11 @@ dependencies = [
 
 [[package]]
 name = "portlama-desktop"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
+ "libc",
  "notify-rust",
  "reqwest 0.12.28",
  "rustls",
