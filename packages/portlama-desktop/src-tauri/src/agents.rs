@@ -1,9 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::collections::HashSet;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+use tauri::Emitter;
 
 use crate::config;
+
+/// Maximum bytes per NDJSON line (DoS protection).
+const MAX_LINE_BYTES: usize = 65_536;
+
+/// Guard against concurrent installations for the same label.
+static INSTALLING_LABELS: std::sync::LazyLock<Mutex<HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 /// Agent entry in the multi-agent registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,4 +570,287 @@ pub async fn toggle_panel_expose(label: String, enabled: bool) -> Result<String,
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// --- Agent Installation ---
+
+/// NDJSON progress event from portlama-agent setup --json.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstallProgress {
+    event: String,
+    step: Option<String>,
+    status: Option<String>,
+    message: Option<String>,
+    agent: Option<AgentInstallInfo>,
+    #[allow(dead_code)]
+    recoverable: Option<bool>,
+}
+
+/// Agent info returned in the NDJSON "complete" event.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInstallInfo {
+    label: String,
+    #[allow(dead_code)]
+    panel_url: String,
+    #[allow(dead_code)]
+    auth_method: String,
+    #[allow(dead_code)]
+    domain: Option<String>,
+    #[allow(dead_code)]
+    chisel_version: Option<String>,
+}
+
+/// Emit a progress event to the frontend.
+fn emit_install_progress(app: &tauri::AppHandle, step: &str, status: &str) {
+    let _ = app.emit(
+        "agent-install-progress",
+        serde_json::json!({ "step": step, "status": status }),
+    );
+}
+
+/// Locate Node.js and portlama-agent CLI, installing if needed.
+/// Emits check_node and install_agent_cli progress events.
+fn find_or_install_agent_cli(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // Step: check_node
+    emit_install_progress(app, "check_node", "running");
+    let node_output = Command::new("which")
+        .arg("node")
+        .output()
+        .map_err(|e| format!("Failed to check for Node.js: {}", e))?;
+
+    if !node_output.status.success() {
+        emit_install_progress(app, "check_node", "failed");
+        return Err(
+            "Node.js is not installed. Install Node.js 20+ from https://nodejs.org".to_string(),
+        );
+    }
+    emit_install_progress(app, "check_node", "complete");
+
+    // Step: install_agent_cli
+    emit_install_progress(app, "install_agent_cli", "running");
+
+    let agent_path = find_portlama_agent();
+
+    let cli_path = match agent_path {
+        Some(p) => p,
+        None => {
+            // Install globally via npm
+            let install_output = Command::new("npm")
+                .args(["install", "-g", "@lamalibre/portlama-agent", "--ignore-scripts"])
+                .output()
+                .map_err(|e| format!("Failed to run npm install: {}", e))?;
+
+            if !install_output.status.success() {
+                let stderr = String::from_utf8_lossy(&install_output.stderr);
+                emit_install_progress(app, "install_agent_cli", "failed");
+                return Err(format!(
+                    "Failed to install portlama-agent: {}",
+                    stderr.trim()
+                ));
+            }
+
+            // Re-check after install
+            match find_portlama_agent() {
+                Some(p) => p,
+                None => {
+                    // Try npm prefix bin as fallback
+                    let prefix_output = Command::new("npm")
+                        .args(["config", "get", "prefix"])
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok());
+
+                    if let Some(prefix) = prefix_output {
+                        let bin_path =
+                            PathBuf::from(prefix.trim()).join("bin").join("portlama-agent");
+                        if bin_path.exists() {
+                            bin_path
+                        } else {
+                            emit_install_progress(app, "install_agent_cli", "failed");
+                            return Err(
+                                "portlama-agent installed but not found in PATH. Check your npm prefix configuration.".to_string()
+                            );
+                        }
+                    } else {
+                        emit_install_progress(app, "install_agent_cli", "failed");
+                        return Err(
+                            "portlama-agent installed but not found in PATH".to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    };
+
+    emit_install_progress(app, "install_agent_cli", "complete");
+    Ok(cli_path)
+}
+
+/// Find portlama-agent binary in PATH.
+fn find_portlama_agent() -> Option<PathBuf> {
+    Command::new("which")
+        .arg("portlama-agent")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| PathBuf::from(s.trim()))
+        .filter(|p| p.exists())
+}
+
+/// Install a portlama agent by spawning `portlama-agent setup --json`.
+/// Streams NDJSON progress via Tauri events.
+#[tauri::command]
+pub async fn install_agent(
+    app: tauri::AppHandle,
+    label: String,
+    panel_url: String,
+    token: String,
+) -> Result<AgentWithStatus, String> {
+    validate_agent_label(&label)?;
+
+    // Validate panel URL scheme (prevent file://, gopher://, etc.)
+    if !panel_url.starts_with("https://") {
+        return Err("Panel URL must use https:// scheme".to_string());
+    }
+
+    // Prevent concurrent installations for the same label
+    {
+        let mut guard = INSTALLING_LABELS.lock().map_err(|_| "Lock poisoned")?;
+        if !guard.insert(label.clone()) {
+            return Err(format!(
+                "Agent \"{}\" is already being installed",
+                label
+            ));
+        }
+    }
+
+    let label_guard = label.clone();
+    let result: Result<AgentWithStatus, String> = tokio::task::spawn_blocking(move || {
+        // Phase 1: Find or install the CLI (emits check_node + install_agent_cli events)
+        let cli_path = find_or_install_agent_cli(&app)?;
+
+        // Phase 2: Spawn portlama-agent setup --json
+        let mut child = Command::new(&cli_path)
+            .args([
+                "setup",
+                "--json",
+                "--label",
+                &label,
+                "--panel-url",
+                &panel_url,
+            ])
+            .env("PORTLAMA_ENROLLMENT_TOKEN", &token)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("Failed to start portlama-agent: {}", e))?;
+
+        let stdout = child.stdout.take().ok_or("No stdout from portlama-agent")?;
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut last_error: Option<String> = None;
+        let mut completed_label: Option<String> = None;
+        let mut line_buf = String::new();
+
+        let read_result: Result<(), String> = (|| {
+            loop {
+                line_buf.clear();
+                let n = reader
+                    .read_line(&mut line_buf)
+                    .map_err(|e| format!("Read error: {}", e))?;
+                if n == 0 {
+                    break; // EOF
+                }
+                if n > MAX_LINE_BYTES {
+                    continue; // Skip oversized lines
+                }
+                let line = line_buf.trim();
+                if line.is_empty() {
+                    continue;
+                }
+
+                if let Ok(progress) = serde_json::from_str::<AgentInstallProgress>(line) {
+                    match progress.event.as_str() {
+                        "complete" => {
+                            if let Some(ref agent) = progress.agent {
+                                completed_label = Some(agent.label.clone());
+                            }
+                        }
+                        "error" => {
+                            last_error = progress.message.clone();
+                            // Only emit failed step if the error event includes a step key
+                            if let Some(ref step) = progress.step {
+                                emit_install_progress(&app, step, "failed");
+                            }
+                        }
+                        "step" => {
+                            if let (Some(ref step), Some(ref status)) =
+                                (&progress.step, &progress.status)
+                            {
+                                emit_install_progress(&app, step, status);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(())
+        })();
+
+        // Ensure child process is cleaned up regardless of read outcome
+        if read_result.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(read_result.unwrap_err());
+        }
+
+        let exit_status = child
+            .wait()
+            .map_err(|e| format!("Failed to wait for portlama-agent: {}", e))?;
+
+        if !exit_status.success() {
+            if let Some(err) = last_error {
+                return Err(format!("Agent setup failed: {}", err));
+            }
+            return Err("Agent setup failed".to_string());
+        }
+
+        // Phase 3: Read the updated registry to return the new agent
+        let resolved_label = completed_label.as_deref().unwrap_or(&label);
+        let registry = load_agents_registry()?
+            .ok_or("Agents registry not found after setup")?;
+        let agent = registry
+            .agents
+            .iter()
+            .find(|a| a.label == resolved_label)
+            .ok_or(format!(
+                "Agent \"{}\" not found in registry after setup",
+                resolved_label
+            ))?;
+
+        let (running, pid) = get_agent_chisel_status(&agent.label);
+
+        Ok(AgentWithStatus {
+            label: agent.label.clone(),
+            panel_url: agent.panel_url.clone(),
+            auth_method: agent.auth_method.clone(),
+            domain: agent.domain.clone(),
+            chisel_version: agent.chisel_version.clone(),
+            setup_at: agent.setup_at.clone(),
+            updated_at: agent.updated_at.clone(),
+            running,
+            pid,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+
+    // Release the concurrency guard regardless of outcome
+    if let Ok(mut guard) = INSTALLING_LABELS.lock() {
+        guard.remove(&label_guard);
+    }
+
+    result
 }

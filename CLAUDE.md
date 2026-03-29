@@ -88,6 +88,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Local server installation in `local_install.rs` — spawns `create-portlama --json` via `pkexec`, streams NDJSON progress as Tauri events, auto-imports P12 certificates
 - OS credential storage in `credentials.rs` — macOS `security` CLI, Linux `secret-tool`
 - Multi-agent management in `agents.rs` — registry at `~/.portlama/agents.json`, per-agent data at `~/.portlama/agents/<label>/`, Tauri commands for agent start/stop/restart/logs/tunnels/config
+- Agent installation in `agents.rs` — `install_agent(label, panel_url, token)` checks Node.js, installs CLI via npm, spawns `portlama-agent setup --json`, streams NDJSON progress as `agent-install-progress` Tauri events
 - `config.rs` `load_effective_config()` — checks `agents.json` (multi-agent registry) first, then `servers.json` (active entry), then falls back to `agent.json` (legacy)
 - `tokio::task::spawn_blocking` for subprocess calls and file I/O — never block the Tauri event loop
 - Service registry persisted as JSON at `~/.portlama/services.json`
@@ -135,6 +136,11 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Zero prompts — all configuration happens through browser onboarding UI
 - Listr2 subtask lists with idempotent skip guards
 - `--json` flag replaces Listr2 rendering with NDJSON progress lines on stdout (used by the desktop app's local install feature via `pkexec`)
+
+**Agent CLI (`portlama-agent`):**
+
+- `--json` global flag on `setup` command — NDJSON progress output for desktop app integration, implies non-interactive (requires `--panel-url` + `PORTLAMA_ENROLLMENT_TOKEN`)
+- NDJSON protocol: `{event:"step",step:"<key>",status:"running|complete|skipped|failed"}`, `{event:"error",message:"...",recoverable:false}`, `{event:"complete",agent:{label,panelUrl,authMethod,domain,chiselVersion}}`
 
 ## Critical Constraints
 

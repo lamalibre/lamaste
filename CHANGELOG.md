@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Tauri commands `get_panel_expose_status` and `toggle_panel_expose` for desktop app integration
 - Add `build` script to `create-portlama` that runs `bundle-vendor.js`, keeping bundled panel-server in sync with source
 - Add E2E tests for panel expose in both single-VM (19-panel-expose.sh) and three-VM (15-panel-expose.sh) suites
+- Add in-app agent installation wizard to desktop app — guides users through server selection, enrollment token generation, and real-time setup progress
+- Add `--json` global flag to `portlama-agent setup` for NDJSON progress output (desktop app integration)
+- Add `install_agent` Tauri command — checks Node.js, installs CLI via npm, streams NDJSON progress as `agent-install-progress` events
+- Add "Install Agent" button to Agents page empty state and "Add Agent" header button for existing agents
+- Add E2E tests for agent JSON setup in both single-VM (20-agent-json-setup.sh) and three-VM (16-agent-json-setup.sh) suites
+  - Single-VM suite passed; three-VM suite needs a clean re-run (orchestrator interrupted during cleanup)
 
 ### Security
 
@@ -32,15 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict panel server port to unprivileged range (1024-65535)
 - Validate panel server mTLS CN strictly — accept only `agent:<label>` or `admin` (not any non-agent cert)
 - Use constant-memory log reading (`tail -n 200`) instead of unbounded `readFile` to prevent OOM on 512MB droplets
+- Pass enrollment token via `PORTLAMA_ENROLLMENT_TOKEN` env var in desktop agent install — never exposed in process args
+- Validate `panel_url` scheme (`https://` required) in `install_agent` Tauri command to prevent SSRF via `file://` or other protocols
+- Add concurrency guard on `install_agent` — prevents race conditions from concurrent installations for the same label
+- Use `npm install --ignore-scripts` when installing agent CLI from desktop app
 
 **Affected packages:**
 
 - `@lamalibre/portlama-panel-server`: 0.1.10 → 0.1.11
 - `@lamalibre/portlama-panel-client`: 0.1.8 → 0.1.9
-- `@lamalibre/portlama-agent`: 1.0.11 → 1.0.12
+- `@lamalibre/portlama-agent`: 1.0.11 → 1.0.13
 - `@lamalibre/portlama-agent-panel`: 0.1.0 → 0.1.1
 - `@lamalibre/portlama-admin-panel`: 0.1.0 → 0.1.1
-- `@lamalibre/portlama-desktop`: 0.1.8 → 0.1.9
+- `@lamalibre/portlama-desktop`: 0.1.8 → 0.1.10
 - `@lamalibre/create-portlama`: 1.0.36 → 1.0.37
 
 ## [Unreleased] - 2026-03-29

@@ -1,6 +1,6 @@
 # Portlama E2E: 14 — JSON Installer Output (Three-VM)
 
-> Started at `2026-03-29 07:39:52 UTC`
+> Started at `2026-03-29 09:12:46 UTC`
 
 
 ## create-portlama --json on host VM (redeploy mode)
@@ -8,18 +8,18 @@
 
 ## NDJSON line validation
 
-✅ `07:39:59` All 5 NDJSON lines are valid JSON  
-✅ `07:39:59` Step events emitted: 4  
+✅ `09:12:53` All 5 NDJSON lines are valid JSON  
+✅ `09:12:53` Step events emitted: 4  
 
 ## Complete event
 
-✅ `07:39:59` Exactly one complete event emitted  
-✅ `07:39:59` Server IP present: 192.168.2.12  
-✅ `07:39:59` Panel URL present and uses HTTPS  
+✅ `09:12:53` Exactly one complete event emitted  
+✅ `09:12:53` Server IP present: 192.168.2.15  
+✅ `09:12:53` Panel URL present and uses HTTPS  
 
 ## Panel health after redeploy
 
-⏭️ `07:40:14` Panel health check timed out after --json redeploy (non-critical)  
+⏭️ `09:13:08` Panel health check timed out after --json redeploy (non-critical)  
 
 ---
 
@@ -32,4 +32,4 @@
 | **Skipped** | `1` |
 | **Total** | `6` |
 
-🔵 `07:40:15` **Running: 15-panel-expose.sh**  
+🔵 `09:13:09` **Running: 15-panel-expose.sh**  

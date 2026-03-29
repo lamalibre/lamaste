@@ -1,21 +1,24 @@
 import chalk from 'chalk';
 
 /**
- * Parse --label flag from argv, removing it from the args array.
+ * Parse global flags (--label, --json) from argv, removing them from the args array.
  * @param {string[]} args
- * @returns {{ label: string | undefined, args: string[] }}
+ * @returns {{ label: string | undefined, json: boolean, args: string[] }}
  */
-function extractLabelFlag(args) {
+function extractGlobalFlags(args) {
   let label;
+  let json = false;
   const filtered = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--label' && args[i + 1]) {
       label = args[++i];
+    } else if (args[i] === '--json') {
+      json = true;
     } else {
       filtered.push(args[i]);
     }
   }
-  return { label, args: filtered };
+  return { label, json, args: filtered };
 }
 
 /**
@@ -50,6 +53,7 @@ ${b('COMMANDS')}
 ${b('GLOBAL FLAGS')}
 
   ${c('--label <name>')}  Target a specific agent (overrides the current default)
+  ${c('--json')}           Output NDJSON progress (for desktop app integration)
 
 ${b('EXAMPLES')}
 
@@ -95,7 +99,7 @@ ${b('PREREQUISITES')}
  */
 export async function main() {
   const rawArgs = process.argv.slice(2);
-  const { label, args } = extractLabelFlag(rawArgs);
+  const { label, json, args } = extractGlobalFlags(rawArgs);
   const command = args[0];
 
   if (!command || command === '--help' || command === '-h') {
@@ -105,7 +109,7 @@ export async function main() {
   switch (command) {
     case 'setup': {
       const { runSetup } = await import('./commands/setup.js');
-      await runSetup({ label });
+      await runSetup({ label, json });
       break;
     }
     case 'update': {

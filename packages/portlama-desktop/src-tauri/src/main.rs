@@ -59,6 +59,7 @@ fn main() {
             agents::get_agent_config,
             agents::get_panel_expose_status,
             agents::toggle_panel_expose,
+            agents::install_agent,
             cloud::store_cloud_token,
             cloud::get_cloud_token,
             cloud::delete_cloud_token,

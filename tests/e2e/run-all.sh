@@ -70,6 +70,7 @@ TEST_SCRIPTS=(
   "17-panel-2fa.sh"
   "18-json-installer.sh"
   "19-panel-expose.sh"
+  "20-agent-json-setup.sh"
 )
 
 PASSED=0

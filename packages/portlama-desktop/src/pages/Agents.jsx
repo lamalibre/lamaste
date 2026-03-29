@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Terminal, Loader2 } from 'lucide-react';
+import { Terminal, Loader2, Plus } from 'lucide-react';
 import AgentCard from '../components/AgentCard.jsx';
+import InstallAgentWizard from '../components/InstallAgentWizard.jsx';
 
 export default function Agents({ onManage }) {
+  const [showInstallWizard, setShowInstallWizard] = useState(false);
+
   const agentsQuery = useQuery({
     queryKey: ['agents'],
     queryFn: () => invoke('get_agents'),
@@ -23,6 +27,15 @@ export default function Agents({ onManage }) {
             </span>
           )}
         </div>
+        {agents.length > 0 && (
+          <button
+            onClick={() => setShowInstallWizard(true)}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20"
+          >
+            <Plus size={12} />
+            Add Agent
+          </button>
+        )}
       </div>
 
       {agentsQuery.isLoading ? (
@@ -35,8 +48,16 @@ export default function Agents({ onManage }) {
           <Terminal size={32} className="mx-auto text-zinc-600 mb-3" />
           <p className="text-zinc-400 text-sm mb-2">No agents configured</p>
           <p className="text-zinc-500 text-xs mb-4">
-            Run the following command in your terminal to connect to a Portlama server:
+            Install an agent to connect this machine to a Portlama server.
           </p>
+          <button
+            onClick={() => setShowInstallWizard(true)}
+            className="text-sm px-4 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 inline-flex items-center gap-2 mb-4"
+          >
+            <Plus size={14} />
+            Install Agent
+          </button>
+          <p className="text-zinc-600 text-[10px] mb-2">or run manually:</p>
           <div className="rounded bg-zinc-950 border border-zinc-700 p-3 font-mono text-xs text-cyan-400 select-all max-w-md mx-auto">
             npx @lamalibre/portlama-agent setup --label my-server
           </div>
@@ -47,6 +68,10 @@ export default function Agents({ onManage }) {
             <AgentCard key={agent.label} agent={agent} onManage={onManage} />
           ))}
         </div>
+      )}
+
+      {showInstallWizard && (
+        <InstallAgentWizard onClose={() => setShowInstallWizard(false)} />
       )}
     </div>
   );

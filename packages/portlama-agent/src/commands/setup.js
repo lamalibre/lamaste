@@ -71,17 +71,66 @@ function parseSetupFlags() {
 }
 
 /**
- * Run the interactive setup flow.
- * If --token is provided, uses the hardware-bound enrollment flow.
- * @param {{ label?: string }} options
+ * Write a single NDJSON line to stdout.
+ * @param {object} obj
+ */
+function emitJson(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\n');
+}
+
+/**
+ * Run a single setup step with NDJSON progress output.
+ * Wraps the task in a silent Listr to reuse existing error handling.
+ * @param {object} ctx - Shared context
+ * @param {{ key: string, title: string, fn: (ctx: object) => Promise<void>, skip?: () => string | false }} step
+ */
+async function runJsonStep(ctx, step) {
+  if (step.skip) {
+    const reason = await step.skip();
+    if (reason) {
+      emitJson({ event: 'step', step: step.key, status: 'skipped' });
+      return;
+    }
+  }
+
+  emitJson({ event: 'step', step: step.key, status: 'running' });
+
+  const taskList = new Listr(
+    [{ title: step.title, task: () => step.fn(ctx) }],
+    { renderer: 'silent', exitOnError: true },
+  );
+
+  try {
+    await taskList.run();
+  } catch (error) {
+    emitJson({ event: 'step', step: step.key, status: 'failed' });
+    throw error;
+  }
+
+  emitJson({ event: 'step', step: step.key, status: 'complete' });
+}
+
+/**
+ * Run the agent setup flow.
+ * Dispatches to interactive (P12 or token) or non-interactive (--json) mode.
+ * @param {{ label?: string, json?: boolean }} options
  */
 export async function runSetup(options = {}) {
   const flags = parseSetupFlags();
   // CLI --label from index.js takes precedence, then from parseSetupFlags
   const explicitLabel = options.label || flags.label;
+  const json = options.json || false;
 
   if (flags.token) {
+    if (json) {
+      return runTokenSetupJson({ ...flags, label: explicitLabel });
+    }
     return runTokenSetup({ ...flags, label: explicitLabel });
+  }
+
+  if (json) {
+    emitJson({ event: 'error', message: 'Token is required for --json mode. Provide PORTLAMA_ENROLLMENT_TOKEN env var or --token flag.', recoverable: false });
+    process.exit(1);
   }
 
   return runP12Setup({ label: explicitLabel });
@@ -363,6 +412,254 @@ async function runTokenSetup(flags) {
   }
 
   printSetupSummary(ctx);
+}
+
+/**
+ * Non-interactive NDJSON setup flow for desktop app integration.
+ * Requires --panel-url and a token (env var or --token).
+ *
+ * @param {{ token: string, panelUrl: string, label?: string }} flags
+ */
+async function runTokenSetupJson(flags) {
+  assertSupportedPlatform();
+
+  if (!flags.panelUrl) {
+    emitJson({ event: 'error', message: 'Panel URL is required. Pass --panel-url <url>.', recoverable: false });
+    process.exit(1);
+  }
+
+  if (flags.label) {
+    validateLabel(flags.label);
+  }
+
+  const normalizedUrl = flags.panelUrl.replace(/\/+$/, '');
+
+  const ctx = {
+    panelUrl: normalizedUrl,
+    token: flags.token,
+    explicitLabel: flags.label,
+    agentLabel: null,
+    resolvedLabel: null,
+    keychainIdentity: null,
+    p12Path: null,
+    p12Password: null,
+    chiselVersion: null,
+    serviceConfig: null,
+    domain: null,
+    tunnels: [],
+  };
+
+  const steps = [
+    {
+      key: 'create_directories',
+      title: 'Creating directories',
+      fn: async () => {
+        await mkdir(AGENT_DIR, { recursive: true, mode: 0o700 });
+        await mkdir(CHISEL_BIN_DIR, { recursive: true });
+      },
+    },
+    {
+      key: 'generate_keypair',
+      title: 'Generating keypair and CSR',
+      fn: async () => {
+        ctx._keyData = await generateKeypairAndCSR('pending');
+      },
+    },
+    {
+      key: 'enroll_panel',
+      title: 'Enrolling with panel',
+      fn: async () => {
+        const enrollUrl = `${ctx.panelUrl}/api/enroll`;
+        const result = await curlPostUnauthenticated(enrollUrl, {
+          token: ctx.token,
+          csr: ctx._keyData.csrPem,
+        });
+
+        if (!result.ok) {
+          throw new Error(result.error || 'Enrollment failed');
+        }
+
+        ctx.agentLabel = result.label;
+        ctx._certPem = result.cert;
+        ctx._caCertPem = result.caCert;
+
+        ctx.resolvedLabel = ctx.explicitLabel || deriveLabel(null, result.label);
+        validateLabel(ctx.resolvedLabel);
+      },
+    },
+    {
+      key: 'create_agent_dirs',
+      title: 'Creating agent directories',
+      fn: async () => {
+        const dataDir = agentDataDir(ctx.resolvedLabel);
+        const logsDir = agentLogsDir(ctx.resolvedLabel);
+        await mkdir(dataDir, { recursive: true, mode: 0o700 });
+        await mkdir(logsDir, { recursive: true, mode: 0o700 });
+      },
+    },
+    {
+      key: 'import_cert',
+      title: isDarwin() ? 'Importing certificate into Keychain' : 'Storing certificate',
+      fn: async () => {
+        const result = await storeEnrolledCert(
+          ctx._keyData.keyPath,
+          ctx._certPem,
+          ctx._caCertPem,
+          ctx.resolvedLabel,
+          { log: () => {}, warn: () => {}, error: () => {} },
+        );
+        if (result.identity) {
+          ctx.keychainIdentity = result.identity;
+        } else {
+          ctx.p12Path = result.p12Path;
+          ctx.p12Password = result.p12Password;
+        }
+      },
+    },
+    {
+      key: 'save_ca',
+      title: 'Saving CA certificate',
+      fn: async () => {
+        const caPath = path.join(agentDataDir(ctx.resolvedLabel), 'ca.crt');
+        await writeFile(caPath, ctx._caCertPem, { mode: 0o644 });
+      },
+    },
+    {
+      key: 'verify_connectivity',
+      title: 'Verifying panel connectivity',
+      fn: async () => {
+        const authConfig = ctx.keychainIdentity
+          ? { panelUrl: ctx.panelUrl, authMethod: 'keychain', keychainIdentity: ctx.keychainIdentity }
+          : { panelUrl: ctx.panelUrl, authMethod: 'p12', p12Path: ctx.p12Path, p12Password: ctx.p12Password };
+        await fetchHealth(authConfig);
+      },
+    },
+    {
+      key: 'install_chisel',
+      title: 'Installing Chisel',
+      fn: async () => {
+        const result = await installChisel();
+        ctx.chiselVersion = result.version;
+      },
+    },
+    {
+      key: 'fetch_config',
+      title: 'Fetching tunnel configuration',
+      fn: async () => {
+        const authConfig = ctx.keychainIdentity
+          ? { panelUrl: ctx.panelUrl, authMethod: 'keychain', keychainIdentity: ctx.keychainIdentity }
+          : { panelUrl: ctx.panelUrl, authMethod: 'p12', p12Path: ctx.p12Path, p12Password: ctx.p12Password };
+
+        const agentConfig = await fetchAgentConfig(authConfig);
+        ctx.domain = agentConfig.domain;
+        ctx.serviceConfig = generateServiceConfig(agentConfig.chiselArgs, ctx.resolvedLabel);
+
+        const tunnelData = await fetchTunnels(authConfig);
+        ctx.tunnels = tunnelData.tunnels || [];
+      },
+    },
+    {
+      key: 'write_service',
+      title: 'Writing service config',
+      fn: async () => {
+        await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
+      },
+    },
+    {
+      key: 'unload_previous',
+      title: 'Unloading previous agent',
+      skip: async () => {
+        const loaded = await isAgentLoaded(ctx.resolvedLabel);
+        return !loaded && 'No previous agent loaded';
+      },
+      fn: async () => {
+        await unloadAgent(ctx.resolvedLabel);
+      },
+    },
+    {
+      key: 'load_service',
+      title: 'Loading agent',
+      skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
+      fn: async () => {
+        await loadAgent(ctx.resolvedLabel);
+      },
+    },
+    {
+      key: 'verify_running',
+      title: 'Verifying agent is running',
+      skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
+      fn: async () => {
+        await new Promise((r) => setTimeout(r, 2000));
+        const pid = await getAgentPid(ctx.resolvedLabel);
+        if (!pid) {
+          const loaded = await isAgentLoaded(ctx.resolvedLabel);
+          if (!loaded) {
+            throw new Error('Agent failed to load. Check logs with: portlama-agent logs');
+          }
+        }
+      },
+    },
+    {
+      key: 'save_config',
+      title: 'Saving configuration',
+      fn: async () => {
+        const configData = {
+          panelUrl: ctx.panelUrl,
+          agentLabel: ctx.agentLabel,
+          domain: ctx.domain,
+          chiselVersion: ctx.chiselVersion,
+          setupAt: new Date().toISOString(),
+        };
+
+        if (ctx.keychainIdentity) {
+          configData.authMethod = 'keychain';
+          configData.keychainIdentity = ctx.keychainIdentity;
+        } else {
+          configData.authMethod = 'p12';
+          configData.p12Path = ctx.p12Path;
+          configData.p12Password = ctx.p12Password;
+        }
+
+        await saveAgentConfig(ctx.resolvedLabel, configData);
+
+        await upsertAgent({
+          label: ctx.resolvedLabel,
+          panelUrl: ctx.panelUrl,
+          authMethod: configData.authMethod,
+          p12Path: configData.p12Path || null,
+          keychainIdentity: configData.keychainIdentity || null,
+          agentLabel: ctx.agentLabel,
+          domain: ctx.domain,
+          chiselVersion: ctx.chiselVersion,
+          setupAt: configData.setupAt,
+          updatedAt: null,
+        });
+      },
+    },
+  ];
+
+  try {
+    for (const step of steps) {
+      await runJsonStep(ctx, step);
+    }
+  } catch (err) {
+    if (ctx._keyData?.keyPath) {
+      await secureDelete(ctx._keyData.keyPath).catch(() => {});
+    }
+    emitJson({ event: 'error', message: err.message || 'Setup failed', recoverable: false });
+    process.exit(1);
+  }
+
+  emitJson({
+    event: 'complete',
+    agent: {
+      label: ctx.resolvedLabel,
+      panelUrl: ctx.panelUrl,
+      authMethod: ctx.keychainIdentity ? 'keychain' : 'p12',
+      domain: ctx.domain,
+      chiselVersion: ctx.chiselVersion,
+    },
+  });
 }
 
 /**

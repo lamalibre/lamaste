@@ -1,6 +1,6 @@
 # Single-VM E2E Test Results
 
-> Run at `2026-03-29 07:35:02 UTC`
+> Run at `2026-03-29 09:07:46 UTC`
 
 
 ============================================================================
@@ -9,7 +9,7 @@
 
   BASE_URL:       https://127.0.0.1:9292
   SKIP_DNS_TESTS: 1
-  Date:           2026-03-29 07:35:02 UTC
+  Date:           2026-03-29 09:07:47 UTC
 
   Running: 01-fresh-install.sh
 
@@ -59,7 +59,7 @@
   [PASS] Request with untrusted cert rejected (HTTP 400)
 
 --- Certificate validity check ---
-  [PASS] Client certificate has valid expiry: notAfter=Mar 28 07:33:34 2028 GMT
+  [PASS] Client certificate has valid expiry: notAfter=Mar 28 09:06:15 2028 GMT
   [PASS] Client certificate is signed by the CA
 
 ============================================================================
@@ -101,13 +101,13 @@
   [PASS] Tunnel has an ID
   [PASS] Tunnel has an FQDN
   [PASS] Tunnel has a createdAt timestamp
-  [INFO] Created tunnel ID: f1be362b-1c97-4c03-b9cd-421c65668e13
+  [INFO] Created tunnel ID: bbfe0dbd-f971-4f17-a37c-c67c344dfa4c
 
 --- Verify tunnel in list ---
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774769703
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774775267
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -294,17 +294,17 @@
 --- Pre-flight: check onboarding is complete ---
 
 --- Current cert fingerprint (before rotation) ---
-  [INFO] Current cert fingerprint: sha256 Fingerprint=EA:A2:23:C1:BB:1F:2E:6A:67:92:D0:55:4E:9B:26:8F:7D:F2:06:14:AB:BB:C3:4C:C8:E2:2D:30:82:C2:36:1C
+  [INFO] Current cert fingerprint: sha256 Fingerprint=14:C1:AC:66:8E:9B:9B:1F:F7:0A:C4:DF:42:B5:03:7B:0D:F6:6D:BF:EA:F0:79:BE:AB:B1:7F:4A:F3:97:7D:AA
 
 --- Rotate mTLS certificate ---
   [PASS] Rotation response contains p12 password
-  [PASS] Rotation response contains expiry: 2028-03-28T07:35:32.000Z
+  [PASS] Rotation response contains expiry: 2028-03-28T09:08:17.000Z
   [INFO] Rotation warning: Your current browser certificate is now invalid. Download and import the new certificate before closing this page.
 
 --- Download rotated certificate ---
   [PASS] Downloaded client.p12 (HTTP 200)
   [PASS] Downloaded file is a valid PKCS12
-  [INFO] New cert fingerprint: sha256 Fingerprint=F9:33:0C:A9:78:1E:5B:4A:1B:5E:42:7E:2B:25:0C:7C:F2:21:A6:5B:18:18:F7:85:20:D4:20:28:B5:F4:21:53
+  [INFO] New cert fingerprint: sha256 Fingerprint=A4:B8:4B:79:9F:68:75:E7:65:F8:0A:1E:10:E5:3A:3C:62:E6:41:F7:C4:49:5C:B3:52:8F:3A:71:C4:62:62:E9
   [PASS] New cert has different fingerprint than old cert
 
 --- Verify API access with current credentials ---
@@ -322,7 +322,7 @@
 
 
 --- Determine server IP ---
-  [INFO] Server IP: 192.168.2.12
+  [INFO] Server IP: 192.168.2.15
 
 --- Health endpoint via IP ---
   [PASS] Health endpoint accessible via IP:9292
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: 602c4242-3446-4697-9120-3fed10f49c40)
+  [INFO] Created site: e2esite.test.portlama.local (ID: 707b180c-1ac0-43e2-9001-f877ff6b9846)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -745,7 +745,7 @@
 
 --- Confirm 2FA with valid code ---
   [PASS] Generated TOTP code
-  [INFO] Generated TOTP code: 124970
+  [INFO] Generated TOTP code: 142792
   [PASS] 2FA is now enabled
   [PASS] Session cookie received on confirm
   [PASS] Status shows enabled after confirm
@@ -760,7 +760,7 @@
   [PASS] Authenticated request with session cookie returns system stats
 
 --- Disable 2FA ---
-  [INFO] Waiting 2s for next TOTP window...
+  [INFO] Waiting 17s for next TOTP window...
   [PASS] 2FA disabled successfully
 
 --- IP vhost re-enabled after disabling 2FA ---
@@ -799,8 +799,8 @@
 
 --- Complete event validation ---
   [PASS] Exactly one complete event emitted
-  [PASS] Server IP present: 192.168.2.12
-  [PASS] Panel URL present and uses HTTPS: https://192.168.2.12:9292
+  [PASS] Server IP present: 192.168.2.15
+  [PASS] Panel URL present and uses HTTPS: https://192.168.2.15:9292
   [PASS] P12 path within expected directory: /etc/portlama/pki/client.p12
   [PASS] P12 password path within expected directory: /etc/portlama/pki/.p12-password
 
@@ -827,7 +827,7 @@
 --- Verify panel:expose is a valid capability ---
   [PASS] Agent cert with panel:expose created successfully
   [PASS] Agent cert has a p12 password
-  [INFO] Created agent cert: panel-e2e-1774769780
+  [INFO] Created agent cert: panel-e2e-1774775360
   [PASS] Extracted PEM cert and key from .p12
 
 --- Expose panel: check agent-panel-status before expose ---
@@ -843,14 +843,14 @@
   [PASS] Panel tunnel has an FQDN
   [PASS] Panel tunnel has a createdAt timestamp
   [PASS] Panel tunnel agentLabel matches
-  [INFO] Exposed panel tunnel: agent-panel-e2e-1774769780.test.portlama.local (ID: e0774ebe-ed5d-4a5f-b91c-ee962d9ffaa9)
+  [INFO] Exposed panel tunnel: agent-panel-e2e-1774775360.test.portlama.local (ID: 26f852a6-010a-476e-a9e7-d2af1f71855d)
 
 --- Verify panel tunnel in tunnel listing ---
   [PASS] Panel tunnel shows type 'panel' in listing
   [PASS] Panel tunnel shows correct agentLabel in listing
 
 --- Verify nginx mTLS vhost created (not app vhost) ---
-  [PASS] mTLS panel vhost exists at /etc/nginx/sites-enabled/portlama-agent-panel-agent-panel-e2e-1774769780
+  [PASS] mTLS panel vhost exists at /etc/nginx/sites-enabled/portlama-agent-panel-agent-panel-e2e-1774775360
   [PASS] No app vhost created (correct — panel uses mTLS vhost)
   [PASS] nginx -t passes after panel expose
 
@@ -900,7 +900,21 @@
 ============================================================================
 
   [INFO] Cleaning up test resources...
-{"error":"No panel tunnel found for this agent"}{"ok":true,"label":"panel-e2e-1774769780"}{"ok":true,"label":"nopanel-e2e"}
+{"error":"No panel tunnel found for this agent"}{"ok":true,"label":"panel-e2e-1774775360"}{"ok":true,"label":"nopanel-e2e"}  Running: 20-agent-json-setup.sh
+
+============================================================================
+ Portlama E2E: 20 — Agent JSON Setup Output
+============================================================================
+
+
+--- Pre-flight: check onboarding is complete ---
+  [SKIP] portlama-agent not found in PATH
+
+============================================================================
+  Results: 0 passed, 0 failed, 1 skipped (1 total)
+============================================================================
+
+
 ============================================================================
   Test Suite Summary
 ============================================================================
@@ -923,7 +937,8 @@
   [PASS] 17-panel-2fa.sh
   [PASS] 18-json-installer.sh
   [PASS] 19-panel-expose.sh
+  [PASS] 20-agent-json-setup.sh
 
-  Total: 18 tests — 18 passed, 0 failed
+  Total: 19 tests — 19 passed, 0 failed
 
   SUITE PASSED

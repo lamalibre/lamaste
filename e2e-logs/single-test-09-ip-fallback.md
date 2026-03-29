@@ -1,35 +1,35 @@
 # Portlama E2E: 09 — IP Fallback
 
-> Started at `2026-03-29 07:35:32 UTC`
+> Started at `2026-03-29 09:08:17 UTC`
 
 
 ## Determine server IP
 
-ℹ️ `07:35:32` Server IP: 192.168.2.12  
+ℹ️ `09:08:17` Server IP: 192.168.2.15  
 
 ## Health endpoint via IP
 
-✅ `07:35:33` Health endpoint accessible via IP:9292  
+✅ `09:08:17` Health endpoint accessible via IP:9292  
 
 ## Static files via IP
 
-✅ `07:35:33` Panel client served via IP (HTTP 200)  
+✅ `09:08:17` Panel client served via IP (HTTP 200)  
 
 ## Onboarding status via IP
 
-ℹ️ `07:35:33` Onboarding status via IP: COMPLETED  
-✅ `07:35:33` Onboarding status endpoint works via IP  
+ℹ️ `09:08:17` Onboarding status via IP: COMPLETED  
+✅ `09:08:17` Onboarding status endpoint works via IP  
 
 ## Management API via IP (if onboarding complete)
 
-✅ `07:35:33` Services endpoint works via IP (4 services)  
-✅ `07:35:33` Tunnels endpoint works via IP  
-✅ `07:35:33` Users endpoint works via IP  
-✅ `07:35:33` System stats endpoint works via IP  
+✅ `09:08:17` Services endpoint works via IP (4 services)  
+✅ `09:08:17` Tunnels endpoint works via IP  
+✅ `09:08:17` Users endpoint works via IP  
+✅ `09:08:17` System stats endpoint works via IP  
 
 ## IP access independence from domain nginx
 
-✅ `07:35:33` IP fallback is reliable (second check)  
+✅ `09:08:17` IP fallback is reliable (second check)  
 
 ---
 
