@@ -38,7 +38,7 @@ export type { CloudProvider } from './provider.js';
 export { DigitalOceanProvider } from './digitalocean/index.js';
 export { validateDOToken, assertValidDOToken, REQUIRED_SCOPES } from './digitalocean/scopes.js';
 export { probeRegionLatencies } from './digitalocean/latency.js';
-export { listDomains, createDomain, listDomainRecords, deleteDomainRecord, setupDnsRecords } from './digitalocean/dns.js';
+export { listDomains, createDomain, listDomainRecords, deleteDomainRecord, updateARecord, setupDnsRecords } from './digitalocean/dns.js';
 
 // Provisioner
 export { provision } from './provisioner.js';

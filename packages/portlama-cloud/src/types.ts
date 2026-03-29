@@ -109,6 +109,7 @@ export interface ServerEntry {
   readonly label: string;
   readonly panelUrl: string;
   readonly ip: string;
+  readonly domain?: string | undefined;
   readonly provider?: string | undefined;
   readonly providerId?: string | undefined;
   readonly region?: string | undefined;
@@ -176,4 +177,5 @@ export interface ProvisionOptions {
   readonly platform: 'darwin' | 'linux';
   readonly doDomain?: string | undefined;
   readonly doSubdomain?: string | undefined;
+  readonly overrideDns?: boolean | undefined;
 }

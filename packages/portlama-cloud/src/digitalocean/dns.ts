@@ -7,7 +7,7 @@
  */
 
 import type { DODomain, DODomainRecord, DnsSetupResult } from '../types.js';
-import { doGet, doPost, doDelete, assertObject, assertField } from './api.js';
+import { doGet, doPost, doPut, doDelete, assertObject, assertField } from './api.js';
 
 /** Hard cap on pagination to prevent unbounded memory consumption. */
 const MAX_PAGES = 10;
@@ -177,6 +177,37 @@ export async function createARecord(
 }
 
 /**
+ * Update an existing A record's data (IP address).
+ */
+export async function updateARecord(
+  token: string,
+  domain: string,
+  recordId: number,
+  ip: string,
+  ttl = 300,
+): Promise<DODomainRecord> {
+  assertValidDomain(domain, 'domain');
+  assertValidIpv4(ip);
+  const { body } = await doPut(
+    `/v2/domains/${encodeURIComponent(domain)}/records/${recordId}`,
+    { data: ip, ttl },
+    { token },
+  );
+
+  assertObject(body, 'update record response');
+  assertField(body, 'domain_record', 'object', 'update record response');
+  const r = body.domain_record as Record<string, unknown>;
+
+  return {
+    id: typeof r.id === 'number' ? r.id : recordId,
+    type: typeof r.type === 'string' ? r.type : 'A',
+    name: typeof r.name === 'string' ? r.name : '',
+    data: typeof r.data === 'string' ? r.data : ip,
+    ttl: typeof r.ttl === 'number' ? r.ttl : ttl,
+  };
+}
+
+/**
  * Delete a DNS record by ID.
  */
 export async function deleteDomainRecord(
@@ -196,18 +227,20 @@ export async function deleteDomainRecord(
 // ---------------------------------------------------------------------------
 
 /**
- * Create A and wildcard A records for a Portlama panel domain.
+ * Create or update A and wildcard A records for a Portlama panel domain.
  *
  * Handles three cases for each record:
  * - No existing record: create it
  * - Existing record points to the same IP: skip (idempotent)
- * - Existing record points to a different IP: warn, do NOT overwrite
+ * - Existing record points to a different IP: update if overrideExisting
+ *   is true, otherwise warn
  */
 export async function setupDnsRecords(
   token: string,
   domain: string,
   subdomain: string | undefined,
   dropletIp: string,
+  overrideExisting = false,
 ): Promise<DnsSetupResult> {
   if (subdomain !== undefined) {
     assertValidSubdomain(subdomain);
@@ -233,6 +266,9 @@ export async function setupDnsRecords(
   if (existingA) {
     if (existingA.data === dropletIp) {
       // Already points to the right IP — nothing to do
+    } else if (overrideExisting) {
+      await updateARecord(token, domain, existingA.id, dropletIp);
+      aRecordCreated = true;
     } else {
       warnings.push(
         `A record for "${aName === '@' ? domain : `${aName}.${domain}`}" ` +
@@ -251,6 +287,9 @@ export async function setupDnsRecords(
   if (existingWildcard) {
     if (existingWildcard.data === dropletIp) {
       // Already points to the right IP — nothing to do
+    } else if (overrideExisting) {
+      await updateARecord(token, domain, existingWildcard.id, dropletIp);
+      wildcardCreated = true;
     } else {
       warnings.push(
         `Wildcard A record for "${wildcardName}.${domain}" ` +

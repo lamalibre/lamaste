@@ -175,6 +175,110 @@ function createProvider(name: string, token: string): CloudProvider {
 // Provisioner
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Remote onboarding helper — completes the full onboarding flow via SSH
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a curl command on the remote server via SSH and return the HTTP status + body.
+ *
+ * Uses curl's -w flag to append the HTTP status code as the last line of output.
+ * Does NOT throw on HTTP errors — caller checks the status.
+ */
+async function sshCurl(
+  ip: string,
+  keyPath: string,
+  knownHostsPath: string,
+  method: string,
+  path: string,
+  body?: string,
+  timeoutMs = 30_000,
+): Promise<{ status: string; body: string }> {
+  let cmd: string;
+  // Use nginx (port 9292) with the admin P12 cert for mTLS.
+  // The P12 and its password are on the server filesystem from the installer.
+  const certArgs = `--cert-type P12 --cert "/etc/portlama/pki/client.p12:$(cat /etc/portlama/pki/.p12-password)" -k`;
+  const url = `https://127.0.0.1:9292${path}`;
+
+  if (body) {
+    const b64 = Buffer.from(body).toString('base64');
+    cmd = `echo ${b64} | base64 -d | curl -sS --max-time 15 ${certArgs} -w '\\n%{http_code}' -X ${method} -H 'Content-Type: application/json' -d @- ${url}`;
+  } else {
+    cmd = `curl -sS --max-time 15 ${certArgs} -w '\\n%{http_code}' -X ${method} ${url}`;
+  }
+
+  const { stdout } = await sshExec(ip, keyPath, cmd, timeoutMs, knownHostsPath);
+  const lines = stdout.trimEnd().split('\n');
+  const httpStatus = lines.pop() ?? '';
+  return { status: httpStatus, body: lines.join('\n') };
+}
+
+/**
+ * Complete the full onboarding flow (domain → DNS verify → provision) via SSH.
+ *
+ * For cloud-provisioned servers with DNS records already created, this avoids
+ * requiring the user to open the browser panel for onboarding.
+ */
+async function completeOnboarding(
+  ip: string,
+  keyPath: string,
+  knownHostsPath: string,
+  domain: string,
+  email: string,
+): Promise<void> {
+  // Step 1: Set domain (FRESH → DOMAIN_SET)
+  const domainPayload = JSON.stringify({ domain, email });
+  const domainResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/domain', domainPayload);
+  if (!domainResult.status.startsWith('2')) {
+    throw new Error(`Domain setup returned HTTP ${domainResult.status}: ${domainResult.body}`);
+  }
+
+  // Step 2: Verify DNS — retry for up to 60 seconds (records may still be propagating)
+  const dnsDeadline = Date.now() + 60_000;
+  let dnsOk = false;
+  while (Date.now() < dnsDeadline) {
+    const dnsResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/verify-dns');
+    if (dnsResult.status.startsWith('2')) {
+      try {
+        const parsed = JSON.parse(dnsResult.body);
+        if (parsed.ok) {
+          dnsOk = true;
+          break;
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  if (!dnsOk) {
+    throw new Error('DNS verification timed out — records may not have propagated yet');
+  }
+
+  // Step 3: Trigger provisioning (DNS_READY → PROVISIONING → COMPLETED)
+  const provisionResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/provision');
+  if (!provisionResult.status.startsWith('2')) {
+    throw new Error(`Server provisioning returned HTTP ${provisionResult.status}: ${provisionResult.body}`);
+  }
+
+  // Step 4: Wait for provisioning to complete (runs in background on the server)
+  const provDeadline = Date.now() + 300_000; // 5 minutes
+  while (Date.now() < provDeadline) {
+    const statusResult = await sshCurl(ip, keyPath, knownHostsPath, 'GET', '/api/onboarding/status');
+    if (statusResult.status.startsWith('2')) {
+      try {
+        const parsed = JSON.parse(statusResult.body);
+        if (parsed.status === 'COMPLETED') return;
+        if (parsed.error) {
+          throw new Error(`Server provisioning failed: ${parsed.error}`);
+        }
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message.startsWith('Server provisioning failed')) throw e;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  throw new Error('Server provisioning timed out after 5 minutes');
+}
+
 /**
  * Run the full server provisioning flow.
  *
@@ -254,6 +358,7 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
           options.doDomain,
           options.doSubdomain,
           ip,
+          options.overrideDns ?? false,
         );
 
         // Register cleanup for created DNS records (prevents dangling DNS on failure)
@@ -286,11 +391,17 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
           effectiveDomain = dnsResult.domain;
         }
       } catch (err: unknown) {
-        // DNS setup is non-fatal — log warning and continue
+        // DNS setup is non-fatal — log warning and continue.
+        // Still compute the effective domain so onboarding can proceed.
         const msg = err instanceof Error ? err.message : String(err);
         emitStep('setup_dns', 'done', {
           warning: `DNS setup failed: ${msg}. You can configure DNS manually after provisioning.`,
         });
+        if (!effectiveDomain && options.doDomain) {
+          effectiveDomain = options.doSubdomain
+            ? `${options.doSubdomain}.${options.doDomain}`
+            : options.doDomain;
+        }
       }
     }
 
@@ -388,20 +499,25 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
     // The payload is base64-encoded to avoid shell injection — sshExec
     // passes the command through a remote shell, so user-controlled values
     // must never be interpolated directly into the command string.
+    //
+    // This step is non-fatal: domain can always be set later through the
+    // browser onboarding UI, so a failure here should not abort provisioning.
     const onboardDomain = effectiveDomain ?? options.domain;
     if (onboardDomain && options.email) {
-      const onboardPayload = JSON.stringify({
-        domain: onboardDomain,
-        email: options.email,
+      try {
+        await completeOnboarding(ip, sshKeyPair.privateKeyPath, knownHostsPath, onboardDomain, options.email);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emitStep('enroll_admin', 'running', {
+          warning: `Onboarding failed: ${msg}. Complete it through the browser panel.`,
+        });
+      }
+    } else if (options.doDomain) {
+      // DO DNS was selected but effectiveDomain is empty — DNS setup must have failed.
+      // This means the onboarding can't proceed automatically.
+      emitStep('enroll_admin', 'running', {
+        warning: `DNS setup did not produce a domain. Complete onboarding through the browser panel.`,
       });
-      const b64 = Buffer.from(onboardPayload).toString('base64');
-      await sshExec(
-        ip,
-        sshKeyPair.privateKeyPath,
-        `echo ${b64} | base64 -d | curl -s -f --max-time 15 -X POST -H 'Content-Type: application/json' -d @- http://127.0.0.1:3100/api/onboarding/domain`,
-        30_000,
-        knownHostsPath,
-      );
     }
 
     // Store the P12 certificate locally.
@@ -427,6 +543,7 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
       label,
       panelUrl,
       ip,
+      domain: onboardDomain,
       provider: providerName,
       providerId: server.id,
       region,

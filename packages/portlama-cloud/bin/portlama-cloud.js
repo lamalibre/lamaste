@@ -23,7 +23,7 @@ function usage() {
   console.error(`Usage: portlama-cloud <command> [options]
 
 Commands:
-  provision  --provider <name> --region <slug> --label <name> [--size <slug>] [--domain <fqdn> --email <addr>] [--do-domain <name> --do-subdomain <prefix>]
+  provision  --provider <name> --region <slug> --label <name> [--size <slug>] [--domain <fqdn> --email <addr>] [--do-domain <name> --do-subdomain <prefix>] [--override-dns]
   validate   Validate the cloud API token
   regions    List available regions with latency probes
   sizes      --region <slug>  List available droplet sizes for a region
@@ -72,6 +72,7 @@ async function main() {
       const email = getArg(args, 'email') || undefined;
       const doDomain = getArg(args, 'do-domain') || undefined;
       const doSubdomain = getArg(args, 'do-subdomain') || undefined;
+      const overrideDns = args.includes('--override-dns');
       const token = getToken();
 
       if (!region || !label) {
@@ -80,7 +81,7 @@ async function main() {
       }
 
       const platform = os.platform() === 'darwin' ? 'darwin' : 'linux';
-      await provision({ provider, token, region, label, size, domain, email, platform, doDomain, doSubdomain });
+      await provision({ provider, token, region, label, size, domain, email, platform, doDomain, doSubdomain, overrideDns });
       break;
     }
 

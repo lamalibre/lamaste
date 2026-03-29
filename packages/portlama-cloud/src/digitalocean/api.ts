@@ -114,6 +114,39 @@ export async function doPost(
 }
 
 /**
+ * Make an authenticated PUT request to the DO API.
+ */
+export async function doPut(
+  path: string,
+  payload: unknown,
+  options: DOApiOptions,
+): Promise<{ body: unknown; headers: Headers }> {
+  const { token, timeoutMs = 30_000 } = options;
+  const url = `${BASE_URL}${path}`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new CloudHttpError(
+      `DO API PUT ${path}: HTTP ${response.status} ${response.statusText}${text ? ` — ${text}` : ''}`,
+      response.status,
+    );
+  }
+
+  const body: unknown = await response.json();
+  return { body, headers: response.headers };
+}
+
+/**
  * Make an authenticated DELETE request to the DO API.
  * Returns void — DELETE responses typically have no body.
  */

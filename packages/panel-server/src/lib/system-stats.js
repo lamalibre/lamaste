@@ -34,8 +34,8 @@ export async function getSystemStats(logger) {
       },
       memory: {
         total: mem.total,
-        used: mem.used,
-        free: mem.free,
+        used: mem.active,
+        free: mem.available,
       },
       disk: {
         total: rootFs.size || 0,

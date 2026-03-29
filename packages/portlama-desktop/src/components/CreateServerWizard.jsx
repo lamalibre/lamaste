@@ -421,6 +421,10 @@ function DomainStep({
   setNewDomainName,
   showCreate,
   setShowCreate,
+  existingRecords,
+  recordsLoading,
+  overrideDns,
+  setOverrideDns,
 }) {
   if (loading) {
     return (
@@ -537,13 +541,60 @@ function DomainStep({
         </div>
       )}
 
-      {fqdnPreview && (
-        <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs space-y-1">
-          <p className="text-zinc-300 font-medium">DNS records to create</p>
-          <p className="text-zinc-400 font-mono">A &rarr; {fqdnPreview}</p>
-          <p className="text-zinc-400 font-mono">A &rarr; {wildcardPreview}</p>
-        </div>
-      )}
+      {fqdnPreview && (() => {
+        // Determine which existing A records conflict with the ones we need
+        const aName = subdomain || '@';
+        const wildcardName = subdomain ? `*.${subdomain}` : '*';
+        const existingA = existingRecords?.filter((r) => r.type === 'A');
+        const conflictA = existingA?.find((r) => r.name === aName);
+        const conflictWildcard = existingA?.find((r) => r.name === wildcardName);
+        const hasConflicts = !!conflictA || !!conflictWildcard;
+
+        return (
+          <div className="space-y-2">
+            <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs space-y-1">
+              <p className="text-zinc-300 font-medium">DNS records to create</p>
+              <p className="text-zinc-400 font-mono">
+                A &rarr; {fqdnPreview}
+                {conflictA && (
+                  <span className="text-amber-400 ml-2">(exists: {conflictA.data})</span>
+                )}
+              </p>
+              <p className="text-zinc-400 font-mono">
+                A &rarr; {wildcardPreview}
+                {conflictWildcard && (
+                  <span className="text-amber-400 ml-2">(exists: {conflictWildcard.data})</span>
+                )}
+              </p>
+              {recordsLoading && (
+                <p className="text-zinc-500 flex items-center gap-1 mt-1">
+                  <Loader2 size={10} className="animate-spin" /> Checking existing records...
+                </p>
+              )}
+            </div>
+
+            {hasConflicts && (
+              <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                <div className="flex items-start gap-1.5">
+                  <AlertTriangle size={12} className="text-amber-400 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-400 leading-relaxed">
+                    Existing A records found. Override them with the new server&apos;s IP during provisioning?
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={overrideDns}
+                    onChange={(e) => setOverrideDns(e.target.checked)}
+                    className="rounded border-zinc-600 bg-zinc-900 text-cyan-400 focus:ring-cyan-400"
+                  />
+                  <span className="text-xs text-zinc-300">Override existing records</span>
+                </label>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="rounded bg-cyan-500/5 border border-cyan-500/20 p-2">
         <div className="flex items-start gap-1.5">
@@ -705,7 +756,7 @@ function ProvisionStep({ provisioning, provisionError, provisionSuccess, steps }
     <div className="space-y-2">
       {steps.map((step, stepIdx) => {
         const isPast = provisionSuccess || (currentIdx >= 0 && currentIdx > stepIdx);
-        const isCurrent = provisioning === step.key;
+        const isCurrent = provisioning === step.key && !provisionSuccess;
 
         return (
           <div key={step.key} className="flex items-center gap-2 text-xs">
@@ -767,11 +818,11 @@ function ProvisionStep({ provisioning, provisionError, provisionSuccess, steps }
 export default function CreateServerWizard({ onClose }) {
   const queryClient = useQueryClient();
 
-  // Check if the user dismissed the overview step previously
+  // Show the overview disclaimer as a separate screen before the wizard tabs
   const overviewDismissed = localStorage.getItem(DISCLAIMER_KEY) === 'true';
-  const initialStep = overviewDismissed ? 1 : 0;
+  const [showOverview, setShowOverview] = useState(!overviewDismissed);
 
-  const [step, setStep] = useState(initialStep);
+  const [step, setStep] = useState(0);
   const [dismissChecked, setDismissChecked] = useState(false);
   const [token, setToken] = useState('');
   const [validation, setValidation] = useState(null);
@@ -793,6 +844,7 @@ export default function CreateServerWizard({ onClose }) {
   const [doSubdomain, setDoSubdomain] = useState('');
   const [newDomainName, setNewDomainName] = useState('');
   const [showCreateDomain, setShowCreateDomain] = useState(false);
+  const [overrideDns, setOverrideDns] = useState(false);
 
   // Check for saved token on mount
   const { data: savedToken } = useQuery({
@@ -886,6 +938,18 @@ export default function CreateServerWizard({ onClose }) {
     },
   });
 
+  // Fetch existing DNS records when a domain is selected (to detect conflicts)
+  const domainRecordsQuery = useQuery({
+    queryKey: ['cloud-domain-records', 'digitalocean', selectedDoDomain],
+    queryFn: () => invoke('get_cloud_domain_records', { provider: 'digitalocean', domain: selectedDoDomain }),
+    enabled: !!selectedDoDomain && hasDnsAccess,
+    staleTime: 2 * 60 * 1000,
+    retry: 1,
+  });
+
+  const domainRecords = domainRecordsQuery.data ?? null;
+  const domainRecordsLoading = domainRecordsQuery.isLoading && !!selectedDoDomain;
+
   // Find the selected size's data for the summary
   const selectedSizeData = sizes?.find((s) => s.slug === selectedSize) ?? null;
 
@@ -916,6 +980,7 @@ export default function CreateServerWizard({ onClose }) {
         email: email || null,
         doDomain: selectedDoDomain || null,
         doSubdomain: doSubdomain || null,
+        overrideDns: overrideDns || null,
       });
       setProvisionSuccess(true);
       setProvisioning('cleanup');
@@ -929,7 +994,6 @@ export default function CreateServerWizard({ onClose }) {
   // Each entry: { id, icon, label, key }
   const wizardSteps = useMemo(() => {
     const steps = [
-      { id: 'overview', icon: Info, label: 'Overview' },
       { id: 'token', icon: Key, label: 'Token' },
       { id: 'region', icon: MapPin, label: 'Region' },
       { id: 'size', icon: HardDrive, label: 'Size' },
@@ -947,8 +1011,6 @@ export default function CreateServerWizard({ onClose }) {
 
   const canNext = () => {
     switch (currentStepId) {
-      case 'overview':
-        return true;
       case 'token':
         return validation?.valid === true;
       case 'region':
@@ -978,9 +1040,6 @@ export default function CreateServerWizard({ onClose }) {
   };
 
   const handleNext = () => {
-    if (currentStepId === 'overview' && dismissChecked) {
-      localStorage.setItem(DISCLAIMER_KEY, 'true');
-    }
     if (currentStepId === 'label') {
       setStep(provisionStepIndex);
       startProvision();
@@ -998,14 +1057,41 @@ export default function CreateServerWizard({ onClose }) {
     setStep(step + 1);
   };
 
-  // When overview is skipped, hide it from the breadcrumb
-  const visibleStepIndices = overviewDismissed
-    ? wizardSteps.map((_, i) => i).filter((i) => i > 0)
-    : wizardSteps.map((_, i) => i);
+  // Overview is shown as a separate screen, not in the tab bar
+  if (showOverview) {
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-xl">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+            <h2 className="text-sm font-bold text-white">Create Server</h2>
+            <button onClick={onClose} className="text-zinc-500 hover:text-white">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="px-5 py-4 max-h-[60vh] overflow-y-auto">
+            <OverviewStep dismissed={dismissChecked} setDismissed={setDismissChecked} />
+          </div>
+          <div className="flex justify-end px-5 py-3 border-t border-zinc-800">
+            <button
+              onClick={() => {
+                if (dismissChecked) {
+                  localStorage.setItem(DISCLAIMER_KEY, 'true');
+                }
+                setShowOverview(false);
+              }}
+              className="flex items-center gap-1.5 text-xs px-4 py-2 rounded bg-cyan-400 text-zinc-950 font-medium hover:bg-cyan-300"
+            >
+              I understand <ChevronRight size={12} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-lg">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
           <h2 className="text-sm font-bold text-white">Create Server</h2>
@@ -1020,8 +1106,7 @@ export default function CreateServerWizard({ onClose }) {
 
         {/* Step indicators */}
         <div className="flex items-center gap-1 px-5 py-3 border-b border-zinc-800">
-          {visibleStepIndices.map((i, visIdx) => {
-            const ws = wizardSteps[i];
+          {wizardSteps.map((ws, i) => {
             const Icon = ws.icon;
             return (
               <div key={ws.id} className="flex items-center gap-1">
@@ -1037,7 +1122,7 @@ export default function CreateServerWizard({ onClose }) {
                   <Icon size={10} />
                   {ws.label}
                 </div>
-                {visIdx < visibleStepIndices.length - 1 && (
+                {i < wizardSteps.length - 1 && (
                   <ChevronRight size={12} className="text-zinc-700" />
                 )}
               </div>
@@ -1047,12 +1132,6 @@ export default function CreateServerWizard({ onClose }) {
 
         {/* Content */}
         <div className="px-5 py-4 min-h-[240px] max-h-[420px] overflow-y-auto">
-          {currentStepId === 'overview' && (
-            <OverviewStep
-              dismissed={dismissChecked}
-              setDismissed={setDismissChecked}
-            />
-          )}
           {currentStepId === 'token' && (
             <ProviderStep
               token={token}
@@ -1097,6 +1176,10 @@ export default function CreateServerWizard({ onClose }) {
               setNewDomainName={setNewDomainName}
               showCreate={showCreateDomain}
               setShowCreate={setShowCreateDomain}
+              existingRecords={domainRecords}
+              recordsLoading={domainRecordsLoading}
+              overrideDns={overrideDns}
+              setOverrideDns={setOverrideDns}
             />
           )}
           {currentStepId === 'label' && (
@@ -1127,8 +1210,8 @@ export default function CreateServerWizard({ onClose }) {
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-800">
           <button
-            onClick={() => step > initialStep && currentStepId !== 'provision' && setStep(step - 1)}
-            disabled={step <= initialStep || currentStepId === 'provision'}
+            onClick={() => step > 0 && currentStepId !== 'provision' && setStep(step - 1)}
+            disabled={step <= 0 || currentStepId === 'provision'}
             className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30 flex items-center gap-1"
           >
             <ChevronLeft size={12} />
@@ -1141,7 +1224,7 @@ export default function CreateServerWizard({ onClose }) {
               disabled={!canNext()}
               className="text-xs px-3 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-30 flex items-center gap-1"
             >
-              {currentStepId === 'overview' ? 'I understand' : currentStepId === 'label' ? 'Create Server' : 'Next'}
+              {currentStepId === 'label' ? 'Create Server' : 'Next'}
               <ChevronRight size={12} />
             </button>
           ) : provisionSuccess ? (

@@ -68,6 +68,7 @@ fn main() {
             cloud::get_cloud_regions,
             cloud::get_cloud_sizes,
             cloud::get_cloud_domains,
+            cloud::get_cloud_domain_records,
             cloud::create_cloud_domain,
             cloud::provision_server,
             cloud::destroy_cloud_server,

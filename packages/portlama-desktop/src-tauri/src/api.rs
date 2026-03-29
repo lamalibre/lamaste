@@ -93,7 +93,7 @@ impl Drop for CurlConfigFile {
 
 /// Build auth-specific curl args. For P12, creates a temp config file (RAII).
 /// For Keychain, returns --cert <identity> args directly.
-enum CurlAuth {
+pub(crate) enum CurlAuth {
     P12(CurlConfigFile),
     Keychain(String),
 }
@@ -113,7 +113,7 @@ impl CurlAuth {
         }
     }
 
-    fn auth_args(&self) -> Vec<String> {
+    pub(crate) fn auth_args(&self) -> Vec<String> {
         match self {
             CurlAuth::P12(cfg_file) => vec![
                 "-K".to_string(),
@@ -125,6 +125,13 @@ impl CurlAuth {
             ],
         }
     }
+}
+
+/// Build a CurlAuth for a server's admin config (for use in health checks etc.).
+/// The returned CurlAuth must be kept alive until the curl command completes
+/// (it holds the RAII guard for the temp config file).
+pub(crate) fn build_curl_auth_for_server(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
+    admin_curl_auth(cfg)
 }
 
 pub(crate) fn curl_panel(

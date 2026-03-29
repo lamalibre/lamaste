@@ -35,6 +35,17 @@ pub struct DODomain {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct DODomainRecord {
+    pub id: u64,
+    #[serde(rename = "type")]
+    pub record_type: String,
+    pub name: String,
+    pub data: String,
+    pub ttl: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RegionWithLatency {
     pub slug: String,
     pub name: String,
@@ -60,6 +71,7 @@ pub struct ServerEntry {
     pub label: String,
     pub panel_url: String,
     pub ip: String,
+    pub domain: Option<String>,
     pub provider: Option<String>,
     pub provider_id: Option<String>,
     pub region: Option<String>,
@@ -493,6 +505,27 @@ pub async fn create_cloud_domain(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+#[tauri::command]
+pub async fn get_cloud_domain_records(
+    provider: String,
+    domain: String,
+) -> Result<Vec<DODomainRecord>, String> {
+    validate_provider(&provider)?;
+    validate_domain(&domain)?;
+    let token = tokio::task::spawn_blocking(move || credentials::get_credential(&provider))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))??
+        .ok_or("No cloud token stored. Please add your API token first.")?;
+
+    tokio::task::spawn_blocking(move || {
+        let output = run_cloud_cmd(&["domain-records", "--domain", &domain], &token)?;
+        serde_json::from_str::<Vec<DODomainRecord>>(output.trim())
+            .map_err(|e| format!("Failed to parse domain records: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 // ---------------------------------------------------------------------------
 // Provisioning
 // ---------------------------------------------------------------------------
@@ -508,6 +541,7 @@ pub async fn provision_server(
     email: Option<String>,
     do_domain: Option<String>,
     do_subdomain: Option<String>,
+    override_dns: Option<bool>,
 ) -> Result<ServerEntry, String> {
     validate_provider(&provider)?;
     validate_label(&label)?;
@@ -557,6 +591,9 @@ pub async fn provision_server(
         if let Some(ds) = do_subdomain {
             args.push("--do-subdomain".to_string());
             args.push(ds);
+        }
+        if override_dns.unwrap_or(false) {
+            args.push("--override-dns".to_string());
         }
 
         let mut child = std::process::Command::new("node")
@@ -735,9 +772,10 @@ pub fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
 
             let entry = ServerEntry {
                 id: uuid::Uuid::new_v4().to_string(),
-                label: cfg.domain.unwrap_or_else(|| ip.clone()),
+                label: cfg.domain.clone().unwrap_or_else(|| ip.clone()),
                 panel_url: cfg.panel_url,
                 ip,
+                domain: cfg.domain,
                 provider: None,
                 provider_id: None,
                 region: None,
@@ -850,6 +888,7 @@ pub async fn add_managed_server(
         label,
         panel_url: panel_url_ref.trim_end_matches('/').to_string(),
         ip,
+        domain: None,
         provider: None,
         provider_id: None,
         region: None,
@@ -928,11 +967,12 @@ pub async fn remove_server(server_id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_server_health(server_id: String) -> Result<ServerHealth, String> {
+    let server_id_clone = server_id.clone();
     let server = tokio::task::spawn_blocking(move || {
         let servers = load_servers_registry()?;
         servers
             .into_iter()
-            .find(|s| s.id == server_id)
+            .find(|s| s.id == server_id_clone)
             .ok_or_else(|| "Server not found".to_string())
     })
     .await
@@ -942,13 +982,35 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
     validate_panel_url(&server.panel_url)?;
     let health_url = format!("{}/api/health", server.panel_url);
 
+    // Build admin cert args for mTLS — nginx requires a client cert even
+    // though the panel exempts /api/health from mTLS validation.
+    let admin_cfg = tokio::task::spawn_blocking(move || {
+        build_server_admin_config(&server_id, &server)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?;
+
     let result = tokio::task::spawn_blocking(move || {
+        let mut args = vec![
+            "-s".to_string(), "-f".to_string(),
+            "--max-time".to_string(), "10".to_string(),
+            "-k".to_string(),
+            "--proto".to_string(), "=https".to_string(),
+        ];
+
+        // Attach client cert if available (required for nginx mTLS)
+        let _auth_guard;
+        if let Ok(cfg) = &admin_cfg {
+            if let Ok(auth) = crate::api::build_curl_auth_for_server(cfg) {
+                args.extend(auth.auth_args());
+                _auth_guard = Some(auth);
+            }
+        }
+
+        args.push(health_url);
+
         std::process::Command::new("curl")
-            .args([
-                "-s", "-f", "--max-time", "10", "-k",
-                "--proto", "=https",
-                &health_url,
-            ])
+            .args(&args)
             .output()
     })
     .await
@@ -970,4 +1032,29 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
             status: None,
         }),
     }
+}
+
+/// Build admin API config for a specific server (not necessarily the active one).
+fn build_server_admin_config(
+    server_id: &str,
+    server: &ServerEntry,
+) -> Result<config::AdminApiConfig, String> {
+    let auth_method = server.auth_method.clone();
+    let p12_path = server.p12_path.clone();
+    let keychain_identity = server.keychain_identity.clone();
+
+    let mut p12_password = None;
+    if auth_method == "p12" {
+        if let Ok(Some(pw)) = crate::credentials::get_server_credential(server_id) {
+            p12_password = Some(pw);
+        }
+    }
+
+    Ok(config::AdminApiConfig {
+        panel_url: server.panel_url.clone(),
+        auth_method,
+        p12_path,
+        p12_password,
+        keychain_identity,
+    })
 }

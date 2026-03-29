@@ -44,15 +44,15 @@ export default function Agents({ onManage }) {
           Loading agents...
         </div>
       ) : agents.length === 0 ? (
-        <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-8 text-center">
-          <Terminal size={32} className="mx-auto text-zinc-600 mb-3" />
-          <p className="text-zinc-400 text-sm mb-2">No agents configured</p>
-          <p className="text-zinc-500 text-xs mb-4">
+        <div className="flex flex-col items-center justify-center py-16">
+          <Terminal size={48} className="text-zinc-700 mb-4" />
+          <h2 className="text-sm font-medium text-zinc-400 mb-2">No agents yet</h2>
+          <p className="text-xs text-zinc-500 mb-6 text-center max-w-sm">
             Install an agent to connect this machine to a Portlama server.
           </p>
           <button
             onClick={() => setShowInstallWizard(true)}
-            className="text-sm px-4 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 inline-flex items-center gap-2 mb-4"
+            className="text-xs px-4 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 flex items-center gap-1.5 mb-4"
           >
             <Plus size={14} />
             Install Agent

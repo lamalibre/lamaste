@@ -18,7 +18,6 @@ import {
   ShieldCheck,
   Ticket,
   Package,
-  Shield,
   ChevronLeft,
   Puzzle,
 } from 'lucide-react';
@@ -104,46 +103,12 @@ function SetupRequired({ message, onCreateServer }) {
   );
 }
 
-function ModeToggle({ mode, onModeChange }) {
-  return (
-    <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-zinc-800 border border-zinc-700">
-      <button
-        type="button"
-        onClick={() => onModeChange('agent')}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-          mode === 'agent'
-            ? 'bg-zinc-700 text-cyan-400'
-            : 'text-zinc-500 hover:text-zinc-300'
-        }`}
-      >
-        <Terminal size={12} />
-        Agents
-      </button>
-      <button
-        type="button"
-        onClick={() => onModeChange('admin')}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-          mode === 'admin'
-            ? 'bg-zinc-700 text-cyan-400'
-            : 'text-zinc-500 hover:text-zinc-300'
-        }`}
-      >
-        <Shield size={12} />
-        Servers
-      </button>
-    </div>
-  );
-}
-
 export default function App() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('agent-list');
   const [skipSetup, setSkipSetup] = useState(false);
-  // Server mode: null = server list, server object = managing that server
   const [managingServer, setManagingServer] = useState(null);
-  // Agent mode: null = agent list, agent object = managing that agent
   const [managingAgent, setManagingAgent] = useState(null);
-  const [mode, setMode] = useState('agent');
 
   const statusQuery = useQuery({
     queryKey: ['status'],
@@ -157,17 +122,21 @@ export default function App() {
     refetchInterval: 5000,
   });
 
-  const agents = agentsQuery.data || [];
+  const serversQuery = useQuery({
+    queryKey: ['servers'],
+    queryFn: () => invoke('get_servers'),
+    refetchInterval: 10000,
+  });
 
+  const agents = agentsQuery.data || [];
+  const servers = serversQuery.data || [];
   const status = statusQuery.data;
 
-  // Create agent client bound to the currently managed agent
   const agentClient = useMemo(
     () => createDesktopAgentClient(managingAgent?.label),
     [managingAgent?.label],
   );
 
-  // Derive domain from the server being managed
   const managingDomain = (() => {
     if (!managingServer?.panelUrl) return '';
     try {
@@ -180,7 +149,6 @@ export default function App() {
   })();
   const managingHasDomain = managingDomain.length > 0;
 
-  // Check if the server being managed has an admin cert
   const managingHasAdmin = managingServer && (
     !!managingServer.adminAuth || !!managingServer.provider
   );
@@ -217,20 +185,14 @@ export default function App() {
     }
   }, [agents, status?.configured, status?.chisel?.running]);
 
-  const handleModeChange = (newMode) => {
-    setMode(newMode);
-    setManagingServer(null);
-    setManagingAgent(null);
-    setActiveTab(newMode === 'admin' ? 'server-list' : 'agent-list');
-  };
-
   const handleManageServer = useCallback(async (server) => {
-    // Set this server as active so Rust admin commands target it
     try {
       await invoke('set_active_server', { serverId: server.id });
     } catch {
       // ignore if already active
     }
+    queryClient.removeQueries({ queryKey: ['agent'] });
+    setManagingAgent(null);
     setManagingServer(server);
     setActiveTab('server-dashboard');
     queryClient.invalidateQueries();
@@ -242,8 +204,8 @@ export default function App() {
   };
 
   const handleManageAgent = useCallback((agent) => {
-    // Clear stale agent data from previous agent to prevent cross-agent cache leakage
     queryClient.removeQueries({ queryKey: ['agent'] });
+    setManagingServer(null);
     setManagingAgent(agent);
     setActiveTab('dashboard');
   }, [queryClient]);
@@ -260,7 +222,6 @@ export default function App() {
         message={status.setupMessage}
         onCreateServer={() => {
           setSkipSetup(true);
-          setMode('admin');
           setActiveTab('server-list');
         }}
       />
@@ -280,35 +241,7 @@ export default function App() {
     }
   };
 
-  const renderAgentPage = () => {
-    // Agent list is the landing page
-    if (!managingAgent) {
-      return <Agents onManage={handleManageAgent} />;
-    }
-
-    // Per-agent drill-down — wrapped in shared package providers
-    switch (activeTab) {
-      case 'tunnels':
-        return <AgentTunnelsPage />;
-      case 'services':
-        return <AgentServicesPage />;
-      case 'logs':
-        return <AgentLogsPage />;
-      case 'settings':
-        return <AgentSettingsPage />;
-      case 'dashboard':
-      default:
-        return <AgentDashboardPage />;
-    }
-  };
-
-  const renderServerPage = () => {
-    // Server list is the landing page for Servers mode
-    if (!managingServer) {
-      return <Servers onManage={handleManageServer} />;
-    }
-
-    // Per-server admin panel
+  const renderServerDetailPage = () => {
     if (!managingHasAdmin) {
       return (
         <div className="p-6 max-w-md mx-auto mt-20 text-center">
@@ -352,125 +285,204 @@ export default function App() {
     }
   };
 
-  // Determine which tabs to show in sidebar
-  const getSidebarTabs = () => {
-    if (mode === 'agent') {
-      return managingAgent ? AGENT_TABS : []; // Agent list mode — no nav tabs
+  const renderAgentDetailPage = () => {
+    switch (activeTab) {
+      case 'tunnels':
+        return <AgentTunnelsPage />;
+      case 'services':
+        return <AgentServicesPage />;
+      case 'logs':
+        return <AgentLogsPage />;
+      case 'settings':
+        return <AgentSettingsPage />;
+      case 'dashboard':
+      default:
+        return <AgentDashboardPage />;
     }
-    if (managingServer && managingHasAdmin) return SERVER_ADMIN_TABS;
-    return []; // Server list mode — no nav tabs
   };
 
-  const currentTabs = getSidebarTabs();
+  const navigateToAgentList = () => {
+    queryClient.removeQueries({ queryKey: ['agent'] });
+    setManagingAgent(null);
+    setManagingServer(null);
+    setActiveTab('agent-list');
+  };
+
+  const navigateToServerList = () => {
+    setManagingAgent(null);
+    setManagingServer(null);
+    setActiveTab('server-list');
+  };
 
   return (
     <div className="flex h-screen bg-zinc-950">
       {/* Sidebar */}
       <div className="w-48 bg-zinc-900 border-r border-zinc-800 flex flex-col">
         <div className="p-4 border-b border-zinc-800">
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex items-center gap-2">
             <Terminal size={18} className="text-cyan-400" />
             <span className="text-sm font-bold text-white">Portlama</span>
           </div>
-          <ModeToggle mode={mode} onModeChange={handleModeChange} />
         </div>
 
         <nav className="flex-1 p-2 overflow-y-auto">
-          {/* Back button when managing a specific agent */}
-          {mode === 'agent' && managingAgent && (
+          {/* AGENTS section */}
+          <div className="mb-1">
             <button
               type="button"
-              onClick={handleBackToAgentList}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border-b border-zinc-800 pb-3"
+              onClick={navigateToAgentList}
+              className="w-full flex items-center justify-between px-3 py-1.5 rounded hover:bg-zinc-800/30 mb-0.5"
             >
-              <ChevronLeft size={14} />
-              <span className="truncate">{managingAgent.label}</span>
+              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+                activeTab === 'agent-list' || managingAgent ? 'text-zinc-400' : 'text-zinc-500'
+              }`}>
+                Agents
+              </span>
+              {agents.length > 0 && (
+                <span className="text-[10px] text-zinc-600">{agents.length}</span>
+              )}
             </button>
-          )}
 
-          {/* Agent list link when in Agents mode without managing */}
-          {mode === 'agent' && !managingAgent && (
+            {managingAgent ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleBackToAgentList}
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded text-xs mb-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                >
+                  <ChevronLeft size={12} className="flex-shrink-0" />
+                  <span className="truncate font-medium text-zinc-300">{managingAgent.label}</span>
+                </button>
+                {AGENT_TABS.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveTab(id)}
+                    className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
+                      activeTab === id
+                        ? 'bg-zinc-800 text-cyan-400'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {label}
+                  </button>
+                ))}
+              </>
+            ) : (
+              agents.map((agent) => (
+                <button
+                  key={agent.label}
+                  type="button"
+                  onClick={() => handleManageAgent(agent)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 ${
+                    activeTab === 'agent-list'
+                      ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                    agent.running ? 'bg-green-400' : 'bg-zinc-600'
+                  }`} />
+                  <span className="truncate">{agent.label}</span>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* SERVERS section */}
+          <div className="mb-1 mt-3">
             <button
               type="button"
-              onClick={() => setActiveTab('agent-list')}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 bg-zinc-800 text-cyan-400"
+              onClick={navigateToServerList}
+              className="w-full flex items-center justify-between px-3 py-1.5 rounded hover:bg-zinc-800/30 mb-0.5"
             >
-              <Terminal size={14} />
-              Agents
+              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+                activeTab === 'server-list' || managingServer ? 'text-zinc-400' : 'text-zinc-500'
+              }`}>
+                Servers
+              </span>
+              {servers.length > 0 && (
+                <span className="text-[10px] text-zinc-600">{servers.length}</span>
+              )}
             </button>
-          )}
 
-          {/* Back button when managing a specific server */}
-          {mode === 'admin' && managingServer && (
+            {managingServer ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleBackToServerList}
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded text-xs mb-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                >
+                  <ChevronLeft size={12} className="flex-shrink-0" />
+                  <span className="truncate font-medium text-zinc-300">{managingServer.label}</span>
+                </button>
+                {managingHasAdmin && SERVER_ADMIN_TABS.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveTab(id)}
+                    className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
+                      activeTab === id
+                        ? 'bg-zinc-800 text-cyan-400'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {label}
+                  </button>
+                ))}
+              </>
+            ) : (
+              servers.map((server) => (
+                <button
+                  key={server.id}
+                  type="button"
+                  onClick={() => handleManageServer(server)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                >
+                  <Cloud size={12} className="flex-shrink-0 text-zinc-600" />
+                  <span className="truncate">{server.label || server.domain || 'Server'}</span>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* LOCAL section */}
+          <div className="mt-3 pt-2 border-t border-zinc-800">
+            <div className="px-3 py-1.5">
+              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+                activeTab === 'local-plugins' ? 'text-zinc-400' : 'text-zinc-500'
+              }`}>
+                Local
+              </span>
+            </div>
             <button
               type="button"
-              onClick={handleBackToServerList}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border-b border-zinc-800 pb-3"
-            >
-              <ChevronLeft size={14} />
-              <span className="truncate">{managingServer.label}</span>
-            </button>
-          )}
-
-          {/* Server list link when in Servers mode without managing */}
-          {mode === 'admin' && !managingServer && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('server-list')}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 bg-zinc-800 text-cyan-400"
-            >
-              <Cloud size={14} />
-              Servers
-            </button>
-          )}
-
-          {currentTabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveTab(id)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 ${
-                activeTab === id
-                  ? 'bg-zinc-800 text-cyan-400'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-              }`}
-            >
-              <Icon size={14} />
-              {label}
-            </button>
-          ))}
-
-          {/* Local Plugins — always visible */}
-          <div className="border-t border-zinc-800 mt-2 pt-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('local-plugins')}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 ${
+              onClick={() => { setManagingAgent(null); setManagingServer(null); setActiveTab('local-plugins'); }}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 ${
                 activeTab === 'local-plugins'
                   ? 'bg-zinc-800 text-cyan-400'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
               }`}
             >
-              <Puzzle size={14} />
-              Local Plugins
+              <Puzzle size={13} />
+              Plugins
             </button>
           </div>
-
-          {mode === 'agent' && (
-            <button
-              type="button"
-              onClick={handleOpenPanel}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm mb-0.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-            >
-              <ExternalLink size={14} />
-              Open Panel
-            </button>
-          )}
         </nav>
 
-        {/* Connection status */}
-        <div className="p-3 border-t border-zinc-800">
-          <div className="flex items-center gap-2 text-xs">
+        {/* Footer */}
+        <div className="border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={handleOpenPanel}
+            className="w-full flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 hover:text-zinc-300"
+          >
+            <ExternalLink size={12} />
+            Open Panel
+          </button>
+          <div className="px-4 pb-3 flex items-center gap-2 text-xs">
             {agents.length > 0 ? (
               <>
                 <span
@@ -506,22 +518,24 @@ export default function App() {
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'local-plugins' ? (
           <LocalPlugins />
-        ) : mode === 'admin' ? (
+        ) : managingServer ? (
           <AdminClientProvider client={desktopAdminClient}>
             <AdminToastProvider>
               <TwoFaProvider>
-                {renderServerPage()}
+                {renderServerDetailPage()}
               </TwoFaProvider>
             </AdminToastProvider>
           </AdminClientProvider>
         ) : managingAgent ? (
           <AgentClientProvider client={agentClient}>
             <AgentToastProvider>
-              {renderAgentPage()}
+              {renderAgentDetailPage()}
             </AgentToastProvider>
           </AgentClientProvider>
+        ) : activeTab === 'server-list' ? (
+          <Servers onManage={handleManageServer} />
         ) : (
-          renderAgentPage()
+          <Agents onManage={handleManageAgent} />
         )}
       </div>
     </div>

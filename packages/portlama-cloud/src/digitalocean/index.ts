@@ -269,7 +269,8 @@ export class DigitalOceanProvider implements CloudProvider {
     domain: string,
     subdomain: string | undefined,
     ip: string,
+    overrideExisting = false,
   ): Promise<DnsSetupResult> {
-    return setupDnsRecordsApi(this.token, domain, subdomain, ip);
+    return setupDnsRecordsApi(this.token, domain, subdomain, ip, overrideExisting);
   }
 }

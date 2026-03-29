@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `build` script to `create-portlama` that runs `bundle-vendor.js`, keeping bundled panel-server in sync with source
 - Add E2E tests for panel expose in both single-VM (19-panel-expose.sh) and three-VM (15-panel-expose.sh) suites
 - Add in-app agent installation wizard to desktop app — guides users through server selection, enrollment token generation, and real-time setup progress
+- Add DNS record override option in the cloud provisioning Domain step — detects existing A/wildcard records with conflicting IPs and offers an override checkbox to update them in place
+- Add `get_cloud_domain_records` Tauri command and `doPut` API helper for fetching and updating DigitalOcean DNS records
+- Add full server-side onboarding completion to the cloud provisioner — after droplet creation, automatically runs domain setup, DNS verification, and provisioning via mTLS-authenticated SSH curl through nginx (port 9292)
+- Add `domain` field to `ServerEntry` in both TypeScript and Rust — persists the configured domain in the local server registry
+- Add two-step server destroy confirmation in desktop app — inline Yes/No prompt followed by a type-to-confirm modal requiring the exact server label
+
+### Changed
+
+- Replace Agents/Servers mode toggle in desktop app sidebar with unified section layout — AGENTS, SERVERS, and LOCAL sections are always visible, agents and servers listed inline with status indicators, drill-down expands sub-navigation within each section
+- Move Overview from a wizard tab to a scrollable popup screen in the cloud provisioning wizard, freeing horizontal space for remaining steps
 - Add `--json` global flag to `portlama-agent setup` for NDJSON progress output (desktop app integration)
 - Add `install_agent` Tauri command — checks Node.js, installs CLI via npm, streams NDJSON progress as `agent-install-progress` events
 - Add "Install Agent" button to Agents page empty state and "Add Agent" header button for existing agents
@@ -57,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update desktop app to consume agent pages from `@lamalibre/portlama-agent-panel` instead of local page components
 - Namespace all agent-panel React Query keys with `['agent', ...]` prefix to prevent collisions with admin-panel queries
+
+### Fixed
+
+- Fix dashboard memory readout showing inflated values on Linux — use `mem.active` / `mem.available` instead of `mem.used` / `mem.free` from `systeminformation`, which incorrectly included kernel buffers and disk cache
+- Fix server health check returning offline for mTLS-protected servers — attach admin P12 certificate to the health check curl request
+- Fix cleanup spinner not stopping after successful provisioning in the cloud wizard
+- Remove white background from desktop app dock icon — icon now renders with transparency on macOS
 
 ### Security
 
