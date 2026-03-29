@@ -11,6 +11,7 @@
  */
 
 import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +31,11 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     logger: {
       level: 'info',
     },
+  });
+
+  await server.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
   });
 
   // --- mTLS validation middleware ---
@@ -85,7 +91,10 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
       wildcard: false,
     });
   } catch (err) {
-    server.log.warn({ err, staticRoot }, 'Failed to register static file serving — SPA may not be built');
+    server.log.warn(
+      { err, staticRoot },
+      'Failed to register static file serving — SPA may not be built',
+    );
   }
 
   // --- SPA fallback for client-side routing ---

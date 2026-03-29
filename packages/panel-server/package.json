@@ -17,6 +17,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.0.0",
     "@fastify/multipart": "^9.4.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^8.0.0",
     "@fastify/websocket": "^11.0.0",
     "bcryptjs": "^3.0.3",

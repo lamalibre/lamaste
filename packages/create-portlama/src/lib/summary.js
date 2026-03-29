@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import chalk from 'chalk';
 
 // eslint-disable-next-line no-control-regex
@@ -78,9 +77,6 @@ export async function printSummary(ctx) {
   }
 
   // Full install mode: complete summary with certificate instructions
-  const p12PasswordFile = `${ctx.pkiDir}/.p12-password`;
-  const p12Password = (await readFile(p12PasswordFile, 'utf8')).trim();
-
   const scpCmd = `scp root@${ip}:${ctx.pkiDir}/client.p12 .`;
 
   const lines = [
@@ -108,7 +104,7 @@ export async function printSummary(ctx) {
     '',
     `   ${chalk.white.bold('3.')} ${chalk.white('Certificate password:')}`,
     '',
-    `      ${chalk.yellow.bold(p12Password)}`,
+    `      ${chalk.yellow.bold(`cat ${ctx.pkiDir}/.p12-password`)}`,
     '',
     `   ${chalk.white.bold('4.')} ${chalk.white('Open the Portlama panel:')}`,
     '',

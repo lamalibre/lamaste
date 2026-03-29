@@ -93,7 +93,12 @@ function assertObject(value: unknown, label: string): asserts value is Record<st
   }
 }
 
-function assertField(obj: Record<string, unknown>, field: string, type: string, label: string): void {
+function assertField(
+  obj: Record<string, unknown>,
+  field: string,
+  type: string,
+  label: string,
+): void {
   if (type === 'array') {
     if (!Array.isArray(obj[field])) {
       throw new Error(`${label} missing ${field} array`);
@@ -122,7 +127,9 @@ export class TicketClient {
   private readonly logger: TicketLogger;
 
   constructor(options: TicketClientOptions) {
-    this.panelUrl = options.panelUrl.replace(/\/+$/, '');
+    this.panelUrl = options.panelUrl.endsWith('/')
+      ? options.panelUrl.replace(/\/+$/, '')
+      : options.panelUrl;
     this.dispatcher = options.dispatcher;
     this.logger = options.logger.child({ component: 'ticket-client' });
   }
@@ -311,9 +318,7 @@ export class TicketClient {
    * The server generates the session ID.
    * POST /api/tickets/sessions
    */
-  async reportSessionCreation(
-    ticketId: string,
-  ): Promise<{ ok: boolean; session: SessionInfo }> {
+  async reportSessionCreation(ticketId: string): Promise<{ ok: boolean; session: SessionInfo }> {
     const url = `${this.panelUrl}/api/tickets/sessions`;
     this.logger.debug('Reporting session creation');
 
@@ -370,10 +375,7 @@ export class TicketClient {
    * Update session status (e.g., grace period on temporary disconnection).
    * PATCH /api/tickets/sessions/:sessionId
    */
-  async updateSessionStatus(
-    sessionId: string,
-    status: 'active' | 'grace',
-  ): Promise<void> {
+  async updateSessionStatus(sessionId: string, status: 'active' | 'grace'): Promise<void> {
     const url = `${this.panelUrl}/api/tickets/sessions/${encodeURIComponent(sessionId)}`;
     this.logger.debug({ sessionId, status }, 'Updating session status');
 

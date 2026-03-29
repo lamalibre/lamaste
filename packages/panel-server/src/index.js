@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import path from 'node:path';
@@ -19,7 +20,11 @@ import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import { getPluginCapabilities } from './lib/plugins.js';
 import { setPluginCapabilities } from './lib/mtls.js';
-import { loadTicketScopeCapabilities, checkInstanceLiveness, clearRateLimitInterval } from './lib/tickets.js';
+import {
+  loadTicketScopeCapabilities,
+  checkInstanceLiveness,
+  clearRateLimitInterval,
+} from './lib/tickets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,6 +68,10 @@ async function start() {
   });
   await server.register(cookie);
   await server.register(websocket);
+  await server.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+  });
 
   // Resolve static file root for the panel client SPA
   let staticRoot;

@@ -236,7 +236,7 @@ async function main() {
   console.log('  Panel 2FA has been disabled (if it was on).');
   console.log('  IP:9292 access has been restored.');
   console.log('');
-  console.log(`  P12 Password: ${p12Password}`);
+  console.log(`  P12 Password: (saved in ${PKI_DIR}/.p12-password)`);
   console.log(`  P12 File:     ${PKI_DIR}/client.p12`);
   console.log('');
   console.log('  Download the P12 from the panel or copy it');

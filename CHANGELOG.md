@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-03-30
+
+### Security
+
+- Fix SSRF in agent panel API proxy — validate that all curl targets use `https://` scheme before invocation (`portlama-agent`)
+- Fix XSS and open-redirect in onboarding complete page — reject non-`https://` URLs in panel and auth link `href` attributes (`panel-client`)
+- Fix clear-text password logging in installer summary and admin reset CLI — reference the password file path instead of printing the password (`create-portlama`, `panel-server`)
+- Fix polynomial ReDoS in email validation regex used during cloud provisioning (`portlama-cloud`)
+- Fix polynomial ReDoS in trailing-slash normalization for panel URLs and cert paths (`portlama-tickets`, `panel-server`)
+- Fix incomplete HTML tag sanitization in documentation page heading ID generation (`panel-client`)
+- Add `@fastify/rate-limit` (100 req/min) to panel server, agent panel server, and local plugin host (`panel-server`, `portlama-agent`)
+- Add `permissions: contents: read` to CI workflow to follow least-privilege principle
+
+**Affected packages:** panel-server 0.1.12, panel-client 0.1.9, portlama-agent 1.0.14, portlama-tickets 0.1.0, portlama-cloud 0.1.2, create-portlama 1.0.39
+
 ## [Unreleased] - 2026-03-29
 
 ### Added

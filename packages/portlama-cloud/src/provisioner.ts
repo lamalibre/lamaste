@@ -16,12 +16,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import type { CloudProvider } from './provider.js';
-import type {
-  ProvisionOptions,
-  ProvisionStep,
-  ProgressEvent,
-  ServerEntry,
-} from './types.js';
+import type { ProvisionOptions, ProvisionStep, ProgressEvent, ServerEntry } from './types.js';
 import { CloudError } from './errors.js';
 import { DigitalOceanProvider } from './digitalocean/index.js';
 import { assertValidDOToken } from './digitalocean/scopes.js';
@@ -44,7 +39,8 @@ const execFileAsync = promisify(execFile);
 
 const FQDN_REGEX = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 const SUBDOMAIN_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_REGEX =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
 function validateProvisionInputs(options: ProvisionOptions): void {
   if (options.domain && !FQDN_REGEX.test(options.domain)) {
@@ -69,7 +65,11 @@ function emit(event: ProgressEvent): void {
   process.stdout.write(JSON.stringify(event) + '\n');
 }
 
-function emitStep(step: ProvisionStep, status: 'running' | 'done', data?: Record<string, unknown>): void {
+function emitStep(
+  step: ProvisionStep,
+  status: 'running' | 'done',
+  data?: Record<string, unknown>,
+): void {
   emit({ event: 'step', step, status, ...(data ? { data } : {}) });
 }
 
@@ -228,7 +228,14 @@ async function completeOnboarding(
 ): Promise<void> {
   // Step 1: Set domain (FRESH → DOMAIN_SET)
   const domainPayload = JSON.stringify({ domain, email });
-  const domainResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/domain', domainPayload);
+  const domainResult = await sshCurl(
+    ip,
+    keyPath,
+    knownHostsPath,
+    'POST',
+    '/api/onboarding/domain',
+    domainPayload,
+  );
   if (!domainResult.status.startsWith('2')) {
     throw new Error(`Domain setup returned HTTP ${domainResult.status}: ${domainResult.body}`);
   }
@@ -237,7 +244,13 @@ async function completeOnboarding(
   const dnsDeadline = Date.now() + 60_000;
   let dnsOk = false;
   while (Date.now() < dnsDeadline) {
-    const dnsResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/verify-dns');
+    const dnsResult = await sshCurl(
+      ip,
+      keyPath,
+      knownHostsPath,
+      'POST',
+      '/api/onboarding/verify-dns',
+    );
     if (dnsResult.status.startsWith('2')) {
       try {
         const parsed = JSON.parse(dnsResult.body);
@@ -245,7 +258,9 @@ async function completeOnboarding(
           dnsOk = true;
           break;
         }
-      } catch { /* ignore parse errors */ }
+      } catch {
+        /* ignore parse errors */
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
@@ -254,15 +269,29 @@ async function completeOnboarding(
   }
 
   // Step 3: Trigger provisioning (DNS_READY → PROVISIONING → COMPLETED)
-  const provisionResult = await sshCurl(ip, keyPath, knownHostsPath, 'POST', '/api/onboarding/provision');
+  const provisionResult = await sshCurl(
+    ip,
+    keyPath,
+    knownHostsPath,
+    'POST',
+    '/api/onboarding/provision',
+  );
   if (!provisionResult.status.startsWith('2')) {
-    throw new Error(`Server provisioning returned HTTP ${provisionResult.status}: ${provisionResult.body}`);
+    throw new Error(
+      `Server provisioning returned HTTP ${provisionResult.status}: ${provisionResult.body}`,
+    );
   }
 
   // Step 4: Wait for provisioning to complete (runs in background on the server)
   const provDeadline = Date.now() + 300_000; // 5 minutes
   while (Date.now() < provDeadline) {
-    const statusResult = await sshCurl(ip, keyPath, knownHostsPath, 'GET', '/api/onboarding/status');
+    const statusResult = await sshCurl(
+      ip,
+      keyPath,
+      knownHostsPath,
+      'GET',
+      '/api/onboarding/status',
+    );
     if (statusResult.status.startsWith('2')) {
       try {
         const parsed = JSON.parse(statusResult.body);
@@ -461,7 +490,13 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
 
     // Download P12 certificate
     const localP12Path = join(tmpDir, 'client.p12');
-    await scpDownload(ip, sshKeyPair.privateKeyPath, '/etc/portlama/pki/client.p12', localP12Path, knownHostsPath);
+    await scpDownload(
+      ip,
+      sshKeyPair.privateKeyPath,
+      '/etc/portlama/pki/client.p12',
+      localP12Path,
+      knownHostsPath,
+    );
     emitStep('retrieve_credentials', 'done');
 
     // Step 9: Enroll admin cert
@@ -505,7 +540,13 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
     const onboardDomain = effectiveDomain ?? options.domain;
     if (onboardDomain && options.email) {
       try {
-        await completeOnboarding(ip, sshKeyPair.privateKeyPath, knownHostsPath, onboardDomain, options.email);
+        await completeOnboarding(
+          ip,
+          sshKeyPair.privateKeyPath,
+          knownHostsPath,
+          onboardDomain,
+          options.email,
+        );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         emitStep('enroll_admin', 'running', {

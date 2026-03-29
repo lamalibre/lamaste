@@ -109,6 +109,18 @@ function certArgs(configPath) {
 }
 
 /**
+ * Validate that a URL uses the https: scheme.  Prevents SSRF by ensuring
+ * curl only connects to HTTPS endpoints.
+ * @param {string[]} args - curl arguments; the last element must be the URL
+ */
+function validateCurlUrl(args) {
+  const url = args[args.length - 1];
+  if (typeof url !== 'string' || !url.startsWith('https://')) {
+    throw new Error(`Refusing to call curl with non-HTTPS URL: ${url}`);
+  }
+}
+
+/**
  * Execute a curl command with mTLS credentials passed via a temporary config
  * file.  The config file is created before the call and removed afterwards,
  * regardless of success or failure.
@@ -118,6 +130,7 @@ function certArgs(configPath) {
  * @returns {Promise<import('execa').ExecaReturnValue>}
  */
 async function curlWithConfig(p12Path, p12Password, extraArgs) {
+  validateCurlUrl(extraArgs);
   const configPath = await createCurlConfig(p12Path, p12Password);
   try {
     return await execa('curl', [...certArgs(configPath), ...extraArgs]);
@@ -135,14 +148,15 @@ async function curlWithConfig(p12Path, p12Password, extraArgs) {
  * @returns {Promise<import('execa').ExecaReturnValue>}
  */
 async function curlWithKeychain(keychainIdentity, extraArgs) {
+  validateCurlUrl(extraArgs);
   return execa('curl', [
     '--cert',
     keychainIdentity,
-    '-s',           // silent
-    '-f',           // fail on HTTP errors
+    '-s', // silent
+    '-f', // fail on HTTP errors
     '--max-time',
     '30',
-    '-k',           // skip server TLS verification (self-signed server cert)
+    '-k', // skip server TLS verification (self-signed server cert)
     ...extraArgs,
   ]);
 }
@@ -202,9 +216,10 @@ export async function fetchHealth(panelUrlOrConfig, p12Path, p12Password) {
   const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/health`;
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, [url])
-      : await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, [url])
+        : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -228,9 +243,10 @@ export async function fetchAgentConfig(panelUrlOrConfig, p12Path, p12Password) {
   const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/tunnels/agent-config`;
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, [url])
-      : await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, [url])
+        : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -250,9 +266,10 @@ export async function fetchTunnels(panelUrlOrConfig, p12Path, p12Password) {
   const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/tunnels`;
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, [url])
-      : await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, [url])
+        : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -272,9 +289,10 @@ export async function fetchSites(panelUrlOrConfig, p12Path, p12Password) {
   const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   const url = `${panelUrl}/api/sites`;
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, [url])
-      : await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, [url])
+        : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to fetch sites from panel. ` + `Details: ${err.stderr || err.message}`);
@@ -304,9 +322,10 @@ export async function createSite(panelUrlOrConfig, p12Path, p12Password, body) {
     url,
   ];
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
-      : await curlWithConfig(p12Path, p12Password, curlArgs);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+        : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to create site on panel. ` + `Details: ${err.stderr || err.message}`);
@@ -327,9 +346,10 @@ export async function deleteSite(panelUrlOrConfig, p12Path, p12Password, siteId)
   const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}`;
   const curlArgs = ['-X', 'DELETE', url];
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
-      : await curlWithConfig(p12Path, p12Password, curlArgs);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+        : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to delete site from panel. ` + `Details: ${err.stderr || err.message}`);
@@ -345,7 +365,13 @@ export async function deleteSite(panelUrlOrConfig, p12Path, p12Password, siteId)
  * @param {string} [dirPath='.'] - Directory path to list
  * @returns {Promise<{ files: Array }>}
  */
-export async function fetchSiteFiles(panelUrlOrConfig, p12Path, p12Password, siteId, dirPath = '.') {
+export async function fetchSiteFiles(
+  panelUrlOrConfig,
+  p12Path,
+  p12Password,
+  siteId,
+  dirPath = '.',
+) {
   const panelUrl = resolvePanelUrl(panelUrlOrConfig);
   let actualSiteId, actualDirPath;
   if (typeof panelUrlOrConfig === 'object') {
@@ -357,9 +383,10 @@ export async function fetchSiteFiles(panelUrlOrConfig, p12Path, p12Password, sit
   }
   const url = `${panelUrl}/api/sites/${encodeURIComponent(actualSiteId)}/files?path=${encodeURIComponent(actualDirPath)}`;
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, [url])
-      : await curlWithConfig(p12Path, p12Password, [url]);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, [url])
+        : await curlWithConfig(p12Path, p12Password, [url]);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -401,9 +428,10 @@ export async function uploadSiteFiles(
   const fileArgs = actualLocalFilePaths.flatMap((fp) => ['-F', `file=@${fp}`]);
   const curlArgs = ['-X', 'POST', ...fileArgs, url];
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
-      : await curlWithConfig(p12Path, p12Password, curlArgs);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+        : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to upload files to site. ` + `Details: ${err.stderr || err.message}`);
@@ -440,9 +468,10 @@ export async function deleteSiteFile(panelUrlOrConfig, p12Path, p12Password, sit
     url,
   ];
   try {
-    const { stdout } = typeof panelUrlOrConfig === 'object'
-      ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
-      : await curlWithConfig(p12Path, p12Password, curlArgs);
+    const { stdout } =
+      typeof panelUrlOrConfig === 'object'
+        ? await curlAuthenticated(panelUrlOrConfig, curlArgs)
+        : await curlWithConfig(p12Path, p12Password, curlArgs);
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(
@@ -484,9 +513,12 @@ export async function fetchTicketInbox(config) {
 export async function validateTicket(config, ticketId) {
   const url = `${config.panelUrl}/api/tickets/validate`;
   const curlArgs = [
-    '-X', 'POST',
-    '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ ticketId }),
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ ticketId }),
     url,
   ];
   try {
@@ -507,9 +539,12 @@ export async function validateTicket(config, ticketId) {
 export async function registerTicketInstance(config, scope, transport) {
   const url = `${config.panelUrl}/api/tickets/instances`;
   const curlArgs = [
-    '-X', 'POST',
-    '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ scope, transport }),
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ scope, transport }),
     url,
   ];
   try {
@@ -548,9 +583,12 @@ export async function sendInstanceHeartbeat(config, instanceId) {
 export async function requestTicket(config, scope, instanceId, target) {
   const url = `${config.panelUrl}/api/tickets`;
   const curlArgs = [
-    '-X', 'POST',
-    '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ scope, instanceId, target }),
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ scope, instanceId, target }),
     url,
   ];
   try {
@@ -570,9 +608,12 @@ export async function requestTicket(config, scope, instanceId, target) {
 export async function reportSessionCreation(config, ticketId) {
   const url = `${config.panelUrl}/api/tickets/sessions`;
   const curlArgs = [
-    '-X', 'POST',
-    '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ ticketId }),
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ ticketId }),
     url,
   ];
   try {
@@ -610,9 +651,12 @@ export async function sendSessionHeartbeat(config, sessionId) {
 export async function updateSessionStatus(config, sessionId, status) {
   const url = `${config.panelUrl}/api/tickets/sessions/${encodeURIComponent(sessionId)}`;
   const curlArgs = [
-    '-X', 'PATCH',
-    '-H', 'Content-Type: application/json',
-    '-d', JSON.stringify({ status }),
+    '-X',
+    'PATCH',
+    '-H',
+    'Content-Type: application/json',
+    '-d',
+    JSON.stringify({ status }),
     url,
   ];
   try {
@@ -670,9 +714,7 @@ export async function curlPostUnauthenticated(url, body) {
     if (err.message && !err.message.startsWith('Request to')) {
       throw err;
     }
-    throw new Error(
-      `Request to ${url} failed. Details: ${err.stderr || err.message}`,
-    );
+    throw new Error(`Request to ${url} failed. Details: ${err.stderr || err.message}`);
   }
 }
 
@@ -705,16 +747,17 @@ export async function exposePanelTunnel(config, port) {
   const url = `${config.panelUrl}/api/tunnels/expose-panel`;
   try {
     const { stdout } = await curlAuthenticated(config, [
-      '-X', 'POST',
-      '-H', 'Content-Type: application/json',
-      '-d', JSON.stringify({ port }),
+      '-X',
+      'POST',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify({ port }),
       url,
     ]);
     return JSON.parse(stdout);
   } catch (err) {
-    throw new Error(
-      `Failed to expose panel tunnel. Details: ${err.stderr || err.message}`,
-    );
+    throw new Error(`Failed to expose panel tunnel. Details: ${err.stderr || err.message}`);
   }
 }
 
@@ -727,15 +770,10 @@ export async function exposePanelTunnel(config, port) {
 export async function retractPanelTunnel(config) {
   const url = `${config.panelUrl}/api/tunnels/retract-panel`;
   try {
-    const { stdout } = await curlAuthenticated(config, [
-      '-X', 'DELETE',
-      url,
-    ]);
+    const { stdout } = await curlAuthenticated(config, ['-X', 'DELETE', url]);
     return JSON.parse(stdout);
   } catch (err) {
-    throw new Error(
-      `Failed to retract panel tunnel. Details: ${err.stderr || err.message}`,
-    );
+    throw new Error(`Failed to retract panel tunnel. Details: ${err.stderr || err.message}`);
   }
 }
 
@@ -751,8 +789,6 @@ export async function fetchPanelTunnelStatus(config) {
     const { stdout } = await curlAuthenticated(config, [url]);
     return JSON.parse(stdout);
   } catch (err) {
-    throw new Error(
-      `Failed to fetch panel tunnel status. Details: ${err.stderr || err.message}`,
-    );
+    throw new Error(`Failed to fetch panel tunnel status. Details: ${err.stderr || err.message}`);
   }
 }

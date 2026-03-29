@@ -80,13 +80,16 @@ export class TicketInstanceManager {
   private readonly lastTicketRequest = new Map<string, number>();
 
   constructor(options: TicketInstanceManagerOptions) {
-    this.panelUrl = options.panelUrl.replace(/\/+$/, '');
+    this.panelUrl = options.panelUrl.endsWith('/')
+      ? options.panelUrl.replace(/\/+$/, '')
+      : options.panelUrl;
     this.certs = options.certs;
     this.scope = options.scope;
     this.transport = options.transport;
     this.logger = options.logger.child({ component: 'ticket-instance-manager' });
     this.rejectUnauthorized = options.rejectUnauthorized ?? false;
-    this.instanceHeartbeatIntervalMs = options.instanceHeartbeatIntervalMs ?? DEFAULT_INSTANCE_HEARTBEAT_INTERVAL_MS;
+    this.instanceHeartbeatIntervalMs =
+      options.instanceHeartbeatIntervalMs ?? DEFAULT_INSTANCE_HEARTBEAT_INTERVAL_MS;
     this.ticketCooldownMs = options.ticketCooldownMs ?? DEFAULT_TICKET_COOLDOWN_MS;
   }
 
@@ -105,10 +108,10 @@ export class TicketInstanceManager {
     this.logger.info({ scope: this.scope }, 'Starting ticket instance manager');
 
     // Read certificates and create mTLS dispatcher
-    this.dispatcher = await createTicketDispatcher({
+    this.dispatcher = (await createTicketDispatcher({
       certs: this.certs,
       rejectUnauthorized: this.rejectUnauthorized,
-    }) as UndiciAgent;
+    })) as UndiciAgent;
 
     this.client = new TicketClient({
       panelUrl: this.panelUrl,

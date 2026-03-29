@@ -6,10 +6,23 @@ import { BookOpen, ChevronRight, ChevronLeft, Menu, X, List } from 'lucide-react
 
 // Custom renderer: add IDs to headings for anchor links
 const renderer = new marked.Renderer();
+/**
+ * Strip HTML tags completely — loops until no tags remain to avoid
+ * incomplete sanitization from nested or broken markup like `<<b>script>`.
+ */
+function stripHtmlTags(str) {
+  let result = str;
+  let prev;
+  do {
+    prev = result;
+    result = result.replace(/<[^>]*>/g, '');
+  } while (result !== prev);
+  return result;
+}
+
 renderer.heading = ({ text, depth }) => {
-  const id = text
+  const id = stripHtmlTags(text)
     .toLowerCase()
-    .replace(/<[^>]*>/g, '')
     .replace(/[^\w\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
@@ -26,9 +39,8 @@ function extractToc(markdown) {
   while ((match = regex.exec(markdown)) !== null) {
     const depth = match[1].length;
     const text = match[2].replace(/`([^`]+)`/g, '$1');
-    const id = text
+    const id = stripHtmlTags(text)
       .toLowerCase()
-      .replace(/<[^>]*>/g, '')
       .replace(/[^\w\s-]/g, '')
       .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
@@ -210,7 +222,9 @@ export default function DocsPage() {
     fetch('/docs/_index.json')
       .then((r) => r.json())
       .then(setIndex)
-      .catch((err) => dispatchDoc({ type: 'error', error: `Failed to load docs index: ${err.message}` }));
+      .catch((err) =>
+        dispatchDoc({ type: 'error', error: `Failed to load docs index: ${err.message}` }),
+      );
   }, []);
 
   // Flatten all pages for prev/next navigation

@@ -24,13 +24,24 @@ function CopyButton({ text }) {
   );
 }
 
+/**
+ * Returns the URL only if it uses the https: scheme, preventing XSS via
+ * javascript: or data: URLs and open-redirect via arbitrary schemes.
+ * @param {string} url
+ * @returns {string}
+ */
+function safeHttpsUrl(url) {
+  if (typeof url === 'string' && url.startsWith('https://')) return url;
+  return '';
+}
+
 export default function CompleteStep({ result, ip }) {
   const [passwordVisible, setPasswordVisible] = useState(false);
 
   const adminUsername = result?.adminUsername || 'admin';
   const adminPassword = result?.adminPassword || '';
-  const panelUrl = result?.panelUrl || '';
-  const authUrl = result?.authUrl || '';
+  const panelUrl = safeHttpsUrl(result?.panelUrl || '');
+  const authUrl = safeHttpsUrl(result?.authUrl || '');
   const ipUrl = `https://${ip}:9292`;
 
   return (

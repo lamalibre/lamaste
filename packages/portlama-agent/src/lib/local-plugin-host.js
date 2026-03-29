@@ -7,6 +7,7 @@
  */
 
 import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import crypto from 'node:crypto';
@@ -21,14 +22,10 @@ import {
 import { localDir, localPluginsDir } from './platform.js';
 
 // Reserved names — requests for these prefixes are never plugin routes.
-const RESERVED_PREFIXES = new Set([
-  'health', 'plugins',
-]);
+const RESERVED_PREFIXES = new Set(['health', 'plugins']);
 
 // Allowed Host header values to prevent DNS rebinding attacks.
-const ALLOWED_HOSTS = new Set([
-  '127.0.0.1', 'localhost',
-]);
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost']);
 
 /**
  * Generate or read the host auth token.
@@ -60,6 +57,11 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
   });
 
   const hostToken = await getOrCreateHostToken();
+
+  await server.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+  });
 
   // --- DNS rebinding protection ---
   // Reject requests where Host header is not localhost/127.0.0.1
@@ -142,7 +144,10 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
     if (plugin.packages?.server) {
       // Defense-in-depth: verify scope at load time
       if (!plugin.packages.server.startsWith('@lamalibre/')) {
-        server.log.error({ plugin: pluginName }, 'Plugin server package scope violation — skipping');
+        server.log.error(
+          { plugin: pluginName },
+          'Plugin server package scope violation — skipping',
+        );
         continue;
       }
 
@@ -202,9 +207,7 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
 
     const currentRegistry = await readLocalPluginRegistry();
     cachedDisabledPlugins = new Set(
-      currentRegistry.plugins
-        .filter((p) => p.status !== 'enabled')
-        .map((p) => p.name),
+      currentRegistry.plugins.filter((p) => p.status !== 'enabled').map((p) => p.name),
     );
     cacheExpiry = now + 5000;
     return cachedDisabledPlugins;
