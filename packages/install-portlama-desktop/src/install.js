@@ -14,6 +14,7 @@ const PLATFORM_SUFFIXES = {
   'darwin-arm64': '_aarch64.dmg',
   'darwin-x64': '_x64.dmg',
   'linux-x64': '_amd64.AppImage',
+  'linux-arm64': '_aarch64.AppImage',
 };
 
 function detectPlatformSuffix() {

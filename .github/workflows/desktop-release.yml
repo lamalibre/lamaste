@@ -51,8 +51,10 @@ jobs:
             |----------|------|
             | macOS Apple Silicon (M1/M2/M3/M4) | `Portlama_${{ github.event.inputs.version }}_aarch64.dmg` |
             | macOS Intel | `Portlama_${{ github.event.inputs.version }}_x64.dmg` |
-            | Linux (Debian/Ubuntu) | `portlama_${{ github.event.inputs.version }}_amd64.deb` |
-            | Linux (AppImage) | `portlama_${{ github.event.inputs.version }}_amd64.AppImage` |
+            | Linux x64 (Debian/Ubuntu) | `portlama_${{ github.event.inputs.version }}_amd64.deb` |
+            | Linux x64 (AppImage) | `portlama_${{ github.event.inputs.version }}_amd64.AppImage` |
+            | Linux arm64 (Debian/Ubuntu) | `portlama_${{ github.event.inputs.version }}_arm64.deb` |
+            | Linux arm64 (AppImage) | `portlama_${{ github.event.inputs.version }}_aarch64.AppImage` |
 
             > **macOS note:** The app is not code-signed. On first launch, right-click → Open, or go to System Settings → Privacy & Security → Open Anyway.
 
@@ -68,6 +70,8 @@ jobs:
             runner: macos-latest
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
 
     runs-on: ${{ matrix.runner }}
 

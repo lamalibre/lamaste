@@ -8,7 +8,7 @@ npx @lamalibre/install-portlama-desktop
 
 ## What It Does
 
-1. Detects your platform (macOS arm64/x64, Linux x64)
+1. Detects your platform (macOS arm64/x64, Linux x64/arm64)
 2. Fetches the latest desktop release from GitHub
 3. Downloads and caches the binary in `~/.portlama/desktop/`
 4. Installs and launches the app:
@@ -49,6 +49,7 @@ The installer attempts to clear the quarantine attribute automatically.
 | macOS Apple Silicon | `.dmg` (aarch64) |
 | macOS Intel         | `.dmg` (x64)     |
 | Linux x64           | `.AppImage`      |
+| Linux arm64         | `.AppImage`      |
 
 ## Links
 
