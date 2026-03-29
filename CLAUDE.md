@@ -123,7 +123,8 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - `undici` for HTTP — direct REST API calls to cloud providers, no heavy SDKs
 - `child_process.execFile` for SSH/SCP/openssl commands (array args only)
 - Provider abstraction: `CloudProvider` interface, each provider (DigitalOcean, etc.) implements it
-- Token scope validation: reject over-scoped tokens, require minimum necessary permissions
+- Token scope validation: reject over-scoped tokens, require minimum necessary permissions. `domain:*` scopes are safe extras (opt-in DNS management)
+- DNS management (opt-in): if token has `domain:read`, wizard lists DO-managed domains; after droplet creation, `setup_dns` provisioning step creates A + wildcard A records. Existing records with different IPs are warned, not overwritten. DNS records are NOT auto-cleaned on server destroy
 - NDJSON progress protocol on stdout for Rust/Tauri integration
 - SSH via `ssh-keygen`/`ssh`/`scp` commands — temporary ed25519 keys, secure-deleted after use. SSH TOFU accepted risk: first connection uses `accept-new`, pinned in per-session `known_hosts` for subsequent commands; DigitalOcean does not expose host fingerprints via API
 - Credential storage: macOS Keychain (`security-framework` crate, no CLI) / Linux libsecret (`secret-tool` with stdin) — never plaintext, never in process args. Two services: `com.portlama.cloud` (API tokens), `com.portlama.server` (P12 passwords, keyed by server UUID)

@@ -23,6 +23,9 @@ export type {
   CompleteEvent,
   ProgressEvent,
   ProvisionOptions,
+  DODomain,
+  DODomainRecord,
+  DnsSetupResult,
 } from './types.js';
 
 // Errors
@@ -35,6 +38,7 @@ export type { CloudProvider } from './provider.js';
 export { DigitalOceanProvider } from './digitalocean/index.js';
 export { validateDOToken, assertValidDOToken, REQUIRED_SCOPES } from './digitalocean/scopes.js';
 export { probeRegionLatencies } from './digitalocean/latency.js';
+export { listDomains, createDomain, listDomainRecords, deleteDomainRecord, setupDnsRecords } from './digitalocean/dns.js';
 
 // Provisioner
 export { provision } from './provisioner.js';

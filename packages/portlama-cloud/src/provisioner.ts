@@ -39,6 +39,29 @@ import { addServer } from './registry.js';
 const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
+// Input validation (defense in depth — UI also validates, but CLI bypasses UI)
+// ---------------------------------------------------------------------------
+
+const FQDN_REGEX = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+const SUBDOMAIN_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateProvisionInputs(options: ProvisionOptions): void {
+  if (options.domain && !FQDN_REGEX.test(options.domain)) {
+    throw new CloudError(`Invalid domain: ${options.domain}`);
+  }
+  if (options.email && !EMAIL_REGEX.test(options.email)) {
+    throw new CloudError(`Invalid email: ${options.email}`);
+  }
+  if (options.doDomain && !FQDN_REGEX.test(options.doDomain)) {
+    throw new CloudError(`Invalid DO domain: ${options.doDomain}`);
+  }
+  if (options.doSubdomain && !SUBDOMAIN_REGEX.test(options.doSubdomain)) {
+    throw new CloudError(`Invalid subdomain: ${options.doSubdomain}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Progress reporting
 // ---------------------------------------------------------------------------
 
@@ -161,6 +184,7 @@ function createProvider(name: string, token: string): CloudProvider {
 export async function provision(options: ProvisionOptions): Promise<ServerEntry> {
   const { provider: providerName, token, region, label, platform } = options;
 
+  validateProvisionInputs(options);
   await acquireLock();
   const cleanup = new CleanupStack();
   let sshKeyPair: SSHKeyPair | null = null;
@@ -219,6 +243,56 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
     }
     const ip = activeServer.ip;
     emitStep('wait_droplet', 'done', { ip });
+
+    // Step 5b: Set up DNS records (only if DO-managed domain was selected)
+    let effectiveDomain = options.domain;
+    if (options.doDomain && provider instanceof DigitalOceanProvider) {
+      currentStep = 'setup_dns';
+      emitStep('setup_dns', 'running');
+      try {
+        const dnsResult = await provider.setupDnsRecords(
+          options.doDomain,
+          options.doSubdomain,
+          ip,
+        );
+
+        // Register cleanup for created DNS records (prevents dangling DNS on failure)
+        if (dnsResult.createdRecordIds.length > 0) {
+          const doDomain = options.doDomain;
+          cleanup.push('delete DNS records', async () => {
+            const { deleteDomainRecord } = await import('./digitalocean/dns.js');
+            for (const recordId of dnsResult.createdRecordIds) {
+              try {
+                await deleteDomainRecord(token, doDomain, recordId);
+              } catch {
+                // Best-effort — orphaned DNS records are harmless
+              }
+            }
+          });
+        }
+
+        const stepData: Record<string, unknown> = {
+          domain: dnsResult.domain,
+          aRecordCreated: dnsResult.aRecordCreated,
+          wildcardCreated: dnsResult.wildcardCreated,
+        };
+        if (dnsResult.conflictWarning) {
+          stepData.conflictWarning = dnsResult.conflictWarning;
+        }
+        emitStep('setup_dns', 'done', stepData);
+
+        // Use the composed FQDN as the effective domain for onboarding
+        if (!effectiveDomain) {
+          effectiveDomain = dnsResult.domain;
+        }
+      } catch (err: unknown) {
+        // DNS setup is non-fatal — log warning and continue
+        const msg = err instanceof Error ? err.message : String(err);
+        emitStep('setup_dns', 'done', {
+          warning: `DNS setup failed: ${msg}. You can configure DNS manually after provisioning.`,
+        });
+      }
+    }
 
     // Step 6: Wait for SSH
     currentStep = 'wait_ssh';
@@ -310,16 +384,21 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
       }
     }
 
-    // If domain and email were provided, start onboarding (set domain)
-    if (options.domain && options.email) {
+    // If domain and email were provided, start onboarding (set domain).
+    // The payload is base64-encoded to avoid shell injection — sshExec
+    // passes the command through a remote shell, so user-controlled values
+    // must never be interpolated directly into the command string.
+    const onboardDomain = effectiveDomain ?? options.domain;
+    if (onboardDomain && options.email) {
       const onboardPayload = JSON.stringify({
-        domain: options.domain,
+        domain: onboardDomain,
         email: options.email,
       });
+      const b64 = Buffer.from(onboardPayload).toString('base64');
       await sshExec(
         ip,
         sshKeyPair.privateKeyPath,
-        `curl -s -f --max-time 15 -X POST -H 'Content-Type: application/json' -d '${onboardPayload}' http://127.0.0.1:3100/api/onboarding/domain`,
+        `echo ${b64} | base64 -d | curl -s -f --max-time 15 -X POST -H 'Content-Type: application/json' -d @- http://127.0.0.1:3100/api/onboarding/domain`,
         30_000,
         knownHostsPath,
       );

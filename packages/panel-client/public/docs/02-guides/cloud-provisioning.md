@@ -60,8 +60,11 @@ Tokens created in the Portlama team can only see and manage resources that belon
 | **regions**    | `read`                                            | List available regions and measure latency            |
 | **ssh_key**    | `create`, `read`, `update`, `delete`              | Upload a temporary SSH key for installation           |
 | **tag**        | `create`, `read`, `delete`                        | Tag managed droplets with `portlama:managed`          |
+| **domain** *(optional)* | `read`, `create`, `update`, `delete`     | Automatic DNS record creation (see [DNS Management](#dns-management-optional) below) |
 
 > **Note:** DigitalOcean's custom scopes UI works at the resource level — you cannot select individual sub-scopes (e.g., `droplet:create` alone). Selecting "droplet" grants all 5 droplet sub-scopes. DO also auto-adds read-only dependency scopes (`sizes:read`, `actions:read`, `image:read`, `snapshot:read`, `vpc:read`). This is normal. Your token will show about 20 total scopes. The app expects this and will not reject these extra scopes — only scopes like `database:delete`, `kubernetes:create`, or `account:write` are rejected.
+>
+> **DNS scopes are optional.** If your token includes the **domain** resource group, the wizard adds a Domain step where you can select a DigitalOcean-managed domain and have A records created automatically. If the token does not have domain scopes, the wizard skips this step and you configure DNS manually after provisioning (the existing behavior).
 
 8. Click **Generate Token**
 9. **Copy the token immediately** — DigitalOcean only shows it once
@@ -75,7 +78,7 @@ The combination of a dedicated team and custom-scoped token provides two layers 
 | Layer                        | What it protects against                                    |
 | ---------------------------- | ----------------------------------------------------------- |
 | **Dedicated team**           | Token cannot see or touch resources outside the team        |
-| **Custom scopes (7 only)**   | Token cannot manage databases, firewalls, Kubernetes, etc.  |
+| **Custom scopes (5 groups)**  | Token cannot manage databases, firewalls, Kubernetes, etc.  |
 | **`portlama:managed` tag**   | App-level guard: refuses to destroy untagged droplets       |
 | **Dangerous scope rejection** | App rejects tokens that are overly broad                   |
 
@@ -96,7 +99,7 @@ The token is never written to a file on disk and never passed as a command-line 
 2. Navigate to the **Servers** tab (cloud icon in the sidebar)
 3. Click **Create New Server** (or, if this is your first time and no servers exist, click the "Create a new server" button in the center of the page)
 
-The wizard opens with four steps shown in a breadcrumb bar: **Token → Region → Label → Create**.
+The wizard opens with an overview screen (shown once, dismissable) followed by steps in a breadcrumb bar: **Token → Region → Size → [Domain] → Label → Create**. The Domain step appears only if your token has DNS management scopes (the `domain` resource group).
 
 ---
 
@@ -109,7 +112,7 @@ The wizard opens with four steps shown in a breadcrumb bar: **Token → Region �
 The app checks three things:
 
 - **Is the token valid?** — It calls the DigitalOcean API to verify the token works and reads your account email
-- **Does it have all required scopes?** — All 4 resource groups listed above must be present
+- **Does it have all required scopes?** — All 5 required resource groups listed above must be present
 - **Does it have dangerous scopes?** — Scopes like `account:write` or `database:delete` cause rejection
 
 ### What you will see
@@ -120,11 +123,11 @@ A green checkmark appears with your DigitalOcean account email. The **Next** but
 
 **If scopes are missing:**
 
-A red message lists the missing scopes. Go back to DigitalOcean and create a new token with all 4 required resource groups.
+A red message lists the missing scopes. Go back to DigitalOcean and create a new token with all 5 required resource groups.
 
 **If dangerous scopes are detected:**
 
-An amber warning lists the excess scopes. This means you used a full-access or overly broad token. Create a new token with custom scopes — only the 7 listed above.
+An amber warning lists the excess scopes. This means you used a full-access or overly broad token. Create a new token with custom scopes — only the 5 required resource groups listed above.
 
 ---
 
@@ -142,11 +145,48 @@ The regions are sorted by latency — the fastest one is at the top and is auto-
 
 > **Tip:** If you are in Europe, `fra1` or `ams3` are usually the fastest. In the US, `nyc1`, `nyc3`, or `sfo3`. In Asia-Pacific, `sgp1` or `blr1`.
 
-Only regions that support the $4 droplet size (`s-1vcpu-512mb-10gb`) are shown. If a region does not support this size, it is filtered out automatically.
+Only regions that support the minimum droplet size (`s-1vcpu-512mb-10gb`) are shown. If a region does not support this size, it is filtered out automatically. All shown regions also support larger sizes available in the Size step.
 
 ---
 
-## Step 5: Name Your Server
+## Step 5: Select a Droplet Size
+
+After choosing a region, the wizard shows available droplet sizes sorted by price. The recommended size ($4/month, 512MB RAM, 1 vCPU, 10GB SSD) is pre-selected and sufficient for most Portlama deployments. Larger sizes are available if you need more resources.
+
+Only basic-tier sizes available in your selected region are shown. AMD/Intel-specific variants are filtered out for simplicity.
+
+---
+
+## Step 6: Select a Domain (Optional — DNS Management)
+
+This step appears only if your token includes the `domain` resource group. If it does not, the wizard skips directly to "Name Your Server."
+
+When the Domain step appears, the app fetches your DigitalOcean-managed domains and displays them as selectable cards:
+
+1. **Select a domain** — Click on a domain you already manage in DigitalOcean DNS
+2. **Or create a new domain** — Click "Add a domain," enter the domain name, and click **Create**
+
+> **Important:** If you create a new domain, you must point your domain's nameservers to DigitalOcean (`ns1.digitalocean.com`, `ns2.digitalocean.com`, `ns3.digitalocean.com`) at your domain registrar for DNS records to resolve.
+
+3. **Optional subdomain prefix** — After selecting a domain, you can enter a subdomain prefix (e.g., `panel`). The resulting FQDN will be `panel.example.com`
+
+The wizard shows a preview of the DNS records that will be created:
+
+- **A record** — `panel.example.com` → droplet IP
+- **Wildcard A record** — `*.panel.example.com` → droplet IP (for tunnel subdomains)
+
+> **DNS records are not auto-removed** when the server is destroyed. You must remove them manually in the DigitalOcean DNS console.
+
+### Conflict handling
+
+If an A record already exists for the selected domain/subdomain:
+
+- **Same IP** — No action needed, the record is already correct
+- **Different IP** — The wizard warns you but does not overwrite. You must update the record manually
+
+---
+
+## Step 7: Name Your Server
 
 Enter a label for your server. This is a short name used to identify the server in the app and on DigitalOcean.
 
@@ -159,7 +199,7 @@ If you leave it blank, it defaults to `portlama-{region}` (e.g., `portlama-fra1`
 
 A summary box shows what will be created:
 
-- **Size:** 512MB RAM / 1 vCPU / 10GB SSD ($4/month)
+- **Size:** Your selected droplet size (e.g., 512MB RAM / 1 vCPU / 10GB SSD)
 - **Image:** Ubuntu 24.04 LTS
 - **Region:** Your selected region
 
@@ -167,17 +207,18 @@ Click **Create Server** to begin provisioning.
 
 ---
 
-## Step 6: Watch the Provisioning
+## Step 8: Watch the Provisioning
 
-The wizard shows 11 steps with live progress indicators. Each step shows a spinning cyan icon while in progress, a green checkmark when complete, or a red X if something fails.
+The wizard shows up to 12 steps with live progress indicators. Each step shows a spinning cyan icon while in progress, a green checkmark when complete, or a red X if something fails.
 
 | Step                        | What happens                                                                        |
 | --------------------------- | ----------------------------------------------------------------------------------- |
 | **Validating token**        | Re-verifies the API token (defense in depth)                                        |
 | **Generating SSH key**      | Creates a temporary ed25519 keypair (used only for this installation, then deleted) |
 | **Uploading SSH key**       | Uploads the public key to your DigitalOcean account                                 |
-| **Creating droplet**        | Creates the $4 droplet with Ubuntu 24.04 and the `portlama:managed` tag             |
+| **Creating droplet**        | Creates a droplet with the selected size, Ubuntu 24.04, and the `portlama:managed` tag |
 | **Waiting for boot**        | Polls DigitalOcean until the droplet has a public IP and is ready (up to 5 minutes) |
+| **Setting up DNS records**  | Creates A and wildcard A records in DigitalOcean DNS (only if a domain was selected in the Domain step) |
 | **Connecting via SSH**      | Establishes an SSH connection using the temporary key                               |
 | **Installing Portlama**     | Runs `npx @lamalibre/create-portlama` on the droplet (up to 10 minutes)             |
 | **Retrieving credentials**  | Downloads the admin certificate (`.p12` file) from the droplet                      |
@@ -277,6 +318,33 @@ The app checks that the panel is reachable before adding it. The server is added
 
 ---
 
+## DNS Management (Optional)
+
+If your DigitalOcean API token includes the `domain` resource group, the wizard can automatically manage DNS records during provisioning. This eliminates the need to manually create A records and configure DNS after server creation.
+
+### What the wizard creates
+
+During provisioning, after the droplet boots and receives a public IP, the wizard creates two A records:
+
+| Record type | Name | Value | TTL |
+|-------------|------|-------|-----|
+| A | `subdomain` (or `@` for apex) | Droplet IP | 300s |
+| A | `*.subdomain` (or `*` for apex) | Droplet IP | 300s |
+
+The wildcard record enables tunnel subdomains (e.g., `myapp.panel.example.com`) to resolve automatically.
+
+### What the wizard does NOT do
+
+- **Does not delete DNS records** when you destroy the server. You must clean them up manually in the DigitalOcean DNS console.
+- **Does not overwrite existing records** that point to a different IP. If a conflict is detected, the wizard shows a warning and continues without modifying the existing record.
+- **Does not configure nameservers** at your domain registrar. If you create a new domain in the wizard, you must point your NS records to DigitalOcean yourself.
+
+### Fallback behavior
+
+If your token does not have the `domain` resource group, the wizard behaves exactly as before — you enter a domain manually in the Label step (or skip it and configure DNS through the admin panel after provisioning).
+
+---
+
 ## Destroying a Server
 
 ### Cloud-provisioned servers
@@ -326,7 +394,8 @@ On macOS, the `security-framework` Rust crate accesses the Keychain directly (no
 | **Remove managed server** | Click "Remove" on server card → confirm                        |
 | **Server registry file**  | `~/.portlama/servers.json`                                     |
 | **Token storage**         | OS credential store (`com.portlama.cloud`)                     |
-| **Required DO scopes**    | `droplet:create/read/delete`, `ssh_key:create/read/delete`, `tag:create/read`, `regions:read` |
+| **Required DO scopes**    | `account:read`, `droplet:create/read/delete`, `ssh_key:create/read/delete`, `tag:create/read`, `regions:read` |
+| **Optional DO scopes**    | `domain:read/create/update/delete` (enables automatic DNS record creation)                    |
 
 ### Related Documentation
 

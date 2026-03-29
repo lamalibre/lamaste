@@ -23,6 +23,14 @@ pub struct TokenValidation {
     pub email: String,
     pub missing_scopes: Vec<String>,
     pub excess_scopes: Vec<String>,
+    pub has_dns_access: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DODomain {
+    pub name: String,
+    pub ttl: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -177,6 +185,53 @@ pub fn validate_label(label: &str) -> Result<(), String> {
 fn validate_provider(provider: &str) -> Result<(), String> {
     if !ALLOWED_PROVIDERS.contains(&provider) {
         return Err(format!("Unsupported provider: {}", provider));
+    }
+    Ok(())
+}
+
+/// Validate a fully-qualified domain name (mirrors FQDN_REGEX in provisioner.ts).
+fn validate_domain(domain: &str) -> Result<(), String> {
+    fn is_valid_label(label: &str) -> bool {
+        let len = label.len();
+        len >= 1
+            && len <= 63
+            && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && label.as_bytes()[0].is_ascii_alphanumeric()
+            && label.as_bytes()[len - 1].is_ascii_alphanumeric()
+    }
+    let parts: Vec<&str> = domain.split('.').collect();
+    if parts.len() < 2 {
+        return Err(format!("Invalid domain name: {}", domain));
+    }
+    let tld = parts.last().unwrap();
+    if tld.len() < 2 || !tld.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return Err(format!("Invalid domain name: {}", domain));
+    }
+    for part in &parts[..parts.len() - 1] {
+        if !is_valid_label(part) {
+            return Err(format!("Invalid domain name: {}", domain));
+        }
+    }
+    Ok(())
+}
+
+/// Validate a subdomain label (mirrors SUBDOMAIN_REGEX in provisioner.ts).
+fn validate_subdomain(subdomain: &str) -> Result<(), String> {
+    let len = subdomain.len();
+    if len == 0 || len > 63 {
+        return Err(format!("Invalid subdomain: {}", subdomain));
+    }
+    if !subdomain
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(format!("Invalid subdomain: {}", subdomain));
+    }
+    let bytes = subdomain.as_bytes();
+    if !(bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
+        || !(bytes[len - 1].is_ascii_lowercase() || bytes[len - 1].is_ascii_digit())
+    {
+        return Err(format!("Invalid subdomain: {}", subdomain));
     }
     Ok(())
 }
@@ -397,6 +452,48 @@ pub async fn get_cloud_sizes(
 }
 
 // ---------------------------------------------------------------------------
+// DNS domain management
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_cloud_domains(provider: String) -> Result<Vec<DODomain>, String> {
+    validate_provider(&provider)?;
+    let token = tokio::task::spawn_blocking(move || credentials::get_credential(&provider))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))??
+        .ok_or("No cloud token stored. Please add your API token first.")?;
+
+    tokio::task::spawn_blocking(move || {
+        let output = run_cloud_cmd(&["domains"], &token)?;
+        serde_json::from_str::<Vec<DODomain>>(output.trim())
+            .map_err(|e| format!("Failed to parse domains: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn create_cloud_domain(
+    provider: String,
+    name: String,
+) -> Result<DODomain, String> {
+    validate_provider(&provider)?;
+    validate_domain(&name)?;
+    let token = tokio::task::spawn_blocking(move || credentials::get_credential(&provider))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))??
+        .ok_or("No cloud token stored. Please add your API token first.")?;
+
+    tokio::task::spawn_blocking(move || {
+        let output = run_cloud_cmd(&["create-domain", "--name", &name], &token)?;
+        serde_json::from_str::<DODomain>(output.trim())
+            .map_err(|e| format!("Failed to parse domain: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+// ---------------------------------------------------------------------------
 // Provisioning
 // ---------------------------------------------------------------------------
 
@@ -409,9 +506,20 @@ pub async fn provision_server(
     size: Option<String>,
     domain: Option<String>,
     email: Option<String>,
+    do_domain: Option<String>,
+    do_subdomain: Option<String>,
 ) -> Result<ServerEntry, String> {
     validate_provider(&provider)?;
     validate_label(&label)?;
+    if let Some(ref d) = do_domain {
+        validate_domain(d)?;
+    }
+    if let Some(ref s) = do_subdomain {
+        validate_subdomain(s)?;
+    }
+    if let Some(ref d) = domain {
+        validate_domain(d)?;
+    }
     let provider_clone = provider.clone();
     let token = tokio::task::spawn_blocking(move || credentials::get_credential(&provider_clone))
         .await
@@ -441,6 +549,14 @@ pub async fn provision_server(
         if let Some(e) = email {
             args.push("--email".to_string());
             args.push(e);
+        }
+        if let Some(dd) = do_domain {
+            args.push("--do-domain".to_string());
+            args.push(dd);
+        }
+        if let Some(ds) = do_subdomain {
+            args.push("--do-subdomain".to_string());
+            args.push(ds);
         }
 
         let mut child = std::process::Command::new("node")

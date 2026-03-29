@@ -11,11 +11,20 @@ import type {
   Server,
   CreateServerOptions,
   SSHKey,
+  DODomain,
+  DODomainRecord,
+  DnsSetupResult,
 } from '../types.js';
 import { CloudError } from '../errors.js';
 import { doGet, doPost, doDelete, assertObject, assertField } from './api.js';
 import { validateDOToken } from './scopes.js';
 import { probeRegionLatencies } from './latency.js';
+import {
+  listDomains as listDomainsApi,
+  createDomain as createDomainApi,
+  listDomainRecords as listDomainRecordsApi,
+  setupDnsRecords as setupDnsRecordsApi,
+} from './dns.js';
 
 /** The tag applied to all Portlama-managed droplets. */
 const MANAGED_TAG = 'portlama:managed';
@@ -240,5 +249,27 @@ export class DigitalOceanProvider implements CloudProvider {
       `/v2/account/keys/${encodeURIComponent(id)}`,
       { token: this.token },
     );
+  }
+
+  // --- DNS management (opt-in, requires domain:* scopes) ---
+
+  async listDomains(): Promise<DODomain[]> {
+    return listDomainsApi(this.token);
+  }
+
+  async createDomain(name: string): Promise<DODomain> {
+    return createDomainApi(this.token, name);
+  }
+
+  async listDomainRecords(domain: string): Promise<DODomainRecord[]> {
+    return listDomainRecordsApi(this.token, domain);
+  }
+
+  async setupDnsRecords(
+    domain: string,
+    subdomain: string | undefined,
+    ip: string,
+  ): Promise<DnsSetupResult> {
+    return setupDnsRecordsApi(this.token, domain, subdomain, ip);
   }
 }

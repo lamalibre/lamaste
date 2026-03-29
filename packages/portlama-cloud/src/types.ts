@@ -25,6 +25,32 @@ export interface TokenValidation {
   readonly email: string;
   readonly missingScopes: readonly string[];
   readonly excessScopes: readonly string[];
+  readonly hasDnsAccess: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// DNS (DigitalOcean managed domains)
+// ---------------------------------------------------------------------------
+
+export interface DODomain {
+  readonly name: string;
+  readonly ttl: number;
+}
+
+export interface DODomainRecord {
+  readonly id: number;
+  readonly type: string;
+  readonly name: string;
+  readonly data: string;
+  readonly ttl: number;
+}
+
+export interface DnsSetupResult {
+  readonly domain: string;
+  readonly aRecordCreated: boolean;
+  readonly wildcardCreated: boolean;
+  readonly conflictWarning?: string | undefined;
+  readonly createdRecordIds: readonly number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +130,7 @@ export type ProvisionStep =
   | 'upload_ssh_key'
   | 'create_droplet'
   | 'wait_droplet'
+  | 'setup_dns'
   | 'wait_ssh'
   | 'install_portlama'
   | 'retrieve_credentials'
@@ -147,4 +174,6 @@ export interface ProvisionOptions {
   readonly domain?: string | undefined;
   readonly email?: string | undefined;
   readonly platform: 'darwin' | 'linux';
+  readonly doDomain?: string | undefined;
+  readonly doSubdomain?: string | undefined;
 }

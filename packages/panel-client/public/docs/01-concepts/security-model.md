@@ -153,7 +153,7 @@ Portlama uses bcrypt instead. Bcrypt uses ~4KB per hash — over 23,000 times le
 
 When using the desktop app to create servers on DigitalOcean, the app enforces several safeguards:
 
-- **Custom-scoped tokens** — the app requires 4 DigitalOcean resource groups (account, droplet, regions, ssh_key) and rejects tokens with dangerous permissions (`database:delete`, `kubernetes:create`, `account:write`, etc.)
+- **Custom-scoped tokens** — the app requires 5 DigitalOcean resource groups (account, droplet, regions, ssh_key, tag) and rejects tokens with dangerous permissions (`database:delete`, `kubernetes:create`, `account:write`, etc.). An optional 6th group (`domain`) enables automatic DNS record creation during provisioning
 - **Credential storage** — API tokens and P12 passwords are stored in the OS credential store (macOS Keychain / Linux libsecret), never in plaintext files or CLI arguments
 - **`portlama:managed` tag** — the app tags droplets it creates and refuses to destroy untagged droplets
 - **Ephemeral SSH keys** — temporary ed25519 keys are generated for installation, then securely deleted afterward

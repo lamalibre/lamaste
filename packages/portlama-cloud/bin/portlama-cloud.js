@@ -23,10 +23,13 @@ function usage() {
   console.error(`Usage: portlama-cloud <command> [options]
 
 Commands:
-  provision  --provider <name> --region <slug> --label <name> [--size <slug>] [--domain <fqdn> --email <addr>]
+  provision  --provider <name> --region <slug> --label <name> [--size <slug>] [--domain <fqdn> --email <addr>] [--do-domain <name> --do-subdomain <prefix>]
   validate   Validate the cloud API token
   regions    List available regions with latency probes
   sizes      --region <slug>  List available droplet sizes for a region
+  domains    List DigitalOcean-managed domains (requires domain:read scope)
+  create-domain --name <fqdn>  Register a new domain in DigitalOcean DNS
+  domain-records --domain <name>  List DNS records for a domain
   destroy    --provider <name> --id <dropletId>
   servers    List registered servers
 
@@ -67,6 +70,8 @@ async function main() {
       const size = getArg(args, 'size') || undefined;
       const domain = getArg(args, 'domain') || undefined;
       const email = getArg(args, 'email') || undefined;
+      const doDomain = getArg(args, 'do-domain') || undefined;
+      const doSubdomain = getArg(args, 'do-subdomain') || undefined;
       const token = getToken();
 
       if (!region || !label) {
@@ -75,7 +80,7 @@ async function main() {
       }
 
       const platform = os.platform() === 'darwin' ? 'darwin' : 'linux';
-      await provision({ provider, token, region, label, size, domain, email, platform });
+      await provision({ provider, token, region, label, size, domain, email, platform, doDomain, doSubdomain });
       break;
     }
 
@@ -134,6 +139,40 @@ async function main() {
       // Redact sensitive fields before writing to stdout
       const redacted = servers.map(({ p12Password, ...rest }) => rest);
       process.stdout.write(JSON.stringify(redacted) + '\n');
+      break;
+    }
+
+    case 'domains': {
+      const token = getToken();
+      const provider = new DigitalOceanProvider(token);
+      const domains = await provider.listDomains();
+      process.stdout.write(JSON.stringify(domains) + '\n');
+      break;
+    }
+
+    case 'create-domain': {
+      const token = getToken();
+      const name = getArg(args, 'name');
+      if (!name) {
+        console.error('Error: --name is required');
+        process.exit(1);
+      }
+      const provider = new DigitalOceanProvider(token);
+      const domain = await provider.createDomain(name);
+      process.stdout.write(JSON.stringify(domain) + '\n');
+      break;
+    }
+
+    case 'domain-records': {
+      const token = getToken();
+      const domainName = getArg(args, 'domain');
+      if (!domainName) {
+        console.error('Error: --domain is required');
+        process.exit(1);
+      }
+      const provider = new DigitalOceanProvider(token);
+      const records = await provider.listDomainRecords(domainName);
+      process.stdout.write(JSON.stringify(records) + '\n');
       break;
     }
 

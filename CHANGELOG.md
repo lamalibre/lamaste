@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add DigitalOcean DNS management to the cloud provisioning wizard — when the API token includes the `domain` resource group, the wizard shows a Domain step where users can select a DO-managed domain (or create a new one) and have A + wildcard A records created automatically after droplet creation
+- Add `domains`, `create-domain`, and `domain-records` CLI commands to `portlama-cloud`
+- Add `get_cloud_domains` and `create_cloud_domain` Tauri commands for desktop app integration
+- Add `setup_dns` provisioning step between `wait_droplet` and `wait_ssh` — creates DNS records and registers them in the cleanup stack for rollback on failure
 - Add standalone local plugin installation via the desktop app — install and manage `@lamalibre/` plugins directly on the local machine without requiring a server or agent
 - Add "Local Plugins" sidebar section visible in both Agents and Servers modes in the desktop app
 - Add local plugin host Fastify server on `127.0.0.1:9293` — mounts enabled plugin server routes and serves panel bundles, managed as a launchd/systemd user-level service
@@ -17,8 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `modes` field to `portlama-plugin.json` manifest schema — plugins declare support for `server`, `agent`, and/or `local` execution modes (defaults to `['server', 'agent']`)
 - Add bearer token authentication and Host header validation (DNS rebinding protection) to the local plugin host
 - Add `local_plugins.rs` Tauri module with 11 commands for local plugin management from the desktop app
-
-**Affected packages:** panel-server 0.1.11 → 0.1.12, portlama-agent 1.0.13 → 1.0.14, portlama-desktop 0.1.10 → 0.1.11, create-portlama 1.0.37 → 1.0.38
 
 - Add agent web panel expose feature — agents can serve their management panel at `agent-<label>.<domain>` via a tunnelled mTLS-protected subdomain
 - Add `panel:expose` capability for agent certificates — admin grants per-agent permission to expose the panel
@@ -40,8 +42,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add E2E tests for agent JSON setup in both single-VM (20-agent-json-setup.sh) and three-VM (16-agent-json-setup.sh) suites
   - Single-VM suite passed; three-VM suite needs a clean re-run (orchestrator interrupted during cleanup)
 
+- Add `@lamalibre/portlama-agent-panel` shared package — extract agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) into a host-agnostic React library with `AgentClientContext` abstraction
+- Add `createDesktopAgentClient(label)` factory in the desktop app — Tauri-backed implementation of the `AgentClient` interface with multi-agent label binding
+- Add URL scheme validation on all `openExternal` calls — only HTTP(S) URLs accepted
+- Add cross-agent cache isolation — agent query data is cleared when switching between agents
+- Add `--json` flag to `create-portlama` installer for NDJSON progress output, enabling programmatic consumption by desktop and CI tools
+- Add local server installation from the desktop app — install Portlama directly on the local Linux machine via `pkexec` privilege escalation
+- Add "Install on This Machine" option to the Servers page dropdown (disabled on macOS with "Linux only" indicator)
+- Add `LocalInstallWizard` component with overview, progress streaming, and completion steps
+- Add existing installation detection and import — register a pre-existing `/etc/portlama/` installation without reinstalling
+- Add E2E tests for `--json` installer output in both single-VM and three-VM suites
+
+### Changed
+
+- Update desktop app to consume agent pages from `@lamalibre/portlama-agent-panel` instead of local page components
+- Namespace all agent-panel React Query keys with `['agent', ...]` prefix to prevent collisions with admin-panel queries
+
 ### Security
 
+- Fix shell injection vector in provisioner SSH curl command — domain and email values are now base64-encoded before shell interpolation, preventing command injection via crafted domain names
+- Add server-side input validation for domain names, subdomains, and emails in the provisioner — validates format with strict regexes before any use
+- Add pagination hard cap (MAX_PAGES=10) to DNS list functions to prevent unbounded memory consumption
 - Validate tunnel UUID parameters with regex before URL interpolation in agent panel API proxy routes
 - Enforce `panel:expose` capability on PATCH and DELETE operations for panel-type tunnels
 - Prevent cross-agent panel tunnel spoofing — agents can only create panel tunnels matching their own certificate label
@@ -53,49 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validate `panel_url` scheme (`https://` required) in `install_agent` Tauri command to prevent SSRF via `file://` or other protocols
 - Add concurrency guard on `install_agent` — prevents race conditions from concurrent installations for the same label
 - Use `npm install --ignore-scripts` when installing agent CLI from desktop app
-
-**Affected packages:**
-
-- `@lamalibre/portlama-panel-server`: 0.1.10 → 0.1.11
-- `@lamalibre/portlama-panel-client`: 0.1.8 → 0.1.9
-- `@lamalibre/portlama-agent`: 1.0.11 → 1.0.13
-- `@lamalibre/portlama-agent-panel`: 0.1.0 → 0.1.1
-- `@lamalibre/portlama-admin-panel`: 0.1.0 → 0.1.1
-- `@lamalibre/portlama-desktop`: 0.1.8 → 0.1.10
-- `@lamalibre/create-portlama`: 1.0.36 → 1.0.37
-
-## [Unreleased] - 2026-03-29
-
-### Added
-
-- Add `@lamalibre/portlama-agent-panel` shared package — extract agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) into a host-agnostic React library with `AgentClientContext` abstraction
-- Add `createDesktopAgentClient(label)` factory in the desktop app — Tauri-backed implementation of the `AgentClient` interface with multi-agent label binding
-- Add URL scheme validation on all `openExternal` calls — only HTTP(S) URLs accepted
-- Add cross-agent cache isolation — agent query data is cleared when switching between agents
-
-### Changed
-
-- Update desktop app to consume agent pages from `@lamalibre/portlama-agent-panel` instead of local page components
-- Namespace all agent-panel React Query keys with `['agent', ...]` prefix to prevent collisions with admin-panel queries
-
-**Affected packages:**
-
-- `@lamalibre/portlama-agent-panel`: 0.1.0 (new)
-- `@lamalibre/portlama-desktop`: 0.1.8
-
-## [Unreleased] - 2026-03-29
-
-### Added
-
-- Add `--json` flag to `create-portlama` installer for NDJSON progress output, enabling programmatic consumption by desktop and CI tools
-- Add local server installation from the desktop app — install Portlama directly on the local Linux machine via `pkexec` privilege escalation
-- Add "Install on This Machine" option to the Servers page dropdown (disabled on macOS with "Linux only" indicator)
-- Add `LocalInstallWizard` component with overview, progress streaming, and completion steps
-- Add existing installation detection and import — register a pre-existing `/etc/portlama/` installation without reinstalling
-- Add E2E tests for `--json` installer output in both single-VM and three-VM suites
-
-### Security
-
 - Validate NDJSON-supplied file paths against `/etc/portlama/pki/` prefix with symlink resolution to prevent path traversal
 - Use `libc::getuid()` for privilege operations instead of the `$USER` environment variable
 - Gate `CARGO_MANIFEST_DIR` dev paths to debug builds only to avoid leaking developer filesystem layout in release binaries
@@ -104,8 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Affected packages:**
 
-- `@lamalibre/create-portlama`: 1.0.35 → 1.0.36
-- `@lamalibre/portlama-desktop`: 0.1.7 → 0.1.8 (package.json), 0.1.6 → 0.1.7 (Cargo.toml)
+- `@lamalibre/portlama-cloud`: 0.1.1 → 0.1.2
+- `@lamalibre/portlama-panel-server`: 0.1.10 → 0.1.12
+- `@lamalibre/portlama-panel-client`: 0.1.8 → 0.1.9
+- `@lamalibre/portlama-agent`: 1.0.11 → 1.0.14
+- `@lamalibre/portlama-agent-panel`: 0.1.0 → 0.1.1
+- `@lamalibre/portlama-admin-panel`: 0.1.0 → 0.1.1
+- `@lamalibre/portlama-desktop`: 0.1.6 → 0.1.12
+- `@lamalibre/create-portlama`: 1.0.35 → 1.0.38
 
 ## [Unreleased] - 2026-03-28
 

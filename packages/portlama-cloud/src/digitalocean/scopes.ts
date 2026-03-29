@@ -68,6 +68,16 @@ const SAFE_EXTRA_SCOPES: readonly string[] = [
   'image:read',
   'snapshot:read',
   'vpc:read',
+  // DNS management (opt-in — enables automatic DNS record creation).
+  // DO's custom scope UI grants all 4 domain sub-scopes as a group;
+  // domain:delete cannot be individually deselected. Accepted risk:
+  // Portlama only uses domain:read and domain:create, but we must
+  // allow domain:delete and domain:update to avoid rejecting all
+  // tokens that have any DNS access.
+  'domain:read',
+  'domain:create',
+  'domain:delete',
+  'domain:update',
 ];
 
 /**
@@ -78,8 +88,6 @@ const DANGEROUS_SCOPE_PREFIXES: readonly string[] = [
   'account:write',
   'database:create',
   'database:delete',
-  'domain:create',
-  'domain:delete',
   'firewall:create',
   'firewall:delete',
   'image:create',
@@ -161,16 +169,13 @@ export async function validateDOToken(token: string): Promise<TokenValidation> {
       (required) => !tokenScopes.includes(required),
     );
 
-    const allowedScopes = new Set([
-      ...REQUIRED_SCOPES,
-      ...SAFE_EXTRA_SCOPES,
-    ]);
     const excessScopes = tokenScopes.filter((scope) =>
       DANGEROUS_SCOPE_PREFIXES.includes(scope),
     );
 
+    const hasDnsAccess = tokenScopes.includes('domain:read');
     const valid = missingScopes.length === 0 && excessScopes.length === 0;
-    return { valid, email, missingScopes, excessScopes };
+    return { valid, email, missingScopes, excessScopes, hasDnsAccess };
   }
 
   // --- Fallback: probe read endpoints ---
@@ -179,9 +184,10 @@ export async function validateDOToken(token: string): Promise<TokenValidation> {
     probeEndpoint('/v2/account/keys?per_page=1', token),
     probeEndpoint('/v2/regions?per_page=1', token),
     probeEndpoint('/v2/tags?per_page=1', token),
+    probeEndpoint('/v2/domains?per_page=1', token),
   ]);
 
-  const [hasDroplets, hasSSHKeys, hasRegions, hasTags] = probeResults;
+  const [hasDroplets, hasSSHKeys, hasRegions, hasTags, hasDnsAccess] = probeResults;
   const missingScopes: string[] = [];
 
   if (!hasDroplets) {
@@ -200,7 +206,7 @@ export async function validateDOToken(token: string): Promise<TokenValidation> {
   // We cannot probe create/delete non-destructively, so if reads pass
   // we trust the user selected the full resource group.
   const valid = missingScopes.length === 0;
-  return { valid, email, missingScopes, excessScopes: [] };
+  return { valid, email, missingScopes, excessScopes: [], hasDnsAccess };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -20,6 +20,8 @@ import {
   AlertTriangle,
   Info,
   BookOpen,
+  Globe,
+  Plus,
 } from 'lucide-react';
 
 const DOCS_BASE = 'https://lamalibre.github.io/portlama';
@@ -401,10 +403,166 @@ function SizeStep({ sizes, selectedSize, setSelectedSize, loading, error }) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Server Label
+// Step 4: Domain (conditional — only when hasDnsAccess is true)
 // ---------------------------------------------------------------------------
 
-function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region, sizeData }) {
+function DomainStep({
+  domains,
+  loading,
+  error,
+  selectedDomain,
+  setSelectedDomain,
+  subdomain,
+  setSubdomain,
+  onCreateDomain,
+  creating,
+  createError,
+  newDomainName,
+  setNewDomainName,
+  showCreate,
+  setShowCreate,
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 size={20} className="animate-spin text-zinc-400" />
+        <span className="text-sm text-zinc-400 ml-2">Loading domains...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded border border-red-500/30 bg-red-500/5 p-3">
+        <p className="text-xs text-red-400">Failed to load domains: {error.toString()}</p>
+      </div>
+    );
+  }
+
+  const fqdnPreview = selectedDomain
+    ? subdomain ? `${subdomain}.${selectedDomain}` : selectedDomain
+    : null;
+  const wildcardPreview = fqdnPreview
+    ? `*.${fqdnPreview}`
+    : null;
+
+  const domainNameValid = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(newDomainName);
+  const subdomainValid = !subdomain || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-zinc-400">
+        Select a DigitalOcean-managed domain. DNS records will be created automatically.
+      </p>
+
+      {domains?.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+          {domains.map((d) => (
+            <button
+              key={d.name}
+              onClick={() => setSelectedDomain(d.name)}
+              className={`text-left rounded border px-3 py-2 text-xs ${
+                selectedDomain === d.name
+                  ? 'border-cyan-400 bg-cyan-400/10 text-cyan-400'
+                  : 'border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700'
+              }`}
+            >
+              <span className="font-medium font-mono">{d.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!showCreate ? (
+        <button
+          onClick={() => setShowCreate(true)}
+          className="text-xs text-cyan-400 hover:underline flex items-center gap-1"
+        >
+          <Plus size={10} />
+          Add a domain
+        </button>
+      ) : (
+        <div className="rounded border border-zinc-800 bg-zinc-950 p-3 space-y-2">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newDomainName}
+              onChange={(e) => setNewDomainName(e.target.value.toLowerCase())}
+              placeholder="example.com"
+              className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
+            />
+            <button
+              onClick={onCreateDomain}
+              disabled={!domainNameValid || creating}
+              className="text-xs px-3 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-50 flex items-center gap-1"
+            >
+              {creating ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
+              Create
+            </button>
+          </div>
+          {newDomainName && !domainNameValid && (
+            <p className="text-xs text-red-400">Enter a valid domain name.</p>
+          )}
+          {createError && (
+            <p className="text-xs text-red-400">Failed to create domain: {createError.toString()}</p>
+          )}
+          <div className="rounded bg-amber-500/5 border border-amber-500/20 p-2">
+            <div className="flex items-start gap-1.5">
+              <AlertTriangle size={10} className="text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-[10px] text-amber-400 leading-relaxed">
+                You must point your domain&apos;s nameservers to DigitalOcean
+                (<code className="text-amber-300">ns1.digitalocean.com</code>,{' '}
+                <code className="text-amber-300">ns2.digitalocean.com</code>,{' '}
+                <code className="text-amber-300">ns3.digitalocean.com</code>)
+                for DNS records to resolve.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedDomain && (
+        <div>
+          <label className="text-xs text-zinc-400 block mb-1">Subdomain prefix <span className="text-zinc-600">(optional)</span></label>
+          <input
+            type="text"
+            value={subdomain}
+            onChange={(e) => setSubdomain(e.target.value.toLowerCase())}
+            placeholder="panel"
+            className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
+          />
+          {subdomain && !subdomainValid && (
+            <p className="text-xs text-red-400 mt-1">Lowercase letters, numbers, and hyphens only.</p>
+          )}
+        </div>
+      )}
+
+      {fqdnPreview && (
+        <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs space-y-1">
+          <p className="text-zinc-300 font-medium">DNS records to create</p>
+          <p className="text-zinc-400 font-mono">A &rarr; {fqdnPreview}</p>
+          <p className="text-zinc-400 font-mono">A &rarr; {wildcardPreview}</p>
+        </div>
+      )}
+
+      <div className="rounded bg-cyan-500/5 border border-cyan-500/20 p-2">
+        <div className="flex items-start gap-1.5">
+          <Info size={10} className="text-cyan-400 mt-0.5 shrink-0" />
+          <p className="text-[10px] text-zinc-400 leading-relaxed">
+            DNS records are <strong className="text-zinc-300">not auto-removed</strong> when the server is destroyed.
+            You must remove them manually in the DigitalOcean DNS console.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 4/5: Server Label
+// ---------------------------------------------------------------------------
+
+function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region, sizeData, hasDnsAccess, selectedDoDomain, doSubdomain }) {
   const labelValid = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]?$/.test(label);
   const domainValid = !domain || /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
   const emailValid = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -433,37 +591,63 @@ function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region
 
       <div className="border-t border-zinc-800 pt-3">
         <p className="text-xs text-zinc-300 font-medium mb-2">Onboarding</p>
-        <p className="text-[10px] text-zinc-500 mb-2">
-          Optional — you can configure these later through the admin panel.
-        </p>
-        <div className="space-y-2">
-          <div>
-            <label className="text-xs text-zinc-400 block mb-1">Domain</label>
-            <input
-              type="text"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value.toLowerCase())}
-              placeholder="example.com"
-              className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
-            />
-            {domain && !domainValid && (
-              <p className="text-xs text-red-400 mt-1">Enter a valid domain name.</p>
-            )}
+        {hasDnsAccess && selectedDoDomain ? (
+          <div className="space-y-2">
+            <div className="rounded bg-zinc-950 border border-zinc-800 p-2 text-xs">
+              <p className="text-zinc-400">
+                Domain: <span className="text-cyan-400 font-mono">{doSubdomain ? `${doSubdomain}.${selectedDoDomain}` : selectedDoDomain}</span>
+              </p>
+              <p className="text-zinc-500 text-[10px] mt-0.5">DNS records will be created automatically during provisioning.</p>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span></label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
+              />
+              {email && !emailValid && (
+                <p className="text-xs text-red-400 mt-1">Enter a valid email address.</p>
+              )}
+            </div>
           </div>
-          <div>
-            <label className="text-xs text-zinc-400 block mb-1">Email <span className="text-zinc-600">(for Let's Encrypt)</span></label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
-            />
-            {email && !emailValid && (
-              <p className="text-xs text-red-400 mt-1">Enter a valid email address.</p>
-            )}
-          </div>
-        </div>
+        ) : (
+          <>
+            <p className="text-[10px] text-zinc-500 mb-2">
+              Optional — you can configure these later through the admin panel.
+            </p>
+            <div className="space-y-2">
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Domain</label>
+                <input
+                  type="text"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value.toLowerCase())}
+                  placeholder="example.com"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                {domain && !domainValid && (
+                  <p className="text-xs text-red-400 mt-1">Enter a valid domain name.</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span></label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400"
+                />
+                {email && !emailValid && (
+                  <p className="text-xs text-red-400 mt-1">Enter a valid email address.</p>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs text-zinc-400">
@@ -480,19 +664,27 @@ function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region
 // Step 5: Provisioning Progress
 // ---------------------------------------------------------------------------
 
-const PROVISION_STEPS = [
-  { key: 'validate_token', label: 'Validating token', cmd: 'validate-token --provider digitalocean' },
-  { key: 'generate_ssh_key', label: 'Generating SSH key', cmd: 'ssh-keygen -t ed25519' },
-  { key: 'upload_ssh_key', label: 'Uploading SSH key', cmd: 'upload-key --provider digitalocean' },
-  { key: 'create_droplet', label: 'Creating droplet', cmd: 'create-droplet --image ubuntu-24-04-x64' },
-  { key: 'wait_droplet', label: 'Waiting for boot', cmd: 'poll-droplet --wait-for active' },
-  { key: 'wait_ssh', label: 'Connecting via SSH', cmd: 'ssh root@host echo ok' },
-  { key: 'install_portlama', label: 'Installing Portlama', cmd: 'npx @lamalibre/create-portlama --yes' },
-  { key: 'retrieve_credentials', label: 'Retrieving credentials', cmd: 'scp root@host:/etc/portlama/pki/client.p12' },
-  { key: 'enroll_admin', label: 'Enrolling admin certificate', cmd: 'security import -x admin.p12' },
-  { key: 'save_registry', label: 'Saving configuration', cmd: 'write ~/.portlama/servers.json' },
-  { key: 'cleanup', label: 'Cleaning up', cmd: 'delete-key --provider digitalocean' },
-];
+function buildProvisionSteps(hasDns) {
+  const steps = [
+    { key: 'validate_token', label: 'Validating token', cmd: 'validate-token --provider digitalocean' },
+    { key: 'generate_ssh_key', label: 'Generating SSH key', cmd: 'ssh-keygen -t ed25519' },
+    { key: 'upload_ssh_key', label: 'Uploading SSH key', cmd: 'upload-key --provider digitalocean' },
+    { key: 'create_droplet', label: 'Creating droplet', cmd: 'create-droplet --image ubuntu-24-04-x64' },
+    { key: 'wait_droplet', label: 'Waiting for boot', cmd: 'poll-droplet --wait-for active' },
+  ];
+  if (hasDns) {
+    steps.push({ key: 'setup_dns', label: 'Setting up DNS records', cmd: 'create-a-record --type A,*.A' });
+  }
+  steps.push(
+    { key: 'wait_ssh', label: 'Connecting via SSH', cmd: 'ssh root@host echo ok' },
+    { key: 'install_portlama', label: 'Installing Portlama', cmd: 'npx @lamalibre/create-portlama --yes' },
+    { key: 'retrieve_credentials', label: 'Retrieving credentials', cmd: 'scp root@host:/etc/portlama/pki/client.p12' },
+    { key: 'enroll_admin', label: 'Enrolling admin certificate', cmd: 'security import -x admin.p12' },
+    { key: 'save_registry', label: 'Saving configuration', cmd: 'write ~/.portlama/servers.json' },
+    { key: 'cleanup', label: 'Cleaning up', cmd: 'delete-key --provider digitalocean' },
+  );
+  return steps;
+}
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -505,13 +697,13 @@ function BrailleSpinner() {
   return <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>;
 }
 
-function ProvisionStep({ provisioning, provisionError, provisionSuccess }) {
-  const currentIdx = PROVISION_STEPS.findIndex(s => s.key === provisioning);
-  const currentStep = currentIdx >= 0 ? PROVISION_STEPS[currentIdx] : null;
+function ProvisionStep({ provisioning, provisionError, provisionSuccess, steps }) {
+  const currentIdx = steps.findIndex(s => s.key === provisioning);
+  const currentStep = currentIdx >= 0 ? steps[currentIdx] : null;
 
   return (
     <div className="space-y-2">
-      {PROVISION_STEPS.map((step, stepIdx) => {
+      {steps.map((step, stepIdx) => {
         const isPast = provisionSuccess || (currentIdx >= 0 && currentIdx > stepIdx);
         const isCurrent = provisioning === step.key;
 
@@ -594,6 +786,14 @@ export default function CreateServerWizard({ onClose }) {
   const [regionsEnabled, setRegionsEnabled] = useState(false);
   const [sizesEnabled, setSizesEnabled] = useState(false);
 
+  // DNS management state (opt-in when token has domain:* scopes)
+  const [hasDnsAccess, setHasDnsAccess] = useState(false);
+  const [domainsEnabled, setDomainsEnabled] = useState(false);
+  const [selectedDoDomain, setSelectedDoDomain] = useState('');
+  const [doSubdomain, setDoSubdomain] = useState('');
+  const [newDomainName, setNewDomainName] = useState('');
+  const [showCreateDomain, setShowCreateDomain] = useState(false);
+
   // Check for saved token on mount
   const { data: savedToken } = useQuery({
     queryKey: ['cloud-token-exists', 'digitalocean'],
@@ -618,15 +818,25 @@ export default function CreateServerWizard({ onClose }) {
         token: tokenToUse,
       });
     },
-    onSuccess: (result) => setValidation(result),
+    onSuccess: (result) => {
+      setValidation(result);
+      setHasDnsAccess(result.hasDnsAccess ?? false);
+    },
     onError: (err) =>
-      setValidation({ valid: false, email: '', missingScopes: [], excessScopes: [], error: err.toString() }),
+      setValidation({ valid: false, email: '', missingScopes: [], excessScopes: [], hasDnsAccess: false, error: err.toString() }),
   });
 
   // Region loading via useQuery, triggered when stepping to region step
   const regionsQuery = useQuery({
     queryKey: ['cloud-regions', 'digitalocean'],
-    queryFn: () => invoke('get_cloud_regions', { provider: 'digitalocean' }),
+    queryFn: async () => {
+      const data = await invoke('get_cloud_regions', { provider: 'digitalocean' });
+      // Auto-select closest region (first in list, sorted by latency)
+      if (Array.isArray(data) && data.length > 0 && !selectedRegion) {
+        setSelectedRegion(data[0].slug);
+      }
+      return data;
+    },
     enabled: regionsEnabled,
     staleTime: 5 * 60 * 1000,
     retry: 1,
@@ -649,16 +859,36 @@ export default function CreateServerWizard({ onClose }) {
   const sizesLoading = sizesQuery.isLoading && sizesEnabled;
   const sizesError = sizesQuery.error;
 
+  // Domain loading (opt-in — only when token has DNS scopes)
+  const domainsQuery = useQuery({
+    queryKey: ['cloud-domains', 'digitalocean'],
+    queryFn: () => invoke('get_cloud_domains', { provider: 'digitalocean' }),
+    enabled: domainsEnabled && hasDnsAccess,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+
+  const doDomains = domainsQuery.data ?? null;
+  const domainsLoading = domainsQuery.isLoading && domainsEnabled;
+  const domainsError = domainsQuery.error;
+
+  const createDomainMutation = useMutation({
+    mutationFn: async () => {
+      return invoke('create_cloud_domain', { provider: 'digitalocean', name: newDomainName });
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(['cloud-domains', 'digitalocean'], (old) =>
+        [...(old || []), result],
+      );
+      setSelectedDoDomain(result.name);
+      setNewDomainName('');
+      setShowCreateDomain(false);
+    },
+  });
+
   // Find the selected size's data for the summary
   const selectedSizeData = sizes?.find((s) => s.slug === selectedSize) ?? null;
 
-  // Auto-select closest region when data first loads
-  const prevRegionsRef = useState({ applied: false })[0];
-  if (regions?.length > 0 && !selectedRegion && !prevRegionsRef.applied) {
-    prevRegionsRef.applied = true;
-    // Safe: guarded by applied flag, runs at most once
-    setSelectedRegion(regions[0].slug);
-  }
 
   // Listen for provision progress events from the Rust backend
   useEffect(() => {
@@ -684,6 +914,8 @@ export default function CreateServerWizard({ onClose }) {
         size: selectedSize,
         domain: domain || null,
         email: email || null,
+        doDomain: selectedDoDomain || null,
+        doSubdomain: doSubdomain || null,
       });
       setProvisionSuccess(true);
       setProvisioning('cleanup');
@@ -693,22 +925,50 @@ export default function CreateServerWizard({ onClose }) {
     }
   };
 
+  // Build the step sequence. The Domain step is conditionally included.
+  // Each entry: { id, icon, label, key }
+  const wizardSteps = useMemo(() => {
+    const steps = [
+      { id: 'overview', icon: Info, label: 'Overview' },
+      { id: 'token', icon: Key, label: 'Token' },
+      { id: 'region', icon: MapPin, label: 'Region' },
+      { id: 'size', icon: HardDrive, label: 'Size' },
+    ];
+    if (hasDnsAccess) {
+      steps.push({ id: 'domain', icon: Globe, label: 'Domain' });
+    }
+    steps.push({ id: 'label', icon: Tag, label: 'Label' });
+    steps.push({ id: 'provision', icon: Rocket, label: 'Create' });
+    return steps;
+  }, [hasDnsAccess]);
+  const currentStepId = wizardSteps[step]?.id;
+  const provisionStepIndex = wizardSteps.findIndex((s) => s.id === 'provision');
+  const provisionSteps = useMemo(() => buildProvisionSteps(!!selectedDoDomain), [selectedDoDomain]);
+
   const canNext = () => {
-    switch (step) {
-      case 0:
-        return true; // Overview — always allowed to proceed
-      case 1:
+    switch (currentStepId) {
+      case 'overview':
+        return true;
+      case 'token':
         return validation?.valid === true;
-      case 2:
+      case 'region':
         return !!selectedRegion;
-      case 3:
+      case 'size':
         return !!selectedSize;
-      case 4: {
+      case 'domain': {
+        const subOk = !doSubdomain || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(doSubdomain);
+        return !!selectedDoDomain && subOk;
+      }
+      case 'label': {
         const l = label || `portlama-${selectedRegion}`;
         const labelOk = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]?$/.test(l);
+        if (hasDnsAccess && selectedDoDomain) {
+          // When using DO DNS, email is required for Let's Encrypt
+          const emailOk = !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+          return labelOk && emailOk;
+        }
         const domainOk = !domain || /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
         const emailOk = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-        // If domain is set, email is required
         const pairOk = !domain || !!email;
         return labelOk && domainOk && emailOk && pairOk;
       }
@@ -718,28 +978,30 @@ export default function CreateServerWizard({ onClose }) {
   };
 
   const handleNext = () => {
-    if (step === 0 && dismissChecked) {
+    if (currentStepId === 'overview' && dismissChecked) {
       localStorage.setItem(DISCLAIMER_KEY, 'true');
     }
-    if (step === 4) {
-      setStep(5);
+    if (currentStepId === 'label') {
+      setStep(provisionStepIndex);
       startProvision();
       return;
     }
-    if (step === 1) {
+    if (currentStepId === 'token') {
       setRegionsEnabled(true);
     }
-    if (step === 2) {
+    if (currentStepId === 'region') {
       setSizesEnabled(true);
+    }
+    if (currentStepId === 'size' && hasDnsAccess) {
+      setDomainsEnabled(true);
     }
     setStep(step + 1);
   };
 
-  const allStepIcons = [Info, Key, MapPin, HardDrive, Tag, Rocket];
-  const allStepLabels = ['Overview', 'Token', 'Region', 'Size', 'Label', 'Create'];
-
   // When overview is skipped, hide it from the breadcrumb
-  const visibleStepIndices = overviewDismissed ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5];
+  const visibleStepIndices = overviewDismissed
+    ? wizardSteps.map((_, i) => i).filter((i) => i > 0)
+    : wizardSteps.map((_, i) => i);
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -759,10 +1021,10 @@ export default function CreateServerWizard({ onClose }) {
         {/* Step indicators */}
         <div className="flex items-center gap-1 px-5 py-3 border-b border-zinc-800">
           {visibleStepIndices.map((i, visIdx) => {
-            const Icon = allStepIcons[i];
-            const s = allStepLabels[i];
+            const ws = wizardSteps[i];
+            const Icon = ws.icon;
             return (
-              <div key={s} className="flex items-center gap-1">
+              <div key={ws.id} className="flex items-center gap-1">
                 <div
                   className={`flex items-center gap-1 text-xs px-2 py-1 rounded ${
                     i === step
@@ -773,7 +1035,7 @@ export default function CreateServerWizard({ onClose }) {
                   }`}
                 >
                   <Icon size={10} />
-                  {s}
+                  {ws.label}
                 </div>
                 {visIdx < visibleStepIndices.length - 1 && (
                   <ChevronRight size={12} className="text-zinc-700" />
@@ -785,13 +1047,13 @@ export default function CreateServerWizard({ onClose }) {
 
         {/* Content */}
         <div className="px-5 py-4 min-h-[240px] max-h-[420px] overflow-y-auto">
-          {step === 0 && (
+          {currentStepId === 'overview' && (
             <OverviewStep
               dismissed={dismissChecked}
               setDismissed={setDismissChecked}
             />
           )}
-          {step === 1 && (
+          {currentStepId === 'token' && (
             <ProviderStep
               token={token}
               setToken={setToken}
@@ -801,7 +1063,7 @@ export default function CreateServerWizard({ onClose }) {
               savedToken={savedToken}
             />
           )}
-          {step === 2 && (
+          {currentStepId === 'region' && (
             <RegionStep
               regions={regions}
               selectedRegion={selectedRegion}
@@ -810,7 +1072,7 @@ export default function CreateServerWizard({ onClose }) {
               error={regionsError}
             />
           )}
-          {step === 3 && (
+          {currentStepId === 'size' && (
             <SizeStep
               sizes={sizes}
               selectedSize={selectedSize}
@@ -819,7 +1081,25 @@ export default function CreateServerWizard({ onClose }) {
               error={sizesError}
             />
           )}
-          {step === 4 && (
+          {currentStepId === 'domain' && (
+            <DomainStep
+              domains={doDomains}
+              loading={domainsLoading}
+              error={domainsError}
+              selectedDomain={selectedDoDomain}
+              setSelectedDomain={setSelectedDoDomain}
+              subdomain={doSubdomain}
+              setSubdomain={setDoSubdomain}
+              onCreateDomain={() => createDomainMutation.mutate()}
+              creating={createDomainMutation.isPending}
+              createError={createDomainMutation.error}
+              newDomainName={newDomainName}
+              setNewDomainName={setNewDomainName}
+              showCreate={showCreateDomain}
+              setShowCreate={setShowCreateDomain}
+            />
+          )}
+          {currentStepId === 'label' && (
             <LabelStep
               label={label}
               setLabel={setLabel}
@@ -829,13 +1109,17 @@ export default function CreateServerWizard({ onClose }) {
               setEmail={setEmail}
               region={selectedRegion}
               sizeData={selectedSizeData}
+              hasDnsAccess={hasDnsAccess}
+              selectedDoDomain={selectedDoDomain}
+              doSubdomain={doSubdomain}
             />
           )}
-          {step === 5 && (
+          {currentStepId === 'provision' && (
             <ProvisionStep
               provisioning={provisioning}
               provisionError={provisionError}
               provisionSuccess={provisionSuccess}
+              steps={provisionSteps}
             />
           )}
         </div>
@@ -843,21 +1127,21 @@ export default function CreateServerWizard({ onClose }) {
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-800">
           <button
-            onClick={() => step > initialStep && step < 5 && setStep(step - 1)}
-            disabled={step <= initialStep || step === 5}
+            onClick={() => step > initialStep && currentStepId !== 'provision' && setStep(step - 1)}
+            disabled={step <= initialStep || currentStepId === 'provision'}
             className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-white disabled:opacity-30 flex items-center gap-1"
           >
             <ChevronLeft size={12} />
             Back
           </button>
 
-          {step < 5 ? (
+          {currentStepId !== 'provision' ? (
             <button
               onClick={handleNext}
               disabled={!canNext()}
               className="text-xs px-3 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-30 flex items-center gap-1"
             >
-              {step === 0 ? 'I understand' : step === 4 ? 'Create Server' : 'Next'}
+              {currentStepId === 'overview' ? 'I understand' : currentStepId === 'label' ? 'Create Server' : 'Next'}
               <ChevronRight size={12} />
             </button>
           ) : provisionSuccess ? (
