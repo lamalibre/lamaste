@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { Cloud, Plus, Server, ChevronDown, HardDrive } from 'lucide-react';
+import { Cloud, Plus, Server, ChevronDown, HardDrive, Database } from 'lucide-react';
 import ServerCard from '../components/ServerCard.jsx';
 import CreateServerWizard from '../components/CreateServerWizard.jsx';
+import CreateStorageWizard from '../components/CreateStorageWizard.jsx';
+import StorageServerCard from '../components/StorageServerCard.jsx';
 import AddManagedServer from '../components/AddManagedServer.jsx';
 import LocalInstallWizard from '../components/LocalInstallWizard.jsx';
 
@@ -12,6 +14,7 @@ export default function Servers({ onManage }) {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [showAddManaged, setShowAddManaged] = useState(false);
   const [showLocalInstall, setShowLocalInstall] = useState(false);
+  const [showCreateStorageWizard, setShowCreateStorageWizard] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const menuRef = useRef(null);
 
@@ -33,6 +36,12 @@ export default function Servers({ onManage }) {
     refetchInterval: 10000,
   });
 
+  const storageServersQuery = useQuery({
+    queryKey: ['storage-servers'],
+    queryFn: () => invoke('get_storage_servers'),
+    refetchInterval: 10000,
+  });
+
   const localInstallQuery = useQuery({
     queryKey: ['local-install-available'],
     queryFn: () => invoke('check_local_install_available'),
@@ -45,6 +54,7 @@ export default function Servers({ onManage }) {
   });
 
   const servers = serversQuery.data || [];
+  const storageServers = storageServersQuery.data || [];
 
   return (
     <div className="p-6">
@@ -104,6 +114,17 @@ export default function Servers({ onManage }) {
                   <span className="text-[9px] text-zinc-500">Installed</span>
                 )}
               </button>
+              <div className="border-t border-zinc-700" />
+              <button
+                onClick={() => {
+                  setShowAddMenu(false);
+                  setShowCreateStorageWizard(true);
+                }}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 flex items-center gap-2"
+              >
+                <Database size={12} />
+                Create Storage Server
+              </button>
             </div>
           )}
         </div>
@@ -154,6 +175,21 @@ export default function Servers({ onManage }) {
         </div>
       )}
 
+      {storageServers.length > 0 && (
+        <div className="mt-8">
+          <div className="flex items-center gap-2 mb-3">
+            <Database size={16} className="text-cyan-400" />
+            <h2 className="text-sm font-medium text-zinc-400">Storage Servers</h2>
+            <span className="text-xs text-zinc-500">{storageServers.length}</span>
+          </div>
+          <div className="grid gap-3">
+            {storageServers.map((s) => (
+              <StorageServerCard key={s.id} server={s} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {showCreateWizard && (
         <CreateServerWizard onClose={() => setShowCreateWizard(false)} />
       )}
@@ -165,6 +201,9 @@ export default function Servers({ onManage }) {
           existingInstall={localInstallQuery.data?.existingInstall}
           onClose={() => setShowLocalInstall(false)}
         />
+      )}
+      {showCreateStorageWizard && (
+        <CreateStorageWizard onClose={() => setShowCreateStorageWizard(false)} />
       )}
     </div>
   );

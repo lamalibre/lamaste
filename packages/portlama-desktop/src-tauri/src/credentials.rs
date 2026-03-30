@@ -14,6 +14,9 @@ const SERVER_SERVICE: &str = "com.portlama.server";
 /// Service name for per-server admin P12 passwords (keyed by server UUID).
 const ADMIN_SERVICE: &str = "com.portlama.admin";
 
+/// Service name for storage provider credentials (e.g., Spaces access key + secret key).
+const STORAGE_SERVICE: &str = "com.portlama.storage";
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -199,4 +202,25 @@ pub fn get_admin_credential(server_id: &str) -> Result<Option<String>, String> {
 /// Delete an admin P12 password from the OS credential store.
 pub fn delete_admin_credential(server_id: &str) -> Result<(), String> {
     delete_credential_impl(ADMIN_SERVICE, server_id)
+}
+
+// ---------------------------------------------------------------------------
+// Storage credential API (service: com.portlama.storage)
+// ---------------------------------------------------------------------------
+
+/// Store storage provider credentials in the OS credential store.
+/// The secret is typically JSON containing access key + secret key.
+pub fn store_storage_credential(account: &str, secret: &str) -> Result<(), String> {
+    store_credential_impl(STORAGE_SERVICE, account, secret)
+}
+
+/// Retrieve storage provider credentials from the OS credential store.
+/// Returns None if no credential is found.
+pub fn get_storage_credential(account: &str) -> Result<Option<String>, String> {
+    get_credential_impl(STORAGE_SERVICE, account)
+}
+
+/// Delete storage provider credentials from the OS credential store.
+pub fn delete_storage_credential(account: &str) -> Result<(), String> {
+    delete_credential_impl(STORAGE_SERVICE, account)
 }

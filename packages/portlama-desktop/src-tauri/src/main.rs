@@ -77,6 +77,16 @@ fn main() {
             cloud::add_managed_server,
             cloud::remove_server,
             cloud::check_server_health,
+            // Storage server management
+            cloud::store_storage_credentials,
+            cloud::get_storage_credentials,
+            cloud::delete_storage_credentials,
+            cloud::validate_storage_credentials,
+            cloud::get_spaces_regions,
+            cloud::provision_storage_server,
+            cloud::get_storage_servers,
+            cloud::remove_storage_server,
+            cloud::destroy_storage_server,
             // Local installation
             local_install::check_local_install_available,
             local_install::start_local_install,

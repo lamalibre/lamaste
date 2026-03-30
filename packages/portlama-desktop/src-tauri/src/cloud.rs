@@ -102,6 +102,50 @@ struct ProvisionProgress {
 }
 
 // ---------------------------------------------------------------------------
+// Storage types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageServerEntry {
+    pub id: String,
+    pub label: String,
+    pub provider: String,
+    pub region: String,
+    pub bucket: String,
+    pub endpoint: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacesRegion {
+    pub slug: String,
+    pub name: String,
+    pub endpoint: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageProvisionProgress {
+    event: String,
+    step: Option<String>,
+    status: Option<String>,
+    message: Option<String>,
+    data: Option<serde_json::Value>,
+    storage_server: Option<StorageServerEntry>,
+    recoverable: Option<bool>,
+}
+
+/// JSON structure for storage credentials in the OS credential store.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageCredentials {
+    access_key: String,
+    secret_key: String,
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -189,6 +233,33 @@ pub fn validate_label(label: &str) -> Result<(), String> {
         return Err(
             "Label must contain only lowercase letters, numbers, and hyphens".to_string(),
         );
+    }
+    Ok(())
+}
+
+/// Validate a Spaces region slug against the known region list.
+fn validate_spaces_region(region: &str) -> Result<(), String> {
+    const VALID_REGIONS: &[&str] = &["nyc3", "sfo3", "ams3", "sgp1", "fra1", "syd1", "blr1"];
+    if !VALID_REGIONS.contains(&region) {
+        return Err(format!("Invalid Spaces region: {}", region));
+    }
+    Ok(())
+}
+
+/// Validate a bucket name: 3-63 chars, lowercase alphanumeric + hyphens,
+/// must start and end with alphanumeric.
+fn validate_bucket_name(bucket: &str) -> Result<(), String> {
+    let len = bucket.len();
+    if len < 3 || len > 63 {
+        return Err("Bucket name must be 3-63 characters".to_string());
+    }
+    let bytes = bucket.as_bytes();
+    let is_alnum = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    if !is_alnum(bytes[0]) || !is_alnum(bytes[len - 1]) {
+        return Err("Bucket name must start and end with a lowercase letter or number".to_string());
+    }
+    if !bucket.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err("Bucket name must contain only lowercase letters, numbers, and hyphens".to_string());
     }
     Ok(())
 }
@@ -355,6 +426,80 @@ fn run_cloud_cmd(
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Run a portlama-cloud CLI command for storage operations.
+/// Passes Spaces credentials via environment variables.
+fn run_storage_cmd(
+    args: &[&str],
+    access_key: &str,
+    secret_key: &str,
+) -> Result<String, String> {
+    let cli_path = cloud_cli_path();
+
+    let output = std::process::Command::new("node")
+        .arg(&cli_path)
+        .args(args)
+        .env("PORTLAMA_SPACES_ACCESS_KEY", access_key)
+        .env("PORTLAMA_SPACES_SECRET_KEY", secret_key)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn portlama-cloud: {}", e))?
+        .wait_with_output()
+        .map_err(|e| format!("Failed to run portlama-cloud: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "portlama-cloud {} failed: {}{}",
+            args.first().unwrap_or(&""),
+            stderr,
+            if !stdout.is_empty() {
+                format!("\n{}", stdout)
+            } else {
+                String::new()
+            }
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Run a portlama-cloud CLI command that requires no credentials.
+fn run_cloud_cmd_no_credentials(args: &[&str]) -> Result<String, String> {
+    let cli_path = cloud_cli_path();
+
+    let output = std::process::Command::new("node")
+        .arg(&cli_path)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn portlama-cloud: {}", e))?
+        .wait_with_output()
+        .map_err(|e| format!("Failed to run portlama-cloud: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "portlama-cloud {} failed: {}",
+            args.first().unwrap_or(&""),
+            stderr,
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Load storage credentials from the OS credential store.
+/// Returns the parsed access key and secret key.
+fn load_storage_credentials() -> Result<StorageCredentials, String> {
+    let json = credentials::get_storage_credential("spaces")?
+        .ok_or("No storage credentials stored. Please add your Spaces access keys first.")?;
+    serde_json::from_str::<StorageCredentials>(&json)
+        .map_err(|e| format!("Failed to parse stored storage credentials: {}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,6 +1178,297 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
         }),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Storage server commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn store_storage_credentials(
+    access_key: String,
+    secret_key: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let creds = StorageCredentials {
+            access_key,
+            secret_key,
+        };
+        let json = serde_json::to_string(&creds)
+            .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+        credentials::store_storage_credential("spaces", &json)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_storage_credentials() -> Result<bool, String> {
+    tokio::task::spawn_blocking(|| {
+        Ok(credentials::get_storage_credential("spaces")?
+            .is_some())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn delete_storage_credentials() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| credentials::delete_storage_credential("spaces"))
+        .await
+        .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn validate_storage_credentials(
+    access_key: String,
+    secret_key: String,
+) -> Result<(), String> {
+    // If no credentials provided, load from keychain
+    let (effective_ak, effective_sk) = if access_key.is_empty() || secret_key.is_empty() {
+        let creds = tokio::task::spawn_blocking(load_storage_credentials)
+            .await
+            .map_err(|e| format!("Task failed: {}", e))??;
+        (creds.access_key, creds.secret_key)
+    } else {
+        (access_key, secret_key)
+    };
+
+    tokio::task::spawn_blocking(move || {
+        run_storage_cmd(&["validate-spaces"], &effective_ak, &effective_sk)?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_spaces_regions() -> Result<Vec<SpacesRegion>, String> {
+    tokio::task::spawn_blocking(|| {
+        let output = run_cloud_cmd_no_credentials(&["spaces-regions"])?;
+        serde_json::from_str::<Vec<SpacesRegion>>(output.trim())
+            .map_err(|e| format!("Failed to parse Spaces regions: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn provision_storage_server(
+    app_handle: tauri::AppHandle,
+    region: String,
+    label: String,
+    bucket: Option<String>,
+) -> Result<StorageServerEntry, String> {
+    validate_label(&label)?;
+    validate_spaces_region(&region)?;
+    if let Some(ref b) = bucket {
+        if !b.is_empty() {
+            validate_bucket_name(b)?;
+        }
+    }
+
+    let creds = tokio::task::spawn_blocking(load_storage_credentials)
+        .await
+        .map_err(|e| format!("Task failed: {}", e))??;
+
+    tokio::task::spawn_blocking(move || {
+        let cli_path = cloud_cli_path();
+
+        let mut args = vec![
+            "provision-storage".to_string(),
+            "--region".to_string(),
+            region,
+            "--label".to_string(),
+            label,
+        ];
+        if let Some(b) = bucket {
+            if !b.is_empty() {
+                args.push("--bucket".to_string());
+                args.push(b);
+            }
+        }
+
+        let mut child = std::process::Command::new("node")
+            .arg(&cli_path)
+            .args(&args)
+            .env("PORTLAMA_SPACES_ACCESS_KEY", &creds.access_key)
+            .env("PORTLAMA_SPACES_SECRET_KEY", &creds.secret_key)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn storage provisioner: {}", e))?;
+
+        let stdout = child.stdout.take().ok_or("No stdout")?;
+        let reader = std::io::BufReader::new(stdout);
+        let mut last_storage_server: Option<StorageServerEntry> = None;
+        let mut last_error: Option<String> = None;
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| format!("Read error: {}", e))?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            if let Ok(progress) = serde_json::from_str::<StorageProvisionProgress>(&line) {
+                match progress.event.as_str() {
+                    "complete" => {
+                        last_storage_server = progress.storage_server;
+                    }
+                    "error" => {
+                        last_error = progress.message.clone();
+                        if let Some(ref step) = progress.step {
+                            let _ = app_handle.emit("storage-provision-progress", serde_json::json!({
+                                "step": step,
+                                "status": "failed",
+                            }));
+                        }
+                    }
+                    "step" => {
+                        if let (Some(ref step), Some(ref status)) = (&progress.step, &progress.status) {
+                            let _ = app_handle.emit("storage-provision-progress", serde_json::json!({
+                                "step": step,
+                                "status": status,
+                            }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let status = child
+            .wait()
+            .map_err(|e| format!("Failed to wait for storage provisioner: {}", e))?;
+
+        if !status.success() {
+            if let Some(err) = last_error {
+                return Err(format!("Storage provisioning failed: {}", err));
+            }
+            return Err("Storage provisioning failed".to_string());
+        }
+
+        last_storage_server
+            .ok_or_else(|| "Storage provisioning completed but no entry returned".to_string())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn get_storage_servers() -> Result<Vec<StorageServerEntry>, String> {
+    tokio::task::spawn_blocking(|| {
+        let path = config::storage_servers_registry_path();
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read storage-servers.json: {}", e))?;
+        serde_json::from_str::<Vec<StorageServerEntry>>(&content)
+            .map_err(|e| format!("Failed to parse storage-servers.json: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn remove_storage_server(server_id: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let path = config::storage_servers_registry_path();
+        if !path.exists() {
+            return Err("No storage servers registered".to_string());
+        }
+
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read: {}", e))?;
+        let servers: Vec<StorageServerEntry> = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse: {}", e))?;
+
+        let original_len = servers.len();
+        let filtered: Vec<StorageServerEntry> =
+            servers.into_iter().filter(|s| s.id != server_id).collect();
+
+        if filtered.len() == original_len {
+            return Err("Storage server not found".to_string());
+        }
+
+        save_storage_servers_registry(&path, &filtered)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn destroy_storage_server(server_id: String) -> Result<(), String> {
+    let server_id_for_read = server_id.clone();
+
+    // Verify the entry exists before attempting destruction
+    tokio::task::spawn_blocking(move || {
+        let path = config::storage_servers_registry_path();
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read storage-servers.json: {}", e))?;
+        let servers: Vec<StorageServerEntry> = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse storage-servers.json: {}", e))?;
+        servers
+            .iter()
+            .find(|s| s.id == server_id_for_read)
+            .ok_or_else(|| "Storage server not found".to_string())?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))??;
+
+    let creds = tokio::task::spawn_blocking(load_storage_credentials)
+        .await
+        .map_err(|e| format!("Task failed: {}", e))??;
+
+    // The destroy-storage CLI command deletes the bucket AND removes the
+    // entry from the registry, so no additional cleanup is needed here.
+    tokio::task::spawn_blocking(move || {
+        run_storage_cmd(
+            &["destroy-storage", "--id", &server_id],
+            &creds.access_key,
+            &creds.secret_key,
+        )?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Atomically save the storage servers registry with fsync before rename.
+fn save_storage_servers_registry(
+    path: &std::path::Path,
+    servers: &[StorageServerEntry],
+) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(servers)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let tmp_path = path.with_extension("json.tmp");
+
+    {
+        let mut file = File::create(&tmp_path)
+            .map_err(|e| format!("Failed to create temp file: {}", e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write temp file: {}", e))?;
+        file.sync_all()
+            .map_err(|e| format!("Failed to fsync temp file: {}", e))?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to set permissions: {}", e))?;
+    }
+
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| format!("Failed to save registry: {}", e))?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Server health check
+// ---------------------------------------------------------------------------
 
 /// Build admin API config for a specific server (not necessarily the active one).
 fn build_server_admin_config(

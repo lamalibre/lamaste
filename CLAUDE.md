@@ -85,15 +85,16 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 
 - Shared HTTP helpers in `api.rs` — all panel API calls go through `curl_panel`
 - Service discovery in `services.rs` — detection via `which`/`pgrep`/`lsof`/TCP probe, Docker via `docker ps`
-- Cloud provisioning in `cloud.rs` — bridges React UI to `@lamalibre/portlama-cloud` Node.js CLI
+- Cloud provisioning in `cloud.rs` — bridges React UI to `@lamalibre/portlama-cloud` Node.js CLI for both compute (droplets) and storage (Spaces buckets). Storage commands: `store_storage_credentials`, `get_storage_credentials`, `delete_storage_credentials`, `validate_storage_credentials`, `get_spaces_regions`, `provision_storage_server`, `get_storage_servers`, `remove_storage_server`, `destroy_storage_server`
 - Local server installation in `local_install.rs` — spawns `create-portlama --json` via `pkexec`, streams NDJSON progress as Tauri events, auto-imports P12 certificates
-- OS credential storage in `credentials.rs` — macOS `security` CLI, Linux `secret-tool`
+- OS credential storage in `credentials.rs` — macOS `security-framework` crate (direct Keychain API), Linux `secret-tool` (libsecret). Four services: `com.portlama.cloud` (API tokens), `com.portlama.server` (P12 passwords), `com.portlama.admin` (admin P12 passwords), `com.portlama.storage` (Spaces access key + secret key as JSON)
 - Multi-agent management in `agents.rs` — registry at `~/.portlama/agents.json`, per-agent data at `~/.portlama/agents/<label>/`, Tauri commands for agent start/stop/restart/logs/tunnels/config
 - Agent installation in `agents.rs` — `install_agent(label, panel_url, token)` checks Node.js, installs CLI via npm, spawns `portlama-agent setup --json`, streams NDJSON progress as `agent-install-progress` Tauri events
 - `config.rs` `load_effective_config()` — checks `agents.json` (multi-agent registry) first, then `servers.json` (active entry), then falls back to `agent.json` (legacy)
 - `tokio::task::spawn_blocking` for subprocess calls and file I/O — never block the Tauri event loop
 - Service registry persisted as JSON at `~/.portlama/services.json`
 - Server registry persisted as JSON at `~/.portlama/servers.json`
+- Storage server registry persisted as JSON at `~/.portlama/storage-servers.json` — storage provisioning streams NDJSON as `storage-provision-progress` Tauri events
 - Agent registry persisted as JSON at `~/.portlama/agents.json` — multi-agent support with per-agent data directories
 - Atomic file writes (temp → fsync → rename) for registry and config
 - Local plugin management in `local_plugins.rs` — registry at `~/.portlama/local/plugins.json`, curated plugin list, npm install/uninstall, launchd/systemd service for the local Fastify host on `127.0.0.1:9293`
@@ -136,7 +137,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Storage provisioning: `StorageProvider` creates S3-compatible buckets (currently DigitalOcean Spaces). Uses AWS Signature V4 signing via `node:crypto` (no external S3 SDK). Hardcoded Spaces region list (DO has no API to list them). Storage servers are independent resources with their own lifecycle — not tied to compute servers
 - NDJSON progress protocol on stdout for Rust/Tauri integration (used by both compute and storage provisioners)
 - SSH via `ssh-keygen`/`ssh`/`scp` commands — temporary ed25519 keys, secure-deleted after use. SSH TOFU accepted risk: first connection uses `accept-new`, pinned in per-session `known_hosts` for subsequent commands; DigitalOcean does not expose host fingerprints via API
-- Credential storage: macOS Keychain (`security-framework` crate, no CLI) / Linux libsecret (`secret-tool` with stdin) — never plaintext, never in process args. Two services: `com.portlama.cloud` (API tokens), `com.portlama.server` (P12 passwords, keyed by server UUID)
+- Credential storage: macOS Keychain (`security-framework` crate, no CLI) / Linux libsecret (`secret-tool` with stdin) — never plaintext, never in process args. Four services: `com.portlama.cloud` (API tokens), `com.portlama.server` (P12 passwords, keyed by server UUID), `com.portlama.admin` (admin P12 passwords), `com.portlama.storage` (Spaces access key + secret key as JSON)
 - Compute token passed via `PORTLAMA_CLOUD_TOKEN` env var (never CLI args). Storage credentials via `PORTLAMA_SPACES_ACCESS_KEY` and `PORTLAMA_SPACES_SECRET_KEY` env vars
 - Server registry: `~/.portlama/servers.json` with atomic writes (tmp → 0600 → fsync → rename)
 - Storage server registry: `~/.portlama/storage-servers.json` with same atomic write pattern. Stores bucket name, region, endpoint — no credentials (those stay in OS keychain)

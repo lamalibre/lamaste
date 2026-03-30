@@ -39,6 +39,7 @@ Compute commands:
 
 Storage commands:
   provision-storage  --region <slug> --label <name> [--bucket <name>]
+  validate-spaces    Validate Spaces access credentials
   spaces-regions     List available Spaces regions
   destroy-storage    --id <uuid>
   storage-servers    List registered storage servers
@@ -206,6 +207,21 @@ async function main() {
       }
 
       await provisionStorage({ provider: 'spaces', accessKey, secretKey, region, label, bucket });
+      break;
+    }
+
+    case 'validate-spaces': {
+      const accessKey = process.env.PORTLAMA_SPACES_ACCESS_KEY;
+      const secretKey = process.env.PORTLAMA_SPACES_SECRET_KEY;
+
+      if (!accessKey || !secretKey) {
+        console.error('Error: PORTLAMA_SPACES_ACCESS_KEY and PORTLAMA_SPACES_SECRET_KEY environment variables are required');
+        process.exit(1);
+      }
+
+      const spacesProvider = new DigitalOceanSpacesProvider();
+      await spacesProvider.validateCredentials(accessKey, secretKey);
+      process.stdout.write(JSON.stringify({ valid: true }) + '\n');
       break;
     }
 

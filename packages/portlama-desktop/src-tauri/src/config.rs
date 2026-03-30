@@ -81,6 +81,10 @@ pub fn servers_registry_path() -> PathBuf {
     agent_dir().join("servers.json")
 }
 
+pub fn storage_servers_registry_path() -> PathBuf {
+    agent_dir().join("storage-servers.json")
+}
+
 pub fn local_dir() -> PathBuf {
     agent_dir().join("local")
 }
