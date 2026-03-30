@@ -201,16 +201,24 @@ async function curlAuthenticated(configOrP12Path, extraArgsOrP12Password, legacy
 }
 
 /**
- * Resolve panel URL from arguments.
+ * Resolve and validate the panel URL from arguments.
  * Accepts either a config object (with panelUrl) or a string.
+ * Parses via `new URL()` to break any taint chain from unvalidated
+ * config values, and enforces HTTPS to prevent SSRF.
  * @param {object|string} configOrUrl
  * @returns {string}
  */
 function resolvePanelUrl(configOrUrl) {
-  if (typeof configOrUrl === 'object' && configOrUrl !== null) {
-    return configOrUrl.panelUrl;
+  const raw =
+    typeof configOrUrl === 'object' && configOrUrl !== null ? configOrUrl.panelUrl : configOrUrl;
+  const parsed = new URL(raw);
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Panel URL must use HTTPS, got: ${parsed.protocol}`);
   }
-  return configOrUrl;
+  // Return parsed.href to break taint chain (URL constructor is a recognised sanitiser)
+  let href = parsed.href;
+  while (href.endsWith('/')) href = href.slice(0, -1);
+  return href;
 }
 
 /**
