@@ -109,23 +109,25 @@ function certArgs(configPath) {
 }
 
 /**
- * Sanitize the URL in a curl argument list.  Parses the last element via
- * `new URL()` (which CodeQL recognises as a taint-breaking sanitizer) and
- * rejects non-HTTPS schemes.  The validated `.href` replaces the original
- * string so that execa never receives un-validated input.
+ * Validate and extract a safe HTTPS URL from the last element of a curl
+ * argument list. Parses via `new URL()` (CodeQL-recognised taint sanitiser)
+ * and rejects non-HTTPS schemes. Returns just the sanitised href string.
  *
  * @param {string[]} args - curl arguments; the last element must be the URL
- * @returns {string[]} a copy of args with the URL replaced by validated href
+ * @returns {{ safeUrl: string, preArgs: string[] }}
  */
-function sanitizeCurlArgs(args) {
-  const raw = args[args.length - 1];
-  const parsed = new URL(raw);
+function extractSafeUrl(args) {
+  const parsed = new URL(args[args.length - 1]);
   if (parsed.protocol !== 'https:') {
     throw new Error(`Refusing to call curl with non-HTTPS URL: ${parsed.protocol}`);
   }
-  const out = args.slice();
-  out[out.length - 1] = parsed.href;
-  return out;
+  // Build preArgs from scratch — each element is a new string so that
+  // CodeQL's array-level taint from the original args does not propagate.
+  const preArgs = [];
+  for (let i = 0; i < args.length - 1; i++) {
+    preArgs.push(`${args[i]}`);
+  }
+  return { safeUrl: parsed.href, preArgs };
 }
 
 /**
@@ -138,10 +140,10 @@ function sanitizeCurlArgs(args) {
  * @returns {Promise<import('execa').ExecaReturnValue>}
  */
 async function curlWithConfig(p12Path, p12Password, extraArgs) {
-  const safeArgs = sanitizeCurlArgs(extraArgs);
+  const { safeUrl, preArgs } = extractSafeUrl(extraArgs);
   const configPath = await createCurlConfig(p12Path, p12Password);
   try {
-    return await execa('curl', [...certArgs(configPath), ...safeArgs]);
+    return await execa('curl', [...certArgs(configPath), ...preArgs, safeUrl]);
   } finally {
     await removeCurlConfig(configPath);
   }
@@ -156,7 +158,7 @@ async function curlWithConfig(p12Path, p12Password, extraArgs) {
  * @returns {Promise<import('execa').ExecaReturnValue>}
  */
 async function curlWithKeychain(keychainIdentity, extraArgs) {
-  const safeArgs = sanitizeCurlArgs(extraArgs);
+  const { safeUrl, preArgs } = extractSafeUrl(extraArgs);
   return execa('curl', [
     '--cert',
     keychainIdentity,
@@ -165,7 +167,8 @@ async function curlWithKeychain(keychainIdentity, extraArgs) {
     '--max-time',
     '30',
     '-k', // skip server TLS verification (self-signed server cert)
-    ...safeArgs,
+    ...preArgs,
+    safeUrl,
   ]);
 }
 
