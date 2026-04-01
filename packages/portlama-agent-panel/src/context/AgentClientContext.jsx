@@ -50,9 +50,21 @@ const AgentClientContext = createContext(null);
  * Web Panel:
  * @property {() => Promise<{enabled: boolean, fqdn?: string, port?: number, running?: boolean}>} getPanelExposeStatus
  * @property {(enabled: boolean) => Promise<any>} togglePanelExpose
+ * @property {() => Promise<any>} startAgentPanel
+ * @property {() => Promise<any>} stopAgentPanel
  *
  * Lifecycle:
  * @property {() => Promise<any>} uninstallAgent
+ *
+ * Plugins:
+ * @property {() => Promise<{plugins: Array}>} getAgentPlugins
+ * @property {(packageName: string) => Promise<{ok: boolean, plugin: Object}>} installAgentPlugin
+ * @property {(name: string) => Promise<any>} enableAgentPlugin
+ * @property {(name: string) => Promise<any>} disableAgentPlugin
+ * @property {(name: string) => Promise<any>} uninstallAgentPlugin
+ * @property {(name: string) => Promise<any>} updateAgentPlugin
+ * @property {(name: string) => Promise<{type: 'source', source: string}>} fetchAgentPluginBundle
+ * @property {(name: string) => Promise<{name: string, currentVersion: string, latestVersion: string, hasUpdate: boolean}>} checkAgentPluginUpdate
  *
  * External links (host-specific):
  * @property {(url: string) => Promise<void>} openExternal

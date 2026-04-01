@@ -24,9 +24,9 @@ const DEFAULT_PANEL_PORT = 9393;
 
 /**
  * @param {string[]} args
- * @param {{ label: string }} options
+ * @param {{ label: string, json?: boolean }} options
  */
-export async function runPanel(args, { label }) {
+export async function runPanel(args, { label, json: globalJson = false }) {
   assertSupportedPlatform();
 
   const config = await loadAgentConfig(label);
@@ -35,9 +35,10 @@ export async function runPanel(args, { label }) {
     process.exit(1);
   }
 
-  const isJson = args.includes('--json');
+  const isJson = globalJson || args.includes('--json');
   const isEnable = args.includes('--enable');
   const isDisable = args.includes('--disable');
+  const isLocalOnly = args.includes('--local-only');
   const isStatus = args.includes('--status') || (!isEnable && !isDisable);
 
   // Parse --port flag
@@ -51,24 +52,24 @@ export async function runPanel(args, { label }) {
   }
 
   if (isEnable) {
-    await enablePanel(label, config, port, isJson);
+    await enablePanel(label, config, port, isJson, isLocalOnly);
   } else if (isDisable) {
-    await disablePanel(label, config, isJson);
+    await disablePanel(label, config, isJson, isLocalOnly);
   } else if (isStatus) {
     await showStatus(label, config, isJson);
   }
 }
 
-async function enablePanel(label, config, port, isJson) {
+async function enablePanel(label, config, port, isJson, localOnly = false) {
   // 1. Check if already enabled
   const loaded = await isPanelLoaded(label);
   if (loaded) {
     if (isJson) {
-      console.log(JSON.stringify({ error: 'Panel service already running' }));
+      console.log(JSON.stringify({ ok: true, alreadyRunning: true, port: config.panelPort || port }));
     } else {
       console.log(chalk.yellow('Panel service is already running.'));
     }
-    process.exit(1);
+    return;
   }
 
   // 2. Generate and write service config
@@ -78,7 +79,24 @@ async function enablePanel(label, config, port, isJson) {
   // 3. Start the panel service
   await loadPanelService(label);
 
-  // 4. Create the tunnel on the panel server
+  // 4. Save panel config
+  config.panelPort = port;
+  config.panelEnabled = true;
+  config.updatedAt = new Date().toISOString();
+  await saveAgentConfig(label, config);
+
+  // 5. If local-only, skip tunnel exposure and chisel restart
+  if (localOnly) {
+    if (isJson) {
+      console.log(JSON.stringify({ ok: true, port }));
+    } else {
+      console.log(chalk.green('\nAgent panel started locally.'));
+      console.log(`  Port: ${chalk.cyan(port)}`);
+    }
+    return;
+  }
+
+  // 6. Create the tunnel on the panel server
   let tunnel;
   try {
     const result = await exposePanelTunnel(config, port);
@@ -87,6 +105,9 @@ async function enablePanel(label, config, port, isJson) {
     // Rollback: stop the panel service we just started
     await unloadPanelService(label);
     await removePanelServiceConfig(label);
+    config.panelEnabled = false;
+    delete config.panelPort;
+    await saveAgentConfig(label, config);
     const msg = err instanceof Error ? err.message : 'Unknown error';
     if (isJson) {
       console.log(JSON.stringify({ error: msg }));
@@ -96,13 +117,7 @@ async function enablePanel(label, config, port, isJson) {
     process.exit(1);
   }
 
-  // 5. Save panel config
-  config.panelPort = port;
-  config.panelEnabled = true;
-  config.updatedAt = new Date().toISOString();
-  await saveAgentConfig(label, config);
-
-  // 6. Update the agent's chisel service (needs new tunnel mapping)
+  // 7. Update the agent's chisel service (needs new tunnel mapping)
   try {
     const { fetchAgentConfig } = await import('../lib/panel-api.js');
     const { generateServiceConfig, writeServiceConfigFile } =
@@ -132,14 +147,16 @@ async function enablePanel(label, config, port, isJson) {
   }
 }
 
-async function disablePanel(label, config, isJson) {
-  // 1. Retract the tunnel
-  try {
-    await retractPanelTunnel(config);
-  } catch (err) {
-    if (!isJson) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.log(chalk.yellow(`Warning: Could not retract panel tunnel: ${msg}`));
+async function disablePanel(label, config, isJson, localOnly = false) {
+  // 1. Retract the tunnel (skip in local-only mode)
+  if (!localOnly) {
+    try {
+      await retractPanelTunnel(config);
+    } catch (err) {
+      if (!isJson) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.log(chalk.yellow(`Warning: Could not retract panel tunnel: ${msg}`));
+      }
     }
   }
 
@@ -149,21 +166,23 @@ async function disablePanel(label, config, isJson) {
   // 3. Remove service config
   await removePanelServiceConfig(label);
 
-  // 4. Update chisel (remove the panel tunnel mapping)
-  try {
-    const { fetchAgentConfig } = await import('../lib/panel-api.js');
-    const { generateServiceConfig, writeServiceConfigFile } =
-      await import('../lib/service-config.js');
-    const { unloadAgent, loadAgent } = await import('../lib/service.js');
-    const agentConfig = await fetchAgentConfig(config);
-    const serviceContent = generateServiceConfig(agentConfig.chiselArgs, label);
-    await writeServiceConfigFile(serviceContent, label);
-    await unloadAgent(label);
-    await loadAgent(label);
-  } catch (err) {
-    if (!isJson) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.log(chalk.yellow(`Warning: Could not restart chisel: ${msg}`));
+  // 4. Update chisel (remove the panel tunnel mapping) — skip in local-only mode
+  if (!localOnly) {
+    try {
+      const { fetchAgentConfig } = await import('../lib/panel-api.js');
+      const { generateServiceConfig, writeServiceConfigFile } =
+        await import('../lib/service-config.js');
+      const { unloadAgent, loadAgent } = await import('../lib/service.js');
+      const agentConfig = await fetchAgentConfig(config);
+      const serviceContent = generateServiceConfig(agentConfig.chiselArgs, label);
+      await writeServiceConfigFile(serviceContent, label);
+      await unloadAgent(label);
+      await loadAgent(label);
+    } catch (err) {
+      if (!isJson) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.log(chalk.yellow(`Warning: Could not restart chisel: ${msg}`));
+      }
     }
   }
 
@@ -176,7 +195,7 @@ async function disablePanel(label, config, isJson) {
   if (isJson) {
     console.log(JSON.stringify({ ok: true }));
   } else {
-    console.log(chalk.green('Agent panel retracted.'));
+    console.log(chalk.green(localOnly ? 'Agent panel stopped.' : 'Agent panel retracted.'));
   }
 }
 

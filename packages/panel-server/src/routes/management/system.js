@@ -1,16 +1,56 @@
 import { execFile } from 'node:child_process';
-import { writeFile, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, rename, open, unlink, mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { getSystemStats } from '../../lib/system-stats.js';
 import { getConfig } from '../../lib/config.js';
+import { setPluginCapabilities } from '../../lib/mtls.js';
+import { getPluginCapabilities } from '../../lib/plugins.js';
+
+// Persist agent-reported capabilities so they survive server restarts
+const AGENT_CAPS_FILE = () => join(getConfig().dataDir, 'agent-plugin-caps.json');
+
+async function loadAgentReportedCaps() {
+  try {
+    const raw = await readFile(AGENT_CAPS_FILE(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.capabilities) ? parsed.capabilities : [];
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    return [];
+  }
+}
+
+async function saveAgentReportedCaps(caps) {
+  const filePath = AGENT_CAPS_FILE();
+  const tmpPath = `${filePath}.tmp`;
+  await mkdir(dirname(filePath), { recursive: true });
+  const content = JSON.stringify({ capabilities: caps }, null, 2) + '\n';
+  await writeFile(tmpPath, content, { encoding: 'utf-8', mode: 0o600 });
+  const fd = await open(tmpPath, 'r');
+  await fd.sync();
+  await fd.close();
+  await rename(tmpPath, filePath);
+}
 
 const UpdateBodySchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/, 'Version must be semver (e.g. 1.0.43)'),
 });
 
 export default async function systemRoutes(fastify, _opts) {
+  // Load agent-reported capabilities from disk on startup
+  try {
+    const persistedCaps = await loadAgentReportedCaps();
+    if (persistedCaps.length > 0) {
+      const serverCaps = await getPluginCapabilities();
+      const merged = [...new Set([...serverCaps, ...persistedCaps])];
+      setPluginCapabilities(merged);
+      fastify.log.info({ count: persistedCaps.length }, 'Loaded persisted agent plugin capabilities');
+    }
+  } catch (err) {
+    fastify.log.warn({ err: err.message }, 'Failed to load agent-reported capabilities');
+  }
   fastify.get(
     '/system/stats',
     {
@@ -103,6 +143,73 @@ export default async function systemRoutes(fastify, _opts) {
         ok: true,
         message: `Update to create-portlama@${version} initiated. The panel will restart shortly.`,
       });
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /agents/plugins/report — accept agent plugin capability report
+  //
+  // Agents report their enabled plugins during `portlama-agent update`.
+  // The server merges the reported plugin capabilities into the valid
+  // capabilities set so they can be assigned to agents.
+  // ------------------------------------------------------------------
+
+  // Capability strings must be <pluginName>:<action> format with safe characters only
+  const CAPABILITY_RE = /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/;
+
+  const PluginReportSchema = z.object({
+    plugins: z.array(
+      z.object({
+        name: z.string().regex(/^[a-z0-9-]+$/),
+        version: z.string(),
+        capabilities: z.array(z.string().regex(CAPABILITY_RE)).default([]),
+      }),
+    ),
+  });
+
+  fastify.post(
+    '/agents/plugins/report',
+    {
+      preHandler: fastify.requireRole(['admin', 'agent']),
+    },
+    async (request, reply) => {
+      const result = PluginReportSchema.safeParse(request.body);
+      if (!result.success) {
+        return reply.code(400).send({ error: 'Invalid plugin report', details: result.error.issues });
+      }
+      const { plugins } = result.data;
+
+      // Collect capabilities, scoped to the reporting plugin's name prefix
+      const reportedCaps = new Set();
+      for (const plugin of plugins) {
+        for (const cap of plugin.capabilities) {
+          // Only accept capabilities prefixed with the plugin's own name
+          if (cap.startsWith(`${plugin.name}:`)) {
+            reportedCaps.add(cap);
+          }
+        }
+      }
+
+      if (reportedCaps.size === 0) {
+        return { ok: true, merged: 0 };
+      }
+
+      // Merge with existing server-side plugin capabilities
+      const serverCaps = await getPluginCapabilities();
+      const allPluginCaps = [...new Set([...serverCaps, ...reportedCaps])];
+      setPluginCapabilities(allPluginCaps);
+
+      // Persist agent-reported capabilities so they survive server restarts
+      const existingAgentCaps = await loadAgentReportedCaps();
+      const allAgentCaps = [...new Set([...existingAgentCaps, ...reportedCaps])];
+      await saveAgentReportedCaps(allAgentCaps);
+
+      request.log.info(
+        { agentPlugins: plugins.length, newCaps: reportedCaps.size },
+        'Agent plugin capabilities reported',
+      );
+
+      return { ok: true, merged: reportedCaps.size };
     },
   );
 }

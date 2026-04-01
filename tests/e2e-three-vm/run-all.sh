@@ -102,6 +102,8 @@ TEST_SCRIPTS=(
   "15-panel-expose.sh"
   "16-agent-json-setup.sh"
   "17-identity-system.sh"
+  "18-agent-plugin-hosting.sh"
+  "19-agent-plugin-crud.sh"
 )
 
 PASSED=0

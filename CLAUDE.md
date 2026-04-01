@@ -77,10 +77,10 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 
 - Host-agnostic React component libraries — pages use context hooks (`useAdminClient()`, `useAgentClient()`) instead of direct API/Tauri calls
 - Each consumer provides its own client implementation: desktop app via Tauri `invoke()`, web panel via `apiFetch()`
-- `AgentClientContext` interface: `getStatus`, `startAgent`, `stopAgent`, `restartAgent`, `updateAgent`, `getTunnels`, `createTunnel`, `deleteTunnel`, `toggleTunnel`, `scanServices`, `addCustomService`, `removeCustomService`, `getLogs`, `getConfig`, `getPanelUrl`, `rotateCertificate`, `downloadCertificate`, `getPanelExposeStatus`, `togglePanelExpose`, `uninstallAgent`, `openExternal`
+- `AgentClientContext` interface: `getStatus`, `startAgent`, `stopAgent`, `restartAgent`, `updateAgent`, `getTunnels`, `createTunnel`, `deleteTunnel`, `toggleTunnel`, `scanServices`, `addCustomService`, `removeCustomService`, `getLogs`, `getConfig`, `getPanelUrl`, `rotateCertificate`, `downloadCertificate`, `getPanelExposeStatus`, `togglePanelExpose`, `uninstallAgent`, `getAgentPlugins`, `installAgentPlugin`, `enableAgentPlugin`, `disableAgentPlugin`, `uninstallAgentPlugin`, `updateAgentPlugin`, `fetchAgentPluginBundle`, `openExternal`
 - Three client implementations: desktop via Tauri `invoke()` (`createDesktopAgentClient(label)`), web via `apiFetch()` (`createWebAgentClient()`), agent REST API in `portlama-agent`
 - Web SPA build: `npm run build:web` in agent-panel, output at `dist-web/`, copied to `portlama-agent/panel-dist/` via root `build:agent-panel-web` script
-- Pages exported with `Agent` prefix to avoid collision with admin-panel: `AgentDashboardPage`, `AgentTunnelsPage`, etc.
+- Pages exported with `Agent` prefix to avoid collision with admin-panel: `AgentDashboardPage`, `AgentTunnelsPage`, `AgentServicesPage`, `AgentLogsPage`, `AgentSettingsPage`, `AgentPluginsPage`
 
 **Rust / Tauri (Desktop):**
 
@@ -98,7 +98,8 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Storage server registry persisted as JSON at `~/.portlama/storage-servers.json` — storage provisioning streams NDJSON as `storage-provision-progress` Tauri events
 - Agent registry persisted as JSON at `~/.portlama/agents.json` — multi-agent support with per-agent data directories
 - Atomic file writes (temp → fsync → rename) for registry and config
-- Local plugin management in `local_plugins.rs` — registry at `~/.portlama/local/plugins.json`, curated plugin list, npm install/uninstall, launchd/systemd service for the local Fastify host on `127.0.0.1:9293`
+- Local plugin management in `local_plugins.rs` — registry at `~/.portlama/local/plugins.json`, curated plugin list, npm install/uninstall, launchd/systemd service for the local Fastify host on `127.0.0.1:9293`. Migration: `migrate_local_plugin_to_agent(name, label)` copies plugin data + installs on agent + removes local copy
+- Agent plugin management in `agents.rs` — 7 Tauri commands (`get_agent_plugins`, `install_agent_plugin`, `enable_agent_plugin`, `disable_agent_plugin`, `uninstall_agent_plugin`, `update_agent_plugin`, `fetch_agent_plugin_bundle`) all use `curl_panel` to call the agent panel REST API
 - Agent panel expose: `get_panel_expose_status(label)` and `toggle_panel_expose(label, enabled)` Tauri commands shell out to `portlama-agent panel --status/--enable/--disable`
 
 **Agent Web Panel:**
@@ -206,7 +207,7 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Manifest `config` field: declarative schema for plugin settings (`{ key: { type, default?, description?, enum? } }`) — stored in registry, used by plugin's settings UI
 - Server-side plugin code runs unsandboxed in the panel process — `@lamalibre/` scope is the trust boundary
 - All `npm install` calls use `--ignore-scripts` to block postinstall script execution
-- Plugin names and ticket scope names matching core API prefixes are rejected — single source of truth in `lib/constants.js`: `health`, `onboarding`, `invite`, `enroll`, `tunnels`, `sites`, `system`, `services`, `logs`, `users`, `certs`, `invitations`, `plugins`, `tickets`, `settings`, `identity`, `storage`
+- Plugin names and ticket scope names matching core API prefixes are rejected — single source of truth in `lib/constants.js`: `health`, `onboarding`, `invite`, `enroll`, `tunnels`, `sites`, `system`, `services`, `logs`, `users`, `certs`, `invitations`, `plugins`, `tickets`, `settings`, `identity`, `storage`, `agents`
 - Plugin server routes are mounted with two-level Fastify encapsulation: auth guard on outer scope (plugin cannot override), plugin code on inner scope
 - Plugin panel bundles served at `/{pluginName}/panel.js` with runtime `@lamalibre/` scope check
 - Disabled plugins return 503 via `onRequest` hook (Fastify cannot remove routes at runtime — clean state requires restart)
@@ -230,6 +231,27 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - Fastify host server in `portlama-agent/src/lib/local-plugin-host.js` — mounts enabled plugin routes (no auth, localhost only), serves panel.js bundles, management API on `127.0.0.1:9293`
 - Service config in `portlama-agent/src/lib/local-host-service.js` — generates plist/systemd for the host entry point (`local-plugin-host-entry.js`)
 - Desktop frontend: `portlama-desktop/src/pages/LocalPlugins.jsx` (management page), `portlama-desktop/src/lib/desktop-local-plugin-client.js` (Tauri invoke wrapper)
+- Migration to agent: "Move to Agent" button in LocalPlugins.jsx, opens agent selector, calls `migrate_local_plugin_to_agent` Tauri command. Copies plugin data dir, installs on agent via panel API, removes local copy
+
+**Agent plugin hosting (agent-side plugin server):**
+
+- Agents host plugins on their panel server (port 9393) — plugins mount at `/api/plugins/<name>/...` within the mTLS-protected `/api` prefix
+- Three-tier plugin journey: try locally (port 9293) → migrate to agent (port 9393) → agent serves through Portlama tunnel
+- Plugin router in `portlama-agent/src/lib/agent-plugin-router.js` — async Fastify plugin, mounts enabled plugins from `~/.portlama/agents/<label>/plugins.json`
+- Plugin lifecycle library in `portlama-agent/src/lib/agent-plugins.js` — install, uninstall, enable, disable, update, bundle read; same mutex + atomic write patterns as local-plugins.js
+- Validates `modes.includes('agent')` — plugins must declare agent mode support in manifest
+- Plugin routes mounted with CJS/ESM loading (same pattern as local-plugin-host.js) — no additional auth guard needed (panel-server.js validates mTLS for all `/api/*` routes)
+- Panel bundles served at `/api/plugins/<name>/panel.js` with 1hr cache
+- Disabled plugin catch-all returns 503 with 5-second cache
+- Enable/disable triggers panel service restart via `unloadPanelService`/`loadPanelService` (launchd/systemd KeepAlive restarts process with updated registry)
+- Plugin CRUD endpoints in `panel-api-routes.js`: `GET /plugins`, `POST /plugins/install`, `POST /plugins/:name/enable`, `POST /plugins/:name/disable`, `DELETE /plugins/:name`, `POST /plugins/:name/update`, `GET /plugins/:name/bundle`
+- Agent Plugins page in `portlama-agent-panel/src/pages/Plugins.jsx` — plugin cards with install form, enable/disable/uninstall, react-query with 10s refetch
+- `AgentClientContext` extended with: `getAgentPlugins`, `installAgentPlugin`, `enableAgentPlugin`, `disableAgentPlugin`, `uninstallAgentPlugin`, `updateAgentPlugin`, `fetchAgentPluginBundle`
+- Desktop client: 7 Tauri commands in `agents.rs` — `get_agent_plugins`, `install_agent_plugin`, `enable_agent_plugin`, `disable_agent_plugin`, `uninstall_agent_plugin`, `update_agent_plugin`, `fetch_agent_plugin_bundle`
+- Migration command: `migrate_local_plugin_to_agent(name, label)` in `local_plugins.rs` — copies data dir, installs on agent via curl_panel, removes from local registry, npm uninstalls local copy
+- Systemd `ReadWritePaths` includes agent data dir (plugins need write access for runtime state)
+- Capability reporting: `portlama-agent update` reports enabled plugin capabilities to server via `POST /api/agents/plugins/report`; server merges into `getValidCapabilities()` in-memory set
+- CLI: `portlama-agent plugin install/uninstall/update/status` delegates to `agent-plugins.js` library
 
 **Ticket system (agent-to-agent authorization):**
 

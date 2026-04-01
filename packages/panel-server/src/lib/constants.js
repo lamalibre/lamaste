@@ -5,5 +5,5 @@
 export const RESERVED_API_PREFIXES = [
   'health', 'onboarding', 'invite', 'enroll', 'tunnels', 'sites', 'system',
   'services', 'logs', 'users', 'certs', 'invitations', 'plugins', 'tickets', 'settings',
-  'identity', 'storage',
+  'identity', 'storage', 'agents',
 ];

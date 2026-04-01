@@ -184,6 +184,63 @@ pub(crate) fn curl_panel(
     Ok(body)
 }
 
+/// Curl the agent's local panel server (plain HTTP on 127.0.0.1).
+///
+/// The agent panel server trusts nginx to handle mTLS. Since the desktop app
+/// runs on the same machine, we can reach it directly via localhost and pass
+/// the identity via X-SSL-Client-Verify/X-SSL-Client-DN headers — the same
+/// headers nginx would set after a successful mTLS handshake.
+///
+/// This is safe because the panel server binds to 127.0.0.1 only.
+pub(crate) fn curl_agent_local_panel(
+    agent_label: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let url = format!("http://127.0.0.1:{}{}", port, path);
+
+    let mut args = vec![
+        "-s".to_string(),
+        "-H".to_string(),
+        "X-SSL-Client-Verify: SUCCESS".to_string(),
+        "-H".to_string(),
+        format!("X-SSL-Client-DN: CN=agent:{}", agent_label),
+        "-X".to_string(),
+        method.to_string(),
+    ];
+
+    if let Some(json_body) = body {
+        args.push("-H".to_string());
+        args.push("Content-Type: application/json".to_string());
+        args.push("-d".to_string());
+        args.push(json_body.to_string());
+    }
+
+    args.push(url);
+
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Request failed: {}", stderr));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
+            return Err(error.to_string());
+        }
+    }
+
+    Ok(body)
+}
+
 pub(crate) fn curl_panel_binary(
     cfg: &config::AgentConfig,
     path: &str,

@@ -17,10 +17,12 @@ import {
   ScrollText,
   ExternalLink,
   ArrowUpCircle,
+  ArrowRightFromLine,
   ChevronUp,
   ChevronsUp,
   X,
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { desktopLocalPluginClient as client } from '../lib/desktop-local-plugin-client.js';
 
 // Map icon names from curated list to lucide-react components
@@ -202,7 +204,105 @@ function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
   );
 }
 
-function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate, updateInfo, isActing, isUpdating }) {
+function MoveToAgentDialog({ pluginName, onClose, onMoved }) {
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [migrating, setMigrating] = useState(false);
+  const [error, setError] = useState(null);
+
+  const agentsQuery = useQuery({
+    queryKey: ['agents-for-migration'],
+    queryFn: () => invoke('get_agents'),
+    select: (data) => data || [],
+  });
+
+  const agents = agentsQuery.data || [];
+  const loading = agentsQuery.isLoading;
+
+  // Use the first agent as default if no selection has been made
+  const effectiveAgent = selectedAgent || (agents.length > 0 ? agents[0].label : '');
+
+  const handleMigrate = async () => {
+    if (!effectiveAgent) return;
+    setMigrating(true);
+    setError(null);
+    try {
+      await invoke('migrate_local_plugin_to_agent', { name: pluginName, label: effectiveAgent });
+      onMoved(pluginName, effectiveAgent);
+    } catch (err) {
+      setError(typeof err === 'string' ? err : err.message || String(err));
+      setMigrating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="w-full max-w-sm rounded-xl bg-zinc-900 border border-zinc-700 p-6 shadow-xl">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white">Move to Agent</h3>
+          <button type="button" onClick={onClose} className="text-zinc-400 hover:text-white">
+            <X size={20} />
+          </button>
+        </div>
+
+        <p className="text-zinc-400 text-sm mb-4">
+          Move <span className="text-white font-semibold">{pluginName}</span> from local plugins to an agent.
+          The plugin data will be transferred and the local copy removed.
+        </p>
+
+        {loading ? (
+          <p className="text-zinc-500 text-sm">Loading agents...</p>
+        ) : agents.length === 0 ? (
+          <p className="text-zinc-500 text-sm">No agents found. Install an agent first.</p>
+        ) : (
+          <>
+            <label className="block text-xs text-zinc-400 mb-1" htmlFor="migrate-agent-select">
+              Target agent
+            </label>
+            <select
+              id="migrate-agent-select"
+              value={effectiveAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
+              className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 mb-4 focus:border-cyan-500 focus:outline-none"
+            >
+              {agents.map((a) => (
+                <option key={a.label} value={a.label}>
+                  {a.label}{a.domain ? ` (${a.domain})` : ''}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 text-red-400 text-xs mb-4">
+            <AlertCircle size={14} />
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleMigrate}
+            disabled={migrating || !effectiveAgent || agents.length === 0}
+            className="rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {migrating ? 'Moving...' : 'Move'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate, onMoveToAgent, updateInfo, isActing, isUpdating }) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
 
@@ -294,6 +394,18 @@ function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen,
               >
                 <Trash2 size={12} />
                 Uninstall
+              </button>
+            )}
+            {onMoveToAgent && (
+              <button
+                type="button"
+                disabled={isActing}
+                onClick={() => onMoveToAgent(plugin.name)}
+                title="Move this plugin to an agent"
+                className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs text-cyan-400 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowRightFromLine size={12} />
+                Move to Agent
               </button>
             )}
           </>
@@ -537,6 +649,7 @@ function HostLogs() {
 export default function LocalPlugins() {
   const queryClient = useQueryClient();
   const [openPlugin, setOpenPlugin] = useState(null);
+  const [migratePlugin, setMigratePlugin] = useState(null);
   const [toast, setToast] = useState(null);
 
   const addToast = useCallback((message, type = 'success') => {
@@ -741,6 +854,7 @@ export default function LocalPlugins() {
                 onUninstall={(name) => uninstallMutation.mutate(name)}
                 onOpen={(name) => setOpenPlugin(name)}
                 onUpdate={(name) => updateMutation.mutate(name)}
+                onMoveToAgent={(name) => setMigratePlugin(name)}
                 updateInfo={updateInfoMap[plugin.name]}
                 isActing={isActing}
                 isUpdating={updateMutation.isPending}
@@ -764,6 +878,19 @@ export default function LocalPlugins() {
 
       {/* Logs */}
       {hostQuery.data?.running && <HostLogs />}
+
+      {/* Move to Agent dialog */}
+      {migratePlugin && (
+        <MoveToAgentDialog
+          pluginName={migratePlugin}
+          onClose={() => setMigratePlugin(null)}
+          onMoved={(name, agentLabel) => {
+            setMigratePlugin(null);
+            queryClient.invalidateQueries({ queryKey: ['local-plugins'] });
+            addToast(`Plugin "${name}" moved to agent "${agentLabel}"`);
+          }}
+        />
+      )}
     </div>
   );
 }

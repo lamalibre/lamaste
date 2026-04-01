@@ -84,6 +84,36 @@ export async function runUpdate({ label }) {
           });
         },
       },
+      {
+        title: 'Reporting installed plugins',
+        task: async (_ctx, task) => {
+          const { readAgentPluginRegistry } = await import('../lib/agent-plugins.js');
+          const registry = await readAgentPluginRegistry(label);
+          const enabledPlugins = registry.plugins.filter((p) => p.status === 'enabled');
+          if (enabledPlugins.length === 0) {
+            task.skip('No enabled plugins');
+            return;
+          }
+          const pluginReport = enabledPlugins.map((p) => ({
+            name: p.name,
+            version: p.version,
+            capabilities: p.capabilities || [],
+          }));
+          try {
+            const { curlAuthenticatedJson } = await import('../lib/panel-api.js');
+            await curlAuthenticatedJson(config, [
+              '-X', 'POST',
+              '-H', 'Content-Type: application/json',
+              '-d', JSON.stringify({ plugins: pluginReport }),
+              `${config.panelUrl}/api/agents/plugins/report`,
+            ]);
+            task.output = `Reported ${enabledPlugins.length} plugin(s)`;
+          } catch {
+            task.skip('Server does not support plugin reporting yet');
+          }
+        },
+        rendererOptions: { persistentOutput: true },
+      },
     ],
     {
       renderer: 'default',

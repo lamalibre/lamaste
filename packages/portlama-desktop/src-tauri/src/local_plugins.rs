@@ -223,7 +223,7 @@ fn ensure_local_dir() -> Result<PathBuf, String> {
 }
 
 /// Validate a plugin name (same rules as panel-server).
-fn validate_plugin_name(name: &str) -> Result<(), String> {
+pub(crate) fn validate_plugin_name(name: &str) -> Result<(), String> {
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
         return Err(format!("Invalid plugin name: \"{}\". Must contain only lowercase letters, numbers, and hyphens.", name));
     }
@@ -231,6 +231,7 @@ fn validate_plugin_name(name: &str) -> Result<(), String> {
     let reserved = [
         "health", "onboarding", "invite", "enroll", "tunnels", "sites", "system",
         "services", "logs", "users", "certs", "invitations", "plugins", "tickets", "settings",
+        "identity", "storage", "agents",
     ];
     if reserved.contains(&name) {
         return Err(format!("Plugin name \"{}\" is reserved", name));
@@ -1263,6 +1264,110 @@ pub async fn local_get_host_logs() -> Result<String, String> {
             combined.push_str(&stdout_log);
         }
         Ok(combined)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Recursively copy a directory.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create directory {:?}: {}", dst, e))?;
+
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| format!("Failed to read directory {:?}: {}", src, e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to get file type: {}", e))?;
+
+        // Skip symlinks to prevent following links outside the plugin directory
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Failed to copy {:?}: {}", src_path, e))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn migrate_local_plugin_to_agent(name: String, label: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::agents::validate_agent_label(&label)?;
+
+        // 1. Read local plugin registry and find the plugin
+        let mut registry = load_local_plugin_registry()?;
+        let plugin_idx = registry
+            .plugins
+            .iter()
+            .position(|p| p.name == name)
+            .ok_or(format!("Plugin \"{}\" not found in local plugins", name))?;
+
+        let plugin = &registry.plugins[plugin_idx];
+
+        if plugin.status == "enabled" {
+            return Err("Disable the plugin before migrating".to_string());
+        }
+
+        let package_name = plugin.package_name.clone();
+
+        // 2. Copy plugin data directory
+        let src_plugin_dir = config::local_plugins_dir().join(&name);
+        let dst_plugin_dir = crate::agents::agent_data_dir(&label).join("plugins").join(&name);
+
+        if src_plugin_dir.is_dir() {
+            copy_dir_recursive(&src_plugin_dir, &dst_plugin_dir)?;
+        }
+
+        // 3. Install on agent via local panel API (http://127.0.0.1:9393)
+        let payload = serde_json::json!({ "packageName": package_name });
+
+        let install_result = crate::api::curl_agent_local_panel(
+            &label,
+            crate::agents::AGENT_PANEL_PORT,
+            "POST",
+            "/api/plugins/install",
+            Some(&payload.to_string()),
+        );
+
+        if let Err(err) = install_result {
+            // Rollback: remove copied plugin dir
+            if dst_plugin_dir.is_dir() {
+                let _ = std::fs::remove_dir_all(&dst_plugin_dir);
+            }
+            return Err(format!("Failed to install on agent: {}", err));
+        }
+
+        // 4. Remove from local registry
+        registry.plugins.remove(plugin_idx);
+        save_local_plugin_registry(&registry)?;
+
+        // 5. npm uninstall from local
+        let local_dir = config::local_dir();
+        let _ = std::process::Command::new("npm")
+            .args(["uninstall", "--ignore-scripts", &package_name])
+            .current_dir(&local_dir)
+            .output();
+
+        // 6. Remove local plugin data directory
+        if src_plugin_dir.is_dir() {
+            let _ = std::fs::remove_dir_all(&src_plugin_dir);
+        }
+
+        Ok(format!(
+            "Plugin \"{}\" migrated to agent \"{}\"",
+            name, label
+        ))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?

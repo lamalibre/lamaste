@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add agent plugin hosting — agents serve plugins on their panel server (port 9393) with routes at `/<name>/...`, matching local plugin host URL pattern (`portlama-agent`)
+- Add agent plugin lifecycle library with install, enable, disable, uninstall, update, and bundle read operations (`portlama-agent`)
+- Add plugin CRUD endpoints to agent panel API: list, install, enable, disable, uninstall, update, and bundle serving (`portlama-agent`)
+- Add Plugins management page to agent panel with curated plugin list, install form, plugin detail with microfrontend loader, enable/disable toggles, update checking, and uninstall (`portlama-agent-panel`)
+- Add "Move to Agent" migration flow in desktop Local Plugins page — copies plugin data, installs on agent, removes local copy (`portlama-desktop`)
+- Add `POST /api/agents/plugins/report` endpoint — agents report enabled plugin capabilities to server with persistence across restarts (`panel-server`)
+- Add 8 Tauri commands for agent plugin management: get, install, enable, disable, uninstall, update, check-update, fetch bundle with chunked IPC for large bundles (`portlama-desktop`)
+- Add `agents` to reserved API prefixes to prevent plugin name collision (`panel-server`, `portlama-agent`)
 - Add server-side storage system — AES-256-GCM encrypted credential storage, plugin bindings, and admin API (`panel-server`)
 - Add `POST /api/system/update` endpoint for admin-triggered panel self-update via systemd-run (`panel-server`)
 - Add CSR-based agent certificate upgrade to hardware-bound via `POST /api/certs/agent/upgrade-cert` (`panel-server`)
@@ -21,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refactor agent plugin CLI to delegate to shared `agent-plugins.js` library — CLI is now a thin wrapper (`portlama-agent`)
+- Expand systemd `ReadWritePaths` for agent panel service to include agent data directory for plugin runtime state (`portlama-agent`)
 - Migrate panel-client pages to portlama-admin-panel shared package — panel-client now consumes pages from the shared library (`panel-client`, `portlama-admin-panel`)
 - Replace P12-based agent enrollment with CSR-based token enrollment — agent generates keypair locally, sends CSR with one-time token (`portlama-agent`)
 - Remove macOS Keychain identity import from agent CLI — desktop app handles Keychain via Rust crate (`portlama-agent`)
@@ -28,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Add CORS support to agent panel server for desktop app plugin microfrontends — Tauri and localhost origins with credentials (`portlama-agent`)
+- Add localhost-origin mTLS bypass on agent panel server — plugin microfrontend browser fetches no longer require mTLS headers when accessed from the desktop app (`portlama-agent`)
+- Fix agent panel `--json` flag not propagated from global CLI flags — `getPanelExposeStatus` returned human-readable text instead of JSON (`portlama-agent`)
+- Fix agent plugin routes mounted at wrong prefix — plugins expect `/${name}/...` (matching local plugin host) not `/api/plugins/${name}/...` (`portlama-agent`)
+- Fix plugin disable endpoint race condition — `setImmediate` replaced with `setTimeout(500)` to flush HTTP response before panel service restart (`portlama-agent`)
+- Fix Tauri IPC crash with large plugin bundles — split JS source into 16KB chunks in Rust, join in JavaScript to avoid WebKit JSON parser limits (`portlama-desktop`)
+- Fix CSP blocking plugin microfrontend API calls — add `http://127.0.0.1:*` to `connect-src` and `'unsafe-eval'` to `script-src` (`portlama-desktop`)
 - Fix `panel.json` written with mode 0640 instead of 0600 — file contains session secrets (`panel-server`, `create-portlama`)
 - Fix missing fsync before rename in config auto-write and updateConfig — crash could corrupt config (`panel-server`)
 - Fix CORS `origin: true` on local plugin host reflecting arbitrary origins with credentials — restrict to Tauri and localhost origins (`portlama-agent`)
@@ -42,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict local plugin host CORS to explicit origin allowlist instead of echoing any origin (`portlama-agent`)
 - Change `panel.json` file permissions from 0640 to 0600 — contains `sessionSecret` and `panel2fa.secret` (`panel-server`, `create-portlama`)
 
-**Affected packages:** panel-server 0.1.26, panel-client 0.1.10, portlama-agent 1.0.21, create-portlama 1.0.49, portlama-admin-panel 0.1.2, portlama-cloud 0.1.3, portlama-desktop 0.1.12, install-portlama-agent 1.0.0 (new)
+**Affected packages:** panel-server 0.1.27, panel-client 0.1.10, portlama-agent 1.0.22, portlama-agent-panel 0.1.2, create-portlama 1.0.49, portlama-admin-panel 0.1.2, portlama-cloud 0.1.3, portlama-desktop 0.1.13, install-portlama-agent 1.0.0 (new)
 
 ---
 

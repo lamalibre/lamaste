@@ -3,6 +3,7 @@ import {
   Activity,
   Network,
   Compass,
+  Puzzle,
   ScrollText,
   Settings,
   Terminal,
@@ -10,6 +11,7 @@ import {
 import AgentDashboardPage from './pages/Dashboard.jsx';
 import AgentTunnelsPage from './pages/Tunnels.jsx';
 import AgentServicesPage from './pages/Services.jsx';
+import AgentPluginsPage from './pages/Plugins.jsx';
 import AgentLogsPage from './pages/Logs.jsx';
 import AgentSettingsPage from './pages/Settings.jsx';
 
@@ -17,6 +19,7 @@ const TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'tunnels', label: 'Tunnels', icon: Network },
   { id: 'services', label: 'Services', icon: Compass },
+  { id: 'plugins', label: 'Plugins', icon: Puzzle },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -30,6 +33,8 @@ export default function WebApp() {
         return <AgentTunnelsPage />;
       case 'services':
         return <AgentServicesPage />;
+      case 'plugins':
+        return <AgentPluginsPage />;
       case 'logs':
         return <AgentLogsPage />;
       case 'settings':

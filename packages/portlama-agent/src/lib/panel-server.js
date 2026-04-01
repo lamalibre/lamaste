@@ -11,11 +11,14 @@
  */
 
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import panelApiRoutes from './panel-api-routes.js';
+import agentPluginRouter from './agent-plugin-router.js';
+import { readAgentPluginBundle } from './agent-plugins.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +34,18 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     logger: {
       level: 'info',
     },
+  });
+
+  // Allow Tauri webview and localhost origins to call plugin APIs.
+  // credentials: true is required because plugin microfrontends use
+  // fetch(..., { credentials: 'include' }) for session cookies.
+  await server.register(cors, {
+    origin: [
+      'tauri://localhost',
+      'https://tauri.localhost',
+      /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/,
+    ],
+    credentials: true,
   });
 
   await server.register(rateLimit, {
@@ -57,6 +72,19 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
 
     const verify = request.headers['x-ssl-client-verify'];
     if (verify !== 'SUCCESS') {
+      // Allow localhost browser requests (desktop app plugin microfrontends).
+      // The server binds 127.0.0.1 only, so only local processes can reach it.
+      // The Origin header is browser-enforced and cannot be forged by web pages.
+      const origin = request.headers.origin || '';
+      const isLocalOrigin =
+        /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin) ||
+        origin === 'tauri://localhost' ||
+        origin === 'https://tauri.localhost';
+      if (isLocalOrigin) {
+        request.certCN = `agent:${label}`;
+        request.certRole = 'agent';
+        return;
+      }
       return reply.code(403).send({ error: 'Valid mTLS certificate required' });
     }
 
@@ -81,6 +109,33 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
 
   // --- REST API routes ---
   await server.register(panelApiRoutes, { prefix: '/api', label });
+
+  // --- Agent plugin routes ---
+  // Mounts enabled plugin server routes at /<name>/... (root level),
+  // matching the local plugin host pattern that plugins expect.
+  // Plugins construct URLs as ${panelUrl}/${pluginName}/api/${pluginName}/...
+  await server.register(agentPluginRouter, { label });
+
+  // --- Public plugin bundle endpoint (outside /api — no mTLS required) ---
+  // Desktop app loads bundles via <script> tag to bypass Tauri IPC JSON size limits.
+  // Script tags are not subject to CORS, so cross-origin loading works.
+  const PLUGIN_NAME_RE = /^[a-z0-9-]+$/;
+  server.get('/plugin-bundles/:name/panel.js', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      reply.type('application/javascript');
+      return reply.code(400).send('// invalid plugin name');
+    }
+    try {
+      const source = await readAgentPluginBundle(label, name);
+      reply.type('application/javascript');
+      reply.header('Cache-Control', 'public, max-age=3600');
+      return source;
+    } catch {
+      reply.type('application/javascript');
+      return reply.code(404).send(`// plugin bundle not found: ${name}`);
+    }
+  });
 
   // --- Static SPA files ---
   const staticRoot = path.resolve(__dirname, '..', 'panel-dist');

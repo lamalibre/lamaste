@@ -41,6 +41,7 @@ import {
   AgentDashboardPage,
   AgentTunnelsPage,
   AgentServicesPage,
+  AgentPluginsPage,
   AgentLogsPage,
   AgentSettingsPage,
 } from '@lamalibre/portlama-agent-panel';
@@ -54,6 +55,7 @@ const AGENT_TABS = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
   { id: 'tunnels', label: 'Tunnels', icon: Network },
   { id: 'services', label: 'Services', icon: Compass },
+  { id: 'plugins', label: 'Plugins', icon: Puzzle },
   { id: 'logs', label: 'Logs', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -282,6 +284,8 @@ export default function App() {
         return <AgentTunnelsPage />;
       case 'services':
         return <AgentServicesPage />;
+      case 'plugins':
+        return <AgentPluginsPage />;
       case 'logs':
         return <AgentLogsPage />;
       case 'settings':

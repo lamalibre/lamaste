@@ -62,6 +62,51 @@ export function createDesktopAgentClient(label) {
         ? invoke('toggle_panel_expose', { label, enabled })
         : Promise.reject(new Error('Multi-agent label required')),
     uninstallAgent: () => invoke('uninstall_agent'),
+    // Agent panel service
+    startAgentPanel: () =>
+      label
+        ? invoke('start_agent_panel', { label })
+        : Promise.reject(new Error('Multi-agent label required')),
+    stopAgentPanel: () =>
+      label
+        ? invoke('stop_agent_panel', { label })
+        : Promise.reject(new Error('Multi-agent label required')),
+    // Plugins
+    getAgentPlugins: () =>
+      label
+        ? invoke('get_agent_plugins', { label })
+        : Promise.resolve({ plugins: [] }),
+    installAgentPlugin: (packageName) =>
+      label
+        ? invoke('install_agent_plugin', { label, packageName })
+        : Promise.reject(new Error('Multi-agent label required')),
+    enableAgentPlugin: (name) =>
+      label
+        ? invoke('enable_agent_plugin', { label, name })
+        : Promise.reject(new Error('Multi-agent label required')),
+    disableAgentPlugin: (name) =>
+      label
+        ? invoke('disable_agent_plugin', { label, name })
+        : Promise.reject(new Error('Multi-agent label required')),
+    uninstallAgentPlugin: (name) =>
+      label
+        ? invoke('uninstall_agent_plugin', { label, name })
+        : Promise.reject(new Error('Multi-agent label required')),
+    updateAgentPlugin: (name) =>
+      label
+        ? invoke('update_agent_plugin', { label, name })
+        : Promise.reject(new Error('Multi-agent label required')),
+    fetchAgentPluginBundle: (name) =>
+      label
+        ? invoke('fetch_agent_plugin_bundle', { label, name }).then((chunks) => ({
+            type: 'source',
+            source: chunks.join(''),
+          }))
+        : Promise.reject(new Error('Multi-agent label required')),
+    checkAgentPluginUpdate: (name) =>
+      label
+        ? invoke('check_agent_plugin_update', { label, name })
+        : Promise.reject(new Error('Multi-agent label required')),
     openExternal: (url) => {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {

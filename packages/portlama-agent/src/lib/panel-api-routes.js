@@ -17,6 +17,17 @@ import {
   retractPanelTunnel,
   fetchPanelTunnelStatus,
 } from './panel-api.js';
+import {
+  readAgentPluginRegistry,
+  installAgentPlugin,
+  uninstallAgentPlugin,
+  enableAgentPlugin,
+  disableAgentPlugin,
+  updateAgentPlugin,
+  checkAgentPluginUpdate,
+  readAgentPluginBundle,
+} from './agent-plugins.js';
+import { unloadPanelService, loadPanelService } from './panel-service.js';
 
 // UUID regex for validating :id params before proxying to panel server
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -256,5 +267,124 @@ export default async function panelApiRoutes(fastify, opts) {
     // Full uninstall requires the CLI.
     await unloadAgent(label);
     return { ok: true, message: 'Agent stopped. Run portlama-agent uninstall for full removal.' };
+  });
+
+  // --- Plugins ---
+
+  const PLUGIN_NAME_RE = /^[a-z0-9-]+$/;
+
+  fastify.get('/plugins', async () => {
+    return readAgentPluginRegistry(label);
+  });
+
+  fastify.post('/plugins/install', async (request, reply) => {
+    const { packageName } = request.body || {};
+    if (!packageName || typeof packageName !== 'string') {
+      return reply.code(400).send({ error: 'packageName is required' });
+    }
+    try {
+      const entry = await installAgentPlugin(label, packageName);
+      return { ok: true, plugin: entry };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.post('/plugins/:name/enable', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      await enableAgentPlugin(label, name);
+      // Restart panel service to mount newly enabled plugin routes.
+      // The response is sent before the process exits — launchd/systemd
+      // will restart the process with the updated registry.
+      setTimeout(async () => {
+        try {
+          await unloadPanelService(label);
+          await loadPanelService(label);
+        } catch (err) {
+          fastify.log.error({ err: err.message }, 'Failed to restart panel service');
+        }
+      }, 500);
+      return { ok: true, name, status: 'enabled', restarting: true };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.post('/plugins/:name/disable', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      await disableAgentPlugin(label, name);
+      // Restart panel service to unmount disabled plugin routes.
+      // Use setTimeout to flush the response before the process exits.
+      setTimeout(async () => {
+        try {
+          await unloadPanelService(label);
+          await loadPanelService(label);
+        } catch (err) {
+          fastify.log.error({ err: err.message }, 'Failed to restart panel service after disable');
+        }
+      }, 500);
+      return { ok: true, name, status: 'disabled', restarting: true };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.delete('/plugins/:name', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      await uninstallAgentPlugin(label, name);
+      return { ok: true, name };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.post('/plugins/:name/update', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      const plugin = await updateAgentPlugin(label, name);
+      return { ok: true, plugin };
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.get('/plugins/:name/check-update', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      return await checkAgentPluginUpdate(label, name);
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  fastify.get('/plugins/:name/bundle', async (request, reply) => {
+    const { name } = request.params;
+    if (!PLUGIN_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'Invalid plugin name' });
+    }
+    try {
+      const source = await readAgentPluginBundle(label, name);
+      return { source };
+    } catch (err) {
+      return reply.code(404).send({ error: err.message });
+    }
   });
 }

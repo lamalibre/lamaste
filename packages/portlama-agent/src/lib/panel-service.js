@@ -19,6 +19,7 @@ import {
   panelLogFile,
   panelErrorLogFile,
   agentLogsDir,
+  agentDataDir,
 } from './platform.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -218,6 +219,7 @@ function generatePanelSystemdUnit(label, port) {
   const logFile = panelLogFile(label);
   const errorLogFile = panelErrorLogFile(label);
   const logsDir = agentLogsDir(label);
+  const dataDir = agentDataDir(label);
 
   const execStart = [nodePath, entryPath, '--label', label, '--port', String(port)]
     .map(systemdQuote)
@@ -238,7 +240,7 @@ StandardError=append:${errorLogFile}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${logsDir}
+ReadWritePaths=${logsDir} ${dataDir}
 
 [Install]
 WantedBy=multi-user.target

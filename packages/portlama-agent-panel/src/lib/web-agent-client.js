@@ -65,8 +65,32 @@ export function createWebAgentClient() {
     togglePanelExpose: (enabled) =>
       apiFetch(enabled ? '/panel-expose' : '/panel-retract', { method: 'POST' }),
 
+    // Agent panel service (no-op in web context — panel is already running)
+    startAgentPanel: () => Promise.resolve({ ok: true, alreadyRunning: true }),
+    stopAgentPanel: () => Promise.resolve({ ok: true }),
+
     // Lifecycle
     uninstallAgent: () => apiFetch('/uninstall', { method: 'POST' }),
+
+    // Plugins
+    getAgentPlugins: () => apiFetch('/plugins'),
+    installAgentPlugin: (packageName) =>
+      apiFetch('/plugins/install', { method: 'POST', body: { packageName } }),
+    enableAgentPlugin: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}/enable`, { method: 'POST' }),
+    disableAgentPlugin: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}/disable`, { method: 'POST' }),
+    uninstallAgentPlugin: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    updateAgentPlugin: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}/update`, { method: 'POST' }),
+    fetchAgentPluginBundle: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}/bundle`).then((r) => ({
+        type: 'source',
+        source: r.source,
+      })),
+    checkAgentPluginUpdate: (name) =>
+      apiFetch(`/plugins/${encodeURIComponent(name)}/check-update`),
 
     // External links — opens in new tab in web context
     openExternal: (url) => {

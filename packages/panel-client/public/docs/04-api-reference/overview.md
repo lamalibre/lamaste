@@ -287,6 +287,7 @@ There are two exceptions:
 | POST   | `/api/enroll`                             | Public     | Enroll agent with token (hardware-bound)|
 | GET    | `/api/system/stats`                       | Management | System statistics                      |
 | POST   | `/api/system/update`                      | Management | Trigger background server update       |
+| POST   | `/api/agents/plugins/report`              | Management | Report agent plugin capabilities       |
 | GET    | `/api/tunnels/agent-config`               | Management | Get agent tunnel configuration         |
 | GET    | `/api/tunnels`                            | Management | List tunnels                           |
 | POST   | `/api/tunnels`                            | Management | Create tunnel                          |

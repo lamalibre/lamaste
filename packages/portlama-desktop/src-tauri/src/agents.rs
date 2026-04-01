@@ -581,6 +581,56 @@ pub async fn toggle_panel_expose(label: String, enabled: bool) -> Result<String,
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// Start the agent panel service locally (no tunnel exposure).
+/// Used by the Plugins page to ensure the panel server is running before
+/// making API calls.
+#[tauri::command]
+pub async fn start_agent_panel(label: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+
+        let output = Command::new("portlama-agent")
+            .args(["panel", "--enable", "--local-only", "--label", &label, "--json"])
+            .output()
+            .map_err(|e| format!("Failed to run portlama-agent: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to start panel: {}", stderr.trim()));
+        }
+
+        serde_json::from_str(stdout.trim())
+            .map_err(|e| format!("Failed to parse response: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Stop the agent panel service locally (no tunnel retraction).
+#[tauri::command]
+pub async fn stop_agent_panel(label: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+
+        let output = Command::new("portlama-agent")
+            .args(["panel", "--disable", "--local-only", "--label", &label, "--json"])
+            .output()
+            .map_err(|e| format!("Failed to run portlama-agent: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Failed to stop panel: {}", stderr.trim()));
+        }
+
+        serde_json::from_str(stdout.trim())
+            .map_err(|e| format!("Failed to parse response: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
 // --- Agent Installation ---
 
 /// NDJSON progress event from portlama-agent setup --json.
@@ -868,5 +918,176 @@ pub async fn install_agent(
     }
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// Agent plugin management
+// ---------------------------------------------------------------------------
+
+/// Default port for the agent panel server.
+pub(crate) const AGENT_PANEL_PORT: u16 = 9393;
+
+fn validate_plugin_name(name: &str) -> Result<(), String> {
+    crate::local_plugins::validate_plugin_name(name)
+}
+
+/// Curl the agent's local panel server (plain HTTP on 127.0.0.1:9393).
+/// The panel server validates identity via X-SSL-Client-* headers that nginx
+/// normally sets. From localhost this is safe — the server binds 127.0.0.1 only.
+fn curl_local_panel(
+    label: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    crate::api::curl_agent_local_panel(label, AGENT_PANEL_PORT, method, path, body)
+}
+
+#[tauri::command]
+pub async fn get_agent_plugins(label: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        let body = curl_local_panel(&label, "GET", "/api/plugins", None)?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse plugins: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn install_agent_plugin(
+    label: String,
+    package_name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        let payload = serde_json::json!({ "packageName": package_name });
+        let body = curl_local_panel(
+            &label,
+            "POST",
+            "/api/plugins/install",
+            Some(&payload.to_string()),
+        )?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn enable_agent_plugin(
+    label: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let path = format!("/api/plugins/{}/enable", name);
+        let body = curl_local_panel(&label, "POST", &path, None)?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn disable_agent_plugin(
+    label: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let path = format!("/api/plugins/{}/disable", name);
+        let body = curl_local_panel(&label, "POST", &path, None)?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn uninstall_agent_plugin(
+    label: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let path = format!("/api/plugins/{}", name);
+        let body = curl_local_panel(&label, "DELETE", &path, None)?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn update_agent_plugin(
+    label: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let path = format!("/api/plugins/{}/update", name);
+        let body = curl_local_panel(&label, "POST", &path, None)?;
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn fetch_agent_plugin_bundle(
+    label: String,
+    name: String,
+) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let api_path = format!("/api/plugins/{}/bundle", name);
+        let body = curl_local_panel(&label, "GET", &api_path, None)?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))?;
+        let source = parsed["source"]
+            .as_str()
+            .ok_or_else(|| "No source field in bundle response".to_string())?;
+
+        // Split into ~16 KB chunks at character boundaries to avoid WebKit
+        // JSON parser issues with large single-string IPC payloads.
+        let chunk_size = 16384;
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        while start < source.len() {
+            let mut end = std::cmp::min(start + chunk_size, source.len());
+            while end < source.len() && !source.is_char_boundary(end) {
+                end += 1;
+            }
+            chunks.push(source[start..end].to_string());
+            start = end;
+        }
+        Ok(chunks)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn check_agent_plugin_update(
+    label: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_agent_label(&label)?;
+        validate_plugin_name(&name)?;
+        let path = format!("/api/plugins/{}/check-update", name);
+        let body = curl_local_panel(&label, "GET", &path, None)?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Failed to parse: {}", e))?;
+        Ok(parsed)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 

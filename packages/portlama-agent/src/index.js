@@ -163,7 +163,7 @@ export async function main() {
       const { runPanel } = await import('./commands/panel.js');
       const { resolveLabel } = await import('./lib/registry.js');
       const resolved = await resolveLabel(label);
-      await runPanel(args.slice(1), { label: resolved });
+      await runPanel(args.slice(1), { label: resolved, json });
       break;
     }
     case 'list': {
