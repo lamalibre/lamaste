@@ -23,6 +23,11 @@ import {
   LogIn,
   LogOut,
   UserCheck,
+  LayoutDashboard,
+  Monitor,
+  Eye,
+  Trash2,
+  Folder,
 } from 'lucide-react';
 import {
   AdminClientProvider,
@@ -47,6 +52,7 @@ import {
   AgentTunnelsPage,
   AgentServicesPage,
   AgentPluginsPage,
+  AgentPluginPanel,
   AgentLogsPage,
   AgentSettingsPage,
 } from '@lamalibre/portlama-agent-panel';
@@ -81,6 +87,25 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-user-access', label: 'User Plugin Access', icon: UserCheck },
   { id: 'server-settings', label: 'Settings', icon: Settings },
 ];
+
+// Map lucide icon name strings (from plugin pages metadata) to React components
+const PLUGIN_ICON_MAP = {
+  'layout-dashboard': LayoutDashboard,
+  'hard-drive': HardDrive,
+  'monitor': Monitor,
+  'eye': Eye,
+  'trash-2': Trash2,
+  'settings': Settings,
+  'folder': Folder,
+  'activity': Activity,
+  'network': Network,
+  'compass': Compass,
+  'scroll-text': ScrollText,
+  'package': Package,
+  'puzzle': Puzzle,
+  'shield-check': ShieldCheck,
+  'terminal': Terminal,
+};
 
 function SetupRequired({ message, onCreateServer }) {
   return (
@@ -122,6 +147,11 @@ export default function App() {
   const [managingServer, setManagingServer] = useState(null);
   const [managingAgent, setManagingAgent] = useState(null);
   const [userSession, setUserSession] = useState(null);
+
+  // Plugin sidebar injection state
+  const [openPluginName, setOpenPluginName] = useState(null);
+  const [openPluginPages, setOpenPluginPages] = useState([]);
+  const [openPluginCurrentPage, setOpenPluginCurrentPage] = useState('');
 
   // Check for existing user session on mount
   useEffect(() => {
@@ -256,12 +286,18 @@ export default function App() {
     setManagingServer(null);
     setManagingAgent(agent);
     setActiveTab('dashboard');
+    setOpenPluginName(null);
+    setOpenPluginPages([]);
+    setOpenPluginCurrentPage('');
   }, [queryClient]);
 
   const handleBackToAgentList = () => {
     queryClient.removeQueries({ queryKey: ['agent'] });
     setManagingAgent(null);
     setActiveTab('agent-list');
+    setOpenPluginName(null);
+    setOpenPluginPages([]);
+    setOpenPluginCurrentPage('');
   };
 
   if (status && !status.configured && agents.length === 0 && !skipSetup) {
@@ -325,14 +361,48 @@ export default function App() {
     }
   };
 
+  const handleOpenPlugin = useCallback((pluginName, pages) => {
+    setOpenPluginName(pluginName);
+    setOpenPluginPages(pages || []);
+    setOpenPluginCurrentPage(pages?.[0]?.id || '');
+    setActiveTab('plugin-detail');
+  }, []);
+
+  const handleClosePlugin = useCallback(() => {
+    setOpenPluginName(null);
+    setOpenPluginPages([]);
+    setOpenPluginCurrentPage('');
+    setActiveTab('plugins');
+  }, []);
+
   const renderAgentDetailPage = () => {
+    if (activeTab === 'plugin-detail' && openPluginName) {
+      return (
+        <div className="p-6 max-w-4xl mx-auto">
+          <AgentPluginPanel
+            pluginName={openPluginName}
+            client={agentClient}
+            onBack={handleClosePlugin}
+            subPath={openPluginCurrentPage}
+            onPagesDiscovered={(pages) => {
+              if (pages.length > 0 && openPluginPages.length === 0) {
+                setOpenPluginPages(pages);
+                if (!openPluginCurrentPage) {
+                  setOpenPluginCurrentPage(pages[0]?.id || '');
+                }
+              }
+            }}
+          />
+        </div>
+      );
+    }
     switch (activeTab) {
       case 'tunnels':
         return <AgentTunnelsPage />;
       case 'services':
         return <AgentServicesPage />;
       case 'plugins':
-        return <AgentPluginsPage />;
+        return <AgentPluginsPage onOpenPlugin={(name) => handleOpenPlugin(name, [])} />;
       case 'logs':
         return <AgentLogsPage />;
       case 'settings':
@@ -395,21 +465,58 @@ export default function App() {
                   <ChevronLeft size={12} className="flex-shrink-0" />
                   <span className="truncate font-medium text-zinc-300">{managingAgent.label}</span>
                 </button>
-                {AGENT_TABS.map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
-                      activeTab === id
-                        ? 'bg-zinc-800 text-cyan-400'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-                    }`}
-                  >
-                    <Icon size={13} />
-                    {label}
-                  </button>
-                ))}
+                {openPluginName && activeTab === 'plugin-detail' ? (
+                  <>
+                    {/* Plugin sidebar injection — show plugin pages */}
+                    <button
+                      type="button"
+                      onClick={handleClosePlugin}
+                      className="w-full flex items-center gap-1.5 pl-6 pr-3 py-1.5 rounded text-xs mb-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                    >
+                      <ChevronLeft size={11} className="flex-shrink-0" />
+                      <span className="text-zinc-400">Plugins</span>
+                    </button>
+                    <div className="pl-6 pr-3 py-1 mb-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        {openPluginName}
+                      </span>
+                    </div>
+                    {openPluginPages.map((page) => {
+                      const PageIcon = PLUGIN_ICON_MAP[page.icon] || Puzzle;
+                      return (
+                        <button
+                          key={page.id}
+                          type="button"
+                          onClick={() => setOpenPluginCurrentPage(page.id)}
+                          className={`w-full flex items-center gap-2 pl-8 pr-3 py-1.5 rounded text-xs mb-0.5 ${
+                            openPluginCurrentPage === page.id
+                              ? 'bg-zinc-800 text-cyan-400'
+                              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                          }`}
+                        >
+                          <PageIcon size={12} />
+                          {page.label}
+                        </button>
+                      );
+                    })}
+                  </>
+                ) : (
+                  AGENT_TABS.map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => { setActiveTab(id); setOpenPluginName(null); setOpenPluginPages([]); }}
+                      className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
+                        activeTab === id
+                          ? 'bg-zinc-800 text-cyan-400'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                      }`}
+                    >
+                      <Icon size={13} />
+                      {label}
+                    </button>
+                  ))
+                )}
               </>
             ) : (
               agents.map((agent) => (

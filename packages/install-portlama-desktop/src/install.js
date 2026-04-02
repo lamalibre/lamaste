@@ -2,12 +2,13 @@ import { createWriteStream, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { homedir, platform, arch } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { execSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, spawn } from 'node:child_process';
 import { get as httpsGet } from 'node:https';
 import { get as httpGet } from 'node:http';
 
 const REPO = 'lamalibre/portlama';
 const CACHE_DIR = join(homedir(), '.portlama', 'desktop');
+const FERIA_URL = 'http://localhost:4873';
 
 // Map platform+arch to the suffix pattern used in Tauri asset names
 const PLATFORM_SUFFIXES = {
@@ -31,7 +32,41 @@ function parseVersion(tag) {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
 }
 
+/**
+ * Check if Feria dev registry is running and has desktop releases.
+ * Returns the release array or null if Feria is unavailable.
+ */
+async function fetchFeriaReleases() {
+  try {
+    const url = `${FERIA_URL}/api/releases?tag_prefix=desktop-v`;
+    const body = await fetchJson(url);
+    if (Array.isArray(body) && body.length > 0) return body;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function getLatestRelease() {
+  // Try Feria first (local dev registry).
+  const feriaReleases = await fetchFeriaReleases();
+  if (feriaReleases) {
+    const candidates = feriaReleases.filter(
+      (r) => r.tag_name && r.tag_name.startsWith('desktop-v') && r.assets && r.assets.length > 0,
+    );
+    if (candidates.length > 0) {
+      process.stdout.write('  Source: Feria (local registry)\n');
+      candidates.sort((a, b) => {
+        const va = parseVersion(a.tag_name);
+        const vb = parseVersion(b.tag_name);
+        return vb[0] - va[0] || vb[1] - va[1] || vb[2] - va[2];
+      });
+      return candidates[0];
+    }
+  }
+
+  // Fall back to GitHub Releases API.
+  process.stdout.write('  Source: GitHub Releases\n');
   const url = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
   const body = await fetchJson(url);
   const candidates = body.filter((r) => r.tag_name && r.tag_name.startsWith('desktop-v') && r.assets && r.assets.length > 0);
@@ -44,12 +79,16 @@ async function getLatestRelease() {
   return candidates[0];
 }
 
-function fetchJson(url) {
+function fetchJson(url, _depth = 0) {
   return new Promise((resolve, reject) => {
-    const get = url.startsWith('https:') ? httpsGet : httpGet;
+    const isHttps = url.startsWith('https:');
+    const get = isHttps ? httpsGet : httpGet;
     get(url, { headers: { 'User-Agent': 'install-portlama-desktop' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchJson(res.headers.location).then(resolve, reject);
+        if (_depth >= 5) return reject(new Error('Too many redirects'));
+        const loc = res.headers.location;
+        if (isHttps && loc.startsWith('http:')) return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
+        return fetchJson(loc, _depth + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
@@ -68,12 +107,16 @@ function fetchJson(url) {
   });
 }
 
-function download(url, dest) {
+function download(url, dest, _depth = 0) {
   return new Promise((resolve, reject) => {
-    const get = url.startsWith('https:') ? httpsGet : httpGet;
+    const isHttps = url.startsWith('https:');
+    const get = isHttps ? httpsGet : httpGet;
     get(url, { headers: { 'User-Agent': 'install-portlama-desktop' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return download(res.headers.location, dest).then(resolve, reject);
+        if (_depth >= 5) return reject(new Error('Too many redirects'));
+        const loc = res.headers.location;
+        if (isHttps && loc.startsWith('http:')) return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
+        return download(loc, dest, _depth + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
         return reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
@@ -105,7 +148,7 @@ async function installMacOS(dmgPath) {
   const installedApp = join(appsDir, appName);
 
   console.log('  Mounting DMG...');
-  const mountOutput = execSync(`hdiutil attach "${dmgPath}" -nobrowse`, {
+  const mountOutput = execFileSync('hdiutil', ['attach', dmgPath, '-nobrowse'], {
     encoding: 'utf8',
   });
 
@@ -126,18 +169,20 @@ async function installMacOS(dmgPath) {
     // Remove old version if present
     if (existsSync(installedApp)) {
       console.log('  Removing previous version...');
-      execSync(`rm -rf "${installedApp}"`);
+      execFileSync('rm', ['-rf', installedApp]);
     }
 
     console.log(`  Copying to ${appsDir}...`);
-    execSync(`cp -R "${appSource}" "${appsDir}/"`);
+    execFileSync('cp', ['-R', appSource, `${appsDir}/`]);
   } finally {
-    execSync(`hdiutil detach "${mountPoint}" -quiet`, { stdio: 'ignore' });
+    try {
+      execFileSync('hdiutil', ['detach', mountPoint, '-quiet'], { stdio: 'ignore' });
+    } catch { /* best-effort detach */ }
   }
 
   // Clear Gatekeeper quarantine attribute so the unsigned app can launch
   try {
-    execSync(`xattr -rd com.apple.quarantine "${installedApp}"`, {
+    execFileSync('xattr', ['-rd', 'com.apple.quarantine', installedApp], {
       stdio: 'ignore',
     });
   } catch {

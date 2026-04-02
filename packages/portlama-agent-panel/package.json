@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-agent-panel",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Shared React agent panel UI for Portlama — consumed by desktop app and web agent panel",
   "type": "module",
   "main": "src/index.js",

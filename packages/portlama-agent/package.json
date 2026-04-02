@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-agent",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "Tunnel agent for Portlama — manages Chisel tunnel client as a system service",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",

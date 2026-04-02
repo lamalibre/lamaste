@@ -20,7 +20,8 @@ portlama/
 │   ├── install-portlama-agent/ @lamalibre/install-portlama-agent — npx installer for agent cert upgrade to hardware-bound
 │   ├── install-portlama-e2e-mcp/ @lamalibre/install-portlama-e2e-mcp — npx installer + MCP server for E2E test infrastructure
 │   ├── portlama-tickets/      @lamalibre/portlama-tickets — SDK for ticket system (agent-to-agent authorization)
-│   └── portlama-cloud/        @lamalibre/portlama-cloud — cloud provider abstraction for server and storage provisioning
+│   ├── portlama-cloud/        @lamalibre/portlama-cloud — cloud provider abstraction for server and storage provisioning
+│   └── feria/                 @lamalibre/feria — dev-time npm registry + release artifact store + local workflow runner
 ├── tests/
 │   ├── e2e/                   Single-VM end-to-end tests
 │   └── e2e-three-vm/          Three-VM integration tests (Multipass)
@@ -37,6 +38,46 @@ npm run dev:client             # panel frontend (proxies /api to :9292)
 ```
 
 Build before considering a task complete. Avoid commands that hang (e.g., `npm start`).
+
+## Feria Dev Registry
+
+Feria (`packages/feria/`) is a local npm registry that stores `@lamalibre/*` packages locally, proxies everything else to npmjs.org, and auto-manages `~/.npmrc` on start/stop. It replaces the need to publish to npm during development and testing.
+
+**Storage layout:**
+```
+~/.feria/
+├── packages/@lamalibre/*/     # npm package tarballs + metadata
+└── releases/<tag>/            # release artifacts (desktop binaries)
+    ├── release.json
+    └── *.dmg / *.deb / *.AppImage
+```
+
+**Commands:**
+```bash
+feria                          # start registry on :4873, configure .npmrc
+feria release -w <workflow.yml> version=0.1.6  # run GH Actions workflow locally → build + store artifacts
+feria upload --tag <tag> --dir <path>          # upload pre-built binaries (quick testing)
+feria setup / teardown / status                # manage .npmrc without starting server
+```
+
+**Workflow runner:** `feria release` parses GitHub Actions YAML, resolves `${{ }}` expressions, filters matrix to the current platform, executes build steps, and stores resulting artifacts via `softprops/action-gh-release` → Feria release API. Coordination jobs (no matrix) skip `run` steps; build jobs (with matrix) run everything.
+
+**Republishing:** Feria allows overwriting existing versions (`npm publish --force`). No need to bump on every iteration during development.
+
+**Dev → Test → Ship lifecycle:**
+
+| Phase | Feria state | Registry | What happens |
+|-------|-------------|----------|-------------|
+| **Develop** | Running | `@lamalibre:registry=http://localhost:4873` | Code changes, builds, local testing |
+| **Bump + Publish** | Running | Feria | `/bump-versions` bumps patch, publishes all affected packages to Feria |
+| **E2E Tests** | Running | Feria | VMs install from Feria via `npx @lamalibre/create-portlama`, `npm install @lamalibre/portlama-agent`, etc. |
+| **Ship** | Stopped | `@lamalibre:registry` removed | `feria teardown` restores .npmrc, then `npm publish` goes to npmjs.org |
+
+**Key points:**
+- Feria MUST be running before E2E tests — VMs resolve `@lamalibre/*` packages from it
+- `feria release` builds desktop binaries via the workflow runner and stores them for `install-portlama-desktop`
+- `feria teardown` is required before shipping to npm — otherwise `npm publish` would go to Feria instead of npmjs.org
+- After shipping, `feria setup` or restarting Feria re-enables local routing
 
 ## Tech Stack
 
@@ -80,7 +121,9 @@ Build before considering a task complete. Avoid commands that hang (e.g., `npm s
 - `AgentClientContext` interface: `getStatus`, `startAgent`, `stopAgent`, `restartAgent`, `updateAgent`, `getTunnels`, `createTunnel`, `deleteTunnel`, `toggleTunnel`, `scanServices`, `addCustomService`, `removeCustomService`, `getLogs`, `getConfig`, `getPanelUrl`, `rotateCertificate`, `downloadCertificate`, `getPanelExposeStatus`, `togglePanelExpose`, `uninstallAgent`, `getAgentPlugins`, `installAgentPlugin`, `enableAgentPlugin`, `disableAgentPlugin`, `uninstallAgentPlugin`, `updateAgentPlugin`, `fetchAgentPluginBundle`, `openExternal`
 - Three client implementations: desktop via Tauri `invoke()` (`createDesktopAgentClient(label)`), web via `apiFetch()` (`createWebAgentClient()`), agent REST API in `portlama-agent`
 - Web SPA build: `npm run build:web` in agent-panel, output at `dist-web/`, copied to `portlama-agent/panel-dist/` via root `build:agent-panel-web` script
-- Pages exported with `Agent` prefix to avoid collision with admin-panel: `AgentDashboardPage`, `AgentTunnelsPage`, `AgentServicesPage`, `AgentLogsPage`, `AgentSettingsPage`, `AgentPluginsPage`
+- Pages exported with `Agent` prefix to avoid collision with admin-panel: `AgentDashboardPage`, `AgentTunnelsPage`, `AgentServicesPage`, `AgentLogsPage`, `AgentSettingsPage`, `AgentPluginsPage`, `AgentPluginPanel`
+- `AgentPluginPanel` accepts `onPagesDiscovered` callback for sidebar injection — parent receives plugin `pages` metadata (array of `{ id, label, icon }`) for rendering plugin-specific navigation
+- Plugin microfrontend theme uses oklch color values via `HOST_THEME` constant (surface, card, cardHover, border, accent, accentDim, textPrimary, textSecondary, success, warning, error)
 
 **Rust / Tauri (Desktop):**
 

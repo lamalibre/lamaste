@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-panel-server",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Portlama management panel backend",
   "license": "SEE LICENSE IN LICENSE.md",
   "publishConfig": {

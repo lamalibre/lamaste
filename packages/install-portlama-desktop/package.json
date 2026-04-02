@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/install-portlama-desktop",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Download and launch the Portlama Desktop app",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",

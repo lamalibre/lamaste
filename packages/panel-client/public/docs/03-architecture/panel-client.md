@@ -12,7 +12,7 @@ The client has two modes. On first visit, it shows an onboarding wizard that wal
 
 The management-mode admin pages (Dashboard, Tunnels, Sites, Users, Certificates, Services, Plugins, Tickets, Logs, Settings) are extracted into a shared package: `@lamalibre/portlama-admin-panel`. This package is consumed by both `panel-client` (web) and `portlama-desktop` (Tauri app).
 
-The agent-mode pages (Dashboard, Tunnels, Services, Logs, Settings) are extracted into a separate shared package: `@lamalibre/portlama-agent-panel`. This package is consumed by `portlama-desktop` for agent mode.
+The agent-mode pages (Dashboard, Tunnels, Services, Plugins, Logs, Settings) are extracted into a separate shared package: `@lamalibre/portlama-agent-panel`. This package is consumed by `portlama-desktop` for agent mode.
 
 The shared package exposes an `AdminClientContext` abstraction that decouples admin UI pages from their data transport. Each host provides its own client implementation:
 

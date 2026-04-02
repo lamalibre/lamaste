@@ -10,7 +10,7 @@ export { default as AgentTunnelsPage } from './pages/Tunnels.jsx';
 export { default as AgentServicesPage } from './pages/Services.jsx';
 export { default as AgentLogsPage } from './pages/Logs.jsx';
 export { default as AgentSettingsPage } from './pages/Settings.jsx';
-export { default as AgentPluginsPage } from './pages/Plugins.jsx';
+export { default as AgentPluginsPage, AgentPluginPanel } from './pages/Plugins.jsx';
 
 // Web client
 export { createWebAgentClient } from './lib/web-agent-client.js';

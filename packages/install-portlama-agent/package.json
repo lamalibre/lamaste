@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/install-portlama-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Upgrade Portlama agent authentication to hardware-bound (Keychain) certificate",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",

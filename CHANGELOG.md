@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-04-02
+
+### Added
+
+- Add Feria dev registry — local npm registry for `@lamalibre/*` packages with release artifact storage and GitHub Actions workflow runner (`feria`)
+- Add Feria-first download fallback to desktop installer — checks local registry before GitHub Releases (`install-portlama-desktop`)
+- Add plugin sidebar injection to desktop app — multi-page plugins replace agent tabs with plugin-specific navigation (`portlama-desktop`, `portlama-agent-panel`)
+- Export `AgentPluginPanel` component for standalone plugin embedding with `onPagesDiscovered` callback (`portlama-agent-panel`)
+- Add Plugins tab to desktop agent mode (`portlama-desktop`)
+
+### Security
+
+- Fix shell injection in desktop installer — replace `execSync` string interpolation with `execFileSync` array arguments in `installMacOS()` (`install-portlama-desktop`)
+- Fix path traversal in Feria package store — validate scoped package names and apply `path.basename()` to prevent directory escape (`feria`)
+- Fix path traversal in Feria release store — sanitize `tag` and `filename` parameters with `path.basename()` (`feria`)
+- Fix host header poisoning in Feria — hardcode `registryUrl` from server config instead of deriving from `Host` header (`feria`)
+- Fix over-broad URL decoding in Feria — `rewriteUrl` now only decodes `%2f` instead of full `decodeURIComponent` (`feria`)
+- Add HTTPS-to-HTTP redirect downgrade protection in desktop installer (`install-portlama-desktop`)
+- Add redirect depth limit (max 5 hops) to prevent infinite redirect loops in desktop installer (`install-portlama-desktop`)
+- Fix Content-Disposition header injection in Feria — use strict character allowlist for asset filenames (`feria`)
+
+### Changed
+
+- Update plugin microfrontend theme API to use oklch color values via `HOST_THEME` constant (`portlama-agent-panel`)
+
+**Affected packages:** `@lamalibre/feria` 0.1.1, `@lamalibre/install-portlama-desktop` 0.0.7, `@lamalibre/portlama-agent-panel` 0.1.3, `@lamalibre/portlama-desktop` 0.1.14, `@lamalibre/panel-server` 0.1.29, `@lamalibre/create-portlama` 1.0.52, `@lamalibre/portlama-agent` 1.0.23, `@lamalibre/portlama-cloud` 0.1.4, `@lamalibre/portlama-identity` 0.1.1, `@lamalibre/portlama-tickets` 0.1.1
+
 ## [Unreleased] - 2026-04-01
 
 ### Added

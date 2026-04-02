@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-tickets",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SDK for Portlama ticket system — panel-mediated agent-to-agent authorization",
   "type": "module",
   "exports": {

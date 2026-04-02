@@ -162,12 +162,36 @@ function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
 // Default agent panel port — matches AGENT_PANEL_PORT in agents.rs
 const AGENT_PANEL_DEFAULT_PORT = 9393;
 
-function AgentPluginPanel({ pluginName, client, onBack }) {
+// Theme override — maps Portlama Desktop's zinc/cyan palette to sync-panel's
+// custom CSS tokens (--color-surface, --color-card, etc.) so microfrontend
+// plugins look native inside the host.
+const HOST_THEME = {
+  surface: 'oklch(0.145 0.000 0)',         // zinc-950
+  card: 'oklch(0.210 0.006 285.885)',      // zinc-900
+  cardHover: 'oklch(0.274 0.006 286.033)', // zinc-800
+  border: 'oklch(0.274 0.006 286.033)',    // zinc-800
+  accent: 'oklch(0.789 0.154 211.53)',     // cyan-400
+  accentDim: 'oklch(0.609 0.126 211.53)',  // cyan-500
+  textPrimary: 'oklch(1.000 0.000 0)',     // white
+  textSecondary: 'oklch(0.552 0.016 285.938)', // zinc-400
+  success: 'oklch(0.723 0.191 149.579)',   // green-400
+  warning: 'oklch(0.795 0.184 86.047)',    // amber-400
+  error: 'oklch(0.637 0.237 25.331)',      // red-400
+};
+
+function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscovered }) {
   const mountRef = useRef(null);
   const cleanupRef = useRef(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
+  const subPathRef = useRef(subPath || '');
+  const lastMountedSubPathRef = useRef(null);
+
+  // Keep subPathRef in sync for remounting
+  useEffect(() => {
+    subPathRef.current = subPath || '';
+  }, [subPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,10 +218,12 @@ function AgentPluginPanel({ pluginName, client, onBack }) {
         return;
       }
 
+      // Report pages metadata to the parent for sidebar injection
+      if (onPagesDiscovered && Array.isArray(pluginEntry.pages)) {
+        onPagesDiscovered(pluginEntry.pages);
+      }
+
       try {
-        // In web context, panelUrl is the agent panel origin (same origin).
-        // In desktop context (Tauri), plugin API calls need the agent panel
-        // server directly — use localhost with the default panel port.
         const isDesktop = !!window.__TAURI_INTERNALS__;
         const panelUrl = isDesktop
           ? `http://127.0.0.1:${AGENT_PANEL_DEFAULT_PORT}`
@@ -207,13 +233,8 @@ function AgentPluginPanel({ pluginName, client, onBack }) {
           mountPoint: mountRef.current,
           panelUrl,
           basePath: `/api/plugins/${pluginName}`,
-          subPath: '',
-          theme: {
-            bg: 'zinc-950',
-            card: 'zinc-900',
-            accent: 'cyan-400',
-            border: 'zinc-800',
-          },
+          subPath: subPathRef.current,
+          theme: HOST_THEME,
         };
 
         const result = pluginEntry.mount(ctx);
@@ -222,6 +243,7 @@ function AgentPluginPanel({ pluginName, client, onBack }) {
         } else if (typeof result === 'function') {
           cleanupRef.current = result;
         }
+        lastMountedSubPathRef.current = subPathRef.current;
 
         setLoading(false);
       } catch (err) {
@@ -276,16 +298,64 @@ function AgentPluginPanel({ pluginName, client, onBack }) {
     };
   }, [pluginName, client, retryCount]);
 
+  // Re-mount when subPath changes (unmount old, mount new with updated subPath).
+  useEffect(() => {
+    if (loading || error) return;
+    // Skip if this subPath was already mounted by the initial loadBundle effect
+    if (lastMountedSubPathRef.current === (subPath || '')) return;
+
+    const pluginEntry = window.__portlamaPlugins?.[pluginName];
+    if (!pluginEntry || typeof pluginEntry.mount !== 'function') return;
+
+    // Cleanup previous mount
+    if (cleanupRef.current) {
+      try { cleanupRef.current(); } catch { /* best-effort */ }
+      cleanupRef.current = null;
+    }
+
+    // Clear mount point
+    if (mountRef.current) {
+      mountRef.current.innerHTML = '';
+    }
+
+    try {
+      const isDesktop = !!window.__TAURI_INTERNALS__;
+      const panelUrl = isDesktop
+        ? `http://127.0.0.1:${AGENT_PANEL_DEFAULT_PORT}`
+        : window.location.origin;
+
+      const ctx = {
+        mountPoint: mountRef.current,
+        panelUrl,
+        basePath: `/api/plugins/${pluginName}`,
+        subPath: subPath || '',
+        theme: HOST_THEME,
+      };
+
+      const result = pluginEntry.mount(ctx);
+      if (result && typeof result === 'object' && typeof result.unmount === 'function') {
+        cleanupRef.current = result.unmount;
+      } else if (typeof result === 'function') {
+        cleanupRef.current = result;
+      }
+      lastMountedSubPathRef.current = subPath || '';
+    } catch (err) {
+      setError(`[mount] ${err.message || String(err)}`);
+    }
+  }, [subPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div>
-      <button
-        type="button"
-        onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 mb-4"
-      >
-        <ChevronLeft size={14} />
-        Back to Plugins
-      </button>
+      {!onPagesDiscovered && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-200 mb-4"
+        >
+          <ChevronLeft size={14} />
+          Back to Plugins
+        </button>
+      )}
 
       {loading && (
         <div className="text-zinc-500 text-sm">Loading plugin panel...</div>
@@ -511,7 +581,9 @@ function PanelNotRunning({ onStart, isStarting }) {
   );
 }
 
-export default function AgentPluginsPage() {
+export { AgentPluginPanel };
+
+export default function AgentPluginsPage({ onOpenPlugin }) {
   const client = useAgentClient();
   const queryClient = useQueryClient();
   const addToast = useToast();
@@ -611,7 +683,8 @@ export default function AgentPluginsPage() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['agent-plugins'] });
       queryClient.invalidateQueries({ queryKey: ['agent-plugin-updates'] });
-      addToast(`Plugin "${data.name || 'unknown'}" updated to v${data.version || '?'}`);
+      const p = data.plugin || data;
+      addToast(`Plugin "${p.name || 'unknown'}" updated to v${p.version || '?'}`);
     },
     onError: (err) => addToast(err.message, 'error'),
   });
@@ -659,6 +732,7 @@ export default function AgentPluginsPage() {
           pluginName={openPlugin}
           client={client}
           onBack={() => setOpenPlugin(null)}
+          subPath=""
         />
       </div>
     );
@@ -736,7 +810,7 @@ export default function AgentPluginsPage() {
                     onEnable={handleEnable}
                     onDisable={handleDisable}
                     onUninstall={handleUninstall}
-                    onOpen={(name) => setOpenPlugin(name)}
+                    onOpen={(name) => onOpenPlugin ? onOpenPlugin(name) : setOpenPlugin(name)}
                     onUpdate={handleUpdate}
                     updateInfo={updateInfoMap[plugin.name]}
                     isActing={isActing}
