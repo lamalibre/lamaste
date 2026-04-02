@@ -547,19 +547,34 @@ export async function updateAccessControl(sites) {
   // For sites with allowedUsers:
   //   1. Allow rule with subject list (matched users get two_factor)
   //   2. Deny rule for the same domain (everyone else is denied)
-  // For sites without allowedUsers: no specific rules needed —
-  //   the default_policy: two_factor allows all authenticated users.
+  // Two access patterns:
+  //   1. Open: autheliaProtected=true, no allowedUsers or empty array, no restrictAccess flag
+  //      → default_policy: two_factor applies (any authenticated user)
+  //   2. Restricted: allowedUsers array with entries, OR restrictAccess=true
+  //      → per-user rules + admins group + deny fallback
+  // Plugin tunnels set restrictAccess=true so even empty allowedUsers generates
+  // deny rules (admins-only until grants are created).
   const rules = [];
 
   for (const site of sites) {
     if (!site.autheliaProtected) continue;
-    if (!site.allowedUsers || site.allowedUsers.length === 0) continue;
+    const hasUserList = site.allowedUsers && site.allowedUsers.length > 0;
+    if (!hasUserList && !site.restrictAccess) continue;
 
-    // Allow specific users
+    // Allow specific users (if any)
+    if (site.allowedUsers.length > 0) {
+      rules.push({
+        domain: site.fqdn,
+        policy: 'two_factor',
+        subject: site.allowedUsers.map((u) => ['user:' + u]),
+      });
+    }
+
+    // Allow admins group (always has access to restricted subdomains)
     rules.push({
       domain: site.fqdn,
       policy: 'two_factor',
-      subject: site.allowedUsers.map((u) => ['user:' + u]),
+      subject: [['group:admins']],
     });
 
     // Deny everyone else for this domain
@@ -609,14 +624,35 @@ export async function updateAccessControl(sites) {
     quotingType: "'",
     forceQuotes: false,
   });
+  // Backup current config before writing — allows rollback if Authelia fails to restart
+  const bakPath = `${AUTHELIA_CONFIG}.bak`;
+  try {
+    await execa('sudo', ['cp', AUTHELIA_CONFIG, bakPath]);
+  } catch {
+    // First-time write or missing config — no backup needed
+  }
+
   try {
     await sudoWriteFile(AUTHELIA_CONFIG, configContent, '600');
   } catch (err) {
     throw new Error(`Failed to write Authelia configuration: ${err.stderr || err.message}`);
   }
 
-  // Restart Authelia to pick up config changes
-  await reloadAuthelia();
+  // Restart Authelia to pick up config changes; rollback on failure
+  try {
+    await reloadAuthelia();
+    // Clean up backup on success
+    await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
+  } catch (restartErr) {
+    // Restore backup and attempt recovery restart
+    try {
+      await execa('sudo', ['mv', bakPath, AUTHELIA_CONFIG]);
+      await reloadAuthelia();
+    } catch {
+      // Recovery failed — both configs may be broken, manual intervention needed
+    }
+    throw restartErr;
+  }
 }
 
 /**

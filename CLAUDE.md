@@ -227,19 +227,31 @@ feria setup / teardown / status                # manage .npmrc without starting 
 **User plugin access (Authelia login to desktop):**
 
 - Non-admin Authelia users can log into the desktop app and install plugins they've been granted access to by an admin
-- Admin grants per-user, per-plugin enrollment rights via `POST /api/user-access/grants` (admin-only, mTLS). State file: `/etc/portlama/user-plugin-access.json` with atomic writes + promise-chain mutex
-- OAuth-like auth flow: desktop opens browser to `https://auth.<domain>/api/user-access/authorize` (Authelia-protected via nginx forward auth), panel generates 60-second OTP, redirects to `portlama://callback?token=<otp>&domain=<domain>` deep link
-- Desktop captures deep link via `tauri-plugin-deep-link`, exchanges OTP for HMAC-SHA256 signed user session token via `POST /api/user-access/exchange` (public, rate-limited). Session: 12h expiry, 2h inactivity, carries `username` and `type: 'user-access'` (prevents cross-use with 2FA sessions)
+- Admin grants per-user, per-plugin access rights via `POST /api/user-access/grants` (admin-only, mTLS). State file: `/etc/portlama/user-plugin-access.json` with atomic writes + promise-chain mutex
+- Grant model: `{ grantId, username, pluginName, target, used, createdAt, usedAt }`. `target` is `'local'` (default, desktop install) or `'agent:<label>'` (browser access to agent-hosted plugin)
+- Local grants: OAuth-like auth flow → desktop opens browser to `https://auth.<domain>/api/user-access/authorize` (Authelia-protected), panel generates 60-second OTP, redirects to `portlama://callback?token=<otp>&domain=<domain>` deep link. Desktop exchanges OTP for HMAC-SHA256 signed session token
+- Agent-side grants: auto-consumed on creation (`used: true`), no enrollment needed. User accesses plugin via browser at plugin tunnel URL (e.g., `https://herd.example.com`). Authelia access control rules gate per-user access. Revocable at any time (unlike consumed local grants)
+- Desktop captures deep link via `tauri-plugin-deep-link`, exchanges OTP for session token via `POST /api/user-access/exchange` (public, rate-limited). Session: 12h expiry, 2h inactivity, carries `username` and `type: 'user-access'` (prevents cross-use with 2FA sessions)
 - User session passed as `Authorization: Bearer <token>` header (not cookie — desktop uses Rust reqwest, not browser)
-- User-session-protected endpoints: `GET /api/user-access/plugins` (list granted plugins), `POST /api/user-access/enroll` (consume grant, generate enrollment token). Middleware: `user-access-session.js` (Fastify plugin, reads Bearer token, validates signature/expiry/inactivity)
-- Admin endpoints: `GET /api/user-access/grants`, `POST /api/user-access/grants` (`{ username, pluginName }`), `DELETE /api/user-access/grants/:grantId` (revoke unused)
+- User-session-protected endpoints: `GET /api/user-access/plugins` (list granted plugins — enriches agent-side grants with `tunnelUrl`, `agentLabel`, `tunnelEnabled`), `POST /api/user-access/enroll` (consume grant, generate enrollment token — rejects agent-side grants with 400). Middleware: `user-access-session.js` (Fastify plugin, reads Bearer token, validates signature/expiry/inactivity)
+- Admin endpoints: `GET /api/user-access/grants`, `POST /api/user-access/grants` (`{ username, pluginName, target? }`), `DELETE /api/user-access/grants/:grantId` (revoke — agent-side grants always revocable, local grants only if unused)
 - Grant consumption is atomic (mutex-serialized) to prevent double-enrollment races. Consumed grants are kept for audit (not deleted)
 - OTP tokens: 32-byte random hex, 60-second expiry, single-use, timing-safe comparison. Expired tokens cleaned after 5 minutes
-- Desktop UI: "User" sidebar section with Login/My Plugins views. Login opens browser, callback auto-exchanges token. My Plugins shows granted plugins with Install/Uninstall
-- Installed plugins reuse local plugin infrastructure (`127.0.0.1:9293` Fastify host)
-- Admin UI: "User Plugin Access" tab in server admin panel. Table of grants with Create/Revoke actions
+- Desktop UI: "User" sidebar section with Login/My Plugins views. Login opens browser, callback auto-exchanges token. My Plugins shows local grants with Install/Uninstall and agent-side grants with "Open in Browser" button
+- Installed local plugins reuse local plugin infrastructure (`127.0.0.1:9293` Fastify host)
+- Admin UI: "User Plugin Access" tab in server admin panel. Table of grants with Target column (Local/Agent badge), Create modal with Local/Agent target selector and agent dropdown, Revoke action
 - nginx: auth vhost gets `/api/user-access/authorize` with Authelia forward auth + `/internal/authelia/authz` internal location. Panel domain vhost gets public locations for `/api/user-access/exchange`, `/api/user-access/plugins`, `/api/user-access/enroll`
 - Reserved API prefix: `user-access` added to `RESERVED_API_PREFIXES` in `lib/constants.js`
+
+**Plugin tunnels (agent-side user access):**
+
+- Plugin tunnel type (`type: 'plugin'`) enables Authelia-protected access to a specific agent plugin via dedicated subdomain (e.g., `herd.example.com`)
+- Created via `POST /api/tunnels` with `{ type: 'plugin', pluginName, agentLabel, subdomain, port }`. Admin-only
+- Uses `writeAppVhost` with `pathPrefix` option — nginx rewrites `herd.example.com/path` → `127.0.0.1:9393/herd/path`, matching the plugin mount point on the agent panel server
+- Tunnel state gains fields: `pluginName` (full `@lamalibre/` package name), `agentLabel`, `pluginRoute` (derived short name, e.g., `herd` from `@lamalibre/herd-server`)
+- Authelia access control: `syncAllAccessControl()` in `lib/access-control-sync.js` merges site rules + plugin tunnel grant rules. Called on grant create/revoke, tunnel create/delete/toggle, and site updates. Admins group always allowed on restricted subdomains
+- Agent panel server auth: recognizes `Remote-User` header (set by nginx after Authelia forward auth) as a third auth path. Sets `request.certRole = 'user'` and `request.autheliaUser`. Trusts nginx/Authelia — port 9393 binds `127.0.0.1`, external traffic only arrives via nginx
+- Flow: admin creates plugin tunnel → admin creates agent-side grant → `syncAllAccessControl` updates Authelia rules → user visits plugin URL → Authelia authenticates + authorizes → nginx proxies with path rewrite + Remote-User header → agent panel serves plugin
 
 **Certificate scoping:**
 

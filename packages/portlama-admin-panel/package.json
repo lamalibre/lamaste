@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/portlama-admin-panel",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Shared React admin panel UI for Portlama — consumed by web panel and desktop app",
   "type": "module",
   "main": "src/index.js",

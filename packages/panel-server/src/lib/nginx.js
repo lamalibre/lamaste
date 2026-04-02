@@ -372,8 +372,14 @@ export async function writeTunnelVhost(domain) {
  * @param {string} domain - The base domain (e.g., "example.com")
  * @param {number} port - The local port to proxy to
  * @param {string} [certPath] - Optional cert directory path override (e.g. for wildcard certs)
+ * @param {{ pathPrefix?: string }} [options] - Optional: pathPrefix rewrites root to /{pathPrefix}/ (used for plugin tunnels)
  */
-export async function writeAppVhost(subdomain, domain, port, certPath) {
+export async function writeAppVhost(subdomain, domain, port, certPath, { pathPrefix } = {}) {
+  // Defense-in-depth: validate pathPrefix to prevent nginx config injection
+  if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
+    throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
+  }
+
   const fqdn = `${subdomain}.${domain}`;
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   // Normalize: remove trailing slash if present
@@ -433,7 +439,7 @@ export async function writeAppVhost(subdomain, domain, port, certPath) {
         proxy_set_header Remote-Name $name;
         proxy_set_header Remote-Email $email;
 
-        proxy_pass http://127.0.0.1:${port};
+        ${pathPrefix ? `# Rewrite root to plugin prefix on agent panel server\n        rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
 
         # WebSocket support

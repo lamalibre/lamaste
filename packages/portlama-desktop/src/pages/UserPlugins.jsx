@@ -7,7 +7,10 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  ExternalLink,
+  Server,
 } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-shell';
 import { desktopUserAccessClient as client } from '../lib/desktop-user-access-client.js';
 import { desktopLocalPluginClient as localClient } from '../lib/desktop-local-plugin-client.js';
 
@@ -15,9 +18,47 @@ function GrantCard({ grant, localPlugins, onInstall, onUninstall, isInstalling }
   const pluginName = grant.pluginName;
   const displayName = grant.plugin?.displayName || grant.plugin?.name || pluginName;
   const description = grant.plugin?.description || '';
-  const isUsed = grant.used;
+  const target = grant.target || 'local';
+  const isAgentSide = target.startsWith('agent:');
 
-  // Check if the plugin is installed locally
+  // Agent-side grants: show "Open in Browser" instead of install/uninstall
+  if (isAgentSide) {
+    const agentLabel = grant.agentLabel || target.slice('agent:'.length);
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Package size={16} className="text-cyan-400" />
+          <span className="text-white font-semibold">{displayName}</span>
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+            <Server size={10} />
+            Agent: {agentLabel}
+          </span>
+        </div>
+        {description && <p className="text-zinc-400 text-sm mb-2">{description}</p>}
+        <p className="text-zinc-500 text-xs mb-4 font-mono">{pluginName}</p>
+
+        <div className="flex gap-2">
+          {grant.tunnelUrl ? (
+            <button
+              type="button"
+              onClick={() => open(grant.tunnelUrl)}
+              className="flex items-center gap-1.5 rounded bg-cyan-600 px-3 py-1.5 text-xs text-white hover:bg-cyan-500"
+            >
+              <ExternalLink size={12} />
+              Open in Browser
+            </button>
+          ) : (
+            <span className="text-xs text-zinc-500">
+              Tunnel not configured — contact administrator
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Local grants: existing behavior
+  const isUsed = grant.used;
   const localPlugin = localPlugins?.find((p) => p.packageName === pluginName);
   const isInstalled = !!localPlugin;
 
@@ -147,7 +188,7 @@ export default function UserPlugins() {
       <div className="mb-6">
         <h1 className="text-lg font-bold text-white">My Plugins</h1>
         <p className="text-zinc-500 text-sm mt-1">
-          Plugins granted to you by an administrator. Install them to use on this device.
+          Plugins granted to you by an administrator. Install locally or access agent-hosted plugins in your browser.
         </p>
       </div>
 
@@ -156,6 +197,15 @@ export default function UserPlugins() {
           <AlertCircle size={14} className="text-red-400 shrink-0" />
           <span className="text-xs text-red-400">
             {installMutation.error?.toString() || 'Installation failed'}
+          </span>
+        </div>
+      )}
+
+      {uninstallMutation.error && (
+        <div className="flex items-center gap-2 rounded bg-red-500/10 border border-red-500/20 px-3 py-2 mb-4">
+          <AlertCircle size={14} className="text-red-400 shrink-0" />
+          <span className="text-xs text-red-400">
+            {uninstallMutation.error?.toString() || 'Uninstallation failed'}
           </span>
         </div>
       )}

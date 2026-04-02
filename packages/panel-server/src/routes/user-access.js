@@ -13,6 +13,8 @@ import {
 } from '../lib/user-access.js';
 import { createEnrollmentToken } from '../lib/enrollment.js';
 import { readPlugins } from '../lib/plugins.js';
+import { readTunnels } from '../lib/state.js';
+import { syncAllAccessControl } from '../lib/access-control-sync.js';
 
 // --- Zod schemas ---
 
@@ -27,6 +29,14 @@ const CreateGrantSchema = z.object({
     .min(1)
     .max(200)
     .regex(/^@lamalibre\//, 'Plugin must be @lamalibre/ scoped'),
+  target: z
+    .string()
+    .regex(
+      /^(local|agent:[a-z0-9][a-z0-9-]*)$/,
+      'Target must be "local" or "agent:<label>"',
+    )
+    .optional()
+    .default('local'),
 });
 
 const GrantIdParamSchema = z.object({
@@ -80,7 +90,22 @@ export async function userAccessAdminRoutes(fastify, _opts) {
       }
 
       try {
-        const grant = await createGrant(body.username, body.pluginName, request.log);
+        const grant = await createGrant(body.username, body.pluginName, request.log, {
+          target: body.target,
+        });
+
+        // Sync Authelia rules when granting agent-side access
+        if (body.target.startsWith('agent:')) {
+          try {
+            await syncAllAccessControl(request.log);
+          } catch (syncErr) {
+            request.log.error(syncErr, 'Failed to sync Authelia access control after grant creation');
+            return reply.code(500).send({
+              error: 'Grant created but Authelia access control sync failed — user may not have access yet',
+            });
+          }
+        }
+
         return { ok: true, grant };
       } catch (err) {
         request.log.error(err, 'Failed to create user access grant');
@@ -90,7 +115,7 @@ export async function userAccessAdminRoutes(fastify, _opts) {
     },
   );
 
-  // DELETE /api/user-access/grants/:grantId — revoke an unused grant
+  // DELETE /api/user-access/grants/:grantId — revoke a grant
   fastify.delete(
     '/user-access/grants/:grantId',
     {
@@ -105,7 +130,20 @@ export async function userAccessAdminRoutes(fastify, _opts) {
       }
 
       try {
-        await revokeGrant(params.grantId, request.log);
+        const { grant } = await revokeGrant(params.grantId, request.log);
+
+        // Sync Authelia rules when revoking agent-side access
+        if ((grant.target || 'local').startsWith('agent:')) {
+          try {
+            await syncAllAccessControl(request.log);
+          } catch (syncErr) {
+            request.log.error(syncErr, 'Failed to sync Authelia access control after grant revocation');
+            return reply.code(500).send({
+              error: 'Grant revoked but Authelia access control sync failed — user may still have access',
+            });
+          }
+        }
+
         return { ok: true };
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -205,18 +243,49 @@ export async function userAccessProtectedRoutes(fastify, _opts) {
         pluginMap.set(p.packageName, p);
       }
 
+      // Load tunnels for agent-side grant enrichment
+      let tunnels = [];
+      try {
+        tunnels = await readTunnels();
+      } catch {
+        // Tunnel state may not exist — proceed without tunnel info
+      }
+
       const enrichedGrants = grants.map((g) => {
         const plugin = pluginMap.get(g.pluginName);
+        const pluginMeta = plugin
+          ? {
+              name: plugin.name,
+              displayName: plugin.displayName || plugin.name,
+              description: plugin.description,
+              version: plugin.version,
+            }
+          : null;
+
+        const target = g.target || 'local';
+
+        if (target.startsWith('agent:')) {
+          const agentLabel = target.slice('agent:'.length);
+          const tunnel = tunnels.find(
+            (t) =>
+              t.type === 'plugin' &&
+              t.agentLabel === agentLabel &&
+              t.pluginName === g.pluginName,
+          );
+          return {
+            ...g,
+            target,
+            agentLabel,
+            tunnelUrl: tunnel ? `https://${tunnel.fqdn}` : null,
+            tunnelEnabled: tunnel?.enabled ?? false,
+            plugin: pluginMeta,
+          };
+        }
+
         return {
           ...g,
-          plugin: plugin
-            ? {
-                name: plugin.name,
-                displayName: plugin.displayName || plugin.name,
-                description: plugin.description,
-                version: plugin.version,
-              }
-            : null,
+          target,
+          plugin: pluginMeta,
         };
       });
 
@@ -239,6 +308,13 @@ export async function userAccessProtectedRoutes(fastify, _opts) {
     }
 
     try {
+      // Agent-side grants do not require enrollment — they provide browser access
+      const allGrants = await listGrantsForUser(username);
+      const targetGrant = allGrants.find((g) => g.grantId === body.grantId);
+      if (targetGrant && (targetGrant.target || 'local').startsWith('agent:')) {
+        return reply.code(400).send({ error: 'Agent-side grants do not require enrollment' });
+      }
+
       // Consume the grant (validates ownership and single-use)
       const grant = await consumeGrant(body.grantId, username, request.log);
 

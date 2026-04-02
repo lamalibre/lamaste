@@ -144,6 +144,9 @@ export const desktopAdminClient = {
   getTunnelAgentConfig: () => invoke('admin_get_tunnel_agent_config'),
   getMacPlist: (format) => invoke('admin_get_mac_plist', { format }),
 
+  // --- Agents ---
+  getAgents: () => invoke('admin_get_agent_certs'),
+
   // --- User Plugin Access ---
   getUserAccessGrants: () => invoke('admin_get_user_access_grants'),
   createUserAccessGrant: (data) => invoke('admin_create_user_access_grant', { data }),

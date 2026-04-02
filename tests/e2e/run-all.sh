@@ -74,6 +74,7 @@ TEST_SCRIPTS=(
   "21-identity-system.sh"
   "22-agent-plugin-report.sh"
   "23-agent-plugin-crud.sh"
+  "24-agent-user-plugin-access.sh"
 )
 
 PASSED=0

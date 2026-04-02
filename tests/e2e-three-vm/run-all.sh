@@ -104,6 +104,7 @@ TEST_SCRIPTS=(
   "17-identity-system.sh"
   "18-agent-plugin-hosting.sh"
   "19-agent-plugin-crud.sh"
+  "20-agent-user-plugin-access.sh"
 )
 
 PASSED=0

@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
+  Server,
+  Monitor,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -38,6 +40,8 @@ function CreateGrantModal({ onClose }) {
   const { addToast } = useToast();
   const [username, setUsername] = useState('');
   const [pluginName, setPluginName] = useState('');
+  const [targetType, setTargetType] = useState('local');
+  const [selectedAgent, setSelectedAgent] = useState('');
 
   const { data: usersData } = useQuery({
     queryKey: ['admin-users'],
@@ -47,6 +51,11 @@ function CreateGrantModal({ onClose }) {
   const { data: pluginsData } = useQuery({
     queryKey: ['admin-plugins'],
     queryFn: () => client.getPlugins(),
+  });
+
+  const { data: agentsData } = useQuery({
+    queryKey: ['admin-agents'],
+    queryFn: () => client.getAgents(),
   });
 
   const mutation = useMutation({
@@ -63,12 +72,16 @@ function CreateGrantModal({ onClose }) {
 
   const users = usersData?.users || [];
   const plugins = pluginsData?.plugins || [];
+  const agents = agentsData?.agents || [];
+
+  const target = targetType === 'agent' ? `agent:${selectedAgent}` : 'local';
+  const isValid = username && pluginName && (targetType === 'local' || selectedAgent);
 
   return (
     <Modal onClose={onClose}>
       <h2 className="text-lg font-bold text-white mb-4">Create Plugin Grant</h2>
       <p className="text-zinc-400 text-sm mb-6">
-        Grant a user the right to install a plugin on their device.
+        Grant a user access to a plugin — locally on their device or on an agent server via browser.
       </p>
 
       <div className="space-y-4">
@@ -103,6 +116,46 @@ function CreateGrantModal({ onClose }) {
             ))}
           </select>
         </div>
+
+        <div>
+          <label className="text-xs text-zinc-500 mb-1 block">Target</label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setTargetType('local'); setSelectedAgent(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded ${targetType === 'local' ? 'bg-cyan-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
+            >
+              <Monitor size={12} />
+              Local (Desktop)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTargetType('agent')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded ${targetType === 'agent' ? 'bg-cyan-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
+            >
+              <Server size={12} />
+              Agent
+            </button>
+          </div>
+        </div>
+
+        {targetType === 'agent' && (
+          <div>
+            <label className="text-xs text-zinc-500 mb-1 block">Agent</label>
+            <select
+              value={selectedAgent}
+              onChange={(e) => setSelectedAgent(e.target.value)}
+              className="w-full rounded bg-zinc-900 border border-zinc-700 px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+            >
+              <option value="">Select an agent...</option>
+              {agents.map((a) => (
+                <option key={a.label} value={a.label}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-3 mt-6">
@@ -115,8 +168,8 @@ function CreateGrantModal({ onClose }) {
         </button>
         <button
           type="button"
-          disabled={!username || !pluginName || mutation.isPending}
-          onClick={() => mutation.mutate({ username, pluginName })}
+          disabled={!isValid || mutation.isPending}
+          onClick={() => mutation.mutate({ username, pluginName, target })}
           className="flex items-center gap-2 px-4 py-2 text-sm bg-cyan-600 text-white rounded hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus size={14} />
@@ -129,7 +182,13 @@ function CreateGrantModal({ onClose }) {
 
 function GrantRow({ grant, onRevoke }) {
   const isUsed = grant.used;
+  const target = grant.target || 'local';
+  const isAgentSide = target.startsWith('agent:');
+  const agentLabel = isAgentSide ? target.slice('agent:'.length) : null;
   const createdDate = new Date(grant.createdAt).toLocaleDateString();
+
+  // Agent-side grants can always be revoked; local grants only if unused
+  const canRevoke = isAgentSide || !isUsed;
 
   return (
     <tr className="border-b border-zinc-800 hover:bg-zinc-800/30">
@@ -141,7 +200,25 @@ function GrantRow({ grant, onRevoke }) {
         </div>
       </td>
       <td className="px-4 py-3">
-        {isUsed ? (
+        {isAgentSide ? (
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">
+            <Server size={10} />
+            {agentLabel}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-zinc-500/20 text-zinc-400">
+            <Monitor size={10} />
+            Local
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        {isAgentSide ? (
+          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
+            <CheckCircle2 size={10} />
+            Active
+          </span>
+        ) : isUsed ? (
           <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
             <CheckCircle2 size={10} />
             Used
@@ -154,11 +231,8 @@ function GrantRow({ grant, onRevoke }) {
         )}
       </td>
       <td className="px-4 py-3 text-xs text-zinc-500">{createdDate}</td>
-      <td className="px-4 py-3 text-xs text-zinc-500">
-        {grant.usedAt ? new Date(grant.usedAt).toLocaleDateString() : '-'}
-      </td>
       <td className="px-4 py-3">
-        {!isUsed && (
+        {canRevoke && (
           <button
             type="button"
             onClick={() => onRevoke(grant.grantId)}
@@ -204,7 +278,7 @@ export default function UserPluginAccess() {
         <div>
           <h1 className="text-lg font-bold text-white">User Plugin Access</h1>
           <p className="text-zinc-500 text-sm mt-1">
-            Grant non-admin users the right to install plugins on their devices via the desktop app.
+            Grant non-admin users access to plugins — locally on their devices or on agent servers via browser.
           </p>
         </div>
         <button
@@ -239,9 +313,9 @@ export default function UserPluginAccess() {
               <tr className="bg-zinc-900 text-left">
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">User</th>
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Plugin</th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Target</th>
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Created</th>
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Used</th>
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-12"></th>
               </tr>
             </thead>

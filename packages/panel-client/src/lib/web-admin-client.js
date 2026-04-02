@@ -205,6 +205,14 @@ export const webAdminClient = {
   verify2fa: (code) => jsonPost('/api/settings/2fa/verify', { code }),
   disable2fa: (code) => jsonPost('/api/settings/2fa/disable', { code }),
 
+  // --- Agents ---
+  getAgents: () => apiFetch('/api/certs/agent'),
+
+  // --- User Plugin Access ---
+  getUserAccessGrants: () => apiFetch('/api/user-access/grants'),
+  createUserAccessGrant: (data) => jsonPost('/api/user-access/grants', data),
+  revokeUserAccessGrant: (grantId) => jsonDelete(`/api/user-access/grants/${encodeURIComponent(grantId)}`),
+
   // --- Tunnels ---
   getTunnels: () => apiFetch('/api/tunnels'),
   createTunnel: (data) => jsonPost('/api/tunnels', data),

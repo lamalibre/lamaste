@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add agent-side user plugin access — non-admin Authelia users can access agent-hosted plugins via dedicated tunneled subdomains with per-user access control (`panel-server`, `portlama-agent`, `portlama-desktop`, `portlama-admin-panel`)
+- Add `target` field to grants — `'local'` for desktop install (existing), `'agent:<label>'` for browser access to a specific agent's plugin (`panel-server`)
+- Add `plugin` tunnel type — Authelia-protected subdomain with nginx path rewriting to route traffic to the correct plugin on an agent's panel server (`panel-server`)
+- Add `syncAllAccessControl()` — unified Authelia access control rule builder that merges site rules with plugin tunnel grant rules (`panel-server`)
+- Add `Remote-User` header authentication to agent panel server — enables Authelia-authenticated users to access plugin routes via tunneled subdomains (`portlama-agent`)
+- Add target selector (Local/Agent) to admin grant creation modal and target column to grant table (`portlama-admin-panel`)
+- Add "Open in Browser" button for agent-side grants in desktop My Plugins page (`portlama-desktop`)
+- Add user-access grant methods and agents endpoint to web admin client (`panel-client`)
+
+### Security
+
+- Restrict Authelia-authenticated users to plugin routes only — block `/api/*` management endpoints on agent panel server (`portlama-agent`)
+- Add `Remote-User` header format validation to prevent header injection attacks (`portlama-agent`)
+- Tighten `pluginName` regex to `^@lamalibre\/[a-z0-9][a-z0-9._-]*$` to prevent nginx config injection via crafted package names (`panel-server`)
+- Add `pathPrefix` validation in `writeAppVhost()` as defense-in-depth against nginx directive injection (`panel-server`)
+- Add admin-only restriction for plugin tunnel creation — agents with `tunnels:write` cannot create plugin tunnels (`panel-server`)
+- Add `restrictAccess` flag for plugin tunnel Authelia rules — deny all non-admin access when no grants exist (admins-only by default) (`panel-server`)
+- Add Authelia config backup/rollback on restart failure — prevents bricked authentication on config errors (`panel-server`)
+- Add hard cap of 200 active grants to prevent Authelia config DoS via unbounded rule growth (`panel-server`)
+- Add reserved route prefix validation — block plugin tunnels that would collide with `api`, `plugin-bundles`, or `internal` paths (`panel-server`)
+- Return error to admin when Authelia access control sync fails on grant create/revoke instead of silent success (`panel-server`)
+- Expand auth requirement to all `/{pluginName}/` routes (not just `/api/` paths) to prevent authentication bypass on non-API plugin routes (`portlama-agent`)
+
 - Add Feria dev registry — local npm registry for `@lamalibre/*` packages with release artifact storage and GitHub Actions workflow runner (`feria`)
 - Add Feria-first download fallback to desktop installer — checks local registry before GitHub Releases (`install-portlama-desktop`)
 - Add plugin sidebar injection to desktop app — multi-page plugins replace agent tabs with plugin-specific navigation (`portlama-desktop`, `portlama-agent-panel`)
@@ -30,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update plugin microfrontend theme API to use oklch color values via `HOST_THEME` constant (`portlama-agent-panel`)
 
-**Affected packages:** `@lamalibre/feria` 0.1.1, `@lamalibre/install-portlama-desktop` 0.0.7, `@lamalibre/portlama-agent-panel` 0.1.3, `@lamalibre/portlama-desktop` 0.1.14, `@lamalibre/panel-server` 0.1.29, `@lamalibre/create-portlama` 1.0.52, `@lamalibre/portlama-agent` 1.0.23, `@lamalibre/portlama-cloud` 0.1.4, `@lamalibre/portlama-identity` 0.1.1, `@lamalibre/portlama-tickets` 0.1.1
+**Affected packages:** `@lamalibre/portlama-panel-server` 0.1.30, `@lamalibre/portlama-agent` 1.0.24, `@lamalibre/portlama-admin-panel` 0.1.5, `@lamalibre/portlama-panel-client` 0.1.11, `@lamalibre/portlama-desktop` 0.1.15, `@lamalibre/create-portlama` 1.0.53, `@lamalibre/feria` 0.1.1, `@lamalibre/install-portlama-desktop` 0.0.7, `@lamalibre/portlama-agent-panel` 0.1.3, `@lamalibre/portlama-cloud` 0.1.4, `@lamalibre/portlama-identity` 0.1.1, `@lamalibre/portlama-tickets` 0.1.1
 
 ## [Unreleased] - 2026-04-01
 

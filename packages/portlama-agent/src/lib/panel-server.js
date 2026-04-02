@@ -70,10 +70,11 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     // Plugin bundles are intentionally public (loaded via <script> tag)
     if (request.url.startsWith('/plugin-bundles/')) return;
 
-    // Auth is required for /api/* routes AND plugin server routes (/<pluginName>/api/...).
-    // Static assets (SPA files) are served by fastify-static and don't need auth.
+    // Auth is required for /api/* management routes AND all plugin routes
+    // (/<pluginName>/..., including non-/api/ sub-paths). Static assets (SPA
+    // files served by fastify-static from root) don't need auth.
     const needsAuth = request.url.startsWith('/api') ||
-      /^\/[a-z0-9-]+\/api\//.test(request.url);
+      /^\/[a-z0-9-]+\//.test(request.url);
     if (!needsAuth) return;
 
     const verify = request.headers['x-ssl-client-verify'];
@@ -91,6 +92,35 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
         request.certRole = 'agent';
         return;
       }
+
+      // Authelia-authenticated user (plugin tunnel access).
+      // When nginx routes through an Authelia-protected plugin vhost,
+      // Remote-User is set after successful Authelia forward auth. The header
+      // is cleared then re-injected by nginx — cannot be forged from outside.
+      // Port 9393 binds 127.0.0.1, so external traffic only arrives via nginx.
+      //
+      // Authelia users are restricted to plugin routes only (/{pluginName}/...).
+      // They must NOT access agent management API (/api/*) — those require
+      // mTLS (admin/agent cert) or localhost origin (desktop app).
+      const remoteUser = request.headers['remote-user'];
+      if (remoteUser) {
+        // Validate username format (defense-in-depth against header injection)
+        if (!/^[a-z0-9_.-]+$/i.test(remoteUser)) {
+          return reply.code(403).send({ error: 'Invalid user identity' });
+        }
+
+        // Block access to /api/* management endpoints — Authelia users
+        // may only access plugin routes (/{pluginName}/api/...)
+        if (request.url.startsWith('/api')) {
+          return reply.code(403).send({ error: 'Management API requires certificate authentication' });
+        }
+
+        request.certCN = `user:${remoteUser}`;
+        request.certRole = 'user';
+        request.autheliaUser = remoteUser;
+        return;
+      }
+
       return reply.code(403).send({ error: 'Valid mTLS certificate required' });
     }
 

@@ -16,32 +16,50 @@ import { updateChiselConfig } from '../../lib/chisel.js';
 import { issueTunnelCert } from '../../lib/certbot.js';
 import { generatePlist } from '../../lib/plist.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
+import { syncAllAccessControl } from '../../lib/access-control-sync.js';
 
 // Note: the 'agent-' prefix is also reserved for panel tunnels (checked separately in the handler)
 const RESERVED_SUBDOMAINS = ['panel', 'auth', 'tunnel', 'www', 'mail', 'ftp', 'api'];
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
-const CreateTunnelSchema = z.object({
-  subdomain: z
-    .string()
-    .regex(
-      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
-      'Subdomain must be lowercase alphanumeric with optional hyphens, cannot start or end with a hyphen',
-    )
-    .max(63, 'Subdomain must be at most 63 characters'),
-  port: z
-    .number()
-    .int('Port must be an integer')
-    .min(1024, 'Port must be at least 1024')
-    .max(65535, 'Port must be at most 65535'),
-  description: z
-    .string()
-    .max(200, 'Description must be at most 200 characters')
-    .optional()
-    .default(''),
-  type: z.enum(['app', 'panel']).optional().default('app'),
-});
+const CreateTunnelSchema = z
+  .object({
+    subdomain: z
+      .string()
+      .regex(
+        /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/,
+        'Subdomain must be lowercase alphanumeric with optional hyphens, cannot start or end with a hyphen',
+      )
+      .max(63, 'Subdomain must be at most 63 characters'),
+    port: z
+      .number()
+      .int('Port must be an integer')
+      .min(1024, 'Port must be at least 1024')
+      .max(65535, 'Port must be at most 65535'),
+    description: z
+      .string()
+      .max(200, 'Description must be at most 200 characters')
+      .optional()
+      .default(''),
+    type: z.enum(['app', 'panel', 'plugin']).optional().default('app'),
+    pluginName: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^@lamalibre\/[a-z0-9][a-z0-9._-]*$/, 'Invalid plugin name — must be @lamalibre/ scoped with valid npm characters')
+      .optional(),
+    agentLabel: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(/^[a-z0-9][a-z0-9-]*$/, 'Invalid agent label format')
+      .optional(),
+  })
+  .refine(
+    (d) => d.type !== 'plugin' || (d.pluginName && d.agentLabel),
+    { message: 'pluginName and agentLabel are required for plugin tunnels' },
+  );
 
 const ExposePanelSchema = z.object({
   port: z
@@ -159,7 +177,7 @@ export default async function tunnelRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const body = CreateTunnelSchema.parse(request.body);
-      const { subdomain, port, description, type } = body;
+      const { subdomain, port, description, type, pluginName, agentLabel } = body;
 
       // Reserved subdomain check
       if (RESERVED_SUBDOMAINS.includes(subdomain)) {
@@ -169,6 +187,13 @@ export default async function tunnelRoutes(fastify, _opts) {
       // Reserve agent- prefix for panel tunnels only
       if (subdomain.startsWith('agent-') && type !== 'panel') {
         return reply.code(400).send({ error: "Subdomain prefix 'agent-' is reserved for agent panel tunnels" });
+      }
+
+      // Plugin tunnels are admin-only (they grant browser access to non-admin users)
+      if (type === 'plugin') {
+        if (request.certRole !== 'admin') {
+          return reply.code(403).send({ error: 'Plugin tunnels can only be created by administrators' });
+        }
       }
 
       // Panel tunnels require panel:expose capability and must match the requesting agent's label
@@ -226,6 +251,15 @@ export default async function tunnelRoutes(fastify, _opts) {
         const certPath = certResult.certPath || undefined;
         if (type === 'panel') {
           await writeAgentPanelVhost(subdomain, config.domain, port, certPath);
+        } else if (type === 'plugin') {
+          // Derive the plugin route prefix from the package name
+          const pluginRoute = pluginName.replace(/^@lamalibre\//, '').replace(/-server$/, '');
+          // Prevent routing collision with management API or reserved paths
+          const reservedRoutes = ['api', 'plugin-bundles', 'internal', 'install'];
+          if (reservedRoutes.includes(pluginRoute)) {
+            return reply.code(400).send({ error: `Plugin route prefix '${pluginRoute}' conflicts with reserved path` });
+          }
+          await writeAppVhost(subdomain, config.domain, port, certPath, { pathPrefix: pluginRoute });
         } else {
           await writeAppVhost(subdomain, config.domain, port, certPath);
         }
@@ -239,6 +273,7 @@ export default async function tunnelRoutes(fastify, _opts) {
         });
       }
 
+      // Plugin tunnels use the same vhost format as app tunnels (Authelia forward auth)
       const removeVhost = type === 'panel' ? removeAgentPanelVhost : removeAppVhost;
 
       try {
@@ -273,6 +308,13 @@ export default async function tunnelRoutes(fastify, _opts) {
         createdAt: new Date().toISOString(),
       };
 
+      // Plugin tunnels store additional metadata for grant resolution
+      if (type === 'plugin') {
+        tunnel.pluginName = pluginName;
+        tunnel.agentLabel = agentLabel;
+        tunnel.pluginRoute = pluginName.replace(/^@lamalibre\//, '').replace(/-server$/, '');
+      }
+
       try {
         const tunnels = await readTunnels();
         tunnels.push(tunnel);
@@ -288,6 +330,15 @@ export default async function tunnelRoutes(fastify, _opts) {
           error: 'Failed to create tunnel',
           details: `State persistence failed: ${err.message}`,
         });
+      }
+
+      // Sync Authelia access control for plugin tunnels (applies any pre-existing grants)
+      if (type === 'plugin') {
+        try {
+          await syncAllAccessControl(request.log);
+        } catch (syncErr) {
+          request.log.error(syncErr, 'Failed to sync Authelia access control after plugin tunnel creation');
+        }
       }
 
       return reply.code(201).send({ ok: true, tunnel });
@@ -355,6 +406,15 @@ export default async function tunnelRoutes(fastify, _opts) {
         });
       }
 
+      // Sync Authelia access control when toggling plugin tunnels
+      if (tunnel.type === 'plugin') {
+        try {
+          await syncAllAccessControl(request.log);
+        } catch (syncErr) {
+          request.log.error(syncErr, 'Failed to sync Authelia access control after plugin tunnel toggle');
+        }
+      }
+
       return { ok: true, tunnel };
     },
   );
@@ -402,6 +462,15 @@ export default async function tunnelRoutes(fastify, _opts) {
 
         // Step 3: Remove from state
         await writeTunnels(remaining);
+
+        // Sync Authelia access control after plugin tunnel deletion
+        if (tunnel.type === 'plugin') {
+          try {
+            await syncAllAccessControl(request.log);
+          } catch (syncErr) {
+            request.log.error(syncErr, 'Failed to sync Authelia access control after plugin tunnel deletion');
+          }
+        }
       } catch (err) {
         request.log.error(err, 'Failed to delete tunnel');
         return reply.code(500).send({
