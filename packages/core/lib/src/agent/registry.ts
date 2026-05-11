@@ -113,12 +113,18 @@ export function validateLabel(label: string): void {
  */
 export function deriveLabel(domain: string | undefined, agentLabel: string | undefined): string {
   const raw = agentLabel ?? domain ?? 'default';
-  const candidate = raw
-    .split('.')[0]!
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63);
+  // Take the leftmost DNS label and lowercase it. Labels are capped at 63
+  // characters by RFC 1035 — slice before the per-character normalisation so
+  // downstream string ops always operate on a bounded buffer.
+  const head = raw.split('.', 1)[0]!.toLowerCase().slice(0, 63);
+  const normalised = head.replace(/[^a-z0-9-]/g, '-');
+  // Trim leading/trailing '-' deterministically (no regex quantifier
+  // backtracking on inputs full of hyphens).
+  let start = 0;
+  let end = normalised.length;
+  while (start < end && normalised.charCodeAt(start) === 0x2d /* '-' */) start++;
+  while (end > start && normalised.charCodeAt(end - 1) === 0x2d /* '-' */) end--;
+  const candidate = normalised.slice(start, end);
   if (candidate.length > 0 && LABEL_REGEX.test(candidate)) {
     return candidate;
   }

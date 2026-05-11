@@ -888,7 +888,11 @@ export function base32Encode(buffer: Buffer): string {
  */
 export function base32Decode(encoded: string): Buffer {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const stripped = encoded.replace(/=+$/, '').toUpperCase();
+  // Strip trailing '=' padding deterministically (avoid regex quantifier
+  // backtracking on adversarial input of arbitrary length).
+  let end = encoded.length;
+  while (end > 0 && encoded.charCodeAt(end - 1) === 0x3d /* '=' */) end--;
+  const stripped = encoded.slice(0, end).toUpperCase();
   let bits = 0;
   let value = 0;
   const output: number[] = [];

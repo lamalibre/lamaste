@@ -345,7 +345,26 @@ export async function issueTunnelCert(
     throw new Error(`Invalid FQDN: ${fqdn}`);
   }
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  // RFC 5321 caps the full email at 254 chars (local <= 64, domain <= 253).
+  // Validate structurally with String ops instead of a regex with ambiguous
+  // overlapping quantifiers (polynomial-ReDoS class).
+  if (typeof email !== 'string' || email.length === 0 || email.length > 254) {
+    throw new Error(`Invalid email: ${email}`);
+  }
+  const atIndex = email.indexOf('@');
+  if (atIndex <= 0 || atIndex !== email.lastIndexOf('@')) {
+    throw new Error(`Invalid email: ${email}`);
+  }
+  const local = email.slice(0, atIndex);
+  const domainPart = email.slice(atIndex + 1);
+  const dotIndex = domainPart.indexOf('.');
+  if (
+    domainPart.length === 0 ||
+    dotIndex <= 0 ||
+    dotIndex === domainPart.length - 1 ||
+    /\s/.test(local) ||
+    /\s/.test(domainPart)
+  ) {
     throw new Error(`Invalid email: ${email}`);
   }
 

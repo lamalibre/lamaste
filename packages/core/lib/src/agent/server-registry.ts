@@ -77,7 +77,15 @@ export function validateServerLabel(label: string): void {
  * Validate that a panel URL is safe to use (HTTPS only, no private IPs).
  */
 export function validatePanelUrl(url: string): void {
-  const trimmed = url.replace(/\/+$/, '');
+  // RFC 3986 / browser practical cap is 2048 chars; reject anything wildly
+  // longer up front to avoid pathological regex/parse work on adversarial input.
+  if (typeof url !== 'string' || url.length > 2048) {
+    throw new Error('Panel URL is invalid');
+  }
+  // Trim trailing slashes deterministically (no regex quantifier backtracking).
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 0x2f /* '/' */) end--;
+  const trimmed = url.slice(0, end);
   if (!trimmed.startsWith('https://')) {
     throw new Error('Panel URL must use HTTPS scheme');
   }
