@@ -19,9 +19,4 @@ export default defineConfig({
     strictPort: true,
   },
   envPrefix: ['VITE_', 'TAURI_'],
-  build: {
-    commonjsOptions: {
-      include: [/lamaste-server-ui/, /lamaste-agent-ui/, /node_modules/],
-    },
-  },
 });
