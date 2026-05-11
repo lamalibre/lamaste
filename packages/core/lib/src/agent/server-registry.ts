@@ -116,16 +116,40 @@ export function validatePanelUrl(url: string): void {
 }
 
 /**
- * Validate a server ID does not contain path traversal characters.
+ * Server ID safe-segment regex: lowercase/uppercase alphanumeric, hyphens,
+ * and underscores only. 1-128 chars, must start and end with alphanumeric.
+ * Server IDs are minted via `crypto.randomUUID()` / hex randomness, so a
+ * tight allow-list is appropriate and rejects every path-traversal vector
+ * (`/`, `\`, `..`, NUL, leading dot, whitespace, control chars, Unicode).
+ */
+const SERVER_ID_REGEX = /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}[A-Za-z0-9]$|^[A-Za-z0-9]$/;
+
+/**
+ * Validate a server ID is a safe path segment.
+ *
+ * This is the primary sanitizer for path-injection sinks that concatenate a
+ * server ID into a filesystem path. Callers that subsequently build a path
+ * SHOULD additionally use `assertServerDirUnderServersRoot` as a
+ * belt-and-suspenders prefix check after `path.resolve`.
  */
 function validateServerId(serverId: string): void {
-  if (
-    serverId.includes('/') ||
-    serverId.includes('\\') ||
-    serverId.includes('\0') ||
-    serverId.includes('..')
-  ) {
+  if (typeof serverId !== 'string' || !SERVER_ID_REGEX.test(serverId)) {
     throw new Error('Server ID contains invalid characters');
+  }
+}
+
+/**
+ * Assert that a resolved per-server directory path is contained within the
+ * canonical `<LAMASTE_DIR>/servers/` parent. Defends against any residual
+ * traversal that might survive segment validation (e.g. symlinked parents).
+ *
+ * @throws if the path escapes the expected parent
+ */
+function assertServerDirUnderServersRoot(resolvedServerDir: string): void {
+  const expectedParent = path.resolve(LAMASTE_DIR, 'servers');
+  const withSep = expectedParent.endsWith(path.sep) ? expectedParent : expectedParent + path.sep;
+  if (!resolvedServerDir.startsWith(withSep)) {
+    throw new Error('Resolved server directory escapes servers root');
   }
 }
 
@@ -214,17 +238,25 @@ export async function removeServer(serverId: string): Promise<void> {
   }
   await saveServersRegistry(filtered);
 
-  // Clean up server directory (admin.p12 etc.)
-  // Symlink attack protection: verify canonical path is under ~/.lamalibre/lamaste/servers/
-  const serverDir = path.join(LAMASTE_DIR, 'servers', serverId);
+  // Clean up server directory (admin.p12 etc.).
+  // Two layers of protection on top of validateServerId:
+  //   1. `path.resolve` + prefix check against the servers root — defends
+  //      against any segment that would still concatenate outside the root.
+  //   2. `realpath` + canonical prefix check — defends against symlink
+  //      traversal where a child entry is a symlink elsewhere.
+  const serversRoot = path.resolve(LAMASTE_DIR, 'servers');
+  const serverDir = path.resolve(serversRoot, serverId);
+  assertServerDirUnderServersRoot(serverDir);
   if (existsSync(serverDir)) {
     const { realpath } = await import('node:fs/promises');
     try {
       const canonical = await realpath(serverDir);
-      const expectedParent = path.join(LAMASTE_DIR, 'servers');
-      if (existsSync(expectedParent)) {
-        const canonicalParent = await realpath(expectedParent);
-        if (canonical.startsWith(canonicalParent + path.sep)) {
+      if (existsSync(serversRoot)) {
+        const canonicalParent = await realpath(serversRoot);
+        const withSep = canonicalParent.endsWith(path.sep)
+          ? canonicalParent
+          : canonicalParent + path.sep;
+        if (canonical.startsWith(withSep)) {
           await rm(canonical, { recursive: true, force: true });
         }
       }

@@ -5,8 +5,29 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { atomicWriteJSON } from '../file-helpers.js';
-import { agentConfigPath } from './platform.js';
+import { agentConfigPath, agentsDir } from './platform.js';
+import { validateLabel } from './registry.js';
+
+/**
+ * Resolve and assert the per-agent config path stays under `<agents root>/`.
+ *
+ * Belt-and-suspenders for CodeQL path-injection data flow: even though
+ * `validateLabel` rejects every traversal vector, callers downstream may not
+ * recognize it as a sanitizer. Re-validate after `path.resolve` so the data
+ * flow visibly terminates at a guarded sink.
+ */
+function safeAgentConfigPath(label: string): string {
+  validateLabel(label);
+  const root = path.resolve(agentsDir());
+  const resolved = path.resolve(agentConfigPath(label));
+  const withSep = root.endsWith(path.sep) ? root : root + path.sep;
+  if (!resolved.startsWith(withSep)) {
+    throw new Error('Resolved agent config path escapes agents root');
+  }
+  return resolved;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,8 +88,10 @@ export interface AgentConfig {
  * Returns null if the file does not exist.
  */
 export async function loadAgentConfig(label: string): Promise<AgentConfig | null> {
+  // Validate label OUTSIDE the try/catch: invalid labels (path traversal,
+  // forbidden chars) must surface to the caller, not silently return null.
+  const configPath = safeAgentConfigPath(label);
   try {
-    const configPath = agentConfigPath(label);
     const raw = await readFile(configPath, 'utf8');
     const config = JSON.parse(raw) as AgentConfig;
     // Default authMethod to 'p12' for backwards compatibility
@@ -88,7 +111,7 @@ export async function loadAgentConfig(label: string): Promise<AgentConfig | null
  * `mkdirp` option with mode 0o700.
  */
 export async function saveAgentConfig(label: string, config: AgentConfig): Promise<void> {
-  await atomicWriteJSON(agentConfigPath(label), config, {
+  await atomicWriteJSON(safeAgentConfigPath(label), config, {
     mkdirp: true,
     dirMode: 0o700,
     mode: 0o600,

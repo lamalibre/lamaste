@@ -84,7 +84,14 @@ async function rotateCredential(args, { json }) {
     console.log(` ${chalk.green('ok')}`);
     console.log('');
     console.log(`  ${chalk.bold('user:')}      ${chalk.cyan(result.user)}`);
-    console.log(`  ${chalk.bold('password:')}  ${chalk.dim(result.password)}`);
+    // SECURITY: the rotated chisel password is NEVER written to a log sink
+    // (stdout/stderr/console). It is persisted server-side in the chisel
+    // credentials store (mode 0600). Scripted consumers must use the
+    // non-interactive JSON mode (`--json`), which emits the password in
+    // the NDJSON `complete` event for direct programmatic capture.
+    console.log(
+      `  ${chalk.bold('password:')}  ${chalk.dim('*** (redacted — use --json to retrieve)')}`,
+    );
     if (!result.restartOk) {
       console.log('');
       console.log(

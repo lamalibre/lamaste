@@ -375,17 +375,18 @@ export async function runResetAdmin({ json, passwordFile }) {
   console.log(`     ${d('         \u2192 Security \u2192 Manage certificates \u2192 Import')}`);
   console.log(`     ${d('Windows: Double-click the file \u2192 Certificate Import Wizard')}`);
   console.log('');
-  // SECURITY: the certificate password is printed to STDERR (not stdout) so
-  // operators can redirect stdout to a log without capturing the secret:
-  //   sudo lamaste-server reset-admin > reset.log
-  // The password is also persisted to ${PKI_DIR}/.p12-password (mode 0600,
-  // root-readable only) — the source of truth for redeployment scripts and
-  // for the desktop app, which reads it via privileged escalation.
+  // SECURITY: the new certificate password is NEVER written to a log sink
+  // (stdout/stderr/console). It is persisted at ${defaultPasswordPath}
+  // (mode 0600, root-readable only) — the single source of truth for
+  // redeployment scripts and for the desktop app, which reads it via
+  // privileged escalation. Operators retrieve the password with:
+  //   sudo cat ${defaultPasswordPath}
   console.log('  3. Certificate password:');
   console.log('');
-  console.log(`     ${d(`(also stored at ${defaultPasswordPath}, mode 0600)`)}`);
+  console.log(`     ${d(`stored at ${defaultPasswordPath} (mode 0600)`)}`);
+  console.log(`     ${d(`retrieve with: sudo cat ${defaultPasswordPath}`)}`);
   console.log('');
-  console.error(`     ${b(p12Password)}`);
+  console.error(`     ${b('*** (redacted — read the password file above)')}`);
   console.log('');
   console.log('  4. Open the Lamaste panel:');
   console.log('');

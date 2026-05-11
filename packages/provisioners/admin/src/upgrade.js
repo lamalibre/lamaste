@@ -496,10 +496,15 @@ export async function upgrade() {
       ' '.repeat(Math.max(0, 43 - result.p12Path.length)) +
       c('║'),
   );
+  // SECURITY: the new P12 password is NEVER printed. Operators that need
+  // the password must use the non-interactive JSON mode (`--json`), which
+  // persists the password to a 0600 file (see `upgradeJson` below) for
+  // privileged retrieval by the desktop app or scripted consumers.
+  const redactedPassword = '*** (use --json to retrieve)';
   console.log(
     c('  ║') +
-      `  ${b('Password:')} ${d(result.p12Password)}` +
-      ' '.repeat(Math.max(0, 43 - result.p12Password.length)) +
+      `  ${b('Password:')} ${d(redactedPassword)}` +
+      ' '.repeat(Math.max(0, 43 - redactedPassword.length)) +
       c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
