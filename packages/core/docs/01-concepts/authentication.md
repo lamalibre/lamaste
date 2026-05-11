@@ -14,7 +14,7 @@ Think of it this way: the admin panel is your house's back door, opened only by 
 
 These two systems are completely independent. Admin certificate holders do not automatically get access to tunneled apps, and Authelia users cannot access the admin panel.
 
-There is also an **optional built-in 2FA layer** for the admin panel itself. When enabled, the admin must present their client certificate *and* enter a TOTP code to access the panel. This adds a second factor on top of mTLS, protecting against scenarios where the certificate file is compromised. Agents are exempt from this requirement — they authenticate with mTLS only.
+There is also an **optional built-in 2FA layer** for the admin panel itself. When enabled, the admin must present their client certificate _and_ enter a TOTP code to access the panel. This adds a second factor on top of mTLS, protecting against scenarios where the certificate file is compromised. Agents are exempt from this requirement — they authenticate with mTLS only.
 
 ## For Users
 
@@ -336,11 +336,11 @@ The flow works like this:
 
 When authentication succeeds, Authelia returns user information in response headers. nginx captures these with `auth_request_set` and forwards them to the proxied app:
 
-| Header          | Content                | Example                |
-| --------------- | ---------------------- | ---------------------- |
-| `Remote-User`   | Username               | `alice`                |
-| `Remote-Groups` | Comma-separated groups | `admins`               |
-| `Remote-Name`   | Display name           | `alice`                |
+| Header          | Content                | Example               |
+| --------------- | ---------------------- | --------------------- |
+| `Remote-User`   | Username               | `alice`               |
+| `Remote-Groups` | Comma-separated groups | `admins`              |
+| `Remote-Name`   | Display name           | `alice`               |
 | `Remote-Email`  | Email address          | `alice@lamaste.local` |
 
 Your tunneled app can read these headers to identify the authenticated user without implementing its own authentication.
@@ -377,8 +377,8 @@ The panel server API prevents deleting the last Authelia user. If only one user 
 
 ### Source files
 
-| File                                                   | Purpose                                        |
-| ------------------------------------------------------ | ---------------------------------------------- |
+| File                                                         | Purpose                                              |
+| ------------------------------------------------------------ | ---------------------------------------------------- |
 | `packages/lamaste-serverd/src/lib/authelia.js`               | Install, configure, user CRUD, TOTP generation       |
 | `packages/lamaste-serverd/src/routes/management/users.js`    | User management API endpoints                        |
 | `packages/lamaste-serverd/src/lib/nginx.js`                  | App vhost with Authelia forward-auth block           |
@@ -392,11 +392,11 @@ The panel server API prevents deleting the last Authelia user. If only one user 
 
 ### Two authentication systems
 
-| System         | Protects      | Method                            | Session                   |
-| -------------- | ------------- | --------------------------------- | ------------------------- |
-| mTLS           | Admin panel   | Client certificate                | Permanent (cert-based)    |
-| Panel 2FA      | Admin panel   | mTLS + TOTP (opt-in, admin only)  | 12h absolute, 2h inactivity (`lamaste_2fa_session`) |
-| Authelia        | Tunneled apps | Password + TOTP                   | 12h expiry, 2h inactivity |
+| System    | Protects      | Method                           | Session                                             |
+| --------- | ------------- | -------------------------------- | --------------------------------------------------- |
+| mTLS      | Admin panel   | Client certificate               | Permanent (cert-based)                              |
+| Panel 2FA | Admin panel   | mTLS + TOTP (opt-in, admin only) | 12h absolute, 2h inactivity (`lamaste_2fa_session`) |
+| Authelia  | Tunneled apps | Password + TOTP                  | 12h expiry, 2h inactivity                           |
 
 ### Authelia service
 
@@ -418,7 +418,7 @@ The panel server API prevents deleting the last Authelia user. If only one user 
 | Algorithm     | SHA-1               |
 | Digits        | 6                   |
 | Period        | 30 seconds          |
-| Issuer        | `Lamaste`          |
+| Issuer        | `Lamaste`           |
 | Secret length | 20 bytes (160 bits) |
 | Encoding      | Base32              |
 

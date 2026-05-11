@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "21 — Gatekeeper Authorization (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
   "constants": {},
@@ -300,10 +296,7 @@
             "method": "POST",
             "path": "gatekeeper/groups/three-vm-devs/members",
             "body": {
-              "usernames": [
-                "alice",
-                "bob"
-              ]
+              "usernames": ["alice", "bob"]
             }
           }
         },
@@ -316,10 +309,7 @@
             "method": "POST",
             "path": "gatekeeper/groups/three-vm-ops/members",
             "body": {
-              "usernames": [
-                "charlie",
-                "dave"
-              ]
+              "usernames": ["charlie", "dave"]
             }
           }
         },

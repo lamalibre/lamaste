@@ -65,7 +65,11 @@ export async function loadChiselCredential(label) {
  * @param {{ user: string, password: string }} credential
  */
 export async function saveChiselCredential(label, credential) {
-  if (!credential || typeof credential.user !== 'string' || typeof credential.password !== 'string') {
+  if (
+    !credential ||
+    typeof credential.user !== 'string' ||
+    typeof credential.password !== 'string'
+  ) {
     throw new Error('saveChiselCredential: credential must have string user and password');
   }
   const dir = agentDataDir(label);

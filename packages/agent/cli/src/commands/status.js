@@ -32,7 +32,9 @@ export async function runStatus({ label }) {
 
   const config = await loadAgentConfig(label);
   if (!config) {
-    console.log(`  ${r('Not configured.')} Run ${c(`lamaste-agent setup --label ${label}`)} first.`);
+    console.log(
+      `  ${r('Not configured.')} Run ${c(`lamaste-agent setup --label ${label}`)} first.`,
+    );
     console.log('');
     return;
   }
@@ -72,9 +74,7 @@ export async function runStatus({ label }) {
 
   // Panel server status
   const panelRunning = await isPanelServiceLoaded(label);
-  console.log(
-    `  ${b('Web Panel:')} ${panelRunning ? g('running') : d('stopped')}`,
-  );
+  console.log(`  ${b('Web Panel:')} ${panelRunning ? g('running') : d('stopped')}`);
 
   if (panelRunning || config.panelEnabled) {
     try {

@@ -45,17 +45,22 @@ import net from 'node:net';
  * Mirrors the panel-side deny list in tickets.js.
  */
 function isReservedIp(ip: string): boolean {
-  if (ip === '169.254.169.254') return true;          // AWS/GCP/Azure metadata
+  if (ip === '169.254.169.254') return true; // AWS/GCP/Azure metadata
   if (net.isIPv4(ip)) {
     const [a, b] = ip.split('.').map(Number);
     if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;          // link-local
+    if (a === 169 && b === 254) return true; // link-local
     if (a === 172 && b >= 16 && b <= 31) return true; // private
-    if (a === 192 && b === 168) return true;          // private
+    if (a === 192 && b === 168) return true; // private
   }
   if (net.isIPv6(ip)) {
     const lower = ip.toLowerCase();
-    if (lower === '::1' || lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) {
+    if (
+      lower === '::1' ||
+      lower.startsWith('fe80:') ||
+      lower.startsWith('fc') ||
+      lower.startsWith('fd')
+    ) {
       return true;
     }
   }

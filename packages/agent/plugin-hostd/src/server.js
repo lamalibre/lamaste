@@ -50,9 +50,12 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
     };
   });
 
-  await server.register(async (scope) => {
-    await localPluginRoutes(scope);
-  }, { prefix: '/api' });
+  await server.register(
+    async (scope) => {
+      await localPluginRoutes(scope);
+    },
+    { prefix: '/api' },
+  );
 
   await server.register(pluginHostPlugin, {
     baseDir: localDir(),
@@ -63,9 +66,6 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
   });
 
   await server.listen({ host: '127.0.0.1', port });
-  server.log.info(
-    { port, version: pkg.version },
-    'Local plugin host listening',
-  );
+  server.log.info({ port, version: pkg.version }, 'Local plugin host listening');
   return server;
 }

@@ -158,9 +158,7 @@ export async function validateAndConsumeToken(token) {
     // The agent may have been revoked between token creation and consumption.
     if (entry.type === 'delegated' && entry.delegatedBy) {
       const registry = await loadAgentRegistry();
-      const delegator = registry.agents.find(
-        (a) => a.label === entry.delegatedBy && !a.revoked,
-      );
+      const delegator = registry.agents.find((a) => a.label === entry.delegatedBy && !a.revoked);
       if (!delegator) {
         throw Object.assign(new Error('Invalid enrollment token'), { statusCode: 401 });
       }
@@ -181,7 +179,12 @@ export async function validateAndConsumeToken(token) {
   });
 }
 
-export async function createDelegatedEnrollmentToken(delegatingLabel, scope, pluginAgentLabel, logger) {
+export async function createDelegatedEnrollmentToken(
+  delegatingLabel,
+  scope,
+  pluginAgentLabel,
+  logger,
+) {
   // Validate that the scope is a registered ticket scope, not a base capability.
   // Base capabilities (tunnels:read, services:write, etc.) must never be
   // delegated through enrollment — they are admin-assigned per-agent. These
@@ -203,9 +206,7 @@ export async function createDelegatedEnrollmentToken(delegatingLabel, scope, plu
 
   return withTokenLock(async () => {
     const registry = await loadAgentRegistry();
-    const delegatingAgent = registry.agents.find(
-      (a) => a.label === delegatingLabel && !a.revoked,
-    );
+    const delegatingAgent = registry.agents.find((a) => a.label === delegatingLabel && !a.revoked);
     if (!delegatingAgent) {
       throw Object.assign(new Error(`Delegating agent "${delegatingLabel}" not found or revoked`), {
         statusCode: 404,

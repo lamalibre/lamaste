@@ -50,7 +50,10 @@ export async function ensureMigrations(db, migrationsDir) {
   )`);
 
   const applied = new Set(
-    db.prepare('SELECT name FROM schema_migrations').all().map((r) => r.name),
+    db
+      .prepare('SELECT name FROM schema_migrations')
+      .all()
+      .map((r) => r.name),
   );
 
   let entries;
@@ -71,9 +74,11 @@ export async function ensureMigrations(db, migrationsDir) {
     db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(sql);
-      db.prepare(
-        'INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)',
-      ).run(id, file, new Date().toISOString());
+      db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
+        id,
+        file,
+        new Date().toISOString(),
+      );
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');

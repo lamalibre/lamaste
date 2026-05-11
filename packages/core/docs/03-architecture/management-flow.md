@@ -156,17 +156,17 @@ Host static websites directly on the Lamaste server, served via nginx.
 
 ### Tunnel Management
 
-| Method | Path                          | Description                                    | Roles                          |
-| ------ | ----------------------------- | ---------------------------------------------- | ------------------------------ |
-| GET    | `/api/tunnels`                | List all tunnels                               | admin, agent                   |
-| POST   | `/api/tunnels`                | Add tunnel (triggers nginx + certbot + chisel) | admin, agent (`tunnels:write`) |
-| PATCH  | `/api/tunnels/:id`            | Toggle tunnel enabled/disabled                 | admin, agent (`tunnels:write`) |
-| DELETE | `/api/tunnels/:id`            | Remove tunnel                                  | admin, agent (`tunnels:write`) |
-| GET    | `/api/tunnels/agent-config`   | Platform-agnostic agent config                 | admin, agent (`tunnels:read`)  |
-| GET    | `/api/tunnels/mac-plist`      | Download Mac launchd plist                     | admin, agent                   |
-| GET    | `/api/tunnels/agent-panel-status` | Check agent panel expose status            | admin, agent (`panel:expose`)  |
-| POST   | `/api/tunnels/expose-panel`   | Expose agent management panel as subdomain     | admin, agent (`panel:expose`)  |
-| DELETE | `/api/tunnels/retract-panel`  | Retract agent management panel                 | admin, agent (`panel:expose`)  |
+| Method | Path                              | Description                                    | Roles                          |
+| ------ | --------------------------------- | ---------------------------------------------- | ------------------------------ |
+| GET    | `/api/tunnels`                    | List all tunnels                               | admin, agent                   |
+| POST   | `/api/tunnels`                    | Add tunnel (triggers nginx + certbot + chisel) | admin, agent (`tunnels:write`) |
+| PATCH  | `/api/tunnels/:id`                | Toggle tunnel enabled/disabled                 | admin, agent (`tunnels:write`) |
+| DELETE | `/api/tunnels/:id`                | Remove tunnel                                  | admin, agent (`tunnels:write`) |
+| GET    | `/api/tunnels/agent-config`       | Platform-agnostic agent config                 | admin, agent (`tunnels:read`)  |
+| GET    | `/api/tunnels/mac-plist`          | Download Mac launchd plist                     | admin, agent                   |
+| GET    | `/api/tunnels/agent-panel-status` | Check agent panel expose status                | admin, agent (`panel:expose`)  |
+| POST   | `/api/tunnels/expose-panel`       | Expose agent management panel as subdomain     | admin, agent (`panel:expose`)  |
+| DELETE | `/api/tunnels/retract-panel`      | Retract agent management panel                 | admin, agent (`panel:expose`)  |
 
 ### User Management
 

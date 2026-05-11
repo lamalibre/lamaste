@@ -9,11 +9,7 @@ import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { z } from 'zod';
-import {
-  RESERVED_API_PREFIXES,
-  RESERVED_NAV_LABELS,
-  derivePluginRoute,
-} from '../constants.js';
+import { RESERVED_API_PREFIXES, RESERVED_NAV_LABELS, derivePluginRoute } from '../constants.js';
 import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { ManifestSchema as SharedManifestSchema } from '../schemas.js';
@@ -80,7 +76,11 @@ export interface PluginLogger {
 
 /** Abstraction for running shell commands (e.g. npm install). */
 export interface ExecFn {
-  (file: string, args: string[], options?: { cwd?: string; timeout?: number }): Promise<{
+  (
+    file: string,
+    args: string[],
+    options?: { cwd?: string; timeout?: number },
+  ): Promise<{
     stdout: string;
     stderr: string;
   }>;
@@ -234,10 +234,7 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
     const registry = await readPlugins(stateDir);
     const existing = registry.plugins.find((p) => p.packageName === packageName);
     if (existing) {
-      throw new PluginError(
-        `Plugin "${packageName}" is already installed`,
-        'ALREADY_INSTALLED',
-      );
+      throw new PluginError(`Plugin "${packageName}" is already installed`, 'ALREADY_INSTALLED');
     }
 
     // Ensure stateDir has a package.json so npm does not walk up the tree
@@ -261,7 +258,8 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
         timeout: 120000,
       });
     } catch (err: unknown) {
-      const stderr = err instanceof Error && 'stderr' in err ? (err as { stderr: string }).stderr : '';
+      const stderr =
+        err instanceof Error && 'stderr' in err ? (err as { stderr: string }).stderr : '';
       logger.error(
         { packageName, stderr, err: err instanceof Error ? err.message : String(err) },
         'npm install failed',
@@ -329,9 +327,7 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
       // Reject displayName that matches reserved navigation labels
       if (manifest.displayName) {
         if (
-          (RESERVED_NAV_LABELS as readonly string[]).includes(
-            manifest.displayName.toLowerCase(),
-          )
+          (RESERVED_NAV_LABELS as readonly string[]).includes(manifest.displayName.toLowerCase())
         ) {
           throw new PluginError(
             `Plugin display name "${manifest.displayName}" conflicts with a core navigation label`,

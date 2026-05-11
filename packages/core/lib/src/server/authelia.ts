@@ -121,7 +121,10 @@ async function sudoWriteFile(
   mode: string,
   exec: ExecFn,
 ): Promise<void> {
-  const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpFile = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
+  );
   await fsWriteFile(tmpFile, content, 'utf-8');
   await exec('sudo', ['mv', tmpFile, destPath]);
   await exec('sudo', ['chmod', mode, destPath]);
@@ -210,8 +213,7 @@ export async function installAuthelia(exec: ExecFn): Promise<InstallResult> {
   const autheliaArch = archMap[unameArch.trim()] ?? 'linux-amd64';
 
   const asset = releaseInfo.assets?.find(
-    (a) =>
-      a.name.includes(autheliaArch) && a.name.endsWith('.tar.gz') && !a.name.includes('musl'),
+    (a) => a.name.includes(autheliaArch) && a.name.endsWith('.tar.gz') && !a.name.includes('musl'),
   );
 
   if (!asset) {
@@ -575,13 +577,7 @@ export async function startAuthelia(exec: ExecFn): Promise<{ active: true }> {
 
   let journalOutput = '';
   try {
-    const { stdout } = await exec('journalctl', [
-      '-u',
-      AUTHELIA_SERVICE,
-      '--no-pager',
-      '-n',
-      '10',
-    ]);
+    const { stdout } = await exec('journalctl', ['-u', AUTHELIA_SERVICE, '--no-pager', '-n', '10']);
     journalOutput = stdout;
   } catch {
     journalOutput = 'Could not read journal logs';
@@ -762,7 +758,9 @@ export async function updateAccessControl(
   try {
     const { stdout: secretsJson } = await exec('sudo', ['cat', AUTHELIA_SECRETS]);
     const secrets = JSON.parse(secretsJson) as Partial<AutheliaSecrets>;
-    const storage = currentConfig.storage as { local?: unknown; encryption_key?: string } | undefined;
+    const storage = currentConfig.storage as
+      | { local?: unknown; encryption_key?: string }
+      | undefined;
     if (secrets.storageEncryptionKey && storage?.local) {
       storage.encryption_key = secrets.storageEncryptionKey;
     }

@@ -96,13 +96,16 @@ export const webAdminClient = {
   generateAgentCert: (data) => jsonPost('/api/certs/agent', data),
   revokeAgentCert: (label) => jsonDelete(`/api/certs/agent/${encodeURIComponent(label)}`),
   createEnrollmentToken: (data) => jsonPost('/api/certs/agent/enroll', data),
-  revokeEnrollmentToken: (label) => jsonDelete(`/api/certs/agent/enroll/${encodeURIComponent(label)}`),
+  revokeEnrollmentToken: (label) =>
+    jsonDelete(`/api/certs/agent/enroll/${encodeURIComponent(label)}`),
   updateAgentCapabilities: (label, capabilities) =>
     jsonPatch(`/api/certs/agent/${encodeURIComponent(label)}/capabilities`, { capabilities }),
   updateAgentAllowedSites: (label, allowedSites) =>
     jsonPatch(`/api/certs/agent/${encodeURIComponent(label)}/allowed-sites`, { allowedSites }),
   downloadAgentCert: async (label) => {
-    const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}/download`, { credentials: 'same-origin' });
+    const res = await fetch(`/api/certs/agent/${encodeURIComponent(label)}/download`, {
+      credentials: 'same-origin',
+    });
     if (!res.ok) throw new Error('Download failed');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -147,7 +150,9 @@ export const webAdminClient = {
   getTicketAssignments: () => apiFetch('/api/tickets/assignments'),
   createTicketAssignment: (data) => jsonPost('/api/tickets/assignments', data),
   deleteTicketAssignment: (agentLabel, instanceScope) =>
-    jsonDelete(`/api/tickets/assignments/${encodeURIComponent(agentLabel)}/${encodeURIComponent(instanceScope)}`),
+    jsonDelete(
+      `/api/tickets/assignments/${encodeURIComponent(agentLabel)}/${encodeURIComponent(instanceScope)}`,
+    ),
   getTickets: () => apiFetch('/api/tickets'),
   revokeTicket: (id) => jsonDelete(`/api/tickets/${encodeURIComponent(id)}`),
   getTicketSessions: () => apiFetch('/api/tickets/sessions'),
@@ -194,8 +199,7 @@ export const webAdminClient = {
   // --- Identity ---
   getIdentitySelf: () => apiFetch('/api/identity/self'),
   getIdentityUsers: () => apiFetch('/api/identity/users'),
-  getIdentityUser: (username) =>
-    apiFetch(`/api/identity/users/${encodeURIComponent(username)}`),
+  getIdentityUser: (username) => apiFetch(`/api/identity/users/${encodeURIComponent(username)}`),
   getIdentityGroups: () => apiFetch('/api/identity/groups'),
 
   // --- 2FA ---
@@ -211,7 +215,8 @@ export const webAdminClient = {
   // --- User Plugin Access ---
   getUserAccessGrants: () => apiFetch('/api/user-access/grants'),
   createUserAccessGrant: (data) => jsonPost('/api/user-access/grants', data),
-  revokeUserAccessGrant: (grantId) => jsonDelete(`/api/user-access/grants/${encodeURIComponent(grantId)}`),
+  revokeUserAccessGrant: (grantId) =>
+    jsonDelete(`/api/user-access/grants/${encodeURIComponent(grantId)}`),
 
   // --- Tunnels ---
   getTunnels: () => apiFetch('/api/tunnels'),

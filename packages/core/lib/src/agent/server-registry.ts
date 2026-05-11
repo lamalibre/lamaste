@@ -102,15 +102,13 @@ export function validatePanelUrl(url: string): void {
     const parts = host.split('.').map(Number);
     if (
       parts.length === 4 &&
-      (
-        parts[0] === 127 ||                                       // loopback
-        parts[0] === 10 ||                                        // 10.0.0.0/8
+      (parts[0] === 127 || // loopback
+        parts[0] === 10 || // 10.0.0.0/8
         (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) || // 172.16.0.0/12
-        (parts[0] === 192 && parts[1] === 168) ||                 // 192.168.0.0/16
-        (parts[0] === 169 && parts[1] === 254) ||                 // link-local
-        (parts[0] === 100 && (parts[1]! & 0xC0) === 64) ||       // CGNAT
-        parts[0] === 0                                            // 0.0.0.0
-      )
+        (parts[0] === 192 && parts[1] === 168) || // 192.168.0.0/16
+        (parts[0] === 169 && parts[1] === 254) || // link-local
+        (parts[0] === 100 && (parts[1]! & 0xc0) === 64) || // CGNAT
+        parts[0] === 0) // 0.0.0.0
     ) {
       throw new Error('Panel URL must not point to a private or reserved IP address');
     }
@@ -121,7 +119,12 @@ export function validatePanelUrl(url: string): void {
  * Validate a server ID does not contain path traversal characters.
  */
 function validateServerId(serverId: string): void {
-  if (serverId.includes('/') || serverId.includes('\\') || serverId.includes('\0') || serverId.includes('..')) {
+  if (
+    serverId.includes('/') ||
+    serverId.includes('\\') ||
+    serverId.includes('\0') ||
+    serverId.includes('..')
+  ) {
     throw new Error('Server ID contains invalid characters');
   }
 }

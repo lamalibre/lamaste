@@ -14,7 +14,16 @@
  */
 
 import crypto from 'node:crypto';
-import { readFile, writeFile, rename, access, constants, copyFile, unlink, open } from 'node:fs/promises';
+import {
+  readFile,
+  writeFile,
+  rename,
+  access,
+  constants,
+  copyFile,
+  unlink,
+  open,
+} from 'node:fs/promises';
 import chalk from 'chalk';
 import { execa } from 'execa';
 import { CONFIG_PATH, PKI_DIR, PANEL_SERVICE } from '../config.js';
@@ -98,7 +107,11 @@ export async function runResetAdmin({ json, passwordFile }) {
   let oldSerial = '';
   try {
     const { stdout } = await execa('openssl', [
-      'x509', '-in', `${PKI_DIR}/client.crt`, '-serial', '-noout',
+      'x509',
+      '-in',
+      `${PKI_DIR}/client.crt`,
+      '-serial',
+      '-noout',
     ]);
     const match = stdout.match(/serial=([A-Fa-f0-9]+)/);
     oldSerial = match ? match[1] : '';
@@ -113,20 +126,33 @@ export async function runResetAdmin({ json, passwordFile }) {
   // 5. Create CSR
   if (!json) console.log('  Creating certificate signing request...');
   await execa('openssl', [
-    'req', '-new', '-key', `${PKI_DIR}/client.key.new`,
-    '-out', `${PKI_DIR}/client.csr`,
-    '-subj', '/CN=admin/O=Lamaste',
+    'req',
+    '-new',
+    '-key',
+    `${PKI_DIR}/client.key.new`,
+    '-out',
+    `${PKI_DIR}/client.csr`,
+    '-subj',
+    '/CN=admin/O=Lamaste',
   ]);
 
   // 6. Sign with CA
   if (!json) console.log('  Signing certificate with CA...');
   await execa('openssl', [
-    'x509', '-req', '-in', `${PKI_DIR}/client.csr`,
-    '-CA', `${PKI_DIR}/ca.crt`,
-    '-CAkey', `${PKI_DIR}/ca.key`,
+    'x509',
+    '-req',
+    '-in',
+    `${PKI_DIR}/client.csr`,
+    '-CA',
+    `${PKI_DIR}/ca.crt`,
+    '-CAkey',
+    `${PKI_DIR}/ca.key`,
     '-CAcreateserial',
-    '-out', `${PKI_DIR}/client.crt.new`,
-    '-days', '730', '-sha256',
+    '-out',
+    `${PKI_DIR}/client.crt.new`,
+    '-days',
+    '730',
+    '-sha256',
   ]);
 
   // 7. Create P12 bundle
@@ -135,13 +161,24 @@ export async function runResetAdmin({ json, passwordFile }) {
   await execa(
     'openssl',
     [
-      'pkcs12', '-export',
-      '-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES', '-macalg', 'sha1',
-      '-out', `${PKI_DIR}/client.p12.new`,
-      '-inkey', `${PKI_DIR}/client.key.new`,
-      '-in', `${PKI_DIR}/client.crt.new`,
-      '-certfile', `${PKI_DIR}/ca.crt`,
-      '-passout', 'stdin',
+      'pkcs12',
+      '-export',
+      '-keypbe',
+      'PBE-SHA1-3DES',
+      '-certpbe',
+      'PBE-SHA1-3DES',
+      '-macalg',
+      'sha1',
+      '-out',
+      `${PKI_DIR}/client.p12.new`,
+      '-inkey',
+      `${PKI_DIR}/client.key.new`,
+      '-in',
+      `${PKI_DIR}/client.crt.new`,
+      '-certfile',
+      `${PKI_DIR}/ca.crt`,
+      '-passout',
+      'stdin',
     ],
     { input: p12Password },
   );
@@ -198,7 +235,9 @@ export async function runResetAdmin({ json, passwordFile }) {
   await execa('chmod', ['644', `${PKI_DIR}/client.crt`]);
   await execa('chown', [
     'lamaste:lamaste',
-    `${PKI_DIR}/client.key`, `${PKI_DIR}/client.crt`, `${PKI_DIR}/client.p12`,
+    `${PKI_DIR}/client.key`,
+    `${PKI_DIR}/client.crt`,
+    `${PKI_DIR}/client.p12`,
   ]);
 
   if (json) emitStep('install-cert', 'complete');
@@ -326,8 +365,12 @@ export async function runResetAdmin({ json, passwordFile }) {
   console.log('  2. Import client.p12 into your browser:');
   console.log('');
   console.log(`     ${d('macOS:   Double-click the file \u2192 Keychain Access')}`);
-  console.log(`     ${d('         \u2192 select "System" keychain \u2192 enter the password below')}`);
-  console.log(`     ${d('         \u2192 find cert \u2192 double-click \u2192 Trust \u2192 Always Trust')}`);
+  console.log(
+    `     ${d('         \u2192 select "System" keychain \u2192 enter the password below')}`,
+  );
+  console.log(
+    `     ${d('         \u2192 find cert \u2192 double-click \u2192 Trust \u2192 Always Trust')}`,
+  );
   console.log(`     ${d('Linux:   Chrome \u2192 Settings \u2192 Privacy & Security')}`);
   console.log(`     ${d('         \u2192 Security \u2192 Manage certificates \u2192 Import')}`);
   console.log(`     ${d('Windows: Double-click the file \u2192 Certificate Import Wizard')}`);

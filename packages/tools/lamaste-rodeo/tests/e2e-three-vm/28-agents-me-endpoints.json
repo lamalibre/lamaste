@@ -5,14 +5,8 @@
     "name": "Agents Me Endpoints",
     "suite": "e2e-three-vm",
     "description": "28 — Agents /me/* self-service and chisel credential rotation (Three-VM)",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
   "constants": {
@@ -103,14 +97,8 @@
             "path": "certs/agent",
             "body": {
               "label": "agents-me-28",
-              "capabilities": [
-                "tunnels:read",
-                "sites:read"
-              ],
-              "allowedSites": [
-                "site-alpha",
-                "site-beta"
-              ]
+              "capabilities": ["tunnels:read", "sites:read"],
+              "allowedSites": ["site-alpha", "site-beta"]
             }
           },
           "capture": [
@@ -702,9 +690,5 @@
       ]
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ]
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"]
 }

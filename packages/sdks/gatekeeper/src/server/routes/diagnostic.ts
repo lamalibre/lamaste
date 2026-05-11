@@ -59,14 +59,10 @@ async function getStmts(): Promise<LogStmts> {
     `),
     // Newest-first pagination: id is autoincrement so DESC order matches
     // insertion order more cheaply than sorting on `timestamp`.
-    selectPage: db.prepare(
-      'SELECT * FROM access_request_log ORDER BY id DESC LIMIT ? OFFSET ?',
-    ),
+    selectPage: db.prepare('SELECT * FROM access_request_log ORDER BY id DESC LIMIT ? OFFSET ?'),
     countAll: db.prepare('SELECT COUNT(*) AS n FROM access_request_log'),
     deleteAll: db.prepare('DELETE FROM access_request_log'),
-    deleteOlderThan: db.prepare(
-      'DELETE FROM access_request_log WHERE timestamp < ?',
-    ),
+    deleteOlderThan: db.prepare('DELETE FROM access_request_log WHERE timestamp < ?'),
     begin: db.prepare('BEGIN IMMEDIATE'),
     commit: db.prepare('COMMIT'),
     rollback: db.prepare('ROLLBACK'),
@@ -107,13 +103,7 @@ async function persistEntries(entries: AccessRequestEntry[]): Promise<void> {
   s.begin.run();
   try {
     for (const e of entries) {
-      s.insert.run(
-        e.timestamp,
-        e.username,
-        e.resourceType,
-        e.resourceId,
-        e.resourceFqdn,
-      );
+      s.insert.run(e.timestamp, e.username, e.resourceType, e.resourceId, e.resourceFqdn);
     }
     s.commit.run();
   } catch (err) {
@@ -155,10 +145,7 @@ function startDrainerIfNeeded(): void {
       // Even when idle, occasionally sweep retention so a long-running
       // gatekeeper does not accumulate ancient entries.
       maybeSweepRetention().catch((err) => {
-        accessLogger?.error(
-          { err: (err as Error).message },
-          'Failed retention sweep',
-        );
+        accessLogger?.error({ err: (err as Error).message }, 'Failed retention sweep');
       });
       return;
     }
@@ -167,10 +154,7 @@ function startDrainerIfNeeded(): void {
     persistEntries(batch)
       .then(() => maybeSweepRetention())
       .catch((err) => {
-        accessLogger?.error(
-          { err: (err as Error).message },
-          'Failed to persist access log batch',
-        );
+        accessLogger?.error({ err: (err as Error).message }, 'Failed to persist access log batch');
       });
   }, LOG_DRAIN_INTERVAL_MS);
   // Allow the process to exit cleanly during shutdown / tests.
@@ -252,7 +236,9 @@ export async function diagnosticRoutes(fastify: FastifyInstance): Promise<void> 
     try {
       body = UpdateSettingsSchema.parse(request.body);
     } catch (err) {
-      return reply.code(400).send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
     }
 
     try {

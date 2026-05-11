@@ -10,7 +10,9 @@ export async function accessCommand(args: string[]): Promise<void> {
       const resourceId = args[3];
 
       if (!username || !resourceType || !resourceId) {
-        console.error('Usage: lamaste-gatekeeper access check <username> <resourceType> <resourceId>');
+        console.error(
+          'Usage: lamaste-gatekeeper access check <username> <resourceType> <resourceId>',
+        );
         process.exit(1);
       }
 

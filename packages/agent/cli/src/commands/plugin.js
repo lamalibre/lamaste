@@ -89,9 +89,7 @@ async function showStatus(label) {
     console.log(`  ${d('No plugins installed.')}`);
   } else {
     for (const p of registry.plugins) {
-      console.log(
-        `  ${c('•')} ${b(p.name)} ${d(`v${p.version}`)} ${g(p.status || 'installed')}`,
-      );
+      console.log(`  ${c('•')} ${b(p.name)} ${d(`v${p.version}`)} ${g(p.status || 'installed')}`);
       console.log(`    ${d(p.packageName)}`);
       if (p.installedAt) {
         console.log(`    ${d(`Installed: ${p.installedAt}`)}`);
@@ -136,21 +134,27 @@ ${b('COMMANDS')}
   switch (subcommand) {
     case 'install':
       if (!target) {
-        console.error(chalk.red('  Missing package name. Usage: lamaste-agent plugin install <package>'));
+        console.error(
+          chalk.red('  Missing package name. Usage: lamaste-agent plugin install <package>'),
+        );
         process.exit(1);
       }
       await installLocal(label, target);
       break;
     case 'uninstall':
       if (!target) {
-        console.error(chalk.red('  Missing plugin name. Usage: lamaste-agent plugin uninstall <name>'));
+        console.error(
+          chalk.red('  Missing plugin name. Usage: lamaste-agent plugin uninstall <name>'),
+        );
         process.exit(1);
       }
       await uninstallLocal(label, target);
       break;
     case 'update':
       if (!target) {
-        console.error(chalk.red('  Missing plugin name. Usage: lamaste-agent plugin update <name>'));
+        console.error(
+          chalk.red('  Missing plugin name. Usage: lamaste-agent plugin update <name>'),
+        );
         process.exit(1);
       }
       await updateLocal(label, target);

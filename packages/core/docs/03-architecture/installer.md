@@ -230,7 +230,7 @@ The installer is designed to be safely re-run on the same machine. Every task gr
 | Node.js install | `node --version` returns v20+                             | Skip NodeSource + apt-get                 |
 | mTLS certs      | `ca.key` and `client.p12` both exist                      | Skip entire group, read existing password |
 | Panel config    | `panel.json` exists                                       | Merge instead of overwrite                |
-| System user     | `id lamaste` succeeds                                    | Skip `useradd`                            |
+| System user     | `id lamaste` succeeds                                     | Skip `useradd`                            |
 
 The mTLS certificate skip guard is especially important: regenerating certificates would invalidate the admin's already-imported client certificate, locking them out of the panel.
 
@@ -320,9 +320,9 @@ const ctx = {
 
 ## Key Files
 
-| File                                                 | Role                                      |
-| ---------------------------------------------------- | ----------------------------------------- |
-| `packages/create-lamaste/bin/create-lamaste.js`    | CLI entry point (`#!/usr/bin/env node`)   |
+| File                                                | Role                                      |
+| --------------------------------------------------- | ----------------------------------------- |
+| `packages/create-lamaste/bin/create-lamaste.js`     | CLI entry point (`#!/usr/bin/env node`)   |
 | `packages/create-lamaste/src/index.js`              | Main orchestrator with Listr2 pipeline    |
 | `packages/create-lamaste/src/tasks/harden.js`       | OS hardening subtasks                     |
 | `packages/create-lamaste/src/tasks/node.js`         | Node.js 20 installation subtasks          |

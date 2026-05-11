@@ -52,7 +52,11 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
 
   fastify.patch('/gatekeeper/groups/:name', async (request, reply) => {
     const { name } = request.params;
-    const { statusCode, data } = await proxy('PATCH', `/api/groups/${encodeURIComponent(name)}`, request.body);
+    const { statusCode, data } = await proxy(
+      'PATCH',
+      `/api/groups/${encodeURIComponent(name)}`,
+      request.body,
+    );
     return reply.code(statusCode).send(data);
   });
 
@@ -64,13 +68,20 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
 
   fastify.post('/gatekeeper/groups/:name/members', async (request, reply) => {
     const { name } = request.params;
-    const { statusCode, data } = await proxy('POST', `/api/groups/${encodeURIComponent(name)}/members`, request.body);
+    const { statusCode, data } = await proxy(
+      'POST',
+      `/api/groups/${encodeURIComponent(name)}/members`,
+      request.body,
+    );
     return reply.code(statusCode).send(data);
   });
 
   fastify.delete('/gatekeeper/groups/:name/members/:username', async (request, reply) => {
     const { name, username } = request.params;
-    const { statusCode, data } = await proxy('DELETE', `/api/groups/${encodeURIComponent(name)}/members/${encodeURIComponent(username)}`);
+    const { statusCode, data } = await proxy(
+      'DELETE',
+      `/api/groups/${encodeURIComponent(name)}/members/${encodeURIComponent(username)}`,
+    );
     return reply.code(statusCode).send(data);
   });
 
@@ -96,7 +107,10 @@ export default async function gatekeeperProxyRoutes(fastify, _opts) {
 
   fastify.delete('/gatekeeper/grants/:grantId', async (request, reply) => {
     const { grantId } = request.params;
-    const { statusCode, data } = await proxy('DELETE', `/api/grants/${encodeURIComponent(grantId)}`);
+    const { statusCode, data } = await proxy(
+      'DELETE',
+      `/api/grants/${encodeURIComponent(grantId)}`,
+    );
     return reply.code(statusCode).send(data);
   });
 

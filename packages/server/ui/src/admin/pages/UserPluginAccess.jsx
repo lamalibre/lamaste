@@ -122,7 +122,10 @@ function CreateGrantModal({ onClose }) {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => { setTargetType('local'); setSelectedAgent(''); }}
+              onClick={() => {
+                setTargetType('local');
+                setSelectedAgent('');
+              }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded ${targetType === 'local' ? 'bg-cyan-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`}
             >
               <Monitor size={12} />
@@ -278,7 +281,8 @@ export default function UserPluginAccess() {
         <div>
           <h1 className="text-lg font-bold text-white">User Plugin Access</h1>
           <p className="text-zinc-500 text-sm mt-1">
-            Grant non-admin users access to plugins — locally on their devices or on agent servers via browser.
+            Grant non-admin users access to plugins — locally on their devices or on agent servers
+            via browser.
           </p>
         </div>
         <button
@@ -296,7 +300,9 @@ export default function UserPluginAccess() {
       ) : error ? (
         <div className="flex items-center gap-2 rounded bg-red-500/10 border border-red-500/20 px-4 py-3">
           <AlertCircle size={16} className="text-red-400" />
-          <span className="text-sm text-red-400">{error?.toString() || 'Failed to load grants'}</span>
+          <span className="text-sm text-red-400">
+            {error?.toString() || 'Failed to load grants'}
+          </span>
         </div>
       ) : grants.length === 0 ? (
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-8 text-center">
@@ -311,11 +317,21 @@ export default function UserPluginAccess() {
           <table className="w-full">
             <thead>
               <tr className="bg-zinc-900 text-left">
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">User</th>
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Plugin</th>
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Target</th>
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Created</th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  User
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  Plugin
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  Target
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                  Created
+                </th>
                 <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase tracking-wider w-12"></th>
               </tr>
             </thead>
@@ -332,9 +348,7 @@ export default function UserPluginAccess() {
         </div>
       )}
 
-      {showCreateModal && (
-        <CreateGrantModal onClose={() => setShowCreateModal(false)} />
-      )}
+      {showCreateModal && <CreateGrantModal onClose={() => setShowCreateModal(false)} />}
     </div>
   );
 }

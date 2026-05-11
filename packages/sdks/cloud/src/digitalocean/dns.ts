@@ -47,10 +47,7 @@ export async function listDomains(token: string): Promise<DODomain[]> {
   const perPage = 100;
 
   while (true) {
-    const { body } = await doGet(
-      `/v2/domains?page=${page}&per_page=${perPage}`,
-      { token },
-    );
+    const { body } = await doGet(`/v2/domains?page=${page}&per_page=${perPage}`, { token });
 
     assertObject(body, 'domains response');
     assertField(body, 'domains', 'array', 'domains response');
@@ -79,16 +76,9 @@ export async function listDomains(token: string): Promise<DODomain[]> {
  * ns1.digitalocean.com, ns2.digitalocean.com, ns3.digitalocean.com
  * before DNS resolution will work.
  */
-export async function createDomain(
-  token: string,
-  name: string,
-): Promise<DODomain> {
+export async function createDomain(token: string, name: string): Promise<DODomain> {
   assertValidDomain(name, 'domain name');
-  const { body } = await doPost(
-    '/v2/domains',
-    { name },
-    { token },
-  );
+  const { body } = await doPost('/v2/domains', { name }, { token });
 
   assertObject(body, 'create domain response');
   assertField(body, 'domain', 'object', 'create domain response');
@@ -107,10 +97,7 @@ export async function createDomain(
 /**
  * List all DNS records for a domain. Paginates automatically.
  */
-export async function listDomainRecords(
-  token: string,
-  domain: string,
-): Promise<DODomainRecord[]> {
+export async function listDomainRecords(token: string, domain: string): Promise<DODomainRecord[]> {
   assertValidDomain(domain, 'domain');
   const records: DODomainRecord[] = [];
   let page = 1;
@@ -216,10 +203,7 @@ export async function deleteDomainRecord(
   recordId: number,
 ): Promise<void> {
   assertValidDomain(domain, 'domain');
-  await doDelete(
-    `/v2/domains/${encodeURIComponent(domain)}/records/${recordId}`,
-    { token },
-  );
+  await doDelete(`/v2/domains/${encodeURIComponent(domain)}/records/${recordId}`, { token });
 }
 
 // ---------------------------------------------------------------------------

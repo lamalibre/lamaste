@@ -11,14 +11,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Loader2, CheckCircle, XCircle, X, Copy, Check,
-  Cpu, Server, Puzzle,
-} from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, X, Copy, Check, Cpu, Server, Puzzle } from 'lucide-react';
 
 const KIND_CONFIG = {
-  agent:      { label: 'Agent', Icon: Cpu },
-  server:     { label: 'Server', Icon: Server },
+  agent: { label: 'Agent', Icon: Cpu },
+  server: { label: 'Server', Icon: Server },
   pluginHost: { label: 'Plugin Host', Icon: Puzzle },
 };
 
@@ -97,7 +94,7 @@ export default function InstallDaemonModal({ kind, onClose }) {
         }
       } catch (err) {
         if (cancelled) return;
-        const msg = typeof err === 'string' ? err : err?.message ?? 'Installation failed';
+        const msg = typeof err === 'string' ? err : (err?.message ?? 'Installation failed');
         setErrorMessage(msg);
         addLine(`Error: ${msg}`);
         setPhase('error');
@@ -130,16 +127,16 @@ export default function InstallDaemonModal({ kind, onClose }) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       role="dialog"
       aria-modal="true"
-      onKeyDown={(e) => { if (e.key === 'Escape' && phase !== 'running') onClose(); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && phase !== 'running') onClose();
+      }}
     >
       <div className="w-[28rem] rounded-lg border border-zinc-800 bg-zinc-900 shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
           <div className="flex items-center gap-2">
             <Icon size={16} className="text-cyan-400" />
-            <h2 className="text-sm font-semibold text-zinc-100">
-              Install {label}
-            </h2>
+            <h2 className="text-sm font-semibold text-zinc-100">Install {label}</h2>
           </div>
           {phase !== 'running' && (
             <button type="button" onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
@@ -167,7 +164,9 @@ export default function InstallDaemonModal({ kind, onClose }) {
         {/* Result */}
         <div className="px-4 py-3">
           {phase === 'running' && (
-            <p className="text-xs text-zinc-500">This may take a moment. Do not close this window.</p>
+            <p className="text-xs text-zinc-500">
+              This may take a moment. Do not close this window.
+            </p>
           )}
           {phase === 'success' && (
             <div className="flex items-center gap-2 text-emerald-400">

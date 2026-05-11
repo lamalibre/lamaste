@@ -47,7 +47,9 @@ export default function GatekeeperAccessRequestsPage() {
       </p>
 
       {logQuery.isLoading ? (
-        <div className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+        <div className="flex items-center gap-2 text-zinc-400">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+        </div>
       ) : entries.length === 0 ? (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center text-zinc-500">
           No access requests logged.
@@ -69,7 +71,9 @@ export default function GatekeeperAccessRequestsPage() {
                     {new Date(entry.timestamp).toLocaleString()}
                   </td>
                   <td className="px-4 py-2 text-zinc-300">{entry.username}</td>
-                  <td className="px-4 py-2 text-zinc-300">{entry.resourceFqdn || entry.resourceId}</td>
+                  <td className="px-4 py-2 text-zinc-300">
+                    {entry.resourceFqdn || entry.resourceId}
+                  </td>
                 </tr>
               ))}
             </tbody>

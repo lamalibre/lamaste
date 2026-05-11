@@ -103,8 +103,7 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     // Auth is required for /api/* management routes AND all plugin routes
     // (/<pluginName>/..., including non-/api/ sub-paths). Static assets (SPA
     // files served by fastify-static from root) don't need auth.
-    const needsAuth = request.url.startsWith('/api') ||
-      /^\/[a-z0-9-]+\//.test(request.url);
+    const needsAuth = request.url.startsWith('/api') || /^\/[a-z0-9-]+\//.test(request.url);
     if (!needsAuth) return;
 
     const verify = request.headers['x-ssl-client-verify'];
@@ -149,7 +148,9 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
         // Block access to /api/* management endpoints — Authelia users
         // may only access plugin routes (/{pluginName}/api/...)
         if (request.url.startsWith('/api')) {
-          return reply.code(403).send({ error: 'Management API requires certificate authentication' });
+          return reply
+            .code(403)
+            .send({ error: 'Management API requires certificate authentication' });
         }
 
         request.certCN = `user:${remoteUser}`;
@@ -199,7 +200,10 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     try {
       agentConfig = await loadAgentConfig(label);
     } catch (err) {
-      request.log.warn({ errMsg: String(err?.message ?? '') }, 'Failed to load agent config for capability fetch');
+      request.log.warn(
+        { errMsg: String(err?.message ?? '') },
+        'Failed to load agent config for capability fetch',
+      );
       return reply.code(503).send({ error: 'Capability check temporarily unavailable' });
     }
     if (!agentConfig) {
@@ -314,7 +318,13 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   // --- Public plugin bundle endpoint (outside /api — no mTLS required) ---
   // Desktop app loads bundles via <script> tag to bypass Tauri IPC JSON size limits.
   const PLUGIN_NAME_RE = /^[a-z0-9-]+$/;
-  const pluginCfg = { dataDir: agentDataDir(label), registryPath, pluginsDir: agentPluginsDir(label), requiredMode: 'agent', maxPlugins: 20 };
+  const pluginCfg = {
+    dataDir: agentDataDir(label),
+    registryPath,
+    pluginsDir: agentPluginsDir(label),
+    requiredMode: 'agent',
+    maxPlugins: 20,
+  };
   server.get('/plugin-bundles/:name/panel.js', async (request, reply) => {
     const { name } = request.params;
     if (!PLUGIN_NAME_RE.test(name)) {

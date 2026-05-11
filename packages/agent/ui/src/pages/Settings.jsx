@@ -102,7 +102,9 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
             <div>
               <label className="text-xs text-zinc-500 block mb-0.5">Auth Method</label>
               <p className="text-sm text-zinc-200 font-mono truncate">
-                {config.authMethod === 'keychain' ? 'Keychain (hardware-bound)' : config.p12Path || 'P12'}
+                {config.authMethod === 'keychain'
+                  ? 'Keychain (hardware-bound)'
+                  : config.p12Path || 'P12'}
               </p>
             </div>
             <div>
@@ -157,7 +159,8 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
         </h2>
         {panelExposeQuery.isError ? (
           <p className="text-zinc-500 text-sm">
-            Not available (agent may lack <span className="font-mono text-zinc-400">panel:expose</span> capability)
+            Not available (agent may lack{' '}
+            <span className="font-mono text-zinc-400">panel:expose</span> capability)
           </p>
         ) : (
           <>
@@ -165,9 +168,14 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
               <div>
                 <p className="text-sm text-zinc-300">Expose management panel</p>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  {panelExposeQuery.data?.enabled
-                    ? <>Accessible at <span className="font-mono text-cyan-400">{panelExposeQuery.data.fqdn}</span></>
-                    : 'Make this agent panel accessible via a web subdomain'}
+                  {panelExposeQuery.data?.enabled ? (
+                    <>
+                      Accessible at{' '}
+                      <span className="font-mono text-cyan-400">{panelExposeQuery.data.fqdn}</span>
+                    </>
+                  ) : (
+                    'Make this agent panel accessible via a web subdomain'
+                  )}
                 </p>
               </div>
               <button
@@ -282,22 +290,37 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
           /* Post-uninstall: show step results */
           <div className="space-y-3">
             <p className="text-sm text-zinc-300 font-medium">
-              Agent {agentLabel ? <span className="font-mono text-cyan-400">{agentLabel}</span> : ''} uninstalled
+              Agent{' '}
+              {agentLabel ? <span className="font-mono text-cyan-400">{agentLabel}</span> : ''}{' '}
+              uninstalled
             </p>
             <div className="space-y-1.5">
               {uninstallSteps.map((s, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs">
-                  {s.status === 'complete' && <Check size={13} className="text-green-400 mt-0.5 flex-shrink-0" />}
-                  {s.status === 'skipped' && <SkipForward size={13} className="text-zinc-500 mt-0.5 flex-shrink-0" />}
-                  {s.status === 'warning' && <AlertTriangle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />}
-                  {s.status === 'failed' && <X size={13} className="text-red-400 mt-0.5 flex-shrink-0" />}
+                  {s.status === 'complete' && (
+                    <Check size={13} className="text-green-400 mt-0.5 flex-shrink-0" />
+                  )}
+                  {s.status === 'skipped' && (
+                    <SkipForward size={13} className="text-zinc-500 mt-0.5 flex-shrink-0" />
+                  )}
+                  {s.status === 'warning' && (
+                    <AlertTriangle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                  )}
+                  {s.status === 'failed' && (
+                    <X size={13} className="text-red-400 mt-0.5 flex-shrink-0" />
+                  )}
                   <div>
-                    <span className={
-                      s.status === 'complete' ? 'text-zinc-300' :
-                      s.status === 'skipped' ? 'text-zinc-500' :
-                      s.status === 'warning' ? 'text-amber-400' :
-                      'text-red-400'
-                    }>
+                    <span
+                      className={
+                        s.status === 'complete'
+                          ? 'text-zinc-300'
+                          : s.status === 'skipped'
+                            ? 'text-zinc-500'
+                            : s.status === 'warning'
+                              ? 'text-amber-400'
+                              : 'text-red-400'
+                      }
+                    >
                       {s.step}
                     </span>
                     <span className="text-zinc-600 ml-1.5">{s.detail}</span>
@@ -313,13 +336,18 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
                 Done
               </button>
             ) : (
-              <p className="mt-2 text-xs text-zinc-500">Agent has been uninstalled. You can close this page.</p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Agent has been uninstalled. You can close this page.
+              </p>
             )}
           </div>
         ) : !uninstallConfirm ? (
           <>
             <button
-              onClick={() => { setUninstallConfirm(true); setUninstallNameInput(''); }}
+              onClick={() => {
+                setUninstallConfirm(true);
+                setUninstallNameInput('');
+              }}
               className="flex items-center gap-2 rounded bg-red-600/20 border border-red-500/30 px-4 py-2 text-sm text-red-400 hover:bg-red-600/30"
             >
               Uninstall Agent
@@ -352,7 +380,9 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
             <div className="flex gap-2">
               <button
                 onClick={() => uninstallMutation.mutate()}
-                disabled={uninstallMutation.isPending || (agentLabel && uninstallNameInput !== agentLabel)}
+                disabled={
+                  uninstallMutation.isPending || (agentLabel && uninstallNameInput !== agentLabel)
+                }
                 className="flex items-center gap-2 rounded bg-red-600 hover:bg-red-500 px-4 py-2 text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uninstallMutation.isPending && <Loader2 size={14} className="animate-spin" />}

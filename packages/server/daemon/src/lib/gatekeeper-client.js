@@ -123,9 +123,10 @@ export async function gatekeeperRequest(method, apiPath, body) {
     return {
       ok: false,
       statusCode: response.status,
-      error: (data && typeof data === 'object' && 'error' in data && typeof data.error === 'string')
-        ? data.error
-        : `gatekeeper returned HTTP ${response.status}`,
+      error:
+        data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+          ? data.error
+          : `gatekeeper returned HTTP ${response.status}`,
       reason: 'http-error',
     };
   }

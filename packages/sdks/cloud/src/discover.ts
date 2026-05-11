@@ -36,16 +36,17 @@ export async function discover(token: string): Promise<DiscoveredServer[]> {
   for (const d of droplets) {
     if (d.ip) ips.add(d.ip);
   }
-  if (ips.size === 0) return droplets.map((d) => ({
-    dropletId: d.id,
-    name: d.name,
-    status: d.status,
-    ip: d.ip,
-    region: d.region,
-    createdAt: d.createdAt,
-    domains: [],
-    panelUrl: d.ip ? `https://${d.ip}:9292` : null,
-  }));
+  if (ips.size === 0)
+    return droplets.map((d) => ({
+      dropletId: d.id,
+      name: d.name,
+      status: d.status,
+      ip: d.ip,
+      region: d.region,
+      createdAt: d.createdAt,
+      domains: [],
+      panelUrl: d.ip ? `https://${d.ip}:9292` : null,
+    }));
 
   // 3. Build IP → domain[] map from DO DNS and collect zone names
   const ipToDomains = new Map<string, string[]>();
@@ -58,9 +59,7 @@ export async function discover(token: string): Promise<DiscoveredServer[]> {
         const records = await listDomainRecords(token, domain.name);
         for (const r of records) {
           if (r.type !== 'A' || !ips.has(r.data)) continue;
-          const fqdn = r.name === '@'
-            ? domain.name
-            : `${r.name}.${domain.name}`;
+          const fqdn = r.name === '@' ? domain.name : `${r.name}.${domain.name}`;
           const list = ipToDomains.get(r.data) ?? [];
           list.push(fqdn);
           ipToDomains.set(r.data, list);

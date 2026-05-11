@@ -53,7 +53,10 @@ export function parseIdentity(
 
   // Remote-User present but empty
   if (rawUser === '') {
-    return { error: true, message: 'Remote-User header is empty string' } satisfies IdentityParseError;
+    return {
+      error: true,
+      message: 'Remote-User header is empty string',
+    } satisfies IdentityParseError;
   }
 
   // Control character check (chars < 0x20 except tab) — applied to every
@@ -62,13 +65,19 @@ export function parseIdentity(
   // bug, mis-templated nginx config) we want to fail closed before the value
   // reaches a logger or a downstream client.
   if (hasControlCharacters(rawUser)) {
-    return { error: true, message: 'Remote-User header contains control characters' } satisfies IdentityParseError;
+    return {
+      error: true,
+      message: 'Remote-User header contains control characters',
+    } satisfies IdentityParseError;
   }
 
   // Parse groups: comma-separated, trimmed, empty entries removed
   const rawGroups = headerValue(headers['remote-groups']) ?? '';
   if (hasControlCharacters(rawGroups)) {
-    return { error: true, message: 'Remote-Groups header contains control characters' } satisfies IdentityParseError;
+    return {
+      error: true,
+      message: 'Remote-Groups header contains control characters',
+    } satisfies IdentityParseError;
   }
   const groups = rawGroups
     .split(',')
@@ -78,11 +87,17 @@ export function parseIdentity(
   // Display name and email default to empty string
   const displayName = headerValue(headers['remote-name']) ?? '';
   if (hasControlCharacters(displayName)) {
-    return { error: true, message: 'Remote-Name header contains control characters' } satisfies IdentityParseError;
+    return {
+      error: true,
+      message: 'Remote-Name header contains control characters',
+    } satisfies IdentityParseError;
   }
   const email = headerValue(headers['remote-email']) ?? '';
   if (hasControlCharacters(email)) {
-    return { error: true, message: 'Remote-Email header contains control characters' } satisfies IdentityParseError;
+    return {
+      error: true,
+      message: 'Remote-Email header contains control characters',
+    } satisfies IdentityParseError;
   }
 
   return { username: rawUser, displayName, email, groups } satisfies AutheliaIdentity;
@@ -99,5 +114,7 @@ export function hasGroup(identity: AutheliaIdentity, group: string): boolean {
  * Type guard for `IdentityParseError`.
  */
 export function isIdentityParseError(result: IdentityParseResult): result is IdentityParseError {
-  return result !== null && typeof result === 'object' && 'error' in result && result.error === true;
+  return (
+    result !== null && typeof result === 'object' && 'error' in result && result.error === true
+  );
 }

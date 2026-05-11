@@ -7,10 +7,7 @@ import {
   MIN_GROUP_NAME_LENGTH,
   MAX_GROUP_NAME_LENGTH,
 } from './constants.js';
-import {
-  removeGrantsByPredicate,
-  updateGrantsByPredicate,
-} from './grants.js';
+import { removeGrantsByPredicate, updateGrantsByPredicate } from './grants.js';
 import { notifyCacheInvalidated } from './cache-bust.js';
 import { getGatekeeperDb } from './state-db.js';
 import type { StatementSync } from 'node:sqlite';
@@ -71,15 +68,9 @@ async function getStmts(): Promise<GroupStmts> {
       INSERT INTO groups (name, description, members, created_at, created_by)
       VALUES (?, ?, ?, ?, ?)
     `),
-    updateDescription: db.prepare(
-      'UPDATE groups SET description = ? WHERE name = ?',
-    ),
-    updateName: db.prepare(
-      'UPDATE groups SET name = ? WHERE name = ?',
-    ),
-    updateMembers: db.prepare(
-      'UPDATE groups SET members = ? WHERE name = ?',
-    ),
+    updateDescription: db.prepare('UPDATE groups SET description = ? WHERE name = ?'),
+    updateName: db.prepare('UPDATE groups SET name = ? WHERE name = ?'),
+    updateMembers: db.prepare('UPDATE groups SET members = ? WHERE name = ?'),
     deleteByName: db.prepare('DELETE FROM groups WHERE name = ?'),
     begin: db.prepare('BEGIN IMMEDIATE'),
     commit: db.prepare('COMMIT'),
@@ -124,15 +115,16 @@ function validateGroupName(name: string): void {
   }
   if (!GROUP_NAME_REGEX.test(name)) {
     throw Object.assign(
-      new Error('Group name must be lowercase alphanumeric with hyphens, cannot start or end with a hyphen'),
+      new Error(
+        'Group name must be lowercase alphanumeric with hyphens, cannot start or end with a hyphen',
+      ),
       { statusCode: 400 },
     );
   }
   if ((RESERVED_GROUP_NAMES as readonly string[]).includes(name)) {
-    throw Object.assign(
-      new Error(`Group name "${name}" is reserved for Authelia identity tiers`),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error(`Group name "${name}" is reserved for Authelia identity tiers`), {
+      statusCode: 400,
+    });
   }
 }
 
@@ -140,10 +132,7 @@ function validateGroupName(name: string): void {
 // Public API — signatures preserved byte-identical to the JSON-backed version
 // ---------------------------------------------------------------------------
 
-export async function createGroup(
-  name: string,
-  options: CreateGroupOptions = {},
-): Promise<Group> {
+export async function createGroup(name: string, options: CreateGroupOptions = {}): Promise<Group> {
   validateGroupName(name);
 
   return withGroupLock(async () => {
@@ -151,18 +140,14 @@ export async function createGroup(
 
     const countRow = s.countAll.get() as { n: number };
     if (countRow.n >= MAX_GROUPS) {
-      throw Object.assign(
-        new Error(`Maximum number of groups (${MAX_GROUPS}) reached`),
-        { statusCode: 503 },
-      );
+      throw Object.assign(new Error(`Maximum number of groups (${MAX_GROUPS}) reached`), {
+        statusCode: 503,
+      });
     }
 
     const existing = s.selectByName.get(name) as GroupRow | undefined;
     if (existing) {
-      throw Object.assign(
-        new Error(`Group "${name}" already exists`),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error(`Group "${name}" already exists`), { statusCode: 409 });
     }
 
     const group: GroupState = {
@@ -205,18 +190,12 @@ export async function getGroup(name: string): Promise<Group | null> {
   return row ? rowToGroup(row) : null;
 }
 
-export async function updateGroup(
-  name: string,
-  updates: UpdateGroupOptions,
-): Promise<Group> {
+export async function updateGroup(name: string, updates: UpdateGroupOptions): Promise<Group> {
   return withGroupLock(async () => {
     const s = await getStmts();
     const existingRow = s.selectByName.get(name) as GroupRow | undefined;
     if (!existingRow) {
-      throw Object.assign(
-        new Error(`Group "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Group "${name}" not found`), { statusCode: 404 });
     }
     const group = rowToGroup(existingRow);
 
@@ -227,10 +206,9 @@ export async function updateGroup(
 
       const conflict = s.selectByName.get(updates.name) as GroupRow | undefined;
       if (conflict) {
-        throw Object.assign(
-          new Error(`Group "${updates.name}" already exists`),
-          { statusCode: 409 },
-        );
+        throw Object.assign(new Error(`Group "${updates.name}" already exists`), {
+          statusCode: 409,
+        });
       }
       cascadingRename = updates.name;
     }
@@ -279,10 +257,7 @@ export async function deleteGroup(name: string): Promise<DeleteGroupResult> {
     const s = await getStmts();
     const existing = s.selectByName.get(name) as GroupRow | undefined;
     if (!existing) {
-      throw Object.assign(
-        new Error(`Group "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Group "${name}" not found`), { statusCode: 404 });
     }
 
     s.begin.run();
@@ -305,18 +280,12 @@ export async function deleteGroup(name: string): Promise<DeleteGroupResult> {
   });
 }
 
-export async function addMembers(
-  groupName: string,
-  usernames: readonly string[],
-): Promise<Group> {
+export async function addMembers(groupName: string, usernames: readonly string[]): Promise<Group> {
   return withGroupLock(async () => {
     const s = await getStmts();
     const row = s.selectByName.get(groupName) as GroupRow | undefined;
     if (!row) {
-      throw Object.assign(
-        new Error(`Group "${groupName}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Group "${groupName}" not found`), { statusCode: 404 });
     }
     const group = rowToGroup(row);
 
@@ -354,10 +323,7 @@ export async function removeMembers(
     const s = await getStmts();
     const row = s.selectByName.get(groupName) as GroupRow | undefined;
     if (!row) {
-      throw Object.assign(
-        new Error(`Group "${groupName}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Group "${groupName}" not found`), { statusCode: 404 });
     }
     const group = rowToGroup(row);
 

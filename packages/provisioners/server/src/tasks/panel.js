@@ -338,13 +338,7 @@ export function panelTasks(ctx, task) {
           // Install with explicit mode + ownership. install(1) is part of
           // coreutils so it's always available on Ubuntu 24.04.
           subtask.output = `Installing ${w.name} to ${w.dest}...`;
-          await execa('install', [
-            '-o', 'root',
-            '-g', 'root',
-            '-m', '0755',
-            src,
-            w.dest,
-          ]);
+          await execa('install', ['-o', 'root', '-g', 'root', '-m', '0755', src, w.dest]);
         }
 
         subtask.output = 'PKI sudoers wrappers installed';
@@ -387,7 +381,10 @@ export function panelTasks(ctx, task) {
         subtask.output = 'Waiting for service to start...';
         await sleep(3000);
 
-        const { stdout: status } = await execa('systemctl', ['is-active', 'lamalibre-lamaste-serverd']);
+        const { stdout: status } = await execa('systemctl', [
+          'is-active',
+          'lamalibre-lamaste-serverd',
+        ]);
         if (status.trim() !== 'active') {
           const { stdout: logs } = await execa('journalctl', [
             '-u',

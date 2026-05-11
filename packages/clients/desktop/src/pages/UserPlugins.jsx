@@ -89,11 +89,7 @@ function GrantCard({ grant, localPlugins, onInstall, onUninstall, isInstalling }
             onClick={() => onInstall(grant.grantId, pluginName)}
             className="flex items-center gap-1.5 rounded bg-cyan-600 px-3 py-1.5 text-xs text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isInstalling ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Download size={12} />
-            )}
+            {isInstalling ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
             Install
           </button>
         )}
@@ -108,7 +104,9 @@ function GrantCard({ grant, localPlugins, onInstall, onUninstall, isInstalling }
           </button>
         )}
         {isUsed && !isInstalled && (
-          <span className="text-xs text-zinc-500">Grant consumed — plugin may be installed on another device</span>
+          <span className="text-xs text-zinc-500">
+            Grant consumed — plugin may be installed on another device
+          </span>
         )}
       </div>
     </div>
@@ -119,7 +117,11 @@ export default function UserPlugins() {
   const queryClient = useQueryClient();
   const [installingGrant, setInstallingGrant] = useState(null);
 
-  const { data: pluginsData, isLoading, error } = useQuery({
+  const {
+    data: pluginsData,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['user-access-plugins'],
     queryFn: () => client.getPlugins(),
     refetchInterval: 10_000,
@@ -188,7 +190,8 @@ export default function UserPlugins() {
       <div className="mb-6">
         <h1 className="text-lg font-bold text-white">My Plugins</h1>
         <p className="text-zinc-500 text-sm mt-1">
-          Plugins granted to you by an administrator. Install locally or access agent-hosted plugins in your browser.
+          Plugins granted to you by an administrator. Install locally or access agent-hosted plugins
+          in your browser.
         </p>
       </div>
 
@@ -221,9 +224,7 @@ export default function UserPlugins() {
         <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-8 text-center">
           <Package size={32} className="text-zinc-600 mx-auto mb-3" />
           <p className="text-zinc-400 text-sm">No plugins have been granted to your account yet.</p>
-          <p className="text-zinc-500 text-xs mt-1">
-            Contact an administrator to request access.
-          </p>
+          <p className="text-zinc-500 text-xs mt-1">Contact an administrator to request access.</p>
         </div>
       ) : (
         <div className="grid gap-4">
@@ -232,9 +233,7 @@ export default function UserPlugins() {
               key={grant.grantId}
               grant={grant}
               localPlugins={localPlugins}
-              onInstall={(grantId, packageName) =>
-                installMutation.mutate({ grantId, packageName })
-              }
+              onInstall={(grantId, packageName) => installMutation.mutate({ grantId, packageName })}
               onUninstall={(name) => uninstallMutation.mutate(name)}
               isInstalling={installingGrant === grant.grantId && installMutation.isPending}
             />

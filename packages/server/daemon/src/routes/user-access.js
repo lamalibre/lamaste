@@ -30,10 +30,7 @@ const CreateGrantSchema = z.object({
     .regex(/^@lamalibre\//, 'Plugin must be @lamalibre/ scoped'),
   target: z
     .string()
-    .regex(
-      /^(local|agent:[a-z0-9][a-z0-9-]*)$/,
-      'Target must be "local" or "agent:<label>"',
-    )
+    .regex(/^(local|agent:[a-z0-9][a-z0-9-]*)$/, 'Target must be "local" or "agent:<label>"')
     .optional()
     .default('local'),
 });
@@ -47,17 +44,13 @@ const ExchangeBodySchema = z.object({
   // PKCE verifier: 32–64 base64url chars (256–384 bits of entropy). The
   // panel hashes this and timing-safe-compares against the stored S256
   // challenge submitted at /authorize.
-  verifier: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{32,64}$/, 'Invalid verifier format'),
+  verifier: z.string().regex(/^[A-Za-z0-9_-]{32,64}$/, 'Invalid verifier format'),
 });
 
 // PKCE handshake parameters submitted by the desktop at /authorize.
 const AuthorizeQuerySchema = z.object({
   // base64url SHA-256 → 43 chars, no padding (PKCE S256, RFC 7636).
-  challenge: z
-    .string()
-    .regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid PKCE challenge'),
+  challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid PKCE challenge'),
   // 16 random bytes hex-encoded → 32 chars.
   nonce: z.string().regex(/^[a-f0-9]{32}$/, 'Invalid nonce'),
 });
@@ -319,9 +312,7 @@ export async function userAccessProtectedRoutes(fastify, _opts) {
           const agentLabel = target.slice('agent:'.length);
           const tunnel = tunnels.find(
             (t) =>
-              t.type === 'plugin' &&
-              t.agentLabel === agentLabel &&
-              t.pluginName === g.pluginName,
+              t.type === 'plugin' && t.agentLabel === agentLabel && t.pluginName === g.pluginName,
           );
           return {
             ...g,

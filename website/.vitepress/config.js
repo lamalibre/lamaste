@@ -44,8 +44,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern:
-        'https://github.com/lamalibre/lamaste/edit/main/packages/panel-client/public/docs/:path',
+      pattern: 'https://github.com/lamalibre/lamaste/edit/main/packages/core/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

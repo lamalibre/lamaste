@@ -99,7 +99,12 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-gatekeeper', label: 'GK Dashboard', icon: Shield, section: 'Gatekeeper' },
   { id: 'server-gatekeeper-groups', label: 'Groups', icon: Users, section: 'Gatekeeper' },
   { id: 'server-gatekeeper-grants', label: 'Grants', icon: Key, section: 'Gatekeeper' },
-  { id: 'server-gatekeeper-requests', label: 'Access Requests', icon: MessageSquare, section: 'Gatekeeper' },
+  {
+    id: 'server-gatekeeper-requests',
+    label: 'Access Requests',
+    icon: MessageSquare,
+    section: 'Gatekeeper',
+  },
   { id: 'server-gatekeeper-settings', label: 'GK Settings', icon: Settings, section: 'Gatekeeper' },
   { id: 'server-settings', label: 'Settings', icon: Settings },
 ];
@@ -108,19 +113,19 @@ const SERVER_ADMIN_TABS = [
 const PLUGIN_ICON_MAP = {
   'layout-dashboard': LayoutDashboard,
   'hard-drive': HardDrive,
-  'monitor': Monitor,
-  'eye': Eye,
+  monitor: Monitor,
+  eye: Eye,
   'trash-2': Trash2,
-  'settings': Settings,
-  'folder': Folder,
-  'activity': Activity,
-  'network': Network,
-  'compass': Compass,
+  settings: Settings,
+  folder: Folder,
+  activity: Activity,
+  network: Network,
+  compass: Compass,
   'scroll-text': ScrollText,
-  'package': Package,
-  'puzzle': Puzzle,
+  package: Package,
+  puzzle: Puzzle,
   'shield-check': ShieldCheck,
-  'terminal': Terminal,
+  terminal: Terminal,
 };
 
 export default function App() {
@@ -133,7 +138,11 @@ export default function App() {
 
   const [appVersion, setAppVersion] = useState('');
 
-  useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
 
   // Plugin sidebar injection state
   const [openPluginName, setOpenPluginName] = useState(null);
@@ -142,9 +151,12 @@ export default function App() {
 
   // Check for existing user session on mount
   useEffect(() => {
-    desktopUserAccessClient.getSession().then((session) => {
-      if (session) setUserSession(session);
-    }).catch(() => {});
+    desktopUserAccessClient
+      .getSession()
+      .then((session) => {
+        if (session) setUserSession(session);
+      })
+      .catch(() => {});
   }, []);
 
   // Listen for deep link callback from Authelia OAuth flow
@@ -156,7 +168,11 @@ export default function App() {
         try {
           const result = await desktopUserAccessClient.exchangeToken(token, domain, nonce);
           if (result?.ok) {
-            setUserSession({ username: result.username, domain: result.domain, expiresAt: result.expiresAt });
+            setUserSession({
+              username: result.username,
+              domain: result.domain,
+              expiresAt: result.expiresAt,
+            });
             setManagingAgent(null);
             setManagingServer(null);
             setActiveTab('user-plugins');
@@ -165,8 +181,12 @@ export default function App() {
           console.error('Token exchange failed:', err);
         }
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { if (unlisten) unlisten(); };
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []);
 
   const handleUserLogout = useCallback(async () => {
@@ -214,9 +234,8 @@ export default function App() {
   })();
   const managingHasDomain = managingDomain.length > 0;
 
-  const managingHasAdmin = managingServer && (
-    !!managingServer.adminAuth || !!managingServer.provider
-  );
+  const managingHasAdmin =
+    managingServer && (!!managingServer.adminAuth || !!managingServer.provider);
 
   // Sync tray icon with aggregate agent connection state
   useEffect(() => {
@@ -250,33 +269,39 @@ export default function App() {
     }
   }, [agents, status?.configured, status?.chisel?.running]);
 
-  const handleManageServer = useCallback(async (server) => {
-    try {
-      await invoke('set_active_server', { serverId: server.id });
-    } catch {
-      // ignore if already active
-    }
-    queryClient.removeQueries({ queryKey: ['agent'] });
-    setManagingAgent(null);
-    setManagingServer(server);
-    setActiveTab('server-dashboard');
-    queryClient.invalidateQueries();
-  }, [queryClient]);
+  const handleManageServer = useCallback(
+    async (server) => {
+      try {
+        await invoke('set_active_server', { serverId: server.id });
+      } catch {
+        // ignore if already active
+      }
+      queryClient.removeQueries({ queryKey: ['agent'] });
+      setManagingAgent(null);
+      setManagingServer(server);
+      setActiveTab('server-dashboard');
+      queryClient.invalidateQueries();
+    },
+    [queryClient],
+  );
 
   const handleBackToServerList = () => {
     setManagingServer(null);
     setActiveTab('server-list');
   };
 
-  const handleManageAgent = useCallback((agent) => {
-    queryClient.removeQueries({ queryKey: ['agent'] });
-    setManagingServer(null);
-    setManagingAgent(agent);
-    setActiveTab('dashboard');
-    setOpenPluginName(null);
-    setOpenPluginPages([]);
-    setOpenPluginCurrentPage('');
-  }, [queryClient]);
+  const handleManageAgent = useCallback(
+    (agent) => {
+      queryClient.removeQueries({ queryKey: ['agent'] });
+      setManagingServer(null);
+      setManagingAgent(agent);
+      setActiveTab('dashboard');
+      setOpenPluginName(null);
+      setOpenPluginPages([]);
+      setOpenPluginCurrentPage('');
+    },
+    [queryClient],
+  );
 
   const handleBackToAgentList = () => {
     queryClient.removeQueries({ queryKey: ['agent'] });
@@ -294,7 +319,8 @@ export default function App() {
           <Server size={48} className="text-zinc-700 mx-auto mb-4" />
           <h2 className="text-lg font-bold text-white mb-2">No Admin Certificate</h2>
           <p className="text-zinc-400 text-sm mb-4">
-            This server was connected with an agent certificate. To manage it, import an admin certificate.
+            This server was connected with an agent certificate. To manage it, import an admin
+            certificate.
           </p>
           <button
             type="button"
@@ -361,11 +387,12 @@ export default function App() {
 
   // All hooks must be above this line — React requires consistent hook count across renders
   if (
-    status && !status.configured
-    && agents.length === 0
-    && servers.length === 0
-    && !skipSetup
-    && !userSession
+    status &&
+    !status.configured &&
+    agents.length === 0 &&
+    servers.length === 0 &&
+    !skipSetup &&
+    !userSession
   ) {
     return <Welcome onSkip={() => setSkipSetup(true)} />;
   }
@@ -401,7 +428,12 @@ export default function App() {
       case 'logs':
         return <AgentLogsPage />;
       case 'settings':
-        return <AgentSettingsPage agentLabel={managingAgent?.label} onUninstalled={navigateToAgentList} />;
+        return (
+          <AgentSettingsPage
+            agentLabel={managingAgent?.label}
+            onUninstalled={navigateToAgentList}
+          />
+        );
       case 'dashboard':
       default:
         return <AgentDashboardPage />;
@@ -440,9 +472,11 @@ export default function App() {
               onClick={navigateToAgentList}
               className="w-full flex items-center justify-between px-3 py-1.5 rounded hover:bg-zinc-800/30 mb-0.5"
             >
-              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
-                activeTab === 'agent-list' || managingAgent ? 'text-zinc-400' : 'text-zinc-500'
-              }`}>
+              <span
+                className={`text-[10px] font-semibold uppercase tracking-wider ${
+                  activeTab === 'agent-list' || managingAgent ? 'text-zinc-400' : 'text-zinc-500'
+                }`}
+              >
                 Agents
               </span>
               {agents.length > 0 && (
@@ -500,7 +534,11 @@ export default function App() {
                     <button
                       key={id}
                       type="button"
-                      onClick={() => { setActiveTab(id); setOpenPluginName(null); setOpenPluginPages([]); }}
+                      onClick={() => {
+                        setActiveTab(id);
+                        setOpenPluginName(null);
+                        setOpenPluginPages([]);
+                      }}
                       className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
                         activeTab === id
                           ? 'bg-zinc-800 text-cyan-400'
@@ -525,9 +563,11 @@ export default function App() {
                       : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
                   }`}
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
-                    agent.running ? 'bg-green-400' : 'bg-zinc-600'
-                  }`} />
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${
+                      agent.running ? 'bg-green-400' : 'bg-zinc-600'
+                    }`}
+                  />
                   <span className="truncate">{agent.label}</span>
                 </button>
               ))
@@ -541,9 +581,11 @@ export default function App() {
               onClick={navigateToServerList}
               className="w-full flex items-center justify-between px-3 py-1.5 rounded hover:bg-zinc-800/30 mb-0.5"
             >
-              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
-                activeTab === 'server-list' || managingServer ? 'text-zinc-400' : 'text-zinc-500'
-              }`}>
+              <span
+                className={`text-[10px] font-semibold uppercase tracking-wider ${
+                  activeTab === 'server-list' || managingServer ? 'text-zinc-400' : 'text-zinc-500'
+                }`}
+              >
                 Servers
               </span>
               {servers.length > 0 && (
@@ -561,21 +603,22 @@ export default function App() {
                   <ChevronLeft size={12} className="flex-shrink-0" />
                   <span className="truncate font-medium text-zinc-300">{managingServer.label}</span>
                 </button>
-                {managingHasAdmin && SERVER_ADMIN_TABS.map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
-                      activeTab === id
-                        ? 'bg-zinc-800 text-cyan-400'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-                    }`}
-                  >
-                    <Icon size={13} />
-                    {label}
-                  </button>
-                ))}
+                {managingHasAdmin &&
+                  SERVER_ADMIN_TABS.map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setActiveTab(id)}
+                      className={`w-full flex items-center gap-2 pl-6 pr-3 py-1.5 rounded text-xs mb-0.5 ${
+                        activeTab === id
+                          ? 'bg-zinc-800 text-cyan-400'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                      }`}
+                    >
+                      <Icon size={13} />
+                      {label}
+                    </button>
+                  ))}
               </>
             ) : (
               servers.map((server) => (
@@ -595,15 +638,21 @@ export default function App() {
           {/* LOCAL section */}
           <div className="mt-3 pt-2 border-t border-zinc-800">
             <div className="px-3 py-1.5">
-              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
-                activeTab === 'local-plugins' ? 'text-zinc-400' : 'text-zinc-500'
-              }`}>
+              <span
+                className={`text-[10px] font-semibold uppercase tracking-wider ${
+                  activeTab === 'local-plugins' ? 'text-zinc-400' : 'text-zinc-500'
+                }`}
+              >
                 Local
               </span>
             </div>
             <button
               type="button"
-              onClick={() => { setManagingAgent(null); setManagingServer(null); setActiveTab('local-plugins'); }}
+              onClick={() => {
+                setManagingAgent(null);
+                setManagingServer(null);
+                setActiveTab('local-plugins');
+              }}
               className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 ${
                 activeTab === 'local-plugins'
                   ? 'bg-zinc-800 text-cyan-400'
@@ -618,20 +667,30 @@ export default function App() {
           {/* USER section */}
           <div className="mt-3 pt-2 border-t border-zinc-800">
             <div className="px-3 py-1.5">
-              <span className={`text-[10px] font-semibold uppercase tracking-wider ${
-                activeTab === 'user-login' || activeTab === 'user-plugins' ? 'text-zinc-400' : 'text-zinc-500'
-              }`}>
+              <span
+                className={`text-[10px] font-semibold uppercase tracking-wider ${
+                  activeTab === 'user-login' || activeTab === 'user-plugins'
+                    ? 'text-zinc-400'
+                    : 'text-zinc-500'
+                }`}
+              >
                 User
               </span>
             </div>
             {userSession ? (
               <>
                 <div className="px-3 py-1 mb-1">
-                  <span className="text-[10px] text-zinc-500 truncate block">{userSession.username}</span>
+                  <span className="text-[10px] text-zinc-500 truncate block">
+                    {userSession.username}
+                  </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => { setManagingAgent(null); setManagingServer(null); setActiveTab('user-plugins'); }}
+                  onClick={() => {
+                    setManagingAgent(null);
+                    setManagingServer(null);
+                    setActiveTab('user-plugins');
+                  }}
                   className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 ${
                     activeTab === 'user-plugins'
                       ? 'bg-zinc-800 text-cyan-400'
@@ -653,7 +712,11 @@ export default function App() {
             ) : (
               <button
                 type="button"
-                onClick={() => { setManagingAgent(null); setManagingServer(null); setActiveTab('user-login'); }}
+                onClick={() => {
+                  setManagingAgent(null);
+                  setManagingServer(null);
+                  setActiveTab('user-login');
+                }}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded text-xs mb-0.5 ${
                   activeTab === 'user-login'
                     ? 'bg-zinc-800 text-cyan-400'
@@ -674,9 +737,7 @@ export default function App() {
           <LocalDaemonPill kind="pluginHost" />
           <FeriaStatusPill />
           {appVersion && (
-            <div className="mt-0.5 text-[10px] text-zinc-600">
-              lamaste &middot; v{appVersion}
-            </div>
+            <div className="mt-0.5 text-[10px] text-zinc-600">lamaste &middot; v{appVersion}</div>
           )}
         </div>
       </div>
@@ -697,16 +758,12 @@ export default function App() {
         ) : managingServer ? (
           <AdminClientProvider client={desktopAdminClient}>
             <AdminToastProvider>
-              <TwoFaProvider>
-                {renderServerDetailPage()}
-              </TwoFaProvider>
+              <TwoFaProvider>{renderServerDetailPage()}</TwoFaProvider>
             </AdminToastProvider>
           </AdminClientProvider>
         ) : managingAgent ? (
           <AgentClientProvider client={agentClient}>
-            <AgentToastProvider>
-              {renderAgentDetailPage()}
-            </AgentToastProvider>
+            <AgentToastProvider>{renderAgentDetailPage()}</AgentToastProvider>
           </AgentClientProvider>
         ) : activeTab === 'server-list' ? (
           <Servers onManage={handleManageServer} />

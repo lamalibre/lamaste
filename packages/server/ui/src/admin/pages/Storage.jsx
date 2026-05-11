@@ -34,7 +34,8 @@ function RegisterServerModal({ onClose }) {
 
   const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const isValid = form.label && form.region && form.bucket && form.endpoint && form.accessKey && form.secretKey;
+  const isValid =
+    form.label && form.region && form.bucket && form.endpoint && form.accessKey && form.secretKey;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
@@ -340,7 +341,10 @@ export default function Storage() {
         {serversQuery.isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="h-14 animate-pulse rounded-lg bg-zinc-900 border border-zinc-800" />
+              <div
+                key={i}
+                className="h-14 animate-pulse rounded-lg bg-zinc-900 border border-zinc-800"
+              />
             ))}
           </div>
         ) : serversQuery.isError ? (
@@ -362,12 +366,24 @@ export default function Storage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-700 bg-zinc-900">
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">Label</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">Provider</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">Region</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">Bucket</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">Registered</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                    Label
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                    Provider
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">
+                    Region
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">
+                    Bucket
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">
+                    Registered
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -375,8 +391,12 @@ export default function Storage() {
                   <tr key={server.id} className="border-b border-zinc-700 bg-zinc-800">
                     <td className="px-4 py-3 text-zinc-200 font-semibold">{server.label}</td>
                     <td className="px-4 py-3 text-zinc-400">{server.provider}</td>
-                    <td className="px-4 py-3 text-zinc-400 hidden md:table-cell">{server.region}</td>
-                    <td className="px-4 py-3 text-zinc-400 font-mono text-xs hidden lg:table-cell">{server.bucket}</td>
+                    <td className="px-4 py-3 text-zinc-400 hidden md:table-cell">
+                      {server.region}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400 font-mono text-xs hidden lg:table-cell">
+                      {server.bucket}
+                    </td>
                     <td className="px-4 py-3 text-zinc-500 hidden lg:table-cell">
                       {server.registeredAt ? relativeTime(server.registeredAt) : '—'}
                     </td>
@@ -420,7 +440,10 @@ export default function Storage() {
         {bindingsQuery.isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="h-14 animate-pulse rounded-lg bg-zinc-900 border border-zinc-800" />
+              <div
+                key={i}
+                className="h-14 animate-pulse rounded-lg bg-zinc-900 border border-zinc-800"
+              />
             ))}
           </div>
         ) : bindingsQuery.isError ? (
@@ -435,7 +458,9 @@ export default function Storage() {
             <Link2 size={32} className="mx-auto text-zinc-600 mb-3" />
             <p className="text-zinc-400 text-sm">
               No plugins bound to storage.{' '}
-              {servers.length === 0 ? 'Register a storage server first.' : 'Use the button above to bind one.'}
+              {servers.length === 0
+                ? 'Register a storage server first.'
+                : 'Use the button above to bind one.'}
             </p>
           </div>
         ) : (
@@ -443,10 +468,18 @@ export default function Storage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-700 bg-zinc-900">
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">Plugin</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">Storage Server</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">Bound</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">Actions</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                    Plugin
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                    Storage Server
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">
+                    Bound
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -454,7 +487,9 @@ export default function Storage() {
                   const server = servers.find((s) => s.id === binding.storageServerId);
                   return (
                     <tr key={binding.pluginName} className="border-b border-zinc-700 bg-zinc-800">
-                      <td className="px-4 py-3 text-zinc-200 font-semibold">{binding.pluginName}</td>
+                      <td className="px-4 py-3 text-zinc-200 font-semibold">
+                        {binding.pluginName}
+                      </td>
                       <td className="px-4 py-3 text-zinc-400">
                         {server?.label || binding.storageServerId.slice(0, 8)}
                       </td>
@@ -492,7 +527,8 @@ export default function Storage() {
           <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-white mb-3">Remove Storage Server</h3>
             <p className="text-sm text-zinc-400 mb-2">
-              Are you sure you want to remove <strong className="text-white">{deleteTarget.label}</strong>?
+              Are you sure you want to remove{' '}
+              <strong className="text-white">{deleteTarget.label}</strong>?
             </p>
             <p className="text-xs text-amber-400 mb-4">
               All plugin bindings to this server will also be removed.

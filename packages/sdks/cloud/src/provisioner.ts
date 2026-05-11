@@ -31,11 +31,7 @@ import {
 } from './ssh.js';
 import { addServer } from './registry.js';
 import { CleanupStack } from './cleanup.js';
-import {
-  LAMASTE_DIR,
-  serverDataDir,
-  tmpDir,
-} from '@lamalibre/lamaste/agent';
+import { LAMASTE_DIR, serverDataDir, tmpDir } from '@lamalibre/lamaste/agent';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,15 +43,7 @@ let installerVersion = 'latest';
 {
   // Works in both src/ (dev) and dist/ (compiled): both live at
   // packages/sdks/cloud/{src,dist}, so up three levels reaches packages/.
-  const pkgPath = join(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    'provisioners',
-    'server',
-    'package.json',
-  );
+  const pkgPath = join(__dirname, '..', '..', '..', 'provisioners', 'server', 'package.json');
   try {
     const pkg = JSON.parse(await readFile(pkgPath, 'utf-8'));
     if (typeof pkg.version === 'string' && pkg.version.length > 0) {
@@ -230,8 +218,7 @@ async function sshCurl(
     // The body is base64-encoded and decoded on the remote shell; the body
     // bytes are then piped to curl on stdin via `-d @-`.
     cmd =
-      buildBase(`echo ${b64} | base64 -d | `) +
-      `-H 'Content-Type: application/json' -d @- ${url}`;
+      buildBase(`echo ${b64} | base64 -d | `) + `-H 'Content-Type: application/json' -d @- ${url}`;
   } else {
     cmd = buildBase() + url;
   }

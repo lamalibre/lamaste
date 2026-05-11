@@ -126,11 +126,7 @@ export default function PluginLoader() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <div
-        ref={mountRef}
-        className="min-h-64"
-        data-plugin={pluginName}
-      >
+      <div ref={mountRef} className="min-h-64" data-plugin={pluginName}>
         <div className="flex items-center justify-center h-64">
           <p className="text-zinc-500 text-sm">Loading plugin...</p>
         </div>

@@ -42,30 +42,34 @@ export async function storeEnrolledCert(keyPath, certPem, caCertPem, label, logg
     logger.info?.({ label }, 'Creating P12 certificate bundle') ??
       logger.log?.(`Creating P12 certificate bundle: ${label}`);
 
-    await execa('openssl', [
-      'pkcs12',
-      '-export',
-      '-keypbe',
-      'PBE-SHA1-3DES',
-      '-certpbe',
-      'PBE-SHA1-3DES',
-      '-macalg',
-      'sha1',
-      '-out',
-      p12Path,
-      '-inkey',
-      keyPath,
-      '-in',
-      certPath,
-      '-certfile',
-      caPath,
-      '-name',
-      `Lamaste Agent (${label})`,
-      '-passout',
-      'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-    ], {
-      env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: p12Password },
-    });
+    await execa(
+      'openssl',
+      [
+        'pkcs12',
+        '-export',
+        '-keypbe',
+        'PBE-SHA1-3DES',
+        '-certpbe',
+        'PBE-SHA1-3DES',
+        '-macalg',
+        'sha1',
+        '-out',
+        p12Path,
+        '-inkey',
+        keyPath,
+        '-in',
+        certPath,
+        '-certfile',
+        caPath,
+        '-name',
+        `Lamaste Agent (${label})`,
+        '-passout',
+        'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
+      ],
+      {
+        env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: p12Password },
+      },
+    );
 
     // Set restrictive permissions on the P12
     await execa('chmod', ['600', p12Path]);

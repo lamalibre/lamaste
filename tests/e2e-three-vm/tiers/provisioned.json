@@ -22,14 +22,8 @@
       "vm-api-status-helper.sh",
       "certbot-shim.sh"
     ],
-    "agent": [
-      "setup-agent.sh",
-      "logging.sh"
-    ],
-    "visitor": [
-      "setup-visitor.sh",
-      "logging.sh"
-    ]
+    "agent": ["setup-agent.sh", "logging.sh"],
+    "visitor": ["setup-visitor.sh", "logging.sh"]
   },
   "outputs": {
     "hostIp": { "from": "HOST_IP_CRED", "scope": "credentials" },

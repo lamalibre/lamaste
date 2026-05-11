@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "04 — Tunnel Lifecycle",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq"
-    ]
+    "requires": ["curl", "jq"]
   },
   "env": {},
   "constants": {},

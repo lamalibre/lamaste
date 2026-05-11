@@ -563,7 +563,13 @@ export async function writePublicVhost(subdomain, domain, port, certPath, { path
  * Used for tunnels with accessMode='authenticated'.
  * Gatekeeper handles Authelia cookie validation and forwards identity headers.
  */
-export async function writeAuthenticatedVhost(subdomain, domain, port, certPath, { pathPrefix } = {}) {
+export async function writeAuthenticatedVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { pathPrefix } = {},
+) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
@@ -573,7 +579,10 @@ export async function writeAuthenticatedVhost(subdomain, domain, port, certPath,
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
 
-  const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, restricted: false });
+  const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
+    pathPrefix,
+    restricted: false,
+  });
 
   const name = `lamalibre-lamaste-app-${subdomain}`;
   return safeWriteVhost(name, config, fqdn);
@@ -594,7 +603,10 @@ export async function writeRestrictedVhost(subdomain, domain, port, certPath, { 
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
 
-  const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, restricted: true });
+  const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
+    pathPrefix,
+    restricted: true,
+  });
 
   const name = `lamalibre-lamaste-app-${subdomain}`;
   return safeWriteVhost(name, config, fqdn);
@@ -673,8 +685,12 @@ function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, re
         # Authentication failure -> redirect to Authelia login
         error_page 401 =302 https://auth.${domain}/?rd=$scheme://$http_host$request_uri;
 
-        ${restricted ? `# Authorization failure -> Gatekeeper serves inline access-request page
-        error_page 403 = /internal/lamaste/authz;` : ''}
+        ${
+          restricted
+            ? `# Authorization failure -> Gatekeeper serves inline access-request page
+        error_page 403 = /internal/lamaste/authz;`
+            : ''
+        }
     }
 }
 `;

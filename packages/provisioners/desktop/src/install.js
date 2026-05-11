@@ -77,7 +77,9 @@ async function getLatestRelease() {
   process.stdout.write('  Source: GitHub Releases\n');
   const url = `https://api.github.com/repos/${REPO}/releases?per_page=10`;
   const body = await fetchJson(url);
-  const candidates = body.filter((r) => r.tag_name && r.tag_name.startsWith('desktop-v') && r.assets && r.assets.length > 0);
+  const candidates = body.filter(
+    (r) => r.tag_name && r.tag_name.startsWith('desktop-v') && r.assets && r.assets.length > 0,
+  );
   if (candidates.length === 0) throw new Error('No desktop release with assets found');
   candidates.sort((a, b) => {
     const va = parseVersion(a.tag_name);
@@ -95,7 +97,8 @@ function fetchJson(url, _depth = 0) {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         if (_depth >= 5) return reject(new Error('Too many redirects'));
         const loc = res.headers.location;
-        if (isHttps && loc.startsWith('http:')) return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
+        if (isHttps && loc.startsWith('http:'))
+          return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
         return fetchJson(loc, _depth + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
@@ -123,7 +126,8 @@ function download(url, dest, _depth = 0) {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         if (_depth >= 5) return reject(new Error('Too many redirects'));
         const loc = res.headers.location;
-        if (isHttps && loc.startsWith('http:')) return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
+        if (isHttps && loc.startsWith('http:'))
+          return reject(new Error('Refusing HTTPS-to-HTTP redirect'));
         return download(loc, dest, _depth + 1).then(resolve, reject);
       }
       if (res.statusCode !== 200) {
@@ -185,7 +189,9 @@ async function installMacOS(dmgPath) {
   } finally {
     try {
       execFileSync('hdiutil', ['detach', mountPoint, '-quiet'], { stdio: 'ignore' });
-    } catch { /* best-effort detach */ }
+    } catch {
+      /* best-effort detach */
+    }
   }
 
   // Clear Gatekeeper quarantine attribute so the unsigned app can launch

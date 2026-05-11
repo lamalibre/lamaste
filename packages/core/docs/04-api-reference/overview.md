@@ -152,11 +152,11 @@ In development mode, the response includes a `details` object with the error mes
 
 The API is split into two groups with mutual exclusion enforced by middleware:
 
-| Route Group    | Prefix                                                    | Available When        | Otherwise Returns         |
-| -------------- | --------------------------------------------------------- | --------------------- | ------------------------- |
-| **Onboarding** | `/api/onboarding/*`                                       | `status != COMPLETED` | `410 Gone`                |
-| **Management** | `/api/*` (except health, onboarding, invite, and enroll)  | `status == COMPLETED` | `503 Service Unavailable` |
-| **Public**     | `/api/invite/*`, `/api/enroll`                            | Always (no mTLS)      | N/A                       |
+| Route Group    | Prefix                                                   | Available When        | Otherwise Returns         |
+| -------------- | -------------------------------------------------------- | --------------------- | ------------------------- |
+| **Onboarding** | `/api/onboarding/*`                                      | `status != COMPLETED` | `410 Gone`                |
+| **Management** | `/api/*` (except health, onboarding, invite, and enroll) | `status == COMPLETED` | `503 Service Unavailable` |
+| **Public**     | `/api/invite/*`, `/api/enroll`                           | Always (no mTLS)      | N/A                       |
 
 The `GET /api/onboarding/status` endpoint is always accessible regardless of onboarding state. The `GET /api/health` endpoint is also always accessible — it is registered outside both guards. The `/api/invite/*` and `/api/enroll` routes are registered in a separate public context with no mTLS middleware and no onboarding guard.
 
@@ -274,109 +274,109 @@ There are two exceptions:
 
 ### Endpoint Summary
 
-| Method | Path                                      | Group      | Description                            |
-| ------ | ----------------------------------------- | ---------- | -------------------------------------- |
-| GET    | `/api/health`                             | Always     | Health check                           |
-| GET    | `/api/onboarding/status`                  | Always     | Onboarding state                       |
-| POST   | `/api/onboarding/domain`                  | Onboarding | Set domain and email                   |
-| POST   | `/api/onboarding/verify-dns`              | Onboarding | Verify DNS records                     |
-| POST   | `/api/onboarding/provision`               | Onboarding | Start provisioning                     |
-| WS     | `/api/onboarding/provision/stream`        | Onboarding | Provisioning progress                  |
-| GET    | `/api/invite/:token`                      | Public     | Get invitation details                 |
-| POST   | `/api/invite/:token/accept`               | Public     | Accept invitation                      |
-| POST   | `/api/enroll`                             | Public     | Enroll agent with token (hardware-bound)|
-| GET    | `/api/system/stats`                       | Management | System statistics                      |
-| POST   | `/api/system/update`                      | Management | Trigger background server update       |
-| POST   | `/api/agents/plugins/report`              | Management | Report agent plugin capabilities       |
-| GET    | `/api/tunnels/agent-config`               | Management | Get agent tunnel configuration         |
-| GET    | `/api/tunnels`                            | Management | List tunnels                           |
-| POST   | `/api/tunnels`                            | Management | Create tunnel                          |
-| PATCH  | `/api/tunnels/:id`                        | Management | Toggle tunnel enabled/disabled         |
-| DELETE | `/api/tunnels/:id`                        | Management | Delete tunnel                          |
-| GET    | `/api/tunnels/mac-plist`                  | Management | Download Mac plist                     |
-| GET    | `/api/sites`                              | Management | List static sites                      |
-| POST   | `/api/sites`                              | Management | Create static site                     |
-| DELETE | `/api/sites/:id`                          | Management | Delete static site                     |
-| PATCH  | `/api/sites/:id`                          | Management | Update site settings                   |
-| POST   | `/api/sites/:id/verify-dns`               | Management | Verify site DNS                        |
-| GET    | `/api/sites/:id/files`                    | Management | List site files                        |
-| POST   | `/api/sites/:id/files`                    | Management | Upload site files                      |
-| DELETE | `/api/sites/:id/files`                    | Management | Delete site file                       |
-| GET    | `/api/invitations`                        | Management | List invitations                       |
-| POST   | `/api/invitations`                        | Management | Create invitation                      |
-| DELETE | `/api/invitations/:id`                    | Management | Revoke invitation                      |
-| GET    | `/api/users`                              | Management | List users                             |
-| POST   | `/api/users`                              | Management | Create user                            |
-| PUT    | `/api/users/:username`                    | Management | Update user                            |
-| DELETE | `/api/users/:username`                    | Management | Delete user                            |
-| POST   | `/api/users/:username/reset-totp`         | Management | Reset TOTP secret                      |
-| GET    | `/api/certs`                              | Management | List certificates                      |
-| GET    | `/api/certs/auto-renew-status`            | Management | Auto-renew timer status                |
-| POST   | `/api/certs/:domain/renew`                | Management | Force-renew certificate                |
-| POST   | `/api/certs/mtls/rotate`                  | Management | Rotate mTLS cert                       |
-| GET    | `/api/certs/mtls/download`                | Management | Download client.p12                    |
-| POST   | `/api/certs/agent`                        | Management | Generate agent certificate             |
-| GET    | `/api/certs/agent`                        | Management | List agent certificates                |
-| GET    | `/api/certs/agent/:label/download`        | Management | Download agent .p12                    |
-| PATCH  | `/api/certs/agent/:label/capabilities`    | Management | Update agent capabilities              |
-| PATCH  | `/api/certs/agent/:label/allowed-sites`   | Management | Update agent site access               |
-| DELETE | `/api/certs/agent/:label`                 | Management | Revoke agent certificate               |
-| POST   | `/api/certs/agent/enroll`                 | Management | Generate enrollment token              |
-| DELETE | `/api/certs/agent/enroll/:label`          | Management | Revoke unused enrollment token         |
-| POST   | `/api/certs/agent/upgrade-cert`           | Management | Upgrade agent cert to hardware-bound   |
-| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Management | Upgrade admin to hardware-bound     |
-| GET    | `/api/certs/admin/auth-mode`              | Management | Get admin auth mode                    |
-| GET    | `/api/settings/2fa`                       | Management | Get 2FA status                         |
-| POST   | `/api/settings/2fa/setup`                 | Management | Generate TOTP secret                   |
-| POST   | `/api/settings/2fa/confirm`               | Management | Confirm initial code, enable 2FA       |
-| POST   | `/api/settings/2fa/verify`                | Management | Verify code, issue session cookie      |
-| POST   | `/api/settings/2fa/disable`               | Management | Disable 2FA                            |
-| GET    | `/api/services`                           | Management | List service statuses                  |
-| POST   | `/api/services/:name/:action`             | Management | Control a service (start/stop/restart) |
-| WS     | `/api/services/:name/logs`                | Management | Stream service logs                    |
-| GET    | `/api/plugins`                            | Management | List installed plugins                 |
-| GET    | `/api/plugins/:name`                      | Management | Get plugin details                     |
-| POST   | `/api/plugins/install`                    | Management | Install a plugin                       |
-| POST   | `/api/plugins/:name/enable`               | Management | Enable a plugin                        |
-| POST   | `/api/plugins/:name/disable`              | Management | Disable a plugin                       |
-| DELETE | `/api/plugins/:name`                      | Management | Uninstall a plugin                     |
-| GET    | `/api/plugins/push-install/config`        | Management | Get push install configuration         |
-| PATCH  | `/api/plugins/push-install/config`        | Management | Update push install configuration      |
-| GET    | `/api/plugins/push-install/policies`      | Management | List push install policies             |
-| POST   | `/api/plugins/push-install/policies`      | Management | Create push install policy             |
-| PATCH  | `/api/plugins/push-install/policies/:id`  | Management | Update push install policy             |
-| DELETE | `/api/plugins/push-install/policies/:id`  | Management | Delete push install policy             |
-| POST   | `/api/plugins/push-install/enable/:label` | Management | Enable push install for agent          |
-| DELETE | `/api/plugins/push-install/enable/:label` | Management | Disable push install for agent         |
-| GET    | `/api/plugins/push-install/agent-status`  | Management | Agent checks own push install status   |
-| POST   | `/api/plugins/push-install/:label`        | Management | Send push install command to agent     |
-| GET    | `/api/plugins/push-install/sessions`      | Management | List push install audit log            |
-| POST   | `/api/tickets/scopes`                     | Management | Register ticket scope                  |
-| GET    | `/api/tickets/scopes`                     | Management | List scopes, instances, assignments    |
-| DELETE | `/api/tickets/scopes/:name`               | Management | Delete ticket scope                    |
-| POST   | `/api/tickets/instances`                  | Management | Register instance                      |
-| DELETE | `/api/tickets/instances/:instanceId`      | Management | Deregister instance                    |
-| POST   | `/api/tickets/instances/:instanceId/heartbeat` | Management | Instance heartbeat                |
-| POST   | `/api/tickets/assignments`                | Management | Assign agent to instance               |
-| DELETE | `/api/tickets/assignments/:agentLabel/:instanceScope` | Management | Remove assignment        |
-| GET    | `/api/tickets/assignments`                | Management | List assignments                       |
-| POST   | `/api/tickets`                            | Management | Request ticket                         |
-| GET    | `/api/tickets/inbox`                      | Management | Check ticket inbox                     |
-| POST   | `/api/tickets/validate`                   | Management | Validate and consume ticket            |
-| GET    | `/api/tickets`                            | Management | List all tickets (admin)               |
-| DELETE | `/api/tickets/:ticketId`                  | Management | Revoke ticket                          |
-| POST   | `/api/tickets/sessions`                   | Management | Create session from ticket             |
-| POST   | `/api/tickets/sessions/:sessionId/heartbeat` | Management | Session heartbeat                  |
-| PATCH  | `/api/tickets/sessions/:sessionId`        | Management | Update session status                  |
-| DELETE | `/api/tickets/sessions/:sessionId`        | Management | Kill session                           |
-| GET    | `/api/tickets/sessions`                   | Management | List sessions                          |
-| POST   | `/api/storage/servers`                    | Management | Register a storage server              |
-| GET    | `/api/storage/servers`                    | Management | List registered storage servers        |
-| DELETE | `/api/storage/servers/:id`                | Management | Remove a storage server                |
-| POST   | `/api/storage/bindings`                   | Management | Bind storage to plugin                 |
-| GET    | `/api/storage/bindings`                   | Management | List all bindings                      |
-| GET    | `/api/storage/bindings/:pluginName`       | Management | Get binding for plugin                 |
-| DELETE | `/api/storage/bindings/:pluginName`       | Management | Unbind storage from plugin             |
+| Method | Path                                                  | Group      | Description                              |
+| ------ | ----------------------------------------------------- | ---------- | ---------------------------------------- |
+| GET    | `/api/health`                                         | Always     | Health check                             |
+| GET    | `/api/onboarding/status`                              | Always     | Onboarding state                         |
+| POST   | `/api/onboarding/domain`                              | Onboarding | Set domain and email                     |
+| POST   | `/api/onboarding/verify-dns`                          | Onboarding | Verify DNS records                       |
+| POST   | `/api/onboarding/provision`                           | Onboarding | Start provisioning                       |
+| WS     | `/api/onboarding/provision/stream`                    | Onboarding | Provisioning progress                    |
+| GET    | `/api/invite/:token`                                  | Public     | Get invitation details                   |
+| POST   | `/api/invite/:token/accept`                           | Public     | Accept invitation                        |
+| POST   | `/api/enroll`                                         | Public     | Enroll agent with token (hardware-bound) |
+| GET    | `/api/system/stats`                                   | Management | System statistics                        |
+| POST   | `/api/system/update`                                  | Management | Trigger background server update         |
+| POST   | `/api/agents/plugins/report`                          | Management | Report agent plugin capabilities         |
+| GET    | `/api/tunnels/agent-config`                           | Management | Get agent tunnel configuration           |
+| GET    | `/api/tunnels`                                        | Management | List tunnels                             |
+| POST   | `/api/tunnels`                                        | Management | Create tunnel                            |
+| PATCH  | `/api/tunnels/:id`                                    | Management | Toggle tunnel enabled/disabled           |
+| DELETE | `/api/tunnels/:id`                                    | Management | Delete tunnel                            |
+| GET    | `/api/tunnels/mac-plist`                              | Management | Download Mac plist                       |
+| GET    | `/api/sites`                                          | Management | List static sites                        |
+| POST   | `/api/sites`                                          | Management | Create static site                       |
+| DELETE | `/api/sites/:id`                                      | Management | Delete static site                       |
+| PATCH  | `/api/sites/:id`                                      | Management | Update site settings                     |
+| POST   | `/api/sites/:id/verify-dns`                           | Management | Verify site DNS                          |
+| GET    | `/api/sites/:id/files`                                | Management | List site files                          |
+| POST   | `/api/sites/:id/files`                                | Management | Upload site files                        |
+| DELETE | `/api/sites/:id/files`                                | Management | Delete site file                         |
+| GET    | `/api/invitations`                                    | Management | List invitations                         |
+| POST   | `/api/invitations`                                    | Management | Create invitation                        |
+| DELETE | `/api/invitations/:id`                                | Management | Revoke invitation                        |
+| GET    | `/api/users`                                          | Management | List users                               |
+| POST   | `/api/users`                                          | Management | Create user                              |
+| PUT    | `/api/users/:username`                                | Management | Update user                              |
+| DELETE | `/api/users/:username`                                | Management | Delete user                              |
+| POST   | `/api/users/:username/reset-totp`                     | Management | Reset TOTP secret                        |
+| GET    | `/api/certs`                                          | Management | List certificates                        |
+| GET    | `/api/certs/auto-renew-status`                        | Management | Auto-renew timer status                  |
+| POST   | `/api/certs/:domain/renew`                            | Management | Force-renew certificate                  |
+| POST   | `/api/certs/mtls/rotate`                              | Management | Rotate mTLS cert                         |
+| GET    | `/api/certs/mtls/download`                            | Management | Download client.p12                      |
+| POST   | `/api/certs/agent`                                    | Management | Generate agent certificate               |
+| GET    | `/api/certs/agent`                                    | Management | List agent certificates                  |
+| GET    | `/api/certs/agent/:label/download`                    | Management | Download agent .p12                      |
+| PATCH  | `/api/certs/agent/:label/capabilities`                | Management | Update agent capabilities                |
+| PATCH  | `/api/certs/agent/:label/allowed-sites`               | Management | Update agent site access                 |
+| DELETE | `/api/certs/agent/:label`                             | Management | Revoke agent certificate                 |
+| POST   | `/api/certs/agent/enroll`                             | Management | Generate enrollment token                |
+| DELETE | `/api/certs/agent/enroll/:label`                      | Management | Revoke unused enrollment token           |
+| POST   | `/api/certs/agent/upgrade-cert`                       | Management | Upgrade agent cert to hardware-bound     |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound`          | Management | Upgrade admin to hardware-bound          |
+| GET    | `/api/certs/admin/auth-mode`                          | Management | Get admin auth mode                      |
+| GET    | `/api/settings/2fa`                                   | Management | Get 2FA status                           |
+| POST   | `/api/settings/2fa/setup`                             | Management | Generate TOTP secret                     |
+| POST   | `/api/settings/2fa/confirm`                           | Management | Confirm initial code, enable 2FA         |
+| POST   | `/api/settings/2fa/verify`                            | Management | Verify code, issue session cookie        |
+| POST   | `/api/settings/2fa/disable`                           | Management | Disable 2FA                              |
+| GET    | `/api/services`                                       | Management | List service statuses                    |
+| POST   | `/api/services/:name/:action`                         | Management | Control a service (start/stop/restart)   |
+| WS     | `/api/services/:name/logs`                            | Management | Stream service logs                      |
+| GET    | `/api/plugins`                                        | Management | List installed plugins                   |
+| GET    | `/api/plugins/:name`                                  | Management | Get plugin details                       |
+| POST   | `/api/plugins/install`                                | Management | Install a plugin                         |
+| POST   | `/api/plugins/:name/enable`                           | Management | Enable a plugin                          |
+| POST   | `/api/plugins/:name/disable`                          | Management | Disable a plugin                         |
+| DELETE | `/api/plugins/:name`                                  | Management | Uninstall a plugin                       |
+| GET    | `/api/plugins/push-install/config`                    | Management | Get push install configuration           |
+| PATCH  | `/api/plugins/push-install/config`                    | Management | Update push install configuration        |
+| GET    | `/api/plugins/push-install/policies`                  | Management | List push install policies               |
+| POST   | `/api/plugins/push-install/policies`                  | Management | Create push install policy               |
+| PATCH  | `/api/plugins/push-install/policies/:id`              | Management | Update push install policy               |
+| DELETE | `/api/plugins/push-install/policies/:id`              | Management | Delete push install policy               |
+| POST   | `/api/plugins/push-install/enable/:label`             | Management | Enable push install for agent            |
+| DELETE | `/api/plugins/push-install/enable/:label`             | Management | Disable push install for agent           |
+| GET    | `/api/plugins/push-install/agent-status`              | Management | Agent checks own push install status     |
+| POST   | `/api/plugins/push-install/:label`                    | Management | Send push install command to agent       |
+| GET    | `/api/plugins/push-install/sessions`                  | Management | List push install audit log              |
+| POST   | `/api/tickets/scopes`                                 | Management | Register ticket scope                    |
+| GET    | `/api/tickets/scopes`                                 | Management | List scopes, instances, assignments      |
+| DELETE | `/api/tickets/scopes/:name`                           | Management | Delete ticket scope                      |
+| POST   | `/api/tickets/instances`                              | Management | Register instance                        |
+| DELETE | `/api/tickets/instances/:instanceId`                  | Management | Deregister instance                      |
+| POST   | `/api/tickets/instances/:instanceId/heartbeat`        | Management | Instance heartbeat                       |
+| POST   | `/api/tickets/assignments`                            | Management | Assign agent to instance                 |
+| DELETE | `/api/tickets/assignments/:agentLabel/:instanceScope` | Management | Remove assignment                        |
+| GET    | `/api/tickets/assignments`                            | Management | List assignments                         |
+| POST   | `/api/tickets`                                        | Management | Request ticket                           |
+| GET    | `/api/tickets/inbox`                                  | Management | Check ticket inbox                       |
+| POST   | `/api/tickets/validate`                               | Management | Validate and consume ticket              |
+| GET    | `/api/tickets`                                        | Management | List all tickets (admin)                 |
+| DELETE | `/api/tickets/:ticketId`                              | Management | Revoke ticket                            |
+| POST   | `/api/tickets/sessions`                               | Management | Create session from ticket               |
+| POST   | `/api/tickets/sessions/:sessionId/heartbeat`          | Management | Session heartbeat                        |
+| PATCH  | `/api/tickets/sessions/:sessionId`                    | Management | Update session status                    |
+| DELETE | `/api/tickets/sessions/:sessionId`                    | Management | Kill session                             |
+| GET    | `/api/tickets/sessions`                               | Management | List sessions                            |
+| POST   | `/api/storage/servers`                                | Management | Register a storage server                |
+| GET    | `/api/storage/servers`                                | Management | List registered storage servers          |
+| DELETE | `/api/storage/servers/:id`                            | Management | Remove a storage server                  |
+| POST   | `/api/storage/bindings`                               | Management | Bind storage to plugin                   |
+| GET    | `/api/storage/bindings`                               | Management | List all bindings                        |
+| GET    | `/api/storage/bindings/:pluginName`                   | Management | Get binding for plugin                   |
+| DELETE | `/api/storage/bindings/:pluginName`                   | Management | Unbind storage from plugin               |
 
 ### Agent Capabilities
 

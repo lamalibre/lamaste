@@ -18,11 +18,7 @@ import {
   isPanelServiceLoaded,
   unloadPanelService,
 } from '@lamalibre/lamaste/agent';
-import {
-  listAgents,
-  removeAgent,
-  loadRegistry,
-} from '@lamalibre/lamaste/agent';
+import { listAgents, removeAgent, loadRegistry } from '@lamalibre/lamaste/agent';
 import { removePanelServiceConfig } from '../lib/panel-service.js';
 
 /**
@@ -51,7 +47,9 @@ export async function runUninstall({ label, all }) {
       console.error(`    ${chalk.cyan('•')} ${chalk.bold(a.label)}`);
     }
     console.error('');
-    console.error(`  Use ${chalk.cyan('lamaste-agent uninstall --label <name>')} or ${chalk.cyan('--all')}`);
+    console.error(
+      `  Use ${chalk.cyan('lamaste-agent uninstall --label <name>')} or ${chalk.cyan('--all')}`,
+    );
     console.error('');
     process.exit(1);
   }
@@ -145,7 +143,9 @@ async function uninstallAll() {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const count = agents.length;
     rl.question(
-      chalk.yellow(`  This will remove ${count} agent(s) and delete ~/.lamalibre/lamaste. Continue? (y/N) `),
+      chalk.yellow(
+        `  This will remove ${count} agent(s) and delete ~/.lamalibre/lamaste. Continue? (y/N) `,
+      ),
       (answer) => {
         rl.close();
         resolve(answer.trim().toLowerCase() === 'y');

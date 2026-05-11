@@ -18,14 +18,14 @@ For the IP-based admin panel (`https://<ip>:9292`), there is no domain to verify
 
 ### Certificate types in Lamaste
 
-| Type            | Where used                            | Issued by          | Validity | Auto-renew          |
-| --------------- | ------------------------------------- | ------------------ | -------- | ------------------- |
-| Let's Encrypt   | Domain-based vhosts (`*.example.com`) | Let's Encrypt CA   | 90 days  | Yes (systemd timer) |
-| Self-signed TLS | IP-based panel (`https://IP:9292`)    | Lamaste installer | 10 years | No (long validity)  |
-| mTLS CA         | nginx client cert verification        | Lamaste installer | 10 years | No (long validity)  |
-| mTLS client     | Browser authentication                | Lamaste CA        | 2 years  | Manual rotation     |
-| Agent cert      | Agent-to-panel mTLS (`CN=agent:<label>`) | Lamaste CA     | 2 years  | Manual rotation     |
-| Plugin-agent cert | Delegated plugin agent mTLS (`CN=plugin-agent:<delegator>:<name>`) | Lamaste CA | 2 years | Manual rotation |
+| Type              | Where used                                                         | Issued by         | Validity | Auto-renew          |
+| ----------------- | ------------------------------------------------------------------ | ----------------- | -------- | ------------------- |
+| Let's Encrypt     | Domain-based vhosts (`*.example.com`)                              | Let's Encrypt CA  | 90 days  | Yes (systemd timer) |
+| Self-signed TLS   | IP-based panel (`https://IP:9292`)                                 | Lamaste installer | 10 years | No (long validity)  |
+| mTLS CA           | nginx client cert verification                                     | Lamaste installer | 10 years | No (long validity)  |
+| mTLS client       | Browser authentication                                             | Lamaste CA        | 2 years  | Manual rotation     |
+| Agent cert        | Agent-to-panel mTLS (`CN=agent:<label>`)                           | Lamaste CA        | 2 years  | Manual rotation     |
+| Plugin-agent cert | Delegated plugin agent mTLS (`CN=plugin-agent:<delegator>:<name>`) | Lamaste CA        | 2 years  | Manual rotation     |
 
 ### When certificates are issued
 
@@ -360,27 +360,27 @@ Certificates with 30 or fewer days remaining are flagged as `expiringSoon` in th
 
 ### Source files
 
-| File                                                   | Purpose                                  |
-| ------------------------------------------------------ | ---------------------------------------- |
-| `packages/lamaste-serverd/src/lib/certbot.js`             | Let's Encrypt issuance, renewal, listing |
-| `packages/lamaste-serverd/src/lib/mtls.js`                | mTLS cert expiry, rotation, download     |
-| `packages/lamaste-serverd/src/routes/management/certs.js` | Certificate management API               |
-| `packages/create-lamaste/src/tasks/nginx.js`          | Self-signed cert generation              |
-| `packages/create-lamaste/src/tasks/mtls.js`           | mTLS CA and client cert generation       |
+| File                                                      | Purpose                                                 |
+| --------------------------------------------------------- | ------------------------------------------------------- |
+| `packages/lamaste-serverd/src/lib/certbot.js`             | Let's Encrypt issuance, renewal, listing                |
+| `packages/lamaste-serverd/src/lib/mtls.js`                | mTLS cert expiry, rotation, download                    |
+| `packages/lamaste-serverd/src/routes/management/certs.js` | Certificate management API                              |
+| `packages/create-lamaste/src/tasks/nginx.js`              | Self-signed cert generation                             |
+| `packages/create-lamaste/src/tasks/mtls.js`               | mTLS CA and client cert generation                      |
 | `packages/lamaste-serverd/src/lib/csr-signing.js`         | CSR signing for hardware-bound and delegated enrollment |
 | `packages/lamaste-serverd/src/lib/enrollment.js`          | Enrollment token management (regular and delegated)     |
-| `packages/lamaste-serverd/src/routes/enrollment.js`       | Public enrollment route                  |
+| `packages/lamaste-serverd/src/routes/enrollment.js`       | Public enrollment route                                 |
 
 ## Quick Reference
 
 ### Certificate types
 
-| Type            | Location                            | Issued by        | Validity | Key size     |
-| --------------- | ----------------------------------- | ---------------- | -------- | ------------ |
-| Let's Encrypt   | `/etc/letsencrypt/live/<fqdn>/`     | Let's Encrypt CA | 90 days  | 2048-bit RSA |
+| Type            | Location                                     | Issued by        | Validity | Key size     |
+| --------------- | -------------------------------------------- | ---------------- | -------- | ------------ |
+| Let's Encrypt   | `/etc/letsencrypt/live/<fqdn>/`              | Let's Encrypt CA | 90 days  | 2048-bit RSA |
 | Self-signed TLS | `/etc/lamalibre/lamaste/pki/self-signed.pem` | Self             | 10 years | 2048-bit RSA |
 | mTLS CA         | `/etc/lamalibre/lamaste/pki/ca.crt`          | Self             | 10 years | 4096-bit RSA |
-| mTLS client     | `/etc/lamalibre/lamaste/pki/client.crt`      | Lamaste CA      | 2 years  | 4096-bit RSA |
+| mTLS client     | `/etc/lamalibre/lamaste/pki/client.crt`      | Lamaste CA       | 2 years  | 4096-bit RSA |
 
 ### certbot commands
 
@@ -420,17 +420,17 @@ openssl verify -CAfile /etc/letsencrypt/live/panel.example.com/chain.pem \
 
 ### API endpoints
 
-| Method | Path                       | Description                                  |
-| ------ | -------------------------- | -------------------------------------------- |
-| GET    | `/api/certs`               | List all certificates (Let's Encrypt + mTLS) |
-| POST   | `/api/certs/:domain/renew` | Force renewal of a specific certificate      |
-| POST   | `/api/certs/mtls/rotate`   | Rotate the mTLS client certificate           |
-| GET    | `/api/certs/mtls/download` | Download the current `.p12` bundle           |
-| POST   | `/api/certs/agent/enroll`  | Generate enrollment token (admin)            |
-| POST   | `/api/certs/agent/enroll-delegated` | Delegated enrollment token (agent)  |
-| POST   | `/api/enroll`              | Enroll agent with token (public)             |
-| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)   |
-| GET    | `/api/certs/admin/auth-mode` | Get admin auth mode (admin)                |
+| Method | Path                                         | Description                                  |
+| ------ | -------------------------------------------- | -------------------------------------------- |
+| GET    | `/api/certs`                                 | List all certificates (Let's Encrypt + mTLS) |
+| POST   | `/api/certs/:domain/renew`                   | Force renewal of a specific certificate      |
+| POST   | `/api/certs/mtls/rotate`                     | Rotate the mTLS client certificate           |
+| GET    | `/api/certs/mtls/download`                   | Download the current `.p12` bundle           |
+| POST   | `/api/certs/agent/enroll`                    | Generate enrollment token (admin)            |
+| POST   | `/api/certs/agent/enroll-delegated`          | Delegated enrollment token (agent)           |
+| POST   | `/api/enroll`                                | Enroll agent with token (public)             |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)                   |
+| GET    | `/api/certs/admin/auth-mode`                 | Get admin auth mode (admin)                  |
 
 ### Let's Encrypt rate limits
 

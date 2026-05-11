@@ -224,10 +224,7 @@ export async function createTunnel(opts: CreateTunnelOptions): Promise<TunnelEnt
   }
 
   if (existing.find((t) => t.port === port)) {
-    throw new TunnelError(
-      `Port ${port} is already in use by another tunnel`,
-      'PORT_IN_USE',
-    );
+    throw new TunnelError(`Port ${port} is already in use by another tunnel`, 'PORT_IN_USE');
   }
 
   const fqdn = `${subdomain}.${domain}`;

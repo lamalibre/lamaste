@@ -104,7 +104,7 @@ export async function signAdminCSR(_csrPem, logger) {
   throw Object.assign(
     new Error(
       'Panel-initiated admin cert issuance is disabled for security. ' +
-      'Run `sudo lamaste-server reset-admin` on the server console to issue a new admin certificate.',
+        'Run `sudo lamaste-server reset-admin` on the server console to issue a new admin certificate.',
     ),
     { statusCode: 503 },
   );
@@ -167,10 +167,9 @@ export async function rotateAgentCSR(csrPem, label, logger) {
       try {
         await execa('openssl', ['req', '-verify', '-in', csrPath, '-noout']);
       } catch {
-        throw Object.assign(
-          new Error('Invalid CSR: structure or signature verification failed'),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error('Invalid CSR: structure or signature verification failed'), {
+          statusCode: 400,
+        });
       }
 
       // The signing wrapper does not pass `-subj` to openssl, so the cert's
@@ -182,10 +181,9 @@ export async function rotateAgentCSR(csrPem, label, logger) {
       const expectedCN = `agent:${label}`;
       const actualCN = await readCsrCN(csrPath);
       if (actualCN !== expectedCN) {
-        throw Object.assign(
-          new Error(`CSR CN must be ${expectedCN}, got ${actualCN ?? 'none'}`),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error(`CSR CN must be ${expectedCN}, got ${actualCN ?? 'none'}`), {
+          statusCode: 400,
+        });
       }
 
       const serial = randomCertSerial();
@@ -214,7 +212,10 @@ export async function rotateAgentCSR(csrPem, label, logger) {
 
       // Revoke the old certificate
       const { addToRevocationList } = await import('./revocation.js');
-      logger.info({ label, oldSerial: existing.serial }, 'Revoking old agent certificate for hardware-bound upgrade');
+      logger.info(
+        { label, oldSerial: existing.serial },
+        'Revoking old agent certificate for hardware-bound upgrade',
+      );
       await addToRevocationList(existing.serial, `agent:${label} (upgraded to hardware-bound)`);
 
       // Update the existing registry entry atomically: new serial, new expiry,
@@ -223,9 +224,7 @@ export async function rotateAgentCSR(csrPem, label, logger) {
       // `getValidCapabilities()` set ensures that capabilities contributed
       // by a now-uninstalled plugin or a now-deregistered ticket scope are
       // dropped from the rotated cert, rather than being silently re-issued.
-      const storedCaps = Array.isArray(existing.capabilities)
-        ? existing.capabilities
-        : [];
+      const storedCaps = Array.isArray(existing.capabilities) ? existing.capabilities : [];
       const validCaps = new Set(getValidCapabilities());
       const liveCaps = storedCaps.filter((c) => validCaps.has(c));
       const droppedCapabilities = storedCaps.filter((c) => !validCaps.has(c));
@@ -329,10 +328,9 @@ export async function signCSR(csrPem, label, capabilities, allowedSites, logger,
       try {
         await execa('openssl', ['req', '-verify', '-in', csrPath, '-noout']);
       } catch {
-        throw Object.assign(
-          new Error('Invalid CSR: structure or signature verification failed'),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error('Invalid CSR: structure or signature verification failed'), {
+          statusCode: 400,
+        });
       }
 
       // The signing wrapper does not pass `-subj` — the cert keeps whatever
@@ -352,8 +350,8 @@ export async function signCSR(csrPem, label, capabilities, allowedSites, logger,
         throw Object.assign(
           new Error(
             `CSR CN must be "${expectedCN}", got "${actualCN ?? 'none'}". ` +
-            'If you are upgrading from an older agent, use the new client that ' +
-            'looks up the enrollment label before generating the CSR.',
+              'If you are upgrading from an older agent, use the new client that ' +
+              'looks up the enrollment label before generating the CSR.',
           ),
           { statusCode: 400 },
         );
@@ -390,8 +388,8 @@ export async function signCSR(csrPem, label, capabilities, allowedSites, logger,
       const registryEntry = {
         label,
         serial,
-        capabilities: isDelegated ? (capabilities || []) : (capabilities || ['tunnels:read']),
-        allowedSites: isDelegated ? [] : (allowedSites || []),
+        capabilities: isDelegated ? capabilities || [] : capabilities || ['tunnels:read'],
+        allowedSites: isDelegated ? [] : allowedSites || [],
         enrollmentMethod: isDelegated ? 'delegated' : 'hardware-bound',
         createdAt: new Date().toISOString(),
         expiresAt,

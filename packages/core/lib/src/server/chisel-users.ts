@@ -118,9 +118,7 @@ const writeMutex = new KeyedPromiseChainMutex();
 /**
  * Load the chisel credential store keyed by agent label.
  */
-export async function loadChiselCredentials(
-  paths: ChiselPaths,
-): Promise<ChiselCredentialStore> {
+export async function loadChiselCredentials(paths: ChiselPaths): Promise<ChiselCredentialStore> {
   try {
     const raw = await readFile(paths.credentialsFile, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
@@ -168,14 +166,13 @@ function renderAuthfile(creds: ChiselCredentialStore): string {
   return JSON.stringify(entries, null, 2) + '\n';
 }
 
-async function writeAuthfile(
-  paths: ChiselPaths,
-  content: string,
-  exec: ExecFn,
-): Promise<void> {
+async function writeAuthfile(paths: ChiselPaths, content: string, exec: ExecFn): Promise<void> {
   // Temp file name matches the sudoers `mv /tmp/lamalibre-lamaste-chisel-users-*`
   // rule that lets us install into /etc/lamalibre/lamaste/chisel-users.
-  const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-chisel-users-${crypto.randomBytes(8).toString('hex')}`);
+  const tmpFile = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-chisel-users-${crypto.randomBytes(8).toString('hex')}`,
+  );
   await writeFile(tmpFile, content, { encoding: 'utf-8', mode: 0o644 });
   try {
     await exec('sudo', ['mv', tmpFile, paths.authFilePath]);

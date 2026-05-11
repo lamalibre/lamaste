@@ -72,10 +72,7 @@ export {
 export { checkAccess } from './lib/authz.js';
 
 // Templates
-export {
-  getAccessRequestTemplates,
-  buildAccessRequestPage,
-} from './lib/templates.js';
+export { getAccessRequestTemplates, buildAccessRequestPage } from './lib/templates.js';
 
 // Migration
 export { migrateFromLegacy } from './lib/migration.js';

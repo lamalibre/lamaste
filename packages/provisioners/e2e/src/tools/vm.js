@@ -6,8 +6,7 @@ import { z } from 'zod';
 import { runE2eCommand } from '../subprocess.js';
 import { ROLE_NAMES, PROFILE_NAMES, DEFAULT_PROFILE } from '../project-config.js';
 
-const roleItemSchema =
-  ROLE_NAMES.length > 0 ? z.enum(ROLE_NAMES) : z.string().min(1);
+const roleItemSchema = ROLE_NAMES.length > 0 ? z.enum(ROLE_NAMES) : z.string().min(1);
 
 const profileSchema =
   PROFILE_NAMES.length > 0
@@ -26,10 +25,7 @@ export const vmCreateTool = {
     'Optionally create only specific VMs with the "vms" parameter.',
   inputSchema: z.object({
     profile: defaultProfile ? profileSchema.default(defaultProfile) : profileSchema.optional(),
-    vms: z
-      .array(roleItemSchema)
-      .optional()
-      .describe('Which VMs to create (default: all roles)'),
+    vms: z.array(roleItemSchema).optional().describe('Which VMs to create (default: all roles)'),
   }),
   async handler({ profile, vms } = {}) {
     const args = ['vm', 'create'];
@@ -52,10 +48,7 @@ export const vmDeleteTool = {
   name: 'vm_delete',
   description: 'Delete E2E test VMs. Specify which VMs or delete all roles.',
   inputSchema: z.object({
-    vms: z
-      .array(roleItemSchema)
-      .optional()
-      .describe('Which VMs to delete (default: all roles)'),
+    vms: z.array(roleItemSchema).optional().describe('Which VMs to delete (default: all roles)'),
   }),
   async handler({ vms } = {}) {
     const args = ['vm', 'delete'];
@@ -73,10 +66,7 @@ export const vmExecTool = {
     vm: roleItemSchema.describe('Which VM role to run on'),
     command: z.string().min(1).describe('Shell command to execute'),
     sudo: z.coerce.boolean().default(false).describe('Run with sudo'),
-    timeout: z
-      .coerce.number()
-      .default(30000)
-      .describe('Timeout in milliseconds (default: 30s)'),
+    timeout: z.coerce.number().default(30000).describe('Timeout in milliseconds (default: 30s)'),
   }),
   async handler(params = {}) {
     const args = ['vm', 'exec', '--vm', params.vm, '--command', params.command];

@@ -23,9 +23,8 @@ function roleGuard(fastify, _opts, done) {
       if (role === 'admin') return;
 
       // plugin-agent is a subset of agent — accept it wherever agent is accepted
-      const effectiveRole = role === 'plugin-agent' && allowedRoles.includes('agent')
-        ? 'agent'
-        : role;
+      const effectiveRole =
+        role === 'plugin-agent' && allowedRoles.includes('agent') ? 'agent' : role;
 
       // Check if the role is in the allowed list
       if (!allowedRoles.includes(effectiveRole)) {

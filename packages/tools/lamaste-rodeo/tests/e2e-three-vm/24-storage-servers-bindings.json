@@ -5,22 +5,11 @@
     "name": "Storage Servers and Bindings",
     "suite": "e2e-three-vm",
     "description": "24 — Storage Servers and Bindings (Three-VM) — exercises /api/storage CRUD without real provider",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete",
-    "host_api_patch"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete", "host_api_patch"],
   "constants": {
     "STORAGE_LABEL": {
       "value": "rodeo-test-storage"
@@ -616,11 +605,7 @@
                 "kind": "var",
                 "name": "INVALID_STATUS"
               },
-              "expected": [
-                400,
-                422,
-                500
-              ],
+              "expected": [400, 422, 500],
               "message": "POST /api/storage/servers with non-uuid id rejected with 4xx/5xx"
             }
           }
@@ -779,12 +764,7 @@
                 "kind": "var",
                 "name": "BIND_BADNAME_STATUS"
               },
-              "expected": [
-                400,
-                404,
-                422,
-                500
-              ],
+              "expected": [400, 404, 422, 500],
               "message": "POST /api/storage/bindings with invalid pluginName rejected with 4xx/5xx"
             }
           }

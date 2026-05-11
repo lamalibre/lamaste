@@ -127,8 +127,8 @@ Triggers a background update of the Lamaste panel server to the specified versio
 }
 ```
 
-| Field     | Type     | Required | Description                            |
-| --------- | -------- | -------- | -------------------------------------- |
+| Field     | Type     | Required | Description                                    |
+| --------- | -------- | -------- | ---------------------------------------------- |
 | `version` | `string` | Yes      | Target version to update to (e.g., `"1.0.43"`) |
 
 ```bash
@@ -151,11 +151,11 @@ The 202 status indicates the update has been accepted and is running in the back
 
 **Errors:**
 
-| Status | Body                                                             | When                                    |
-| ------ | ---------------------------------------------------------------- | --------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`       | Missing or invalid `version` field      |
-| 403    | `{"error":"Insufficient certificate scope"}`                     | Non-admin certificate                   |
-| 503    | `{"error":"Onboarding not complete","onboardingStatus":"FRESH"}` | Onboarding has not finished             |
+| Status | Body                                                             | When                               |
+| ------ | ---------------------------------------------------------------- | ---------------------------------- |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`       | Missing or invalid `version` field |
+| 403    | `{"error":"Insufficient certificate scope"}`                     | Non-admin certificate              |
+| 503    | `{"error":"Onboarding not complete","onboardingStatus":"FRESH"}` | Onboarding has not finished        |
 
 ---
 
@@ -179,12 +179,12 @@ Accepts a plugin capability report from an agent. Called by `lamaste-agent updat
 }
 ```
 
-| Field                      | Type     | Required | Description                        |
-| -------------------------- | -------- | -------- | ---------------------------------- |
-| `plugins`                  | `array`  | Yes      | List of enabled plugins            |
-| `plugins[].name`           | `string` | Yes      | Plugin name from manifest          |
-| `plugins[].version`        | `string` | Yes      | Plugin version                     |
-| `plugins[].capabilities`   | `array`  | No       | Capability strings (defaults `[]`) |
+| Field                    | Type     | Required | Description                        |
+| ------------------------ | -------- | -------- | ---------------------------------- |
+| `plugins`                | `array`  | Yes      | List of enabled plugins            |
+| `plugins[].name`         | `string` | Yes      | Plugin name from manifest          |
+| `plugins[].version`      | `string` | Yes      | Plugin version                     |
+| `plugins[].capabilities` | `array`  | No       | Capability strings (defaults `[]`) |
 
 **Response (200):**
 
@@ -195,10 +195,10 @@ Accepts a plugin capability report from an agent. Called by `lamaste-agent updat
 }
 ```
 
-| Field    | Type     | Description                                     |
-| -------- | -------- | ----------------------------------------------- |
-| `ok`     | `boolean`| Always `true` on success                        |
-| `merged` | `number` | Number of unique capabilities merged             |
+| Field    | Type      | Description                          |
+| -------- | --------- | ------------------------------------ |
+| `ok`     | `boolean` | Always `true` on success             |
+| `merged` | `number`  | Number of unique capabilities merged |
 
 ---
 
@@ -208,12 +208,12 @@ The stats response is cached for 2 seconds. Multiple requests within the cache w
 
 ## Quick Reference
 
-| Method | Path                          | Auth                                     | Description                    |
-| ------ | ----------------------------- | ---------------------------------------- | ------------------------------ |
-| GET    | `/api/health`                 | None (no mTLS)                           | Health check with version      |
-| GET    | `/api/system/stats`           | mTLS (admin or agent with `system:read`) | CPU, memory, disk, uptime      |
-| POST   | `/api/system/update`          | mTLS (admin only)                        | Trigger background update      |
-| POST   | `/api/agents/plugins/report`  | mTLS (admin or agent)                    | Report agent plugin capabilities |
+| Method | Path                         | Auth                                     | Description                      |
+| ------ | ---------------------------- | ---------------------------------------- | -------------------------------- |
+| GET    | `/api/health`                | None (no mTLS)                           | Health check with version        |
+| GET    | `/api/system/stats`          | mTLS (admin or agent with `system:read`) | CPU, memory, disk, uptime        |
+| POST   | `/api/system/update`         | mTLS (admin only)                        | Trigger background update        |
+| POST   | `/api/agents/plugins/report` | mTLS (admin or agent)                    | Report agent plugin capabilities |
 
 ### Response Shapes
 

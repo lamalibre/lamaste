@@ -60,20 +60,20 @@ Browser (with imported client certificate):
 
 **Components:**
 
-| Component           | Technology        | Role                                              |
-| ------------------- | ----------------- | ------------------------------------------------- |
-| Reverse proxy       | nginx             | TLS termination, mTLS, forward auth, authz cache  |
-| Tunnel server       | Chisel            | WebSocket-over-HTTPS tunnels, bypasses DPI         |
-| Authentication      | Authelia          | TOTP 2FA for tunneled services                     |
-| Server daemon       | Fastify (Node.js) | REST API for management operations (lamalibre-lamaste-serverd) |
-| Server UI           | React + Vite      | Browser-based management panel (lamaste-server-ui)   |
-| Gatekeeper          | Fastify (Node.js) | Tunnel authorization service on 127.0.0.1:9294     |
-| Agent daemon        | Fastify (Node.js) | Agent-side REST API and plugin host (lamalibre-lamaste-agentd) |
-| Agent UI            | React + Vite      | Agent management panel (lamaste-agent-ui)         |
-| Core library        | TypeScript        | Shared types, constants, schemas, helpers (lamaste) |
-| TLS certificates    | Let's Encrypt     | Free, auto-renewing domain certificates            |
-| Panel auth          | mTLS certificates | LXD-style zero-login for admin access              |
-| Desktop app         | Tauri v2 (Rust)   | Native GUI with service discovery and cloud provisioning |
+| Component        | Technology        | Role                                                           |
+| ---------------- | ----------------- | -------------------------------------------------------------- |
+| Reverse proxy    | nginx             | TLS termination, mTLS, forward auth, authz cache               |
+| Tunnel server    | Chisel            | WebSocket-over-HTTPS tunnels, bypasses DPI                     |
+| Authentication   | Authelia          | TOTP 2FA for tunneled services                                 |
+| Server daemon    | Fastify (Node.js) | REST API for management operations (lamalibre-lamaste-serverd) |
+| Server UI        | React + Vite      | Browser-based management panel (lamaste-server-ui)             |
+| Gatekeeper       | Fastify (Node.js) | Tunnel authorization service on 127.0.0.1:9294                 |
+| Agent daemon     | Fastify (Node.js) | Agent-side REST API and plugin host (lamalibre-lamaste-agentd) |
+| Agent UI         | React + Vite      | Agent management panel (lamaste-agent-ui)                      |
+| Core library     | TypeScript        | Shared types, constants, schemas, helpers (lamaste)            |
+| TLS certificates | Let's Encrypt     | Free, auto-renewing domain certificates                        |
+| Panel auth       | mTLS certificates | LXD-style zero-login for admin access                          |
+| Desktop app      | Tauri v2 (Rust)   | Native GUI with service discovery and cloud provisioning       |
 
 ## Features
 
@@ -110,28 +110,28 @@ Browser (with imported client certificate):
 
 All configuration lives under `/etc/lamalibre/lamaste/`:
 
-| File                        | Purpose                                        |
-| --------------------------- | ---------------------------------------------- |
-| `panel.json`                | Server daemon configuration (IP, domain, state)|
-| `pki/ca.crt`                | mTLS certificate authority                     |
-| `pki/ca.key`                | CA private key                                 |
-| `pki/client.p12`            | Client certificate bundle for browser import   |
-| `pki/enrollment-tokens.json`| One-time agent enrollment tokens               |
-| `tunnels.json`              | Tunnel definitions                             |
-| `plugins.json`              | Plugin registry                                |
-| `groups.json`               | Gatekeeper groups                              |
-| `access-grants.json`        | Gatekeeper access grants                       |
-| `ticket-scopes.json`        | Ticket system scope assignments                |
+| File                         | Purpose                                         |
+| ---------------------------- | ----------------------------------------------- |
+| `panel.json`                 | Server daemon configuration (IP, domain, state) |
+| `pki/ca.crt`                 | mTLS certificate authority                      |
+| `pki/ca.key`                 | CA private key                                  |
+| `pki/client.p12`             | Client certificate bundle for browser import    |
+| `pki/enrollment-tokens.json` | One-time agent enrollment tokens                |
+| `tunnels.json`               | Tunnel definitions                              |
+| `plugins.json`               | Plugin registry                                 |
+| `groups.json`                | Gatekeeper groups                               |
+| `access-grants.json`         | Gatekeeper access grants                        |
+| `ticket-scopes.json`         | Ticket system scope assignments                 |
 
 **Environment variables:**
 
-| Variable                     | Default                    | Description                                      |
-| ---------------------------- | -------------------------- | ------------------------------------------------ |
-| `LAMALIBRE_LAMASTE_CONFIG`           | `/etc/lamalibre/lamaste/panel.json` | Path to panel configuration                      |
-| `LAMALIBRE_LAMASTE_DATA_DIR`         | `/etc/lamalibre/lamaste`            | Data directory for gatekeeper state files         |
-| `NODE_ENV`                            | `production`                         | Set to `development` to skip mTLS                |
-| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | —                                    | Agent enrollment token (avoids process listing)   |
-| `LAMALIBRE_CLOUD_TOKEN`               | —                                    | Cloud provider API token (never CLI args)         |
+| Variable                             | Default                             | Description                                     |
+| ------------------------------------ | ----------------------------------- | ----------------------------------------------- |
+| `LAMALIBRE_LAMASTE_CONFIG`           | `/etc/lamalibre/lamaste/panel.json` | Path to panel configuration                     |
+| `LAMALIBRE_LAMASTE_DATA_DIR`         | `/etc/lamalibre/lamaste`            | Data directory for gatekeeper state files       |
+| `NODE_ENV`                           | `production`                        | Set to `development` to skip mTLS               |
+| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | —                                   | Agent enrollment token (avoids process listing) |
+| `LAMALIBRE_CLOUD_TOKEN`              | —                                   | Cloud provider API token (never CLI args)       |
 
 ## Troubleshooting
 
@@ -166,16 +166,16 @@ All configuration lives under `/etc/lamalibre/lamaste/`:
 
 Full documentation is available at [**lamalibre.github.io/lamaste**](https://lamalibre.github.io/lamaste/) and also ships with the management panel UI.
 
-| Section | Contents |
-| --- | --- |
-| [Introduction](https://lamalibre.github.io/lamaste/00-introduction/what-is-lamaste) | What is Lamaste, How It Works, Quick Start |
-| [Concepts](https://lamalibre.github.io/lamaste/01-concepts/tunneling) | Tunneling, mTLS, Authentication, Certificates, Security Model, DNS, nginx |
-| [Guides](https://lamalibre.github.io/lamaste/02-guides/installation) | Installation, Onboarding, First Tunnel, Desktop App, Mac Client, Users, Certs, Sites, DR |
-| [Architecture](https://lamalibre.github.io/lamaste/03-architecture/overview) | System Overview, Panel Server/Client, nginx, State Management, Installer/Onboarding Flows |
-| [API Reference](https://lamalibre.github.io/lamaste/04-api-reference/overview) | Onboarding, Tunnels, Users, Sites, Certificates, Services, System |
-| [Operations](https://lamalibre.github.io/lamaste/05-operations/monitoring) | Monitoring, Upgrades, Backup & Restore, Uninstalling |
-| [Reference](https://lamalibre.github.io/lamaste/06-reference/config-files) | Config Files, Ports & Services, Installer Flags, Troubleshooting, Glossary |
-| [E2E Results](https://lamalibre.github.io/lamaste/e2e-results/single-vm-e2e) | Single-VM (15 tests) and Three-VM (11 tests) end-to-end test results |
+| Section                                                                             | Contents                                                                                  |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [Introduction](https://lamalibre.github.io/lamaste/00-introduction/what-is-lamaste) | What is Lamaste, How It Works, Quick Start                                                |
+| [Concepts](https://lamalibre.github.io/lamaste/01-concepts/tunneling)               | Tunneling, mTLS, Authentication, Certificates, Security Model, DNS, nginx                 |
+| [Guides](https://lamalibre.github.io/lamaste/02-guides/installation)                | Installation, Onboarding, First Tunnel, Desktop App, Mac Client, Users, Certs, Sites, DR  |
+| [Architecture](https://lamalibre.github.io/lamaste/03-architecture/overview)        | System Overview, Panel Server/Client, nginx, State Management, Installer/Onboarding Flows |
+| [API Reference](https://lamalibre.github.io/lamaste/04-api-reference/overview)      | Onboarding, Tunnels, Users, Sites, Certificates, Services, System                         |
+| [Operations](https://lamalibre.github.io/lamaste/05-operations/monitoring)          | Monitoring, Upgrades, Backup & Restore, Uninstalling                                      |
+| [Reference](https://lamalibre.github.io/lamaste/06-reference/config-files)          | Config Files, Ports & Services, Installer Flags, Troubleshooting, Glossary                |
+| [E2E Results](https://lamalibre.github.io/lamaste/e2e-results/single-vm-e2e)        | Single-VM (15 tests) and Three-VM (11 tests) end-to-end test results                      |
 
 ## Built with Claude Code
 

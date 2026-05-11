@@ -27,7 +27,7 @@ The first step asks for two pieces of information:
 
 | Field      | Example           | Purpose                                         |
 | ---------- | ----------------- | ----------------------------------------------- |
-| **Domain** | `example.com`     | Base domain for your Lamaste installation      |
+| **Domain** | `example.com`     | Base domain for your Lamaste installation       |
 | **Email**  | `you@example.com` | Used for Let's Encrypt certificate registration |
 
 Enter your domain name (without `www.` or any prefix — just the base domain) and your email address, then click **Save & Continue**.

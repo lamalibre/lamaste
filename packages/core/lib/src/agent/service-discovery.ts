@@ -179,87 +179,138 @@ function defaultRegistry(): ServiceRegistry {
   return {
     services: [
       {
-        id: 'ollama', name: 'Ollama', defaultPort: 11434, category: 'ai',
+        id: 'ollama',
+        name: 'Ollama',
+        defaultPort: 11434,
+        category: 'ai',
         description: 'Local large language model server',
         detect: { binary: 'ollama', processName: 'ollama' },
       },
       {
-        id: 'comfyui', name: 'ComfyUI', defaultPort: 8188, category: 'ai',
+        id: 'comfyui',
+        name: 'ComfyUI',
+        defaultPort: 8188,
+        category: 'ai',
         description: 'Node-based Stable Diffusion GUI',
         detect: { processName: 'python.*comfyui' },
       },
       {
-        id: 'lm-studio', name: 'LM Studio', defaultPort: 1234, category: 'ai',
+        id: 'lm-studio',
+        name: 'LM Studio',
+        defaultPort: 1234,
+        category: 'ai',
         description: 'Desktop app for running local LLMs',
         detect: { processName: 'LM Studio' },
       },
       {
-        id: 'sd-webui', name: 'Stable Diffusion WebUI', defaultPort: 7860, category: 'ai',
+        id: 'sd-webui',
+        name: 'Stable Diffusion WebUI',
+        defaultPort: 7860,
+        category: 'ai',
         description: 'AUTOMATIC1111 Stable Diffusion web interface',
         detect: { processName: 'webui.py' },
       },
       {
-        id: 'open-webui', name: 'Open WebUI', defaultPort: 3000, category: 'ai',
+        id: 'open-webui',
+        name: 'Open WebUI',
+        defaultPort: 3000,
+        category: 'ai',
         description: 'Web interface for local LLMs',
         detect: { binary: 'open-webui', processName: 'open-webui' },
       },
       {
-        id: 'localai', name: 'LocalAI', defaultPort: 8080, category: 'ai',
+        id: 'localai',
+        name: 'LocalAI',
+        defaultPort: 8080,
+        category: 'ai',
         description: 'Self-hosted OpenAI-compatible API',
         detect: { binary: 'local-ai', processName: 'local-ai' },
       },
       {
-        id: 'jupyter', name: 'Jupyter', defaultPort: 8888, category: 'dev',
+        id: 'jupyter',
+        name: 'Jupyter',
+        defaultPort: 8888,
+        category: 'dev',
         description: 'Interactive notebook environment',
         detect: { binary: 'jupyter', processName: 'jupyter' },
       },
       {
-        id: 'vscode-server', name: 'VS Code Server', defaultPort: 8080, category: 'dev',
+        id: 'vscode-server',
+        name: 'VS Code Server',
+        defaultPort: 8080,
+        category: 'dev',
         description: 'Browser-based VS Code',
         detect: { binary: 'code-server', processName: 'code-server' },
       },
       {
-        id: 'n8n', name: 'n8n', defaultPort: 5678, category: 'dev',
+        id: 'n8n',
+        name: 'n8n',
+        defaultPort: 5678,
+        category: 'dev',
         description: 'Workflow automation platform',
         detect: { binary: 'n8n', processName: 'n8n' },
       },
       {
-        id: 'grafana', name: 'Grafana', defaultPort: 3000, category: 'monitoring',
+        id: 'grafana',
+        name: 'Grafana',
+        defaultPort: 3000,
+        category: 'monitoring',
         description: 'Observability and dashboarding platform',
         detect: { binary: 'grafana-server', processName: 'grafana-server' },
       },
       {
-        id: 'home-assistant', name: 'Home Assistant', defaultPort: 8123, category: 'media',
+        id: 'home-assistant',
+        name: 'Home Assistant',
+        defaultPort: 8123,
+        category: 'media',
         description: 'Home automation platform',
         detect: { processName: 'hass' },
       },
       {
-        id: 'plex', name: 'Plex', defaultPort: 32400, category: 'media',
+        id: 'plex',
+        name: 'Plex',
+        defaultPort: 32400,
+        category: 'media',
         description: 'Media server and streaming platform',
         detect: { processName: 'Plex Media Server' },
       },
       {
-        id: 'minio', name: 'MinIO', defaultPort: 9000, category: 'database',
+        id: 'minio',
+        name: 'MinIO',
+        defaultPort: 9000,
+        category: 'database',
         description: 'S3-compatible object storage',
         detect: { binary: 'minio', processName: 'minio' },
       },
       {
-        id: 'postgresql', name: 'PostgreSQL', defaultPort: 5432, category: 'database',
+        id: 'postgresql',
+        name: 'PostgreSQL',
+        defaultPort: 5432,
+        category: 'database',
         description: 'Relational database',
         detect: { binary: 'psql', processName: 'postgres' },
       },
       {
-        id: 'redis', name: 'Redis', defaultPort: 6379, category: 'database',
+        id: 'redis',
+        name: 'Redis',
+        defaultPort: 6379,
+        category: 'database',
         description: 'In-memory data store',
         detect: { binary: 'redis-cli', processName: 'redis-server' },
       },
       {
-        id: 'mongodb', name: 'MongoDB', defaultPort: 27017, category: 'database',
+        id: 'mongodb',
+        name: 'MongoDB',
+        defaultPort: 27017,
+        category: 'database',
         description: 'Document database',
         detect: { binary: 'mongosh', processName: 'mongod' },
       },
       {
-        id: 'elasticsearch', name: 'Elasticsearch', defaultPort: 9200, category: 'database',
+        id: 'elasticsearch',
+        name: 'Elasticsearch',
+        defaultPort: 9200,
+        category: 'database',
         description: 'Search and analytics engine',
         detect: { processName: 'elasticsearch' },
       },
@@ -359,11 +410,9 @@ export async function findProcessPid(processName: string): Promise<number | null
 export async function findListeningPort(pid: number): Promise<number | null> {
   try {
     const { execa } = await import('execa');
-    const { stdout } = await execa(
-      'lsof',
-      ['-anP', '-iTCP', '-sTCP:LISTEN', '-p', String(pid)],
-      { timeout: 5000 },
-    );
+    const { stdout } = await execa('lsof', ['-anP', '-iTCP', '-sTCP:LISTEN', '-p', String(pid)], {
+      timeout: 5000,
+    });
 
     // Parse lsof output — skip header line
     // Format: process PID user FD type device size/off node name
@@ -414,9 +463,7 @@ export async function detectService(def: ServiceDefinition): Promise<DetectedSer
   let detectedPort: number | null = null;
 
   // Step 1: Check if binary is installed via `which`
-  const installed = def.detect.binary
-    ? await isBinaryInstalled(def.detect.binary)
-    : false;
+  const installed = def.detect.binary ? await isBinaryInstalled(def.detect.binary) : false;
 
   // Step 2: Check if process is running via `pgrep` and find its port
   let running = false;

@@ -19,7 +19,6 @@ import { getConfig } from '../lib/config.js';
 import { getCaPaths } from '../lib/pki-paths.js';
 import { managementOnly } from '../middleware/onboarding-guard.js';
 
-// eslint-disable-next-line no-undef
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 const PLUGINS_DIR = `${STATE_DIR}/plugins`;
 

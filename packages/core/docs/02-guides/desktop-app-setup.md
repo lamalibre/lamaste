@@ -195,22 +195,22 @@ rm -rf ~/.lamalibre/lamaste/
 
 ## Quick Reference
 
-| Action               | Command / Location                        |
-| -------------------- | ----------------------------------------- |
-| **Install**          | `npx @lamalibre/create-lamaste-desktop` |
-| **Update**           | `npx @lamalibre/create-lamaste-desktop` |
-| **Agent setup**      | `npx @lamalibre/lamaste-agent setup --label <name>` |
-| **App location**     | `/Applications/Lamaste.app` (macOS)      |
-| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                 |
-| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`             |
-| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                  |
-| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                |
-| **Service registry** | `~/.lamalibre/lamaste/services.json`               |
-| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                    |
+| Action               | Command / Location                                    |
+| -------------------- | ----------------------------------------------------- |
+| **Install**          | `npx @lamalibre/create-lamaste-desktop`               |
+| **Update**           | `npx @lamalibre/create-lamaste-desktop`               |
+| **Agent setup**      | `npx @lamalibre/lamaste-agent setup --label <name>`   |
+| **App location**     | `/Applications/Lamaste.app` (macOS)                   |
+| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                    |
+| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`                |
+| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                     |
+| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                   |
+| **Service registry** | `~/.lamalibre/lamaste/services.json`                  |
+| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                       |
 | **Chisel logs**      | `~/.lamalibre/lamaste/agents/<label>/logs/chisel.log` |
-| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`) |
-| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`) |
-| **npm package**      | `@lamalibre/create-lamaste-desktop`     |
+| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`)           |
+| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`)  |
+| **npm package**      | `@lamalibre/create-lamaste-desktop`                   |
 
 ### Related Documentation
 

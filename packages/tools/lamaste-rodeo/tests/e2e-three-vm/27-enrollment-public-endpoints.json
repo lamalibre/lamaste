@@ -5,15 +5,8 @@
     "name": "Enrollment Public Endpoints",
     "suite": "e2e-three-vm",
     "description": "27 — Enrollment Public Endpoints (Three-VM)",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "curl", "jq", "openssl"]
   },
   "env": {
     "HOST_IP": {
@@ -25,12 +18,7 @@
       "value": "enroll-public-27"
     }
   },
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete",
-    "host_api_patch"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete", "host_api_patch"],
   "cleanup": [
     {
       "id": "cleanup-agent-cert",
@@ -181,9 +169,7 @@
             "path": "certs/agent/enroll",
             "body": {
               "label": "${TEST_LABEL}",
-              "capabilities": [
-                "tunnels:read"
-              ]
+              "capabilities": ["tunnels:read"]
             }
           },
           "capture": [
@@ -571,9 +557,7 @@
             "path": "certs/agent/enroll",
             "body": {
               "label": "${TEST_LABEL}-lookup",
-              "capabilities": [
-                "tunnels:read"
-              ]
+              "capabilities": ["tunnels:read"]
             }
           },
           "capture": [

@@ -157,8 +157,10 @@ export const desktopAdminClient = {
   createGatekeeperGroup: (data) => invoke('admin_create_gatekeeper_group', { data }),
   updateGatekeeperGroup: (name, data) => invoke('admin_update_gatekeeper_group', { name, data }),
   deleteGatekeeperGroup: (name) => invoke('admin_delete_gatekeeper_group', { name }),
-  addGatekeeperGroupMembers: (name, data) => invoke('admin_add_gatekeeper_group_members', { name, data }),
-  removeGatekeeperGroupMember: (name, username) => invoke('admin_remove_gatekeeper_group_member', { name, username }),
+  addGatekeeperGroupMembers: (name, data) =>
+    invoke('admin_add_gatekeeper_group_members', { name, data }),
+  removeGatekeeperGroupMember: (name, username) =>
+    invoke('admin_remove_gatekeeper_group_member', { name, username }),
 
   // --- Gatekeeper Grants ---
   getGatekeeperGrants: (filter) => invoke('admin_get_gatekeeper_grants', { filter }),

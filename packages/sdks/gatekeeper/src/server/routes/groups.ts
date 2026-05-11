@@ -11,13 +11,22 @@ import {
 } from '../../lib/groups.js';
 
 const CreateGroupSchema = z.object({
-  name: z.string().min(2).max(63).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/),
+  name: z
+    .string()
+    .min(2)
+    .max(63)
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/),
   description: z.string().max(500).optional().default(''),
   createdBy: z.string().max(100).optional(),
 });
 
 const UpdateGroupSchema = z.object({
-  name: z.string().min(2).max(63).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/).optional(),
+  name: z
+    .string()
+    .min(2)
+    .max(63)
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/)
+    .optional(),
   description: z.string().max(500).optional(),
 });
 
@@ -32,7 +41,9 @@ export async function groupRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       body = CreateGroupSchema.parse(request.body);
     } catch (err) {
-      return reply.code(400).send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
     }
 
     try {
@@ -78,7 +89,9 @@ export async function groupRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       body = UpdateGroupSchema.parse(request.body);
     } catch (err) {
-      return reply.code(400).send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
     }
 
     try {
@@ -109,7 +122,9 @@ export async function groupRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       body = AddMembersSchema.parse(request.body);
     } catch (err) {
-      return reply.code(400).send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
     }
 
     try {
@@ -122,14 +137,17 @@ export async function groupRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // DELETE /api/groups/:name/members/:username — remove member
-  fastify.delete('/groups/:name/members/:username', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { name, username } = request.params as { name: string; username: string };
-    try {
-      const group = await removeMembers(name, [username]);
-      return { ok: true, group };
-    } catch (err) {
-      const e = err as Error & { statusCode?: number };
-      return reply.code(e.statusCode ?? 500).send({ error: e.message });
-    }
-  });
+  fastify.delete(
+    '/groups/:name/members/:username',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { name, username } = request.params as { name: string; username: string };
+      try {
+        const group = await removeMembers(name, [username]);
+        return { ok: true, group };
+      } catch (err) {
+        const e = err as Error & { statusCode?: number };
+        return reply.code(e.statusCode ?? 500).send({ error: e.message });
+      }
+    },
+  );
 }

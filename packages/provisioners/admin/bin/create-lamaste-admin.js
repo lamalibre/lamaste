@@ -20,7 +20,8 @@ if (args.includes('--json')) {
   if (!panelUrl || !p12Path || !outputP12Path || !p12Password) {
     const line = JSON.stringify({
       event: 'error',
-      message: 'Missing required arguments. Usage: create-lamaste-admin --json --panel-url <url> --p12-path <path> --output-p12 <path> [--password-file <path>] (with LAMALIBRE_LAMASTE_P12_PASS env var)',
+      message:
+        'Missing required arguments. Usage: create-lamaste-admin --json --panel-url <url> --p12-path <path> --output-p12 <path> [--password-file <path>] (with LAMALIBRE_LAMASTE_P12_PASS env var)',
       recoverable: false,
     });
     process.stdout.write(line + '\n');

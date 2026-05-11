@@ -78,10 +78,10 @@ export async function runStatus({ json }) {
   console.log(b('  Services'));
   console.log(d('  ' + '\u2500'.repeat(40)));
 
-  printService('Panel', panelStatus, { b, g, r, d });
-  printService('Gatekeeper', gatekeeperStatus, { b, g, r, d });
-  printService('Nginx', nginxStatus, { b, g, r, d });
-  printService('Authelia', autheliaStatus, { b, g, r, d });
+  printService('Panel', panelStatus, { b, g, r });
+  printService('Gatekeeper', gatekeeperStatus, { b, g, r });
+  printService('Nginx', nginxStatus, { b, g, r });
+  printService('Authelia', autheliaStatus, { b, g, r });
 
   if (certs.length > 0) {
     console.log('');
@@ -105,7 +105,7 @@ export async function runStatus({ json }) {
  * @param {{ active: boolean, status: string }} info
  * @param {Record<string, Function>} colors
  */
-function printService(name, info, { b, g, r, d }) {
+function printService(name, info, { b, g, r }) {
   const pad = name.length < 12 ? ' '.repeat(12 - name.length) : ' ';
   const statusText = info.active ? g('active') : r(info.status || 'inactive');
   console.log(`  ${b(name + ':')}${pad}${statusText}`);

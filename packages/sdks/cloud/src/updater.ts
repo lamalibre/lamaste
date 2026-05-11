@@ -13,17 +13,17 @@ import crypto from 'node:crypto';
 import { writeFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { UpdateStep, UpdateStepEvent, UpdateProgressEvent, UpdateOptions, ServerEntry } from './types.js';
+import type {
+  UpdateStep,
+  UpdateStepEvent,
+  UpdateProgressEvent,
+  UpdateOptions,
+  ServerEntry,
+} from './types.js';
 import { CloudError } from './errors.js';
 import { DigitalOceanProvider } from './digitalocean/index.js';
 import { assertValidDOToken } from './digitalocean/scopes.js';
-import {
-  generateKeyPair,
-  waitForSSH,
-  sshExec,
-  cleanupKeyPair,
-  type SSHKeyPair,
-} from './ssh.js';
+import { generateKeyPair, waitForSSH, sshExec, cleanupKeyPair, type SSHKeyPair } from './ssh.js';
 import { loadServers } from './registry.js';
 import { CleanupStack } from './cleanup.js';
 import { LAMASTE_DIR } from '@lamalibre/lamaste/agent';
@@ -36,8 +36,14 @@ function emit(event: UpdateProgressEvent): void {
   process.stdout.write(JSON.stringify(event) + '\n');
 }
 
-function emitStep(step: UpdateStep, status: 'running' | 'done' | 'failed', data?: Record<string, unknown> | undefined): void {
-  const ev: UpdateStepEvent = data ? { event: 'step', step, status, data } : { event: 'step', step, status };
+function emitStep(
+  step: UpdateStep,
+  status: 'running' | 'done' | 'failed',
+  data?: Record<string, unknown> | undefined,
+): void {
+  const ev: UpdateStepEvent = data
+    ? { event: 'step', step, status, data }
+    : { event: 'step', step, status };
   emit(ev);
 }
 

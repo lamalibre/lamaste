@@ -150,10 +150,7 @@ export async function doPut(
  * Make an authenticated DELETE request to the DO API.
  * Returns void — DELETE responses typically have no body.
  */
-export async function doDelete(
-  path: string,
-  options: DOApiOptions,
-): Promise<void> {
+export async function doDelete(path: string, options: DOApiOptions): Promise<void> {
   const { token, timeoutMs = 30_000 } = options;
   const url = `${BASE_URL}${path}`;
 

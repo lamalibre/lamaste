@@ -34,16 +34,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { envDetectTool } from './tools/env.js';
 import { vmCreateTool, vmListTool, vmDeleteTool, vmExecTool } from './tools/vm.js';
-import {
-  snapshotCreateTool,
-  snapshotRestoreTool,
-  snapshotListTool,
-} from './tools/snapshots.js';
-import {
-  provisionTool,
-  provisionRoleTool,
-  hotReloadTool,
-} from './tools/provision.js';
+import { snapshotCreateTool, snapshotRestoreTool, snapshotListTool } from './tools/snapshots.js';
+import { provisionTool, provisionRoleTool, hotReloadTool } from './tools/provision.js';
 import {
   testRunTool,
   testRunAllTool,

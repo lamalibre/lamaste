@@ -87,7 +87,11 @@ async function loadSettings(): Promise<GatekeeperSettings> {
  */
 const dirWatchers = new Map<string, Map<string, () => void>>();
 
-function watchFile(filePath: string, reload: () => Promise<void>, logger: { info: (msg: string) => void }): void {
+function watchFile(
+  filePath: string,
+  reload: () => Promise<void>,
+  logger: { info: (msg: string) => void },
+): void {
   const dir = path.dirname(filePath);
   const base = path.basename(filePath);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -151,9 +155,13 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   });
 
   // Watch state files for changes
-  watchFile(tunnelsPath, async () => {
-    tunnelsCache = await loadTunnels();
-  }, server.log);
+  watchFile(
+    tunnelsPath,
+    async () => {
+      tunnelsCache = await loadTunnels();
+    },
+    server.log,
+  );
 
   // TODO(sqlite-step-4): groups.json and access-grants.json are now
   // .migrated stubs after first SQLite open. These watch registrations stay
@@ -162,20 +170,32 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   // not invalidate the in-memory session cache without a daemon restart.
   // Replace with a DB-modtime sentinel that the writer touches on commit
   // (or polled `PRAGMA data_version`) once Step 4 (rodeo) is green.
-  watchFile(path.join(dataDir, GROUPS_FILE), async () => {
-    // Groups are read from SQLite on each call,
-    // but clearing session cache ensures authz re-evaluates group membership
-    sessionCache.clear();
-  }, server.log);
+  watchFile(
+    path.join(dataDir, GROUPS_FILE),
+    async () => {
+      // Groups are read from SQLite on each call,
+      // but clearing session cache ensures authz re-evaluates group membership
+      sessionCache.clear();
+    },
+    server.log,
+  );
 
-  watchFile(path.join(dataDir, GRANTS_FILE), async () => {
-    // Same — clear session cache so authz picks up grant changes
-    sessionCache.clear();
-  }, server.log);
+  watchFile(
+    path.join(dataDir, GRANTS_FILE),
+    async () => {
+      // Same — clear session cache so authz picks up grant changes
+      sessionCache.clear();
+    },
+    server.log,
+  );
 
-  watchFile(settingsPath, async () => {
-    settingsCache = await loadSettings();
-  }, server.log);
+  watchFile(
+    settingsPath,
+    async () => {
+      settingsCache = await loadSettings();
+    },
+    server.log,
+  );
 
   // Load or generate API secret for localhost management auth.
   // The secret is wrapped in a JSON envelope and written atomically so a

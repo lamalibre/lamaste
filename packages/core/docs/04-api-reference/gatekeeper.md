@@ -24,11 +24,11 @@ Create a new Gatekeeper group.
 
 **Request body:**
 
-| Field         | Type   | Required | Description                                              |
-| ------------- | ------ | -------- | -------------------------------------------------------- |
+| Field         | Type   | Required | Description                                               |
+| ------------- | ------ | -------- | --------------------------------------------------------- |
 | `name`        | string | Yes      | Group name (2-63 chars, lowercase alphanumeric + hyphens) |
-| `description` | string | No       | Human-readable description                               |
-| `createdBy`   | string | No       | Creator identifier                                       |
+| `description` | string | No       | Human-readable description                                |
+| `createdBy`   | string | No       | Creator identifier                                        |
 
 **Response (201):**
 
@@ -117,10 +117,10 @@ Update a group's name or description.
 
 **Request body:**
 
-| Field         | Type   | Required | Description                                              |
-| ------------- | ------ | -------- | -------------------------------------------------------- |
+| Field         | Type   | Required | Description                                                   |
+| ------------- | ------ | -------- | ------------------------------------------------------------- |
 | `name`        | string | No       | New group name (2-63 chars, lowercase alphanumeric + hyphens) |
-| `description` | string | No       | New description                                          |
+| `description` | string | No       | New description                                               |
 
 **Response (200):**
 
@@ -176,9 +176,9 @@ Add one or more members to a group.
 
 **Request body:**
 
-| Field       | Type     | Required | Description                          |
-| ----------- | -------- | -------- | ------------------------------------ |
-| `usernames` | string[] | Yes      | Usernames to add (1-50 per request)  |
+| Field       | Type     | Required | Description                         |
+| ----------- | -------- | -------- | ----------------------------------- |
+| `usernames` | string[] | Yes      | Usernames to add (1-50 per request) |
 
 **Response (201):**
 
@@ -242,13 +242,13 @@ Create a new authorization grant linking a principal (user or group) to a resour
 
 **Request body:**
 
-| Field           | Type   | Required | Description                                       |
-| --------------- | ------ | -------- | ------------------------------------------------- |
-| `principalType` | string | Yes      | `"user"` or `"group"`                             |
-| `principalId`   | string | Yes      | Username or group name                            |
-| `resourceType`  | string | Yes      | Type of resource being granted access to          |
-| `resourceId`    | string | Yes      | Identifier of the specific resource               |
-| `context`       | object | No       | Additional context metadata for the grant         |
+| Field           | Type   | Required | Description                               |
+| --------------- | ------ | -------- | ----------------------------------------- |
+| `principalType` | string | Yes      | `"user"` or `"group"`                     |
+| `principalId`   | string | Yes      | Username or group name                    |
+| `resourceType`  | string | Yes      | Type of resource being granted access to  |
+| `resourceId`    | string | Yes      | Identifier of the specific resource       |
+| `context`       | object | No       | Additional context metadata for the grant |
 
 **Response (201):**
 
@@ -284,13 +284,13 @@ Returns all grants, optionally filtered by query parameters.
 
 **Query parameters:**
 
-| Parameter       | Type    | Description                              |
-| --------------- | ------- | ---------------------------------------- |
-| `principalType` | string  | Filter by `"user"` or `"group"`          |
-| `principalId`   | string  | Filter by username or group name         |
-| `resourceType`  | string  | Filter by resource type                  |
-| `resourceId`    | string  | Filter by resource identifier            |
-| `used`          | boolean | Filter by usage status                   |
+| Parameter       | Type    | Description                      |
+| --------------- | ------- | -------------------------------- |
+| `principalType` | string  | Filter by `"user"` or `"group"`  |
+| `principalId`   | string  | Filter by username or group name |
+| `resourceType`  | string  | Filter by resource type          |
+| `resourceId`    | string  | Filter by resource identifier    |
+| `used`          | boolean | Filter by usage status           |
 
 **Response (200):**
 
@@ -390,11 +390,11 @@ Test whether a user has access to a specific resource. Useful for debugging auth
 
 **Query parameters:**
 
-| Parameter      | Type   | Required | Description                     |
-| -------------- | ------ | -------- | ------------------------------- |
-| `username`     | string | Yes      | Username to check               |
-| `resourceType` | string | Yes      | Type of resource                |
-| `resourceId`   | string | Yes      | Identifier of the resource      |
+| Parameter      | Type   | Required | Description                |
+| -------------- | ------ | -------- | -------------------------- |
+| `username`     | string | Yes      | Username to check          |
+| `resourceType` | string | Yes      | Type of resource           |
+| `resourceId`   | string | Yes      | Identifier of the resource |
 
 **Response (200) -- access granted:**
 
@@ -480,15 +480,15 @@ Update Gatekeeper settings. Only provided fields are changed; omitted fields rem
 
 **Request body:**
 
-| Field                     | Type    | Required | Description                                  |
-| ------------------------- | ------- | -------- | -------------------------------------------- |
-| `adminEmail`              | string  | No       | Admin contact email                          |
-| `adminName`               | string  | No       | Admin display name                           |
-| `slackChannel`            | string  | No       | Slack channel for notifications              |
-| `teamsChannel`            | string  | No       | Microsoft Teams channel for notifications    |
-| `sessionCacheTtlMs`       | number  | No       | Session cache TTL in milliseconds            |
-| `accessLoggingEnabled`    | boolean | No       | Enable or disable access logging             |
-| `accessLogRetentionDays`  | number  | No       | Number of days to retain access log entries   |
+| Field                    | Type    | Required | Description                                 |
+| ------------------------ | ------- | -------- | ------------------------------------------- |
+| `adminEmail`             | string  | No       | Admin contact email                         |
+| `adminName`              | string  | No       | Admin display name                          |
+| `slackChannel`           | string  | No       | Slack channel for notifications             |
+| `teamsChannel`           | string  | No       | Microsoft Teams channel for notifications   |
+| `sessionCacheTtlMs`      | number  | No       | Session cache TTL in milliseconds           |
+| `accessLoggingEnabled`   | boolean | No       | Enable or disable access logging            |
+| `accessLogRetentionDays` | number  | No       | Number of days to retain access log entries |
 
 **Response (200):**
 
@@ -523,10 +523,10 @@ Returns access log entries for auditing authorization decisions.
 
 **Query parameters:**
 
-| Parameter | Type   | Required | Description                            |
-| --------- | ------ | -------- | -------------------------------------- |
+| Parameter | Type   | Required | Description                                      |
+| --------- | ------ | -------- | ------------------------------------------------ |
 | `limit`   | number | No       | Max entries to return (default varies, max 1000) |
-| `offset`  | number | No       | Number of entries to skip              |
+| `offset`  | number | No       | Number of entries to skip                        |
 
 **Response (200):**
 
@@ -583,10 +583,10 @@ This is the nginx `auth_request` target. nginx calls this endpoint on every requ
 
 **Response codes:**
 
-| Status | Meaning | Description                                                      |
-| ------ | ------- | ---------------------------------------------------------------- |
-| 200    | Pass    | User is authenticated and authorized; request proceeds           |
-| 401    | No auth | No valid Authelia session; nginx redirects to login              |
+| Status | Meaning | Description                                                                       |
+| ------ | ------- | --------------------------------------------------------------------------------- |
+| 200    | Pass    | User is authenticated and authorized; request proceeds                            |
+| 401    | No auth | No valid Authelia session; nginx redirects to login                               |
 | 403    | Denied  | User is authenticated but lacks a grant; returns an HTML body with denial details |
 
 This endpoint is bound to `127.0.0.1` only. External traffic never reaches it directly -- nginx forwards the subrequest internally.

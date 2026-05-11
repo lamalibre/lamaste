@@ -57,21 +57,9 @@ export async function install({ mcp = false, cliOnly = false } = {}) {
   const mode = mcp ? 'CLI + Desktop + MCP' : cliOnly ? 'CLI only' : 'CLI + Desktop';
 
   console.log('');
-  console.log(
-    chalk.bold.cyan(
-      '  ┌─────────────────────────────────────────────┐',
-    ),
-  );
-  console.log(
-    chalk.bold.cyan(
-      '  │     Lamaste E2E Infrastructure Installer    │',
-    ),
-  );
-  console.log(
-    chalk.bold.cyan(
-      '  └─────────────────────────────────────────────┘',
-    ),
-  );
+  console.log(chalk.bold.cyan('  ┌─────────────────────────────────────────────┐'));
+  console.log(chalk.bold.cyan('  │     Lamaste E2E Infrastructure Installer    │'));
+  console.log(chalk.bold.cyan('  └─────────────────────────────────────────────┘'));
   console.log(`\n  Mode: ${chalk.cyan(mode)}\n`);
 
   const steps = [];
@@ -85,7 +73,7 @@ export async function install({ mcp = false, cliOnly = false } = {}) {
     console.error(
       chalk.red(
         '\n  Could not find lamaste repository. Run from within the repo,\n' +
-        '  or clone it first: git clone https://github.com/lamalibre/lamaste.git\n',
+          '  or clone it first: git clone https://github.com/lamalibre/lamaste.git\n',
       ),
     );
     process.exit(1);
@@ -110,7 +98,9 @@ export async function install({ mcp = false, cliOnly = false } = {}) {
     console.log(chalk.green(stdout.split('\n')[0]));
   } catch {
     console.log(chalk.red('not found'));
-    console.error(chalk.red('\n  Multipass is not installed. Install from https://multipass.run\n'));
+    console.error(
+      chalk.red('\n  Multipass is not installed. Install from https://multipass.run\n'),
+    );
     process.exit(1);
   }
 
@@ -151,20 +141,16 @@ export async function install({ mcp = false, cliOnly = false } = {}) {
       console.log(chalk.green(stdout.trim()));
     } catch {
       console.log(chalk.red('not found'));
-      console.error(chalk.red('\n  Claude Code CLI not found. Install from https://claude.com/claude-code\n'));
+      console.error(
+        chalk.red('\n  Claude Code CLI not found. Install from https://claude.com/claude-code\n'),
+      );
       process.exit(1);
     }
 
     process.stdout.write(chalk.dim('  Registering MCP server... '));
     const serverPath = path.join(repoRoot, 'packages', 'provisioners', 'e2e', 'src', 'index.js');
     await execa('claude', ['mcp', 'remove', 'e2e'], { reject: false });
-    await execa('claude', [
-      'mcp', 'add',
-      '--transport', 'stdio',
-      'e2e',
-      '--',
-      'node', serverPath,
-    ]);
+    await execa('claude', ['mcp', 'add', '--transport', 'stdio', 'e2e', '--', 'node', serverPath]);
     console.log(chalk.green('registered as "e2e"'));
   }
 

@@ -4,15 +4,15 @@
 
 ## Port Allocation
 
-| Port | Binding     | Service        | Protocol | Purpose                                                 |
-| ---- | ----------- | -------------- | -------- | ------------------------------------------------------- |
-| 22   | `0.0.0.0`   | sshd           | TCP      | SSH access (installer only, disposable)                 |
-| 443  | `0.0.0.0`   | nginx          | TCP      | HTTPS — domain-based access (panel, auth, tunnel, apps) |
-| 9292 | `0.0.0.0`   | nginx          | TCP      | HTTPS — IP-based panel access (mTLS, self-signed cert)  |
-| 3100 | `127.0.0.1` | lamalibre-lamaste-serverd | TCP      | Panel server (Fastify API + static files)               |
-| 9090 | `127.0.0.1` | chisel         | TCP      | Chisel tunnel server (WebSocket)                        |
-| 9091 | `127.0.0.1` | authelia       | TCP      | Authelia authentication server                          |
-| 9294 | `127.0.0.1` | lamalibre-lamaste-gatekeeper | TCP | Tunnel authorization (auth_request target)              |
+| Port | Binding     | Service                      | Protocol | Purpose                                                 |
+| ---- | ----------- | ---------------------------- | -------- | ------------------------------------------------------- |
+| 22   | `0.0.0.0`   | sshd                         | TCP      | SSH access (installer only, disposable)                 |
+| 443  | `0.0.0.0`   | nginx                        | TCP      | HTTPS — domain-based access (panel, auth, tunnel, apps) |
+| 9292 | `0.0.0.0`   | nginx                        | TCP      | HTTPS — IP-based panel access (mTLS, self-signed cert)  |
+| 3100 | `127.0.0.1` | lamalibre-lamaste-serverd    | TCP      | Panel server (Fastify API + static files)               |
+| 9090 | `127.0.0.1` | chisel                       | TCP      | Chisel tunnel server (WebSocket)                        |
+| 9091 | `127.0.0.1` | authelia                     | TCP      | Authelia authentication server                          |
+| 9294 | `127.0.0.1` | lamalibre-lamaste-gatekeeper | TCP      | Tunnel authorization (auth_request target)              |
 
 **Key points:**
 
@@ -23,15 +23,15 @@
 
 ## Systemd Units
 
-| Unit Name                | Type   | User     | Description                                 |
-| ------------------------ | ------ | -------- | ------------------------------------------- |
-| `lamalibre-lamaste-serverd.service` | simple | lamaste | Panel server (Fastify Node.js API)          |
-| `chisel.service`         | simple | nobody   | Chisel tunnel server (reverse mode)         |
-| `authelia.service`       | simple | root     | Authelia authentication server              |
-| `lamalibre-lamaste-gatekeeper.service` | simple | lamaste | Gatekeeper tunnel authorization service |
-| `nginx.service`          | —      | root     | nginx reverse proxy (system package)        |
-| `fail2ban.service`       | —      | root     | Intrusion prevention (system package)       |
-| `certbot.timer`          | timer  | root     | Automatic Let's Encrypt certificate renewal |
+| Unit Name                              | Type   | User    | Description                                 |
+| -------------------------------------- | ------ | ------- | ------------------------------------------- |
+| `lamalibre-lamaste-serverd.service`    | simple | lamaste | Panel server (Fastify Node.js API)          |
+| `chisel.service`                       | simple | nobody  | Chisel tunnel server (reverse mode)         |
+| `authelia.service`                     | simple | root    | Authelia authentication server              |
+| `lamalibre-lamaste-gatekeeper.service` | simple | lamaste | Gatekeeper tunnel authorization service     |
+| `nginx.service`                        | —      | root    | nginx reverse proxy (system package)        |
+| `fail2ban.service`                     | —      | root    | Intrusion prevention (system package)       |
+| `certbot.timer`                        | timer  | root    | Automatic Let's Encrypt certificate renewal |
 
 ### Common systemctl Commands
 
@@ -47,15 +47,15 @@
 
 ### Service Unit Files
 
-| Unit             | File Path                                               |
-| ---------------- | ------------------------------------------------------- |
-| `lamalibre-lamaste-serverd` | `/etc/systemd/system/lamalibre-lamaste-serverd.service`            |
-| `chisel`         | `/etc/systemd/system/chisel.service`                    |
-| `authelia`       | `/etc/systemd/system/authelia.service`                  |
+| Unit                           | File Path                                                  |
+| ------------------------------ | ---------------------------------------------------------- |
+| `lamalibre-lamaste-serverd`    | `/etc/systemd/system/lamalibre-lamaste-serverd.service`    |
+| `chisel`                       | `/etc/systemd/system/chisel.service`                       |
+| `authelia`                     | `/etc/systemd/system/authelia.service`                     |
 | `lamalibre-lamaste-gatekeeper` | `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service` |
-| `nginx`          | `/lib/systemd/system/nginx.service` (system package)    |
-| `fail2ban`       | `/lib/systemd/system/fail2ban.service` (system package) |
-| `certbot.timer`  | `/lib/systemd/system/certbot.timer` (system package)    |
+| `nginx`                        | `/lib/systemd/system/nginx.service` (system package)       |
+| `fail2ban`                     | `/lib/systemd/system/fail2ban.service` (system package)    |
+| `certbot.timer`                | `/lib/systemd/system/certbot.timer` (system package)       |
 
 ### Service Startup Order
 
@@ -75,30 +75,30 @@ All services start after `network.target` and are independent of each other. If 
 
 ### Configuration
 
-| Path                                     | Description                                 |
-| ---------------------------------------- | ------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`               | Panel server configuration                  |
-| `/etc/lamalibre/lamaste/tunnels.json`             | Tunnel definitions                          |
-| `/etc/lamalibre/lamaste/sites.json`               | Static site definitions                     |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`       | Ticket scope registry (scopes, instances, assignments) |
-| `/etc/lamalibre/lamaste/tickets.json`             | Ticket and session store                    |
-| `/etc/lamalibre/lamaste/groups.json`              | Lamaste group definitions and membership   |
-| `/etc/lamalibre/lamaste/access-grants.json`       | Generic access grants (principal → resource) |
-| `/etc/lamalibre/lamaste/gatekeeper.json`          | Gatekeeper settings (cache TTL, logging)    |
-| `/etc/lamalibre/lamaste/access-request-log.json`  | Optional denied access log                  |
-| `/etc/authelia/configuration.yml`        | Authelia server configuration               |
-| `/etc/authelia/users.yml`                | Authelia user database                      |
-| `/etc/authelia/.secrets.json`            | Authelia secrets (JWT, session, encryption) |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf` | mTLS configuration snippet                  |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition |
-| `/etc/sudoers.d/lamaste`                | Sudo rules for lamaste user                |
-| `/etc/fail2ban/jail.d/lamaste.conf`     | fail2ban jail configuration                 |
-| `/etc/sysctl.d/99-lamaste.conf`         | Kernel parameter (swappiness)               |
+| Path                                                     | Description                                            |
+| -------------------------------------------------------- | ------------------------------------------------------ |
+| `/etc/lamalibre/lamaste/panel.json`                      | Panel server configuration                             |
+| `/etc/lamalibre/lamaste/tunnels.json`                    | Tunnel definitions                                     |
+| `/etc/lamalibre/lamaste/sites.json`                      | Static site definitions                                |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`              | Ticket scope registry (scopes, instances, assignments) |
+| `/etc/lamalibre/lamaste/tickets.json`                    | Ticket and session store                               |
+| `/etc/lamalibre/lamaste/groups.json`                     | Lamaste group definitions and membership               |
+| `/etc/lamalibre/lamaste/access-grants.json`              | Generic access grants (principal → resource)           |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                 | Gatekeeper settings (cache TTL, logging)               |
+| `/etc/lamalibre/lamaste/access-request-log.json`         | Optional denied access log                             |
+| `/etc/authelia/configuration.yml`                        | Authelia server configuration                          |
+| `/etc/authelia/users.yml`                                | Authelia user database                                 |
+| `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)            |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | mTLS configuration snippet                             |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                 |
+| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user                            |
+| `/etc/fail2ban/jail.d/lamaste.conf`                      | fail2ban jail configuration                            |
+| `/etc/sysctl.d/99-lamaste.conf`                          | Kernel parameter (swappiness)                          |
 
 ### PKI Certificates
 
-| Path                                    | Description                                          |
-| --------------------------------------- | ---------------------------------------------------- |
+| Path                                             | Description                                          |
+| ------------------------------------------------ | ---------------------------------------------------- |
 | `/etc/lamalibre/lamaste/pki/ca.key`              | Certificate Authority private key (4096-bit RSA)     |
 | `/etc/lamalibre/lamaste/pki/ca.crt`              | Certificate Authority certificate (10-year validity) |
 | `/etc/lamalibre/lamaste/pki/client.key`          | Client certificate private key (4096-bit RSA)        |
@@ -119,8 +119,8 @@ All services start after `network.target` and are independent of each other. If 
 
 ### nginx Vhosts
 
-| Path                                                  | Description                              |
-| ----------------------------------------------------- | ---------------------------------------- |
+| Path                                                           | Description                              |
+| -------------------------------------------------------------- | ---------------------------------------- |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-ip`        | IP:9292 panel vhost (mTLS, self-signed)  |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-domain`    | Domain panel vhost (mTLS, Let's Encrypt) |
 | `/etc/nginx/sites-available/lamalibre-lamaste-auth`            | Authelia portal vhost                    |
@@ -130,38 +130,38 @@ All services start after `network.target` and are independent of each other. If 
 
 ### Application Files
 
-| Path                                        | Description               |
-| ------------------------------------------- | ------------------------- |
-| `/opt/lamalibre/lamaste/lamaste-serverd/`               | Fastify backend (Node.js) |
-| `/opt/lamalibre/lamaste/lamaste-serverd/src/index.js`   | Server entry point        |
-| `/opt/lamalibre/lamaste/lamaste-serverd/package.json`   | Server dependencies       |
+| Path                                                      | Description               |
+| --------------------------------------------------------- | ------------------------- |
+| `/opt/lamalibre/lamaste/lamaste-serverd/`                 | Fastify backend (Node.js) |
+| `/opt/lamalibre/lamaste/lamaste-serverd/src/index.js`     | Server entry point        |
+| `/opt/lamalibre/lamaste/lamaste-serverd/package.json`     | Server dependencies       |
 | `/opt/lamalibre/lamaste/lamaste-server-ui/`               | React frontend            |
 | `/opt/lamalibre/lamaste/lamaste-server-ui/dist/`          | Built static assets       |
 | `/opt/lamalibre/lamaste/lamaste-server-ui/cert-help.html` | Certificate help page     |
-| `/var/www/lamaste/`                        | Static site uploads       |
+| `/var/www/lamaste/`                                       | Static site uploads       |
 
 ## Log Locations
 
-| Service        | Log Method      | View Command                                                 |
-| -------------- | --------------- | ------------------------------------------------------------ |
-| lamalibre-lamaste-serverd | journald        | `journalctl -u lamalibre-lamaste-serverd`                               |
-| lamalibre-lamaste-gatekeeper | journald   | `journalctl -u lamalibre-lamaste-gatekeeper`                          |
-| chisel         | journald        | `journalctl -u chisel`                                       |
-| authelia       | journald + file | `journalctl -u authelia` or `/var/log/authelia/authelia.log` |
-| nginx          | file            | `/var/log/nginx/access.log` and `/var/log/nginx/error.log`   |
-| fail2ban       | file            | `/var/log/fail2ban.log`                                      |
-| certbot        | file            | `/var/log/letsencrypt/letsencrypt.log`                       |
+| Service                      | Log Method      | View Command                                                 |
+| ---------------------------- | --------------- | ------------------------------------------------------------ |
+| lamalibre-lamaste-serverd    | journald        | `journalctl -u lamalibre-lamaste-serverd`                    |
+| lamalibre-lamaste-gatekeeper | journald        | `journalctl -u lamalibre-lamaste-gatekeeper`                 |
+| chisel                       | journald        | `journalctl -u chisel`                                       |
+| authelia                     | journald + file | `journalctl -u authelia` or `/var/log/authelia/authelia.log` |
+| nginx                        | file            | `/var/log/nginx/access.log` and `/var/log/nginx/error.log`   |
+| fail2ban                     | file            | `/var/log/fail2ban.log`                                      |
+| certbot                      | file            | `/var/log/letsencrypt/letsencrypt.log`                       |
 
 ### Useful Log Commands
 
-| Command                                     | Description                    |
-| ------------------------------------------- | ------------------------------ |
-| `journalctl -u lamalibre-lamaste-serverd -f`           | Follow panel logs in real time |
-| `journalctl -u chisel --since "1 hour ago"` | Last hour of Chisel logs       |
-| `journalctl -u authelia -n 50`              | Last 50 Authelia log entries   |
-| `tail -f /var/log/nginx/error.log`          | Follow nginx error log         |
-| `tail -f /var/log/fail2ban.log`             | Follow fail2ban activity       |
-| `journalctl --disk-usage`                   | Check journal disk usage       |
+| Command                                      | Description                    |
+| -------------------------------------------- | ------------------------------ |
+| `journalctl -u lamalibre-lamaste-serverd -f` | Follow panel logs in real time |
+| `journalctl -u chisel --since "1 hour ago"`  | Last hour of Chisel logs       |
+| `journalctl -u authelia -n 50`               | Last 50 Authelia log entries   |
+| `tail -f /var/log/nginx/error.log`           | Follow nginx error log         |
+| `tail -f /var/log/fail2ban.log`              | Follow fail2ban activity       |
+| `journalctl --disk-usage`                    | Check journal disk usage       |
 
 ## Binary Locations
 

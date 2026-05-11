@@ -36,12 +36,7 @@ import {
   injectChiselFingerprint,
 } from '../lib/service-config.js';
 import { saveChiselCredential } from '../lib/chisel-credential.js';
-import {
-  isAgentLoaded,
-  unloadAgent,
-  loadAgent,
-  getAgentPid,
-} from '@lamalibre/lamaste/agent';
+import { isAgentLoaded, unloadAgent, loadAgent, getAgentPid } from '@lamalibre/lamaste/agent';
 import { generateKeypairAndCSR, secureDelete } from '../lib/keychain.js';
 import { storeEnrolledCert } from '../lib/cert-store.js';
 
@@ -117,10 +112,10 @@ async function runJsonStep(ctx, step) {
 
   emitJson({ event: 'step', step: step.key, status: 'running' });
 
-  const taskList = new Listr(
-    [{ title: step.title, task: () => step.fn(ctx) }],
-    { renderer: 'silent', exitOnError: true },
-  );
+  const taskList = new Listr([{ title: step.title, task: () => step.fn(ctx) }], {
+    renderer: 'silent',
+    exitOnError: true,
+  });
 
   try {
     await taskList.run();
@@ -151,7 +146,12 @@ export async function runSetup(options = {}) {
   }
 
   if (json) {
-    emitJson({ event: 'error', message: 'Token is required for --json mode. Provide LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN env var or --token flag.', recoverable: false });
+    emitJson({
+      event: 'error',
+      message:
+        'Token is required for --json mode. Provide LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN env var or --token flag.',
+      recoverable: false,
+    });
     process.exit(1);
   }
 
@@ -429,7 +429,9 @@ async function runTokenSetup(flags) {
       },
       {
         title: 'Loading agent',
-        skip: () => ctx.tunnels.length === 0 && 'No tunnels configured — run lamaste-agent update after creating tunnels',
+        skip: () =>
+          ctx.tunnels.length === 0 &&
+          'No tunnels configured — run lamaste-agent update after creating tunnels',
         task: async () => {
           await loadAgent(ctx.resolvedLabel);
         },
@@ -518,7 +520,11 @@ async function runTokenSetupJson(flags) {
   assertSupportedPlatform();
 
   if (!flags.panelUrl) {
-    emitJson({ event: 'error', message: 'Panel URL is required. Pass --panel-url <url>.', recoverable: false });
+    emitJson({
+      event: 'error',
+      message: 'Panel URL is required. Pass --panel-url <url>.',
+      recoverable: false,
+    });
     process.exit(1);
   }
 
@@ -862,7 +868,8 @@ async function runP12Setup(options = {}) {
   }
 
   // Derive label if not explicitly provided
-  const agentLabel = options.label || deriveLabel(normalizedUrl.replace(/^https?:\/\//, '').split(':')[0]);
+  const agentLabel =
+    options.label || deriveLabel(normalizedUrl.replace(/^https?:\/\//, '').split(':')[0]);
 
   console.log('');
 
@@ -1008,7 +1015,9 @@ async function runP12Setup(options = {}) {
       },
       {
         title: 'Loading agent',
-        skip: () => ctx.tunnels.length === 0 && 'No tunnels configured — run lamaste-agent update after creating tunnels',
+        skip: () =>
+          ctx.tunnels.length === 0 &&
+          'No tunnels configured — run lamaste-agent update after creating tunnels',
         task: async () => {
           await loadAgent(ctx.resolvedLabel);
         },

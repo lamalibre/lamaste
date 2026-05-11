@@ -5,22 +5,12 @@
     "name": "Service Logs WebSocket",
     "suite": "three-vm",
     "description": "29 — Service Logs WebSocket (Three-VM)",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "jq"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "jq"]
   },
   "env": {},
   "constants": {},
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete",
-    "host_api_patch"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete", "host_api_patch"],
   "cleanup": [],
   "sections": [
     {

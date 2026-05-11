@@ -65,17 +65,17 @@ See the [Cloud Provisioning guide](../02-guides/cloud-provisioning.md) for a det
 
 Lamaste is a monorepo with several packages:
 
-| Package                    | Technology                 | Purpose                              |
-| -------------------------- | -------------------------- | ------------------------------------ |
-| `create-lamaste`          | Node.js ESM, Listr2, execa | Zero-prompt installer CLI            |
-| `lamalibre-lamaste-serverd`             | Fastify 5, Node.js ESM     | REST API + WebSocket backend         |
-| `lamaste-server-ui`             | React 18, Vite, Tailwind   | Management UI (SPA) + shared admin components for desktop |
-| `lamaste-agent`           | Node.js ESM                | Tunnel agent CLI (macOS & Linux)     |
-| `lamaste-desktop`         | Tauri v2 (Rust + React)    | Desktop app with service discovery, multi-server & cloud provisioning |
-| `lamaste-agent-ui`     | React 18                   | Shared agent UI (pages, context, components) for desktop agent mode |
-| `create-lamaste-desktop`  | Node.js ESM                | npx installer for the desktop app    |
-| `lamaste-tickets`         | TypeScript, undici          | SDK for agent-to-agent authorization |
-| `lamaste-cloud`           | TypeScript, undici          | Cloud provider abstraction for server provisioning |
+| Package                     | Technology                 | Purpose                                                               |
+| --------------------------- | -------------------------- | --------------------------------------------------------------------- |
+| `create-lamaste`            | Node.js ESM, Listr2, execa | Zero-prompt installer CLI                                             |
+| `lamalibre-lamaste-serverd` | Fastify 5, Node.js ESM     | REST API + WebSocket backend                                          |
+| `lamaste-server-ui`         | React 18, Vite, Tailwind   | Management UI (SPA) + shared admin components for desktop             |
+| `lamaste-agent`             | Node.js ESM                | Tunnel agent CLI (macOS & Linux)                                      |
+| `lamaste-desktop`           | Tauri v2 (Rust + React)    | Desktop app with service discovery, multi-server & cloud provisioning |
+| `lamaste-agent-ui`          | React 18                   | Shared agent UI (pages, context, components) for desktop agent mode   |
+| `create-lamaste-desktop`    | Node.js ESM                | npx installer for the desktop app                                     |
+| `lamaste-tickets`           | TypeScript, undici         | SDK for agent-to-agent authorization                                  |
+| `lamaste-cloud`             | TypeScript, undici         | Cloud provider abstraction for server provisioning                    |
 
 **Architecture summary:**
 
@@ -97,16 +97,16 @@ The installer (`npx @lamalibre/create-lamaste`) is completely non-interactive â€
 
 ## Quick Reference
 
-| Item                 | Value                            |
-| -------------------- | -------------------------------- |
-| **Minimum VPS**      | 512MB RAM, Ubuntu 24.04          |
+| Item                 | Value                           |
+| -------------------- | ------------------------------- |
+| **Minimum VPS**      | 512MB RAM, Ubuntu 24.04         |
 | **Install command**  | `npx @lamalibre/create-lamaste` |
-| **Admin panel**      | `https://<ip>:9292` (mTLS)       |
-| **Auth for admin**   | Client certificate (zero-login)  |
-| **Auth for apps**    | TOTP 2FA via Authelia            |
-| **Tunnel protocol**  | WebSocket-over-HTTPS (Chisel)    |
-| **TLS certificates** | Let's Encrypt (auto-renewing)    |
-| **State storage**    | JSON files (no database)         |
-| **RAM usage**        | ~245MB total (all services)      |
+| **Admin panel**      | `https://<ip>:9292` (mTLS)      |
+| **Auth for admin**   | Client certificate (zero-login) |
+| **Auth for apps**    | TOTP 2FA via Authelia           |
+| **Tunnel protocol**  | WebSocket-over-HTTPS (Chisel)   |
+| **TLS certificates** | Let's Encrypt (auto-renewing)   |
+| **State storage**    | JSON files (no database)        |
+| **RAM usage**        | ~245MB total (all services)     |
 | **npm package**      | `@lamalibre/create-lamaste`     |
-| **License**          | Polyform Noncommercial 1.0.0     |
+| **License**          | Polyform Noncommercial 1.0.0    |

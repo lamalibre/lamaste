@@ -44,10 +44,14 @@ export async function generateKeyPair(): Promise<SSHKeyPair> {
   const publicKeyPath = `${privateKeyPath}.pub`;
 
   await execFileAsync('ssh-keygen', [
-    '-t', 'ed25519',
-    '-f', privateKeyPath,
-    '-N', '',
-    '-C', 'lamaste-provisioning',
+    '-t',
+    'ed25519',
+    '-f',
+    privateKeyPath,
+    '-N',
+    '',
+    '-C',
+    'lamaste-provisioning',
   ]);
 
   const publicKey = await readFile(publicKeyPath, 'utf-8');
@@ -89,11 +93,16 @@ export async function generateKeyPair(): Promise<SSHKeyPair> {
  */
 function sshOptions(knownHostsPath: string): string[] {
   return [
-    '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', 'ConnectTimeout=10',
-    '-o', 'BatchMode=yes',
-    '-o', `UserKnownHostsFile=${knownHostsPath}`,
-    '-o', 'LogLevel=ERROR',
+    '-o',
+    'StrictHostKeyChecking=accept-new',
+    '-o',
+    'ConnectTimeout=10',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    `UserKnownHostsFile=${knownHostsPath}`,
+    '-o',
+    'LogLevel=ERROR',
   ];
 }
 
@@ -119,12 +128,7 @@ export async function sshExec(
   const opts = sshOptions(knownHostsPath ?? '/dev/null');
   const { stdout, stderr } = await execFileAsync(
     'ssh',
-    [
-      ...opts,
-      '-i', privateKeyPath,
-      `root@${ip}`,
-      command,
-    ],
+    [...opts, '-i', privateKeyPath, `root@${ip}`, command],
     { timeout: timeoutMs },
   );
 
@@ -144,12 +148,7 @@ export async function scpDownload(
   const opts = sshOptions(knownHostsPath ?? '/dev/null');
   await execFileAsync(
     'scp',
-    [
-      ...opts,
-      '-i', privateKeyPath,
-      `root@${ip}:${remotePath}`,
-      localPath,
-    ],
+    [...opts, '-i', privateKeyPath, `root@${ip}:${remotePath}`, localPath],
     { timeout: 60_000 },
   );
 }
@@ -178,9 +177,7 @@ export async function waitForSSH(
     }
   }
 
-  throw new Error(
-    `SSH not reachable on ${ip} after ${Math.round(timeoutMs / 1000)}s`,
-  );
+  throw new Error(`SSH not reachable on ${ip} after ${Math.round(timeoutMs / 1000)}s`);
 }
 
 // ---------------------------------------------------------------------------

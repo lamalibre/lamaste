@@ -29,7 +29,7 @@ Before you begin, make sure you have:
 | **Image**          | Ubuntu 24.04 (LTS) x64                                |
 | **Size**           | Basic, Regular, $4/mo (512 MB RAM, 1 vCPU, 10 GB SSD) |
 | **Authentication** | SSH keys (recommended) or password                    |
-| **Hostname**       | Something memorable, e.g. `lamaste-relay`            |
+| **Hostname**       | Something memorable, e.g. `lamaste-relay`             |
 
 4. Click **Create Droplet**.
 5. Wait for the droplet to boot. Copy its **public IP address** from the dashboard.
@@ -326,14 +326,14 @@ Every task includes skip guards. Running the installer a second time detects exi
 
 After installation, the server has these Lamaste directories:
 
-| Path                          | Owner               | Purpose                            |
-| ----------------------------- | ------------------- | ---------------------------------- |
-| `/etc/lamalibre/lamaste/`              | `lamaste:lamaste` | Configuration and state files      |
-| `/etc/lamalibre/lamaste/pki/`          | `root:root` (700)   | CA, client cert, server cert, .p12 |
-| `/etc/lamalibre/lamaste/panel.json`    | `lamaste:lamaste` | Panel configuration                |
-| `/opt/lamalibre/lamaste/lamaste-serverd/` | `lamaste:lamaste` | Fastify backend                    |
-| `/opt/lamalibre/lamaste/lamaste-server-ui/` | `lamaste:lamaste` | React frontend (built)             |
-| `/var/www/lamaste/`          | `www-data:www-data` | Static site files                  |
+| Path                                        | Owner               | Purpose                            |
+| ------------------------------------------- | ------------------- | ---------------------------------- |
+| `/etc/lamalibre/lamaste/`                   | `lamaste:lamaste`   | Configuration and state files      |
+| `/etc/lamalibre/lamaste/pki/`               | `root:root` (700)   | CA, client cert, server cert, .p12 |
+| `/etc/lamalibre/lamaste/panel.json`         | `lamaste:lamaste`   | Panel configuration                |
+| `/opt/lamalibre/lamaste/lamaste-serverd/`   | `lamaste:lamaste`   | Fastify backend                    |
+| `/opt/lamalibre/lamaste/lamaste-server-ui/` | `lamaste:lamaste`   | React frontend (built)             |
+| `/var/www/lamaste/`                         | `www-data:www-data` | Static site files                  |
 
 ### CLI Flags
 
@@ -367,14 +367,14 @@ The service includes security hardening: `ProtectHome=true`, `PrivateTmp=true`, 
 
 | Item                     | Value                                                        |
 | ------------------------ | ------------------------------------------------------------ |
-| **Install command**      | `npx @lamalibre/create-lamaste`                             |
+| **Install command**      | `npx @lamalibre/create-lamaste`                              |
 | **Minimum VPS**          | Ubuntu 24.04, 512 MB RAM                                     |
 | **Required ports**       | 22 (SSH), 80 (HTTP/Let's Encrypt), 443 (HTTPS), 9292 (panel) |
-| **Certificate location** | `/etc/lamalibre/lamaste/pki/client.p12`                               |
-| **Download command**     | `scp root@<ip>:/etc/lamalibre/lamaste/pki/client.p12 .`               |
+| **Certificate location** | `/etc/lamalibre/lamaste/pki/client.p12`                      |
+| **Download command**     | `scp root@<ip>:/etc/lamalibre/lamaste/pki/client.p12 .`      |
 | **Panel URL**            | `https://<ip>:9292`                                          |
-| **Config file**          | `/etc/lamalibre/lamaste/panel.json`                                   |
-| **Service name**         | `lamalibre-lamaste-serverd`                                             |
-| **Service logs**         | `journalctl -u lamalibre-lamaste-serverd -f`                            |
+| **Config file**          | `/etc/lamalibre/lamaste/panel.json`                          |
+| **Service name**         | `lamalibre-lamaste-serverd`                                  |
+| **Service logs**         | `journalctl -u lamalibre-lamaste-serverd -f`                 |
 | **Re-run safe**          | Yes (idempotent)                                             |
 | **Total install time**   | ~5-10 minutes                                                |

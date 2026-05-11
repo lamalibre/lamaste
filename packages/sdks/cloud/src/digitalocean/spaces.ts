@@ -165,10 +165,7 @@ export class DigitalOceanSpacesProvider implements StorageProvider {
     }
 
     if (!response.ok) {
-      const message = await s3ErrorMessage(
-        response,
-        `Failed to create Spaces bucket "${bucket}"`,
-      );
+      const message = await s3ErrorMessage(response, `Failed to create Spaces bucket "${bucket}"`);
       throw new CloudHttpError(message, response.status);
     }
   }
@@ -211,10 +208,7 @@ export class DigitalOceanSpacesProvider implements StorageProvider {
     }
 
     if (!response.ok) {
-      const message = await s3ErrorMessage(
-        response,
-        `Failed to delete Spaces bucket "${bucket}"`,
-      );
+      const message = await s3ErrorMessage(response, `Failed to delete Spaces bucket "${bucket}"`);
       throw new CloudHttpError(message, response.status);
     }
   }

@@ -6,11 +6,7 @@
     "suite": "e2e",
     "description": "21 — Identity System",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "requires": ["curl", "jq", "openssl"]
   },
   "env": {},
   "constants": {},
@@ -1173,10 +1169,7 @@
             "method": "PATCH",
             "path": "certs/agent/${AGENT_LABEL}/capabilities",
             "body": {
-              "capabilities": [
-                "tunnels:read",
-                "identity:query"
-              ]
+              "capabilities": ["tunnels:read", "identity:query"]
             }
           },
           "capture": [
@@ -1404,9 +1397,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reserved API prefix: 'identity' in RESERVED_API_PREFIXES\"\n# ---------------------------------------------------------------------------\n\n# Verify the constant file contains 'identity' in the reserved list.\n# We check this by looking at the source file on disk (available in single-VM test).\nCONSTANTS_FILE=\"/opt/lamalibre/lamaste/packages/serverd/src/lib/constants.js\"\nif [ -f \"$CONSTANTS_FILE\" ]; then\n  if grep -qF \"'identity'\" \"$CONSTANTS_FILE\"; then\n    log_pass \"'identity' is listed in RESERVED_API_PREFIXES\"\n  else\n    log_fail \"'identity' is NOT listed in RESERVED_API_PREFIXES\"\n  fi\nelse\n  # Fallback: try to register a ticket scope named 'identity' — should fail\n  SCOPE_STATUS=$(api_post_status \"tickets/scopes\" '{\"name\":\"identity\",\"description\":\"Should fail\"}')\n  if [ \"$SCOPE_STATUS\" = \"400\" ] || [ \"$SCOPE_STATUS\" = \"409\" ] || [ \"$SCOPE_STATUS\" = \"422\" ]; then\n    log_pass \"'identity' prefix is reserved (ticket scope registration rejected with HTTP $SCOPE_STATUS)\"\n  else\n    log_fail \"'identity' prefix reservation not enforced (ticket scope returned HTTP $SCOPE_STATUS)\"\n  fi\nfi"
     }
   ],
-  "apiHelpers": [
-    "agent_api_get_status"
-  ],
+  "apiHelpers": ["agent_api_get_status"],
   "headerRaw": "# ============================================================================\n# 21 — Identity System\n# ============================================================================\n# Verifies the identity API routes:\n# - identity:query capability gating (agent without cap gets 403, with cap gets 200)\n# - GET /api/identity/users (admin) — list users, verify fields, no password hashes\n# - GET /api/identity/users/:username (admin) — single user lookup and 404\n# - GET /api/identity/groups (admin) — sorted group list matching user data\n# - GET /api/identity/self (admin) — 400 on mTLS vhost (no Authelia headers)\n# - Input validation — invalid username characters, nonexistent paths\n# - Reserved API prefix — 'identity' in RESERVED_API_PREFIXES constant\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"21 — Identity System\"\n",
   "cleanupRaw": "",

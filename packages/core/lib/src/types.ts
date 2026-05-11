@@ -198,10 +198,7 @@ export interface AdminClient {
     agentLabel: string;
     instanceScope: string;
   }): Promise<{ ok: boolean }>;
-  deleteTicketAssignment(
-    agentLabel: string,
-    instanceScope: string,
-  ): Promise<{ ok: boolean }>;
+  deleteTicketAssignment(agentLabel: string, instanceScope: string): Promise<{ ok: boolean }>;
   getTickets(): Promise<{ tickets: unknown[] }>;
   revokeTicket(id: string): Promise<{ ok: boolean }>;
   getTicketSessions(): Promise<{ sessions: unknown[] }>;
@@ -388,11 +385,7 @@ export interface AgentClient {
 
   // Tunnels
   getTunnels(): Promise<unknown[]>;
-  createTunnel(data: {
-    subdomain: string;
-    port: number;
-    description?: string;
-  }): Promise<unknown>;
+  createTunnel(data: { subdomain: string; port: number; description?: string }): Promise<unknown>;
   toggleTunnel(id: string, data: { enabled: boolean }): Promise<unknown>;
   deleteTunnel(id: string): Promise<unknown>;
 

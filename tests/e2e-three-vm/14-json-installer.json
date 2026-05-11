@@ -6,10 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "14 — JSON Installer Output (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "jq"
-    ]
+    "requires": ["multipass", "jq"]
   },
   "env": {},
   "constants": {},

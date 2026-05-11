@@ -73,7 +73,9 @@ export async function groupCommand(args: string[]): Promise<void> {
       const groupName = args[1];
       const usernames = args.slice(2);
       if (!groupName || usernames.length === 0) {
-        console.error('Usage: lamaste-gatekeeper group add-member <group> <username> [<username>...]');
+        console.error(
+          'Usage: lamaste-gatekeeper group add-member <group> <username> [<username>...]',
+        );
         process.exit(1);
       }
       const group = await addMembers(groupName, usernames);
@@ -85,7 +87,9 @@ export async function groupCommand(args: string[]): Promise<void> {
       const groupName = args[1];
       const usernames = args.slice(2);
       if (!groupName || usernames.length === 0) {
-        console.error('Usage: lamaste-gatekeeper group remove-member <group> <username> [<username>...]');
+        console.error(
+          'Usage: lamaste-gatekeeper group remove-member <group> <username> [<username>...]',
+        );
         process.exit(1);
       }
       const group = await removeMembers(groupName, usernames);

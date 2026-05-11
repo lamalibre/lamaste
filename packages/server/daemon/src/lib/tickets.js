@@ -154,15 +154,20 @@ const ScopeDeclarationSchema = z.object({
 
 const TransportStrategySchema = z.enum(['tunnel', 'relay', 'direct']);
 
-const TransportSchema = z.object({
-  strategies: z.array(TransportStrategySchema).min(1),
-  preferred: TransportStrategySchema,
-  port: z.number().int().refine((v) => v === 0 || (v >= 1024 && v <= 65535), 'Port must be 0 or 1024-65535'),
-  protocol: z.enum(['wss', 'tcp']),
-}).refine(
-  (t) => t.strategies.includes(t.preferred),
-  'Preferred strategy must be in strategies array',
-);
+const TransportSchema = z
+  .object({
+    strategies: z.array(TransportStrategySchema).min(1),
+    preferred: TransportStrategySchema,
+    port: z
+      .number()
+      .int()
+      .refine((v) => v === 0 || (v >= 1024 && v <= 65535), 'Port must be 0 or 1024-65535'),
+    protocol: z.enum(['wss', 'tcp']),
+  })
+  .refine(
+    (t) => t.strategies.includes(t.preferred),
+    'Preferred strategy must be in strategies array',
+  );
 
 export const RegisterScopeSchema = z.object({
   name: TicketScopeNameSchema,
@@ -173,49 +178,70 @@ export const RegisterScopeSchema = z.object({
 });
 
 // Hostname/IP validation: reject private, loopback, link-local, and metadata IPs
-const HostnameSchema = z.string().min(1).max(255).refine((host) => {
-  // Block metadata endpoint (AWS/GCP/Azure)
-  if (host === '169.254.169.254' || host === 'metadata.google.internal') return false;
-  // Block loopback
-  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
-  // Block IPv4 private ranges and link-local
-  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (a === 10) return false;                         // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return false;  // 172.16.0.0/12
-    if (a === 192 && b === 168) return false;            // 192.168.0.0/16
-    if (a === 169 && b === 254) return false;            // 169.254.0.0/16 link-local
-    if (a === 0) return false;                           // 0.0.0.0/8
-  }
-  return true;
-}, { message: 'Host must be a public hostname or IP address' });
+const HostnameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine(
+    (host) => {
+      // Block metadata endpoint (AWS/GCP/Azure)
+      if (host === '169.254.169.254' || host === 'metadata.google.internal') return false;
+      // Block loopback
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+      // Block IPv4 private ranges and link-local
+      const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+      if (ipv4Match) {
+        const [, a, b] = ipv4Match.map(Number);
+        if (a === 10) return false; // 10.0.0.0/8
+        if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12
+        if (a === 192 && b === 168) return false; // 192.168.0.0/16
+        if (a === 169 && b === 254) return false; // 169.254.0.0/16 link-local
+        if (a === 0) return false; // 0.0.0.0/8
+      }
+      return true;
+    },
+    { message: 'Host must be a public hostname or IP address' },
+  );
 
 export const RegisterInstanceSchema = z.object({
   scope: CapabilityStringSchema,
   transport: z.object({
     strategies: z.array(TransportStrategySchema).min(1),
     preferred: TransportStrategySchema.optional(),
-    direct: z.object({
-      host: HostnameSchema,
-      port: z.number().int().min(1024).max(65535),
-    }).optional(),
+    direct: z
+      .object({
+        host: HostnameSchema,
+        port: z.number().int().min(1024).max(65535),
+      })
+      .optional(),
   }),
 });
 
 export const RequestTicketSchema = z.object({
   scope: CapabilityStringSchema,
-  instanceId: z.string().min(1).max(64).regex(/^[a-f0-9]+$/),
+  instanceId: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-f0-9]+$/),
   // max 150 to accommodate plugin-agent:<delegating>:<plugin> labels
   target: z.string().min(1).max(150),
 });
 
 export const ValidateTicketSchema = z.object({
-  ticketId: z.string().min(1).max(128).regex(/^[a-f0-9]+$/),
+  ticketId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[a-f0-9]+$/),
 });
 
 export const CreateSessionSchema = z.object({
-  ticketId: z.string().min(1).max(128).regex(/^[a-f0-9]+$/),
+  ticketId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[a-f0-9]+$/),
 });
 
 export const UpdateSessionSchema = z.object({
@@ -224,7 +250,11 @@ export const UpdateSessionSchema = z.object({
 
 export const AssignmentSchema = z.object({
   agentLabel: z.string().min(1).max(100),
-  instanceScope: z.string().min(1).max(200).regex(/^plugin:[a-z0-9-]+:[a-z0-9-]+:[a-f0-9]+$/),
+  instanceScope: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^plugin:[a-z0-9-]+:[a-z0-9-]+:[a-f0-9]+$/),
 });
 
 // --- SQLite prepared-statement bundle (lazy init) ---
@@ -308,22 +338,16 @@ async function getStmts() {
         (index_hash, id, scope, instance_id, source, target, created_at, expires_at, used, used_at, session_id, transport)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
-    markTicketUsed: db.prepare(
-      'UPDATE tickets SET used = 1, used_at = ? WHERE index_hash = ?',
-    ),
-    setTicketSession: db.prepare(
-      'UPDATE tickets SET session_id = ? WHERE index_hash = ?',
-    ),
-    deleteTicketsCreatedBefore: db.prepare(
-      'DELETE FROM tickets WHERE created_at <= ?',
-    ),
+    markTicketUsed: db.prepare('UPDATE tickets SET used = 1, used_at = ? WHERE index_hash = ?'),
+    setTicketSession: db.prepare('UPDATE tickets SET session_id = ? WHERE index_hash = ?'),
+    deleteTicketsCreatedBefore: db.prepare('DELETE FROM tickets WHERE created_at <= ?'),
 
     // Session statements
     selectAllSessions: db.prepare('SELECT * FROM ticket_sessions'),
     selectSessionById: db.prepare('SELECT * FROM ticket_sessions WHERE session_id = ?'),
     selectSessionsByInstance: db.prepare('SELECT * FROM ticket_sessions WHERE instance_id = ?'),
     countLiveSessions: db.prepare(
-      "SELECT COUNT(*) AS n FROM ticket_sessions WHERE status != 'dead'"
+      "SELECT COUNT(*) AS n FROM ticket_sessions WHERE status != 'dead'",
     ),
     insertSession: db.prepare(`
       INSERT INTO ticket_sessions
@@ -342,7 +366,7 @@ async function getStmts() {
       WHERE session_id = ?
     `),
     deleteDeadOldSessions: db.prepare(
-      "DELETE FROM ticket_sessions WHERE status = 'dead' AND created_at <= ?"
+      "DELETE FROM ticket_sessions WHERE status = 'dead' AND created_at <= ?",
     ),
 
     // Transaction control
@@ -600,10 +624,9 @@ export function registerScope(body, logger) {
 
     const existing = stmts.selectScopeByName.get(body.name);
     if (existing) {
-      throw Object.assign(
-        new Error(`Ticket scope "${body.name}" is already registered`),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error(`Ticket scope "${body.name}" is already registered`), {
+        statusCode: 409,
+      });
     }
 
     // Sub-scope name uniqueness across the registry: even with namespacing,
@@ -612,9 +635,7 @@ export function registerScope(body, logger) {
     // either owner from cleanly revoking it. Reject the second registration
     // deterministically.
     const subScopeNames = body.scopes.map((s) => s.name);
-    const duplicateInBody = subScopeNames.find(
-      (n, i) => subScopeNames.indexOf(n) !== i,
-    );
+    const duplicateInBody = subScopeNames.find((n, i) => subScopeNames.indexOf(n) !== i);
     if (duplicateInBody) {
       throw Object.assign(
         new Error(`Ticket scope manifest declares sub-scope "${duplicateInBody}" twice`),
@@ -705,10 +726,7 @@ export function unregisterScope(name, logger) {
     await getStmts();
     const scopeRow = stmts.selectScopeByName.get(name);
     if (!scopeRow) {
-      throw Object.assign(
-        new Error(`Ticket scope "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Ticket scope "${name}" not found`), { statusCode: 404 });
     }
 
     const scope = rowToScope(scopeRow);
@@ -777,10 +795,7 @@ export function registerInstance(scope, transport, agentLabel, logger) {
     }
 
     if (!scopeEntry) {
-      throw Object.assign(
-        new Error('Scope not registered'),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error('Scope not registered'), { statusCode: 404 });
     }
 
     // Check for existing instance from this agent for this scope (idempotent re-registration)
@@ -800,7 +815,10 @@ export function registerInstance(scope, transport, agentLabel, logger) {
         throw err;
       }
 
-      logger.info({ scope, agentLabel, instanceId: existing.instance_id }, 'Instance re-registered');
+      logger.info(
+        { scope, agentLabel, instanceId: existing.instance_id },
+        'Instance re-registered',
+      );
       return {
         ok: true,
         instanceId: existing.instance_id,
@@ -940,9 +958,7 @@ export function instanceHeartbeat(instanceId, agentLabel) {
  * legacy behaviour for agents enrolled before capabilities were stored.
  */
 function liveCapsInclude(agent, capability) {
-  const stored = Array.isArray(agent?.capabilities)
-    ? agent.capabilities
-    : ['tunnels:read'];
+  const stored = Array.isArray(agent?.capabilities) ? agent.capabilities : ['tunnels:read'];
   if (!stored.includes(capability)) return false;
   const valid = new Set(getValidCapabilities());
   return valid.has(capability);
@@ -972,10 +988,9 @@ export function createAssignment(agentLabel, instanceScope, logger) {
     // set so caps from uninstalled plugins / deregistered scopes are not
     // honored (see liveCapsInclude).
     if (!liveCapsInclude(agent, baseScope)) {
-      throw Object.assign(
-        new Error(`Agent "${agentLabel}" lacks capability "${baseScope}"`),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error(`Agent "${agentLabel}" lacks capability "${baseScope}"`), {
+        statusCode: 400,
+      });
     }
 
     // Verify instance exists and is active
@@ -1131,7 +1146,10 @@ export function requestTicket(scope, instanceId, target, sourceLabel, logger) {
       throw err;
     }
 
-    logger.info({ ticketId: ticketId.slice(0, 8), scope, source: sourceLabel, target }, 'Ticket issued');
+    logger.info(
+      { ticketId: ticketId.slice(0, 8), scope, source: sourceLabel, target },
+      'Ticket issued',
+    );
     return {
       ok: true,
       ticket: {
@@ -1153,10 +1171,7 @@ export function getTicketInbox(agentLabel) {
     const now = Date.now();
     const allTickets = stmts.selectAllTickets.all().map(rowToTicket);
     const tickets = allTickets.filter(
-      (t) =>
-        t.target === agentLabel &&
-        !t.used &&
-        new Date(t.expiresAt).getTime() > now,
+      (t) => t.target === agentLabel && !t.used && new Date(t.expiresAt).getTime() > now,
     );
 
     return {

@@ -97,7 +97,9 @@ export default function GatekeeperSettingsPage() {
       <form onSubmit={handleSave} className="space-y-6 max-w-lg">
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-4">
           <h2 className="text-sm font-medium text-zinc-300">Admin Contact</h2>
-          <p className="text-xs text-zinc-500">Shown on access-request pages so users know who to contact.</p>
+          <p className="text-xs text-zinc-500">
+            Shown on access-request pages so users know who to contact.
+          </p>
 
           <div>
             <label className="block text-xs text-zinc-500 mb-1">Admin Name</label>
@@ -163,7 +165,9 @@ export default function GatekeeperSettingsPage() {
               <input
                 type="number"
                 value={form.accessLogRetentionDays}
-                onChange={(e) => setForm({ ...form, accessLogRetentionDays: Number(e.target.value) })}
+                onChange={(e) =>
+                  setForm({ ...form, accessLogRetentionDays: Number(e.target.value) })
+                }
                 min={1}
                 max={365}
                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-cyan-500"
@@ -175,7 +179,8 @@ export default function GatekeeperSettingsPage() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-4">
           <h2 className="text-sm font-medium text-zinc-300">Cache</h2>
           <p className="text-xs text-zinc-500">
-            Gatekeeper caches auth decisions for 30 seconds. Bust the cache to immediately apply grant changes.
+            Gatekeeper caches auth decisions for 30 seconds. Bust the cache to immediately apply
+            grant changes.
           </p>
           <button
             type="button"
@@ -195,7 +200,13 @@ export default function GatekeeperSettingsPage() {
           disabled={saveMutation.isPending}
           className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded disabled:opacity-50"
         >
-          {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? 'Saved' : 'Save Settings'}
+          {saveMutation.isPending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : saved ? (
+            'Saved'
+          ) : (
+            'Save Settings'
+          )}
         </button>
       </form>
     </div>

@@ -30,12 +30,28 @@ import {
 } from '../../lib/tickets.js';
 
 // Param validation schemas
-const HexIdSchema = z.string().min(1).max(128).regex(/^[a-f0-9]+$/);
-const SessionIdSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/);
+const HexIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-f0-9]+$/);
+const SessionIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/);
 // Accepts regular agent labels (e.g., "macbook-pro") and plugin-agent labels
 // (e.g., "plugin-agent:macbook-pro:raspi-sync")
-const AgentLabelSchema = z.string().min(1).max(150).regex(/^[a-zA-Z0-9_:-]+$/);
-const InstanceScopeSchema = z.string().min(1).max(200).regex(/^plugin:[a-z0-9-]+:[a-z0-9-]+:[a-f0-9]+$/);
+const AgentLabelSchema = z
+  .string()
+  .min(1)
+  .max(150)
+  .regex(/^[a-zA-Z0-9_:-]+$/);
+const InstanceScopeSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^plugin:[a-z0-9-]+:[a-z0-9-]+:[a-f0-9]+$/);
 
 export default async function ticketRoutes(fastify, _opts) {
   // -----------------------------------------------------------------------
@@ -185,7 +201,11 @@ export default async function ticketRoutes(fastify, _opts) {
     async (request, reply) => {
       const body = AssignmentSchema.parse(request.body);
       try {
-        const { isExisting, ...response } = await createAssignment(body.agentLabel, body.instanceScope, request.log);
+        const { isExisting, ...response } = await createAssignment(
+          body.agentLabel,
+          body.instanceScope,
+          request.log,
+        );
         return reply.code(isExisting ? 200 : 201).send(response);
       } catch (err) {
         const statusCode = err.statusCode || 500;
@@ -217,8 +237,10 @@ export default async function ticketRoutes(fastify, _opts) {
     { preHandler: fastify.requireRole(['admin']) },
     async (request, reply) => {
       const filters = {};
-      if (request.query.agentLabel) filters.agentLabel = AgentLabelSchema.parse(request.query.agentLabel);
-      if (request.query.instanceScope) filters.instanceScope = InstanceScopeSchema.parse(request.query.instanceScope);
+      if (request.query.agentLabel)
+        filters.agentLabel = AgentLabelSchema.parse(request.query.agentLabel);
+      if (request.query.instanceScope)
+        filters.instanceScope = InstanceScopeSchema.parse(request.query.instanceScope);
       try {
         const result = await listAssignments(filters);
         return result;
@@ -393,11 +415,7 @@ export default async function ticketRoutes(fastify, _opts) {
         if (!callerLabel) {
           return reply.code(400).send({ error: 'Agent label required' });
         }
-        const result = await updateSession(
-          sessionId,
-          body.status,
-          callerLabel,
-        );
+        const result = await updateSession(sessionId, body.status, callerLabel);
         return result;
       } catch (err) {
         const statusCode = err.statusCode || 500;

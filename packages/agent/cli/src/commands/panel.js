@@ -138,7 +138,11 @@ async function resetPin(label, config, isJson) {
   if (updated.chiselServerCertSha256Hex) {
     console.log(`  Chisel hash: ${chalk.cyan(updated.chiselServerCertSha256Hex)}`);
   } else {
-    console.log(chalk.yellow(`  Chisel server pin not refreshed (tunnel.${config.domain || '?'} unreachable)`));
+    console.log(
+      chalk.yellow(
+        `  Chisel server pin not refreshed (tunnel.${config.domain || '?'} unreachable)`,
+      ),
+    );
   }
   console.log(chalk.dim('\n  Verify the new pin out-of-band before continuing.'));
   console.log(chalk.dim('  Run `lamaste-agent update` to apply the chisel pin.\n'));
@@ -149,7 +153,9 @@ async function enablePanel(label, config, port, isJson, localOnly = false) {
   const loaded = await isPanelServiceLoaded(label);
   if (loaded) {
     if (isJson) {
-      console.log(JSON.stringify({ ok: true, alreadyRunning: true, port: config.panelPort || port }));
+      console.log(
+        JSON.stringify({ ok: true, alreadyRunning: true, port: config.panelPort || port }),
+      );
     } else {
       console.log(chalk.yellow('Panel service is already running.'));
     }

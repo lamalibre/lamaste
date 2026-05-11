@@ -52,22 +52,22 @@ The Tickets page in the admin panel has five tabs:
 
 Instance owners send heartbeats every 60 seconds to keep their instances alive:
 
-| Status   | Condition              | Effect                                        |
-| -------- | ---------------------- | --------------------------------------------- |
-| Active   | Heartbeat within 5 min | Tickets can be requested                      |
-| Stale    | No heartbeat for 5 min | New tickets rejected (503)                    |
-| Dead     | No heartbeat for 1 hr  | Instance removed, assignments and sessions cleaned up |
+| Status | Condition              | Effect                                                |
+| ------ | ---------------------- | ----------------------------------------------------- |
+| Active | Heartbeat within 5 min | Tickets can be requested                              |
+| Stale  | No heartbeat for 5 min | New tickets rejected (503)                            |
+| Dead   | No heartbeat for 1 hr  | Instance removed, assignments and sessions cleaned up |
 
 ### Rate Limits and Hard Caps
 
 To protect the 512 MB server from resource exhaustion:
 
-| Resource   | Limit | Enforcement                  |
-| ---------- | ----- | ---------------------------- |
-| Instances  | 200   | 503 on registration attempt  |
-| Tickets    | 1000  | 503 on request               |
-| Sessions   | 500   | 503 on creation              |
-| Ticket rate | 10/min per agent | 429 on excess       |
+| Resource    | Limit            | Enforcement                 |
+| ----------- | ---------------- | --------------------------- |
+| Instances   | 200              | 503 on registration attempt |
+| Tickets     | 1000             | 503 on request              |
+| Sessions    | 500              | 503 on creation             |
+| Ticket rate | 10/min per agent | 429 on excess               |
 
 ## For Developers
 
@@ -133,14 +133,14 @@ Similarly, `lastActivityAt` timestamps are always set server-side. The client ca
 
 Every heartbeat checks six conditions. If any fails, the session is terminated:
 
-| Check                      | Termination reason     |
-| -------------------------- | ---------------------- |
-| Source cert revoked        | `source_revoked`       |
-| Source lacks capability    | `capability_removed`   |
-| Target cert revoked        | `target_revoked`       |
-| Target lacks capability    | `capability_removed`   |
-| Assignment removed         | `assignment_removed`   |
-| Admin killed session       | `admin_killed`         |
+| Check                   | Termination reason   |
+| ----------------------- | -------------------- |
+| Source cert revoked     | `source_revoked`     |
+| Source lacks capability | `capability_removed` |
+| Target cert revoked     | `target_revoked`     |
+| Target lacks capability | `capability_removed` |
+| Assignment removed      | `assignment_removed` |
+| Admin killed session    | `admin_killed`       |
 
 ### Information Leakage Prevention
 
@@ -202,7 +202,7 @@ The integration flow:
         "port": 9000,
         "protocol": "wss"
       },
-      "hooks": {},              // Reserved for future hook configuration
+      "hooks": {}, // Reserved for future hook configuration
       "installedAt": "2026-03-26T10:00:00.000Z"
     }
   ],
@@ -365,45 +365,45 @@ See [Standalone Plugin with Tickets](../02-guides/standalone-plugin-with-tickets
 
 ### Source Files
 
-| File                                                    | Purpose                                   |
-| ------------------------------------------------------- | ----------------------------------------- |
-| `packages/lamaste-serverd/src/lib/tickets.js`              | Business logic, validation, state management |
-| `packages/lamaste-serverd/src/routes/management/tickets.js` | HTTP route handlers                       |
-| `packages/lamaste-server-ui/src/pages/Tickets.jsx` | Admin UI (5-tab interface)               |
-| `packages/lamaste-agent/src/lib/panel-api.js`          | Agent-side API functions                  |
-| `packages/lamaste-tickets/src/client.ts`               | SDK: mTLS HTTP client for ticket API      |
-| `packages/lamaste-tickets/src/instance-manager.ts`     | SDK: source-side instance lifecycle       |
-| `packages/lamaste-tickets/src/session-manager.ts`      | SDK: target-side session lifecycle        |
-| `packages/lamaste-tickets/src/types.ts`                | SDK: shared type definitions              |
+| File                                                        | Purpose                                      |
+| ----------------------------------------------------------- | -------------------------------------------- |
+| `packages/lamaste-serverd/src/lib/tickets.js`               | Business logic, validation, state management |
+| `packages/lamaste-serverd/src/routes/management/tickets.js` | HTTP route handlers                          |
+| `packages/lamaste-server-ui/src/pages/Tickets.jsx`          | Admin UI (5-tab interface)                   |
+| `packages/lamaste-agent/src/lib/panel-api.js`               | Agent-side API functions                     |
+| `packages/lamaste-tickets/src/client.ts`                    | SDK: mTLS HTTP client for ticket API         |
+| `packages/lamaste-tickets/src/instance-manager.ts`          | SDK: source-side instance lifecycle          |
+| `packages/lamaste-tickets/src/session-manager.ts`           | SDK: target-side session lifecycle           |
+| `packages/lamaste-tickets/src/types.ts`                     | SDK: shared type definitions                 |
 
 ## Quick Reference
 
 ### Ticket properties
 
-| Property    | Value                             |
-| ----------- | --------------------------------- |
-| ID length   | 64 hex characters (256-bit)       |
-| Expiry      | 30 seconds                        |
-| Usage       | Single-use                        |
-| Comparison  | HMAC-SHA256 + `crypto.timingSafeEqual` (per-process random key) |
-| Rate limit  | 10 per agent per minute           |
+| Property   | Value                                                           |
+| ---------- | --------------------------------------------------------------- |
+| ID length  | 64 hex characters (256-bit)                                     |
+| Expiry     | 30 seconds                                                      |
+| Usage      | Single-use                                                      |
+| Comparison | HMAC-SHA256 + `crypto.timingSafeEqual` (per-process random key) |
+| Rate limit | 10 per agent per minute                                         |
 
 ### Instance lifecycle
 
-| Event           | Status change    | Side effects                           |
-| --------------- | ---------------- | -------------------------------------- |
-| Registration    | → active         | Instance ID generated                  |
-| Heartbeat       | stays active     | `lastHeartbeat` updated                |
-| 5 min no beat   | → stale          | New tickets rejected                   |
-| 1 hr no beat    | → dead           | Removed; assignments, tickets, sessions cleaned |
-| Deregistration  | removed          | Same cleanup as dead; SDK calls `DELETE` on `stop()` |
+| Event          | Status change | Side effects                                         |
+| -------------- | ------------- | ---------------------------------------------------- |
+| Registration   | → active      | Instance ID generated                                |
+| Heartbeat      | stays active  | `lastHeartbeat` updated                              |
+| 5 min no beat  | → stale       | New tickets rejected                                 |
+| 1 hr no beat   | → dead        | Removed; assignments, tickets, sessions cleaned      |
+| Deregistration | removed       | Same cleanup as dead; SDK calls `DELETE` on `stop()` |
 
 ### Session states
 
-| State  | Meaning                                             |
-| ------ | --------------------------------------------------- |
-| active | Connection is live, heartbeats succeeding           |
-| grace  | Temporary disconnection, within reconnect window    |
+| State  | Meaning                                                                   |
+| ------ | ------------------------------------------------------------------------- |
+| active | Connection is live, heartbeats succeeding                                 |
+| grace  | Temporary disconnection, within reconnect window                          |
 | dead   | Terminated (admin kill, validation failure, or 10 min inactivity timeout) |
 
 ### Related documentation

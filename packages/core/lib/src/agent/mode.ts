@@ -7,10 +7,7 @@
 
 import { existsSync } from 'node:fs';
 import { serverAdminP12Path, LAMASTE_DIR } from './platform.js';
-import {
-  loadServersRegistry,
-  saveServersRegistry,
-} from './server-registry.js';
+import { loadServersRegistry, saveServersRegistry } from './server-registry.js';
 
 // Re-export for convenience
 export { serverAdminP12Path } from './platform.js';
@@ -50,7 +47,7 @@ export async function getServerMode(): Promise<ServerMode> {
   const servers = await loadServersRegistry();
   const active = servers.find((s) => s.active);
   if (!active) return 'agent';
-  return (active.activeMode === 'admin' ? 'admin' : 'agent');
+  return active.activeMode === 'admin' ? 'admin' : 'agent';
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +110,12 @@ export async function importAdminCert(
   const pathMod = await import('node:path');
 
   // Validate server_id is safe for filesystem paths
-  if (serverId.includes('/') || serverId.includes('\\') || serverId.includes('\0') || serverId.includes('..')) {
+  if (
+    serverId.includes('/') ||
+    serverId.includes('\\') ||
+    serverId.includes('\0') ||
+    serverId.includes('..')
+  ) {
     throw new Error('Server ID contains invalid characters');
   }
 
@@ -159,7 +161,12 @@ export async function removeAdminCert(serverId: string): Promise<void> {
   const { unlink } = await import('node:fs/promises');
 
   // Validate server_id is safe for filesystem paths
-  if (serverId.includes('/') || serverId.includes('\\') || serverId.includes('\0') || serverId.includes('..')) {
+  if (
+    serverId.includes('/') ||
+    serverId.includes('\\') ||
+    serverId.includes('\0') ||
+    serverId.includes('..')
+  ) {
     throw new Error('Server ID contains invalid characters');
   }
 

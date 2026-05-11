@@ -154,12 +154,12 @@ sequenceDiagram
 
 The admin now has four pieces of information to give to the Raspberry Pi:
 
-| Credential | Purpose | Source |
-|-----------|---------|--------|
-| Sync API key | Authenticate with the Sync server | From step 4 (already known) |
-| Sync server URL | Where to reach the Sync server | `https://sync.your-domain.com` (the tunnel) |
+| Credential              | Purpose                                  | Source                                              |
+| ----------------------- | ---------------------------------------- | --------------------------------------------------- |
+| Sync API key            | Authenticate with the Sync server        | From step 4 (already known)                         |
+| Sync server URL         | Where to reach the Sync server           | `https://sync.your-domain.com` (the tunnel)         |
 | Lamaste delegated token | Enroll with Lamaste to get a certificate | From the pre-announcement (one-time, 10-min expiry) |
-| Lamaste panel URL | Where to submit the enrollment | `https://your-domain.com` |
+| Lamaste panel URL       | Where to submit the enrollment           | `https://your-domain.com`                           |
 
 ### 8. Raspberry Pi Enrolls with Lamaste
 
@@ -240,11 +240,11 @@ sequenceDiagram
 
 The Sync agent now has three credentials:
 
-| Credential | Purpose | Stored at |
-|-----------|---------|-----------|
-| Lamaste plugin-agent cert (`CN=plugin-agent:macbook-pro:rpi-sync`) | Authenticate with Authelia to access the tunnel; participate in the Lamaste ticket system | `~/.sync-agent/lamaste-cert/` (PEM files) |
-| Sync API key (`Authorization: Bearer`) | Authenticate with the Sync server for config fetch and registration | `~/.sync-agent/agent-settings.json` (AES-256-GCM encrypted) |
-| Sync agent token (`X-Agent-Token`) | Authenticate with the Sync server for heartbeats and sync reports | `~/.sync-agent/agent-settings.json` (AES-256-GCM encrypted) |
+| Credential                                                         | Purpose                                                                                   | Stored at                                                   |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Lamaste plugin-agent cert (`CN=plugin-agent:macbook-pro:rpi-sync`) | Authenticate with Authelia to access the tunnel; participate in the Lamaste ticket system | `~/.sync-agent/lamaste-cert/` (PEM files)                   |
+| Sync API key (`Authorization: Bearer`)                             | Authenticate with the Sync server for config fetch and registration                       | `~/.sync-agent/agent-settings.json` (AES-256-GCM encrypted) |
+| Sync agent token (`X-Agent-Token`)                                 | Authenticate with the Sync server for heartbeats and sync reports                         | `~/.sync-agent/agent-settings.json` (AES-256-GCM encrypted) |
 
 ### 10. Admin Grants Ticket Access
 
@@ -336,10 +336,10 @@ sequenceDiagram
 
 The delegated enrollment flow depends on whether the Sync server is reachable through a Lamaste tunnel or directly by IP:
 
-| Access method | Lamaste cert? | Ticket authorization |
-|---------------|----------------|---------------------|
-| Direct IP (`192.168.1.x:port`) | No — no Lamaste involvement | Sync server mediates tickets on behalf of its agents using its own cert. Two-party model collapses to single party. Sufficient for trusted local networks. |
-| Lamaste tunnel (`sync.your-domain.com`) | Yes — delegated enrollment | Each Sync agent has its own Lamaste identity (`CN=plugin-agent:...`). Full two-party ticket authorization with independent source and target identities. |
+| Access method                           | Lamaste cert?               | Ticket authorization                                                                                                                                       |
+| --------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct IP (`192.168.1.x:port`)          | No — no Lamaste involvement | Sync server mediates tickets on behalf of its agents using its own cert. Two-party model collapses to single party. Sufficient for trusted local networks. |
+| Lamaste tunnel (`sync.your-domain.com`) | Yes — delegated enrollment  | Each Sync agent has its own Lamaste identity (`CN=plugin-agent:...`). Full two-party ticket authorization with independent source and target identities.   |
 
 When the Sync server detects it has a Lamaste agent cert, the admin can prepare agent enrollments that include delegated Lamaste tokens. When running standalone without a Lamaste agent, only the Sync API key is needed and ticket authorization is self-mediated.
 

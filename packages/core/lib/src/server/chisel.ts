@@ -141,7 +141,10 @@ export async function installChisel(exec: ExecFn): Promise<InstallResult> {
   // Temp file name matches the sudoers `mv /tmp/lamalibre-lamaste-chisel-*`
   // rule that lets us install into /usr/local/bin/chisel. Any rename of this
   // prefix must keep the sudoers rule in service-config.js in sync.
-  const tmpGz = path.join(tmpdir(), `lamalibre-lamaste-chisel-${crypto.randomBytes(4).toString('hex')}.gz`);
+  const tmpGz = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-chisel-${crypto.randomBytes(4).toString('hex')}.gz`,
+  );
   const tmpBin = tmpGz.replace('.gz', '');
 
   try {
@@ -195,7 +198,10 @@ export async function ensureChiselKey(
   }
   // Temp file name matches the sudoers `mv /tmp/lamalibre-lamaste-chisel-server-key-*`
   // rule that lets us install into /etc/lamalibre/lamaste/chisel-server.key.
-  const tmpKey = path.join(tmpdir(), `lamalibre-lamaste-chisel-server-key-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpKey = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-chisel-server-key-${crypto.randomBytes(4).toString('hex')}`,
+  );
   try {
     await exec(CHISEL_BIN, ['server', '--keygen', tmpKey]);
     await exec('sudo', ['mv', tmpKey, keyFilePath]);
@@ -251,7 +257,10 @@ export async function writeChiselService(
 
   // Temp file name matches the sudoers `mv /tmp/lamalibre-lamaste-chisel-service-*`
   // rule that lets us install into /etc/systemd/system/chisel.service.
-  const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-chisel-service-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpFile = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-chisel-service-${crypto.randomBytes(4).toString('hex')}`,
+  );
   await fsWriteFile(tmpFile, serviceContent, 'utf-8');
 
   try {
@@ -428,7 +437,10 @@ export function updateChiselConfig(
     // Same sudoers prefix as the initial writeChiselService — the rule is
     // `mv /tmp/lamalibre-lamaste-chisel-service-*` and applies to both call
     // sites.
-    const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-chisel-service-${crypto.randomBytes(4).toString('hex')}`);
+    const tmpFile = path.join(
+      tmpdir(),
+      `lamalibre-lamaste-chisel-service-${crypto.randomBytes(4).toString('hex')}`,
+    );
     await fsWriteFile(tmpFile, serviceContent, 'utf-8');
 
     try {

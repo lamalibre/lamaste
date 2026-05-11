@@ -63,8 +63,7 @@ export async function startAgent(label: string): Promise<void> {
     await runSystemctl(['daemon-reload']);
     await runSystemctl(['enable', '--now', systemdUnitName(label)]);
   } catch (err: unknown) {
-    const message = (err as { stderr?: string; message?: string }).stderr ??
-      (err as Error).message;
+    const message = (err as { stderr?: string; message?: string }).stderr ?? (err as Error).message;
     throw new Error(`Failed to start agent: ${message}`);
   }
 }

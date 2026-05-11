@@ -105,18 +105,18 @@ When connecting a machine to Lamaste using `lamaste-agent`, you should **not** u
 
 Agent certificates have capability-based access. By default, a new agent can only read tunnel configuration. Admins can grant additional capabilities per-agent from the panel UI:
 
-| Capability       | What it grants                            |
-| ---------------- | ----------------------------------------- |
-| `tunnels:read`   | List tunnels, download plist (always-on)  |
-| `tunnels:write`  | Create and delete tunnels                 |
-| `services:read`  | View service status                       |
-| `services:write` | Start/stop/restart services               |
-| `system:read`    | View system stats (CPU, RAM, disk)        |
-| `sites:read`     | List sites and browse files               |
-| `sites:write`    | Upload and delete files on assigned sites |
+| Capability       | What it grants                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `tunnels:read`   | List tunnels, download plist (always-on)                                               |
+| `tunnels:write`  | Create and delete tunnels                                                              |
+| `services:read`  | View service status                                                                    |
+| `services:write` | Start/stop/restart services                                                            |
+| `system:read`    | View system stats (CPU, RAM, disk)                                                     |
+| `sites:read`     | List sites and browse files                                                            |
+| `sites:write`    | Upload and delete files on assigned sites                                              |
 | `panel:expose`   | Expose agent management panel at `agent-<label>.<domain>` via mTLS-protected subdomain |
-| `identity:read`  | Parse Authelia identity headers on plugin routes |
-| `identity:query` | Query panel for Authelia user metadata           |
+| `identity:read`  | Parse Authelia identity headers on plugin routes                                       |
+| `identity:query` | Query panel for Authelia user metadata                                                 |
 
 Capabilities are stored server-side, so changing what an agent can do does not require reissuing its certificate. Users, certificates, agent management, and logs always remain admin-only.
 
@@ -413,10 +413,10 @@ if (alreadyProvisioned) {
 
 ### Source files
 
-| File                                                   | Purpose                                            |
-| ------------------------------------------------------ | -------------------------------------------------- |
-| `packages/create-lamaste/src/tasks/mtls.js`           | PKI generation during installation                 |
-| `packages/create-lamaste/src/tasks/nginx.js`          | mTLS snippet and panel vhost                       |
+| File                                                      | Purpose                                            |
+| --------------------------------------------------------- | -------------------------------------------------- |
+| `packages/create-lamaste/src/tasks/mtls.js`               | PKI generation during installation                 |
+| `packages/create-lamaste/src/tasks/nginx.js`              | mTLS snippet and panel vhost                       |
 | `packages/lamaste-serverd/src/lib/mtls.js`                | Certificate rotation, expiry checks, .p12 download |
 | `packages/lamaste-serverd/src/middleware/mtls.js`         | Request-level mTLS verification                    |
 | `packages/lamaste-serverd/src/routes/management/certs.js` | Certificate management API endpoints               |
@@ -425,12 +425,12 @@ if (alreadyProvisioned) {
 
 ### PKI hierarchy
 
-| Certificate                         | Signed by   | Validity | Key size     | Purpose                             |
-| ----------------------------------- | ----------- | -------- | ------------ | ----------------------------------- |
-| CA (`ca.crt`)                       | Self-signed | 10 years | 4096-bit RSA | Trust anchor for nginx              |
-| Admin (`client.crt`)                | CA          | 2 years  | 4096-bit RSA | Full panel access (browser)         |
-| Agent (`agents/<label>/client.crt`) | CA          | 2 years  | 4096-bit RSA | Capability-based access (agent)     |
-| Self-signed TLS                     | Self-signed | 10 years | 2048-bit RSA | HTTPS for IP access                 |
+| Certificate                         | Signed by   | Validity | Key size     | Purpose                         |
+| ----------------------------------- | ----------- | -------- | ------------ | ------------------------------- |
+| CA (`ca.crt`)                       | Self-signed | 10 years | 4096-bit RSA | Trust anchor for nginx          |
+| Admin (`client.crt`)                | CA          | 2 years  | 4096-bit RSA | Full panel access (browser)     |
+| Agent (`agents/<label>/client.crt`) | CA          | 2 years  | 4096-bit RSA | Capability-based access (agent) |
+| Self-signed TLS                     | Self-signed | 10 years | 2048-bit RSA | HTTPS for IP access             |
 
 ### File permissions
 
@@ -445,11 +445,11 @@ if (alreadyProvisioned) {
 
 ### nginx directives
 
-| Directive                | Value                      | Effect                                                      |
-| ------------------------ | -------------------------- | ----------------------------------------------------------- |
-| `ssl_client_certificate` | `/etc/lamalibre/lamaste/pki/ca.crt` | CA that signs valid client certs                            |
-| `ssl_verify_client`      | `optional`                 | Enable client cert verification (per-location `if` enforces) |
-| `error_page 495 496`     | `/cert-help.html`          | Show help when cert is missing                              |
+| Directive                | Value                               | Effect                                                       |
+| ------------------------ | ----------------------------------- | ------------------------------------------------------------ |
+| `ssl_client_certificate` | `/etc/lamalibre/lamaste/pki/ca.crt` | CA that signs valid client certs                             |
+| `ssl_verify_client`      | `optional`                          | Enable client cert verification (per-location `if` enforces) |
+| `error_page 495 496`     | `/cert-help.html`                   | Show help when cert is missing                               |
 
 ### OpenSSL commands
 

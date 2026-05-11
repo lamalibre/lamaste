@@ -229,21 +229,21 @@ sudo apt-get autoremove -y
 
 ### Summary Checklist
 
-| Step                      | Command                                                   | Required? |
-| ------------------------- | --------------------------------------------------------- | --------- |
-| 1. Stop services          | `systemctl stop/disable` + remove unit files              | Yes       |
-| 2. Remove nginx config    | `rm lamaste-*` vhosts and snippet                        | Yes       |
-| 3. Remove Lamaste dirs   | `rm -rf /etc/lamalibre/lamaste/ /opt/lamalibre/lamaste/ /var/www/lamaste/` | Yes       |
-| 4. Remove Authelia files  | `rm -rf /etc/authelia/ /var/log/authelia/`                | Yes       |
-| 5. Remove binaries        | `rm /usr/local/bin/chisel /usr/local/bin/authelia`        | Yes       |
-| 6. Remove user            | `userdel -r lamaste`                                     | Yes       |
-| 7. Remove sudoers         | `rm /etc/sudoers.d/lamaste`                              | Yes       |
-| 8. Remove fail2ban config | `rm /etc/fail2ban/jail.d/lamaste.conf`                   | Optional  |
-| 9. Revert SSH hardening   | Restore `sshd_config.pre-lamaste`                        | Optional  |
-| 10. Revert firewall       | `ufw delete allow 9292/tcp`                               | Optional  |
-| 11. Remove swap           | `swapoff /swapfile && rm /swapfile`                       | Optional  |
-| 12. Remove LE certs       | `certbot delete --cert-name <domain>`                     | Optional  |
-| 13. Remove packages       | `apt-get remove nginx certbot fail2ban`                   | Optional  |
+| Step                      | Command                                                                    | Required? |
+| ------------------------- | -------------------------------------------------------------------------- | --------- |
+| 1. Stop services          | `systemctl stop/disable` + remove unit files                               | Yes       |
+| 2. Remove nginx config    | `rm lamaste-*` vhosts and snippet                                          | Yes       |
+| 3. Remove Lamaste dirs    | `rm -rf /etc/lamalibre/lamaste/ /opt/lamalibre/lamaste/ /var/www/lamaste/` | Yes       |
+| 4. Remove Authelia files  | `rm -rf /etc/authelia/ /var/log/authelia/`                                 | Yes       |
+| 5. Remove binaries        | `rm /usr/local/bin/chisel /usr/local/bin/authelia`                         | Yes       |
+| 6. Remove user            | `userdel -r lamaste`                                                       | Yes       |
+| 7. Remove sudoers         | `rm /etc/sudoers.d/lamaste`                                                | Yes       |
+| 8. Remove fail2ban config | `rm /etc/fail2ban/jail.d/lamaste.conf`                                     | Optional  |
+| 9. Revert SSH hardening   | Restore `sshd_config.pre-lamaste`                                          | Optional  |
+| 10. Revert firewall       | `ufw delete allow 9292/tcp`                                                | Optional  |
+| 11. Remove swap           | `swapoff /swapfile && rm /swapfile`                                        | Optional  |
+| 12. Remove LE certs       | `certbot delete --cert-name <domain>`                                      | Optional  |
+| 13. Remove packages       | `apt-get remove nginx certbot fail2ban`                                    | Optional  |
 
 ## For Developers
 

@@ -1,13 +1,5 @@
 import { useState } from 'react';
-import {
-  Activity,
-  Network,
-  Compass,
-  Puzzle,
-  ScrollText,
-  Settings,
-  Terminal,
-} from 'lucide-react';
+import { Activity, Network, Compass, Puzzle, ScrollText, Settings, Terminal } from 'lucide-react';
 import AgentDashboardPage from './pages/Dashboard.jsx';
 import AgentTunnelsPage from './pages/Tunnels.jsx';
 import AgentServicesPage from './pages/Services.jsx';

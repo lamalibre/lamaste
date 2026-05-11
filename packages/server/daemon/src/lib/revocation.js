@@ -26,9 +26,7 @@ async function getStmts() {
     selectAll: db.prepare('SELECT * FROM revoked_certs'),
     selectSerials: db.prepare('SELECT serial FROM revoked_certs'),
     selectBySerial: db.prepare('SELECT serial FROM revoked_certs WHERE serial = ?'),
-    insert: db.prepare(
-      'INSERT INTO revoked_certs (serial, label, revoked_at) VALUES (?, ?, ?)',
-    ),
+    insert: db.prepare('INSERT INTO revoked_certs (serial, label, revoked_at) VALUES (?, ?, ?)'),
     deleteBySerial: db.prepare('DELETE FROM revoked_certs WHERE serial = ?'),
 
     begin: db.prepare('BEGIN IMMEDIATE'),

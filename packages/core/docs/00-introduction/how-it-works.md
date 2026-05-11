@@ -335,20 +335,20 @@ Layer 7: Least-privilege sudoers
 
 ### Key File Locations on the Droplet
 
-| Path                                         | Purpose                                            |
-| -------------------------------------------- | -------------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`                   | Main configuration (IP, domain, onboarding status) |
-| `/etc/lamalibre/lamaste/tunnels.json`                 | Tunnel definitions                                 |
-| `/etc/lamalibre/lamaste/pki/`                         | CA cert/key, client cert/key, self-signed cert     |
-| `/etc/lamalibre/lamaste/pki/client.p12`               | PKCS12 bundle for browser import                   |
-| `/opt/lamalibre/lamaste/lamaste-serverd/`                | Fastify backend (Node.js)                          |
-| `/opt/lamalibre/lamaste/lamaste-server-ui/dist/`           | Built React SPA (static files)                     |
-| `/var/www/lamaste/`                         | Static site files served through tunnels           |
-| `/etc/nginx/sites-available/lamaste-*`      | nginx vhost configurations                         |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`     | mTLS client certificate requirement                |
+| Path                                                    | Purpose                                            |
+| ------------------------------------------------------- | -------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                     | Main configuration (IP, domain, onboarding status) |
+| `/etc/lamalibre/lamaste/tunnels.json`                   | Tunnel definitions                                 |
+| `/etc/lamalibre/lamaste/pki/`                           | CA cert/key, client cert/key, self-signed cert     |
+| `/etc/lamalibre/lamaste/pki/client.p12`                 | PKCS12 bundle for browser import                   |
+| `/opt/lamalibre/lamaste/lamaste-serverd/`               | Fastify backend (Node.js)                          |
+| `/opt/lamalibre/lamaste/lamaste-server-ui/dist/`        | Built React SPA (static files)                     |
+| `/var/www/lamaste/`                                     | Static site files served through tunnels           |
+| `/etc/nginx/sites-available/lamaste-*`                  | nginx vhost configurations                         |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`       | mTLS client certificate requirement                |
 | `/etc/systemd/system/lamalibre-lamaste-serverd.service` | Panel server systemd unit                          |
-| `/etc/sudoers.d/lamaste`                    | Least-privilege sudo rules                         |
-| `/etc/fail2ban/jail.d/lamaste.conf`         | fail2ban jail configuration                        |
+| `/etc/sudoers.d/lamaste`                                | Least-privilege sudo rules                         |
+| `/etc/fail2ban/jail.d/lamaste.conf`                     | fail2ban jail configuration                        |
 
 ### State Machine
 
@@ -392,14 +392,14 @@ FRESH ──────→ DOMAIN_SET ──────→ DNS_READY ───
 
 ### Services
 
-| systemd Unit     | Binary                     | Purpose                           |
-| ---------------- | -------------------------- | --------------------------------- |
+| systemd Unit                | Binary                     | Purpose                           |
+| --------------------------- | -------------------------- | --------------------------------- |
 | `lamalibre-lamaste-serverd` | `node src/index.js`        | REST API + static file server     |
-| `nginx`          | `/usr/sbin/nginx`          | Reverse proxy, TLS, mTLS          |
-| `chisel`         | `/usr/local/bin/chisel`    | WebSocket tunnel server           |
-| `authelia`       | `/usr/local/bin/authelia`  | TOTP 2FA authentication           |
-| `fail2ban`       | `/usr/bin/fail2ban-server` | Brute-force protection            |
-| `certbot.timer`  | `/usr/bin/certbot`         | Auto-renewing Let's Encrypt certs |
+| `nginx`                     | `/usr/sbin/nginx`          | Reverse proxy, TLS, mTLS          |
+| `chisel`                    | `/usr/local/bin/chisel`    | WebSocket tunnel server           |
+| `authelia`                  | `/usr/local/bin/authelia`  | TOTP 2FA authentication           |
+| `fail2ban`                  | `/usr/bin/fail2ban-server` | Brute-force protection            |
+| `certbot.timer`             | `/usr/bin/certbot`         | Auto-renewing Let's Encrypt certs |
 
 ### Data Flow Summary
 

@@ -86,14 +86,14 @@ These three pieces interact through a clear lifecycle: the installer creates the
 
 ## Port Allocation
 
-| Port   | Listener      | Protocol | Exposure      | Purpose                                  |
-| ------ | ------------- | -------- | ------------- | ---------------------------------------- |
-| `22`   | sshd          | TCP      | Public (UFW)  | SSH access (key-only after hardening)    |
-| `443`  | nginx         | TCP      | Public (UFW)  | All domain-based HTTPS traffic           |
-| `9292` | nginx         | TCP      | Public (UFW)  | IP-based admin panel access (mTLS)       |
-| `3100` | Panel Server  | TCP      | Loopback only | Fastify API + static file serving        |
-| `9090` | Chisel Server | TCP      | Loopback only | WebSocket tunnel endpoint                |
-| `9091` | Authelia      | TCP      | Loopback only | Authentication portal + forward auth API |
+| Port   | Listener      | Protocol | Exposure      | Purpose                                    |
+| ------ | ------------- | -------- | ------------- | ------------------------------------------ |
+| `22`   | sshd          | TCP      | Public (UFW)  | SSH access (key-only after hardening)      |
+| `443`  | nginx         | TCP      | Public (UFW)  | All domain-based HTTPS traffic             |
+| `9292` | nginx         | TCP      | Public (UFW)  | IP-based admin panel access (mTLS)         |
+| `3100` | Panel Server  | TCP      | Loopback only | Fastify API + static file serving          |
+| `9090` | Chisel Server | TCP      | Loopback only | WebSocket tunnel endpoint                  |
+| `9091` | Authelia      | TCP      | Loopback only | Authentication portal + forward auth API   |
 | `9294` | Gatekeeper    | TCP      | Loopback only | Tunnel authorization (auth_request target) |
 
 All backend services (Panel Server, Chisel, Authelia) bind exclusively to `127.0.0.1`. nginx is the only process listening on public interfaces.
@@ -502,29 +502,29 @@ Phase 4: Recovery (if needed)
 
 ## Key Files
 
-| File                                         | Role                                                 |
-| -------------------------------------------- | ---------------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`                   | Central configuration (IP, domain, onboarding state) |
-| `/etc/lamalibre/lamaste/tunnels.json`                 | Tunnel definitions                                   |
-| `/etc/lamalibre/lamaste/sites.json`                   | Static site definitions                              |
-| `/etc/lamalibre/lamaste/pki/`                         | mTLS certificates (CA, client, server, PKCS12)       |
-| `/opt/lamalibre/lamaste/lamaste-serverd/`                | Deployed Panel Server code                           |
-| `/opt/lamalibre/lamaste/lamaste-server-ui/dist/`           | Built Panel Client SPA                               |
-| `/var/www/lamaste/`                         | Static site file roots                               |
-| `/etc/nginx/sites-available/lamaste-*`      | nginx vhost configurations                           |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`     | Shared mTLS snippet                                  |
-| `/etc/authelia/configuration.yml`            | Authelia main config                                 |
-| `/etc/authelia/users.yml`                    | Authelia user database                               |
-| `/etc/systemd/system/lamalibre-lamaste-serverd.service` | Panel Server systemd unit                            |
-| `/etc/systemd/system/chisel.service`         | Chisel Server systemd unit                           |
-| `/etc/systemd/system/authelia.service`       | Authelia systemd unit                                |
-| `/etc/lamalibre/lamaste/plugins.json`                 | Plugin registry (installed plugins and status)       |
-| `/etc/lamalibre/lamaste/plugins/`                     | Per-plugin data directories                          |
-| `/etc/lamalibre/lamaste/groups.json`                  | Lamaste group definitions and membership            |
-| `/etc/lamalibre/lamaste/access-grants.json`           | Generic access grants (principal → resource)         |
-| `/etc/lamalibre/lamaste/gatekeeper.json`              | Gatekeeper settings (cache TTL, admin contact, logging) |
-| `/etc/lamalibre/lamaste/push-install-config.json`     | Push install configuration and policies              |
-| `/etc/lamalibre/lamaste/push-install-sessions.json`   | Push install session audit log                       |
-| `/etc/sudoers.d/lamaste`                    | Scoped sudo rules for lamaste user                  |
-| `~/.lamalibre/lamaste/servers.json`                   | Desktop app server registry (multi-server support)   |
-| `~/.lamalibre/lamaste/services.json`                  | Desktop app service discovery registry               |
+| File                                                    | Role                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                     | Central configuration (IP, domain, onboarding state)    |
+| `/etc/lamalibre/lamaste/tunnels.json`                   | Tunnel definitions                                      |
+| `/etc/lamalibre/lamaste/sites.json`                     | Static site definitions                                 |
+| `/etc/lamalibre/lamaste/pki/`                           | mTLS certificates (CA, client, server, PKCS12)          |
+| `/opt/lamalibre/lamaste/lamaste-serverd/`               | Deployed Panel Server code                              |
+| `/opt/lamalibre/lamaste/lamaste-server-ui/dist/`        | Built Panel Client SPA                                  |
+| `/var/www/lamaste/`                                     | Static site file roots                                  |
+| `/etc/nginx/sites-available/lamaste-*`                  | nginx vhost configurations                              |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`       | Shared mTLS snippet                                     |
+| `/etc/authelia/configuration.yml`                       | Authelia main config                                    |
+| `/etc/authelia/users.yml`                               | Authelia user database                                  |
+| `/etc/systemd/system/lamalibre-lamaste-serverd.service` | Panel Server systemd unit                               |
+| `/etc/systemd/system/chisel.service`                    | Chisel Server systemd unit                              |
+| `/etc/systemd/system/authelia.service`                  | Authelia systemd unit                                   |
+| `/etc/lamalibre/lamaste/plugins.json`                   | Plugin registry (installed plugins and status)          |
+| `/etc/lamalibre/lamaste/plugins/`                       | Per-plugin data directories                             |
+| `/etc/lamalibre/lamaste/groups.json`                    | Lamaste group definitions and membership                |
+| `/etc/lamalibre/lamaste/access-grants.json`             | Generic access grants (principal → resource)            |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                | Gatekeeper settings (cache TTL, admin contact, logging) |
+| `/etc/lamalibre/lamaste/push-install-config.json`       | Push install configuration and policies                 |
+| `/etc/lamalibre/lamaste/push-install-sessions.json`     | Push install session audit log                          |
+| `/etc/sudoers.d/lamaste`                                | Scoped sudo rules for lamaste user                      |
+| `~/.lamalibre/lamaste/servers.json`                     | Desktop app server registry (multi-server support)      |
+| `~/.lamalibre/lamaste/services.json`                    | Desktop app service discovery registry                  |

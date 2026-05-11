@@ -24,12 +24,18 @@ function StatusBadge({ status }) {
 
 function TicketStatusBadge({ ticket }) {
   if (ticket.used) {
-    return <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-500/20 text-zinc-400">used</span>;
+    return (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-500/20 text-zinc-400">used</span>
+    );
   }
   if (new Date(ticket.expiresAt) < new Date()) {
-    return <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">expired</span>;
+    return (
+      <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">expired</span>
+    );
   }
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">pending</span>;
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">pending</span>
+  );
 }
 
 function relativeTime(iso) {
@@ -76,8 +82,14 @@ function ScopesTab() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
 
-  if (isLoading) return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
-  if (isError) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6"><p className="text-red-400 text-sm">Failed to load scopes</p></div>;
+  if (isLoading)
+    return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
+  if (isError)
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
+        <p className="text-red-400 text-sm">Failed to load scopes</p>
+      </div>
+    );
 
   const scopes = data?.scopes || [];
 
@@ -106,14 +118,21 @@ function ScopesTab() {
                 <span className="text-zinc-400">Remove?</span>
                 <button
                   type="button"
-                  onClick={() => { deleteMutation.mutate(scope.name); setConfirmDelete(null); }}
+                  onClick={() => {
+                    deleteMutation.mutate(scope.name);
+                    setConfirmDelete(null);
+                  }}
                   className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
-                >Yes</button>
+                >
+                  Yes
+                </button>
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(null)}
                   className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
-                >No</button>
+                >
+                  No
+                </button>
               </span>
             ) : (
               <button
@@ -129,7 +148,10 @@ function ScopesTab() {
           <p className="text-zinc-400 text-sm mb-2">{scope.description}</p>
           <div className="flex flex-wrap gap-2">
             {scope.scopes?.map((s) => (
-              <span key={s.name} className="text-xs bg-zinc-800 text-cyan-400 px-2 py-0.5 rounded font-mono">
+              <span
+                key={s.name}
+                className="text-xs bg-zinc-800 text-cyan-400 px-2 py-0.5 rounded font-mono"
+              >
                 {s.name}
                 {s.instanceScoped && <span className="text-zinc-500 ml-1">(instance-scoped)</span>}
               </span>
@@ -169,8 +191,14 @@ function InstancesTab() {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
-  if (isLoading) return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
-  if (isError) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6"><p className="text-red-400 text-sm">Failed to load instances</p></div>;
+  if (isLoading)
+    return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
+  if (isError)
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
+        <p className="text-red-400 text-sm">Failed to load instances</p>
+      </div>
+    );
 
   const instances = data?.instances || [];
 
@@ -199,11 +227,17 @@ function InstancesTab() {
         <tbody>
           {instances.map((inst) => (
             <tr key={inst.instanceId} className="border-b border-zinc-800/50">
-              <td className="py-3 pr-4 font-mono text-cyan-400 text-xs">{inst.instanceId.slice(0, 12)}...</td>
+              <td className="py-3 pr-4 font-mono text-cyan-400 text-xs">
+                {inst.instanceId.slice(0, 12)}...
+              </td>
               <td className="py-3 pr-4 font-mono text-zinc-300 text-xs">{inst.scope}</td>
               <td className="py-3 pr-4 text-zinc-300">{inst.agentLabel}</td>
-              <td className="py-3 pr-4"><StatusBadge status={inst.status} /></td>
-              <td className="py-3 pr-4 text-zinc-500 text-xs">{relativeTime(inst.lastHeartbeat)}</td>
+              <td className="py-3 pr-4">
+                <StatusBadge status={inst.status} />
+              </td>
+              <td className="py-3 pr-4 text-zinc-500 text-xs">
+                {relativeTime(inst.lastHeartbeat)}
+              </td>
               <td className="py-3">
                 {confirmDeregister === inst.instanceId ? (
                   <span className="flex items-center gap-1.5 text-xs">
@@ -212,12 +246,16 @@ function InstancesTab() {
                       type="button"
                       onClick={() => deregisterMutation.mutate(inst.instanceId)}
                       className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
-                    >Yes</button>
+                    >
+                      Yes
+                    </button>
                     <button
                       type="button"
                       onClick={() => setConfirmDeregister(null)}
                       className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
-                    >No</button>
+                    >
+                      No
+                    </button>
                   </span>
                 ) : (
                   <button
@@ -249,7 +287,11 @@ function AssignmentsTab() {
   const [instanceScope, setInstanceScope] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(null);
 
-  const { data: assignmentsData, isLoading, isError } = useQuery({
+  const {
+    data: assignmentsData,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['ticket-assignments'],
     queryFn: () => client.getTicketAssignments(),
     refetchInterval: 10000,
@@ -289,8 +331,14 @@ function AssignmentsTab() {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
-  if (isLoading) return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
-  if (isError) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6"><p className="text-red-400 text-sm">Failed to load assignments</p></div>;
+  if (isLoading)
+    return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
+  if (isError)
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
+        <p className="text-red-400 text-sm">Failed to load assignments</p>
+      </div>
+    );
 
   const assignments = assignmentsData?.assignments || [];
   const instances = scopesData?.instances || [];
@@ -325,7 +373,9 @@ function AssignmentsTab() {
               >
                 <option value="">Select agent...</option>
                 {agents.map((a) => (
-                  <option key={a.label} value={a.label}>{a.label}</option>
+                  <option key={a.label} value={a.label}>
+                    {a.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -338,7 +388,9 @@ function AssignmentsTab() {
               >
                 <option value="">Select instance...</option>
                 {instanceScopeOptions.map((is) => (
-                  <option key={is} value={is}>{is}</option>
+                  <option key={is} value={is}>
+                    {is}
+                  </option>
                 ))}
               </select>
             </div>
@@ -372,7 +424,10 @@ function AssignmentsTab() {
             </thead>
             <tbody>
               {assignments.map((a) => (
-                <tr key={`${a.agentLabel}-${a.instanceScope}`} className="border-b border-zinc-800/50">
+                <tr
+                  key={`${a.agentLabel}-${a.instanceScope}`}
+                  className="border-b border-zinc-800/50"
+                >
                   <td className="py-3 pr-4 text-zinc-300">{a.agentLabel}</td>
                   <td className="py-3 pr-4 font-mono text-cyan-400 text-xs">{a.instanceScope}</td>
                   <td className="py-3 pr-4 text-zinc-500 text-xs">{relativeTime(a.assignedAt)}</td>
@@ -382,14 +437,23 @@ function AssignmentsTab() {
                         <span className="text-zinc-400">Remove?</span>
                         <button
                           type="button"
-                          onClick={() => removeMutation.mutate({ agentLabel: a.agentLabel, instanceScope: a.instanceScope })}
+                          onClick={() =>
+                            removeMutation.mutate({
+                              agentLabel: a.agentLabel,
+                              instanceScope: a.instanceScope,
+                            })
+                          }
                           className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
-                        >Yes</button>
+                        >
+                          Yes
+                        </button>
                         <button
                           type="button"
                           onClick={() => setConfirmRemove(null)}
                           className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
-                        >No</button>
+                        >
+                          No
+                        </button>
                       </span>
                     ) : (
                       <button
@@ -435,8 +499,14 @@ function TicketsTab() {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
-  if (isLoading) return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
-  if (isError) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6"><p className="text-red-400 text-sm">Failed to load tickets</p></div>;
+  if (isLoading)
+    return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
+  if (isError)
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
+        <p className="text-red-400 text-sm">Failed to load tickets</p>
+      </div>
+    );
 
   const tickets = data?.tickets || [];
 
@@ -470,23 +540,30 @@ function TicketsTab() {
               <td className="py-3 pr-4 font-mono text-zinc-300 text-xs">{t.scope}</td>
               <td className="py-3 pr-4 text-zinc-300">{t.source}</td>
               <td className="py-3 pr-4 text-zinc-300">{t.target}</td>
-              <td className="py-3 pr-4"><TicketStatusBadge ticket={t} /></td>
+              <td className="py-3 pr-4">
+                <TicketStatusBadge ticket={t} />
+              </td>
               <td className="py-3 pr-4 text-zinc-500 text-xs">{relativeTime(t.createdAt)}</td>
               <td className="py-3">
-                {!t.used && new Date(t.expiresAt) > new Date() && (
-                  confirmRevoke === t.id ? (
+                {!t.used &&
+                  new Date(t.expiresAt) > new Date() &&
+                  (confirmRevoke === t.id ? (
                     <span className="flex items-center gap-1.5 text-xs">
                       <span className="text-zinc-400">Revoke?</span>
                       <button
                         type="button"
                         onClick={() => revokeMutation.mutate(t.id)}
                         className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
-                      >Yes</button>
+                      >
+                        Yes
+                      </button>
                       <button
                         type="button"
                         onClick={() => setConfirmRevoke(null)}
                         className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
-                      >No</button>
+                      >
+                        No
+                      </button>
                     </span>
                   ) : (
                     <button
@@ -497,8 +574,7 @@ function TicketsTab() {
                     >
                       <XCircle size={14} />
                     </button>
-                  )
-                )}
+                  ))}
               </td>
             </tr>
           ))}
@@ -531,8 +607,14 @@ function SessionsTab() {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
-  if (isLoading) return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
-  if (isError) return <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6"><p className="text-red-400 text-sm">Failed to load sessions</p></div>;
+  if (isLoading)
+    return <div className="animate-pulse h-32 rounded-lg bg-zinc-900 border border-zinc-800" />;
+  if (isError)
+    return (
+      <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-6">
+        <p className="text-red-400 text-sm">Failed to load sessions</p>
+      </div>
+    );
 
   const sessions = data?.sessions || [];
 
@@ -562,27 +644,35 @@ function SessionsTab() {
         <tbody>
           {sessions.map((s) => (
             <tr key={s.sessionId} className="border-b border-zinc-800/50">
-              <td className="py-3 pr-4 font-mono text-cyan-400 text-xs">{s.sessionId.slice(0, 12)}...</td>
+              <td className="py-3 pr-4 font-mono text-cyan-400 text-xs">
+                {s.sessionId.slice(0, 12)}...
+              </td>
               <td className="py-3 pr-4 font-mono text-zinc-300 text-xs">{s.scope}</td>
               <td className="py-3 pr-4 text-zinc-300">{s.source}</td>
               <td className="py-3 pr-4 text-zinc-300">{s.target}</td>
-              <td className="py-3 pr-4"><StatusBadge status={s.status} /></td>
+              <td className="py-3 pr-4">
+                <StatusBadge status={s.status} />
+              </td>
               <td className="py-3 pr-4 text-zinc-500 text-xs">{relativeTime(s.lastActivityAt)}</td>
               <td className="py-3">
-                {s.status !== 'dead' && (
-                  confirmKill === s.sessionId ? (
+                {s.status !== 'dead' &&
+                  (confirmKill === s.sessionId ? (
                     <span className="flex items-center gap-1.5 text-xs">
                       <span className="text-zinc-400">Kill?</span>
                       <button
                         type="button"
                         onClick={() => killMutation.mutate(s.sessionId)}
                         className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
-                      >Yes</button>
+                      >
+                        Yes
+                      </button>
                       <button
                         type="button"
                         onClick={() => setConfirmKill(null)}
                         className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
-                      >No</button>
+                      >
+                        No
+                      </button>
                     </span>
                   ) : (
                     <button
@@ -593,8 +683,7 @@ function SessionsTab() {
                     >
                       <XCircle size={14} />
                     </button>
-                  )
-                )}
+                  ))}
               </td>
             </tr>
           ))}

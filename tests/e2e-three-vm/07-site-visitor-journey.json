@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "07 — Static Site Visitor Journey (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "HOST_IP": {
@@ -1320,12 +1316,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: delete site via API\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESPONSE=$(host_api_delete \"sites/${SITE_ID}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Site deletion returned ok: true\" || true\n\n# Mark ID as empty so the trap cleanup doesn't try to delete again\nSITE_ID=\"\"\n\n# Verify site is gone from the list\nLIST_RESPONSE=$(host_api_get \"sites\")\nFOUND_SITE=$(echo \"$LIST_RESPONSE\" | jq -r --arg name \"$SITE_NAME\" '.sites[] | select(.name == $name) | .name' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_SITE\" \"\" \"Site no longer appears in site list after deletion\" || true"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_patch",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 07 — Static Site Visitor Journey (Three-VM)\n# ============================================================================\n# Tests the full visitor experience for a managed static site from an external\n# visitor VM:\n#\n# 1. Create a managed static site via API (Authelia-protected)\n# 2. Write a test index.html to the site directory\n# 3. Visit site from visitor VM without auth — should redirect to Authelia (302)\n# 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)\n# 5. Visit site from visitor VM with auth — should return site content (200)\n# 6. Disable Authelia protection via PATCH\n# 7. Visit site from visitor VM without auth — should now return content (200)\n# 8. Re-enable Authelia protection via PATCH\n# 9. Visit site from visitor VM without auth — should redirect again (302)\n# 10. Cleanup: delete the site\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSITE_NAME=\"e2eblog\"\nSITE_FQDN=\"${SITE_NAME}.${TEST_DOMAIN}\"\nSITE_ID=\"\"\nMARKER=\"E2E_SITE_TEST_OK_$(date +%s)\"\n\nbegin_test \"07 — Static Site Visitor Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-site-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${SITE_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${SITE_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",

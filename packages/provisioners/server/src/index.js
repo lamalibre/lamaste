@@ -403,10 +403,10 @@ async function runJsonStep(ctx, step) {
     return;
   }
   emitJson({ event: 'step', step: step.key, status: 'running' });
-  const taskList = new Listr(
-    [{ title: step.title, task: (_c, t) => step.fn(ctx, t) }],
-    { renderer: 'silent', exitOnError: true },
-  );
+  const taskList = new Listr([{ title: step.title, task: (_c, t) => step.fn(ctx, t) }], {
+    renderer: 'silent',
+    exitOnError: true,
+  });
   try {
     await taskList.run();
   } catch (error) {
@@ -548,7 +548,12 @@ export async function main() {
     } else if (flags.json) {
       // JSON mode: run each install step individually with NDJSON progress
       const installSteps = [
-        { key: 'harden_system', title: 'Hardening operating system', fn: hardenTasks, skip: () => ctx.skipHarden },
+        {
+          key: 'harden_system',
+          title: 'Hardening operating system',
+          fn: hardenTasks,
+          skip: () => ctx.skipHarden,
+        },
         { key: 'install_node', title: 'Installing Node.js 20', fn: nodeTasks },
         { key: 'generate_certs', title: 'Generating mTLS certificates', fn: mtlsTasks },
         { key: 'configure_nginx', title: 'Configuring nginx', fn: nginxTasks },

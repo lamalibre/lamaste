@@ -51,9 +51,7 @@ function speedTestUrl(regionSlug: string): string {
  *
  * Returns null if the probe fails (region unreachable, timeout, etc.).
  */
-async function probeRegion(
-  region: Region,
-): Promise<RegionWithLatency | null> {
+async function probeRegion(region: Region): Promise<RegionWithLatency | null> {
   const url = speedTestUrl(region.slug);
   const start = performance.now();
 
@@ -94,9 +92,7 @@ export async function probeRegionLatencies(
   }
 
   if (candidates.length > 0 && successful.length === 0) {
-    throw new CloudError(
-      'No DigitalOcean regions were reachable — check network connectivity',
-    );
+    throw new CloudError('No DigitalOcean regions were reachable — check network connectivity');
   }
 
   if (failed > 0 && successful.length < candidates.length / 2) {

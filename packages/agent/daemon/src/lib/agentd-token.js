@@ -67,8 +67,12 @@ export async function loadOrCreateAgentdToken() {
   try {
     const raw = await readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && typeof parsed.token === 'string'
-      && /^[0-9a-f]{64,}$/i.test(parsed.token)) {
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.token === 'string' &&
+      /^[0-9a-f]{64,}$/i.test(parsed.token)
+    ) {
       return parsed.token;
     }
     // File exists but is malformed — fall through and rewrite.
@@ -78,10 +82,15 @@ export async function loadOrCreateAgentdToken() {
 
   // Generate a fresh 256-bit token and write it atomically with mode 0600.
   const token = randomBytes(32).toString('hex');
-  const payload = JSON.stringify({
-    token,
-    createdAt: new Date().toISOString(),
-  }, null, 2) + '\n';
+  const payload =
+    JSON.stringify(
+      {
+        token,
+        createdAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ) + '\n';
 
   const tmp = filePath + '.tmp';
   // O_EXCL ensures we don't overwrite a concurrent write or race a symlink.

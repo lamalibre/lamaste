@@ -1,18 +1,10 @@
 import crypto from 'node:crypto';
 import { PromiseChainMutex } from '@lamalibre/lamaste';
-import {
-  MAX_GRANTS,
-  GRANT_RETENTION_MS,
-} from './constants.js';
+import { MAX_GRANTS, GRANT_RETENTION_MS } from './constants.js';
 import { notifyCacheInvalidated } from './cache-bust.js';
 import { getGatekeeperDb } from './state-db.js';
 import type { StatementSync } from 'node:sqlite';
-import type {
-  Grant,
-  GrantState,
-  CreateGrantOptions,
-  GrantFilter,
-} from './types.js';
+import type { Grant, GrantState, CreateGrantOptions, GrantFilter } from './types.js';
 import type { PrincipalType } from './constants.js';
 
 // ---------------------------------------------------------------------------
@@ -63,9 +55,7 @@ async function getStmts(): Promise<GrantStmts> {
         (grant_id, principal_type, principal_id, resource_type, resource_id, context, used, created_at, used_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
-    markUsed: db.prepare(
-      'UPDATE access_grants SET used = 1, used_at = ? WHERE grant_id = ?',
-    ),
+    markUsed: db.prepare('UPDATE access_grants SET used = 1, used_at = ? WHERE grant_id = ?'),
     deleteById: db.prepare('DELETE FROM access_grants WHERE grant_id = ?'),
     // Retention sweep: prune consumed grants past GRANT_RETENTION_MS. The
     // matching index (idx_grants_used_used_at) covers the predicate.
@@ -169,10 +159,9 @@ export async function createGrant(
 
     const countRow = s.countAll.get() as { n: number };
     if (countRow.n >= MAX_GRANTS) {
-      throw Object.assign(
-        new Error(`Maximum number of grants (${MAX_GRANTS}) reached`),
-        { statusCode: 503 },
-      );
+      throw Object.assign(new Error(`Maximum number of grants (${MAX_GRANTS}) reached`), {
+        statusCode: 503,
+      });
     }
 
     // Reject duplicates — same scan as the JSON era over the full table.
@@ -182,7 +171,9 @@ export async function createGrant(
     const all = allRows.map(rowToGrant);
     if (all.some((g) => isDuplicate(g, options))) {
       throw Object.assign(
-        new Error('Duplicate grant: a grant with the same principal, resource, and context already exists'),
+        new Error(
+          'Duplicate grant: a grant with the same principal, resource, and context already exists',
+        ),
         { statusCode: 409 },
       );
     }
@@ -190,12 +181,7 @@ export async function createGrant(
     const now = new Date().toISOString();
     const used = initialState?.used ?? shouldAutoConsume(options);
     const createdAt = initialState?.createdAt ?? now;
-    const usedAt =
-      initialState?.usedAt !== undefined
-        ? initialState.usedAt
-        : used
-          ? now
-          : null;
+    const usedAt = initialState?.usedAt !== undefined ? initialState.usedAt : used ? now : null;
 
     const grant: GrantState = {
       grantId: crypto.randomUUID(),
@@ -240,7 +226,8 @@ export async function listGrants(filter?: GrantFilter): Promise<readonly Grant[]
 
   if (filter) {
     grants = grants.filter((g) => {
-      if (filter.principalType !== undefined && g.principalType !== filter.principalType) return false;
+      if (filter.principalType !== undefined && g.principalType !== filter.principalType)
+        return false;
       if (filter.principalId !== undefined && g.principalId !== filter.principalId) return false;
       if (filter.resourceType !== undefined && g.resourceType !== filter.resourceType) return false;
       if (filter.resourceId !== undefined && g.resourceId !== filter.resourceId) return false;
@@ -263,10 +250,7 @@ export async function revokeGrant(grantId: string): Promise<Grant> {
     const s = await getStmts();
     const row = s.selectById.get(grantId) as GrantRow | undefined;
     if (!row) {
-      throw Object.assign(
-        new Error('Grant not found'),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error('Grant not found'), { statusCode: 404 });
     }
 
     const grant = rowToGrant(row);
@@ -277,10 +261,9 @@ export async function revokeGrant(grantId: string): Promise<Grant> {
       (grant.context?.['target'] as string) === 'local' &&
       grant.used
     ) {
-      throw Object.assign(
-        new Error('Cannot revoke a consumed local plugin grant'),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error('Cannot revoke a consumed local plugin grant'), {
+        statusCode: 409,
+      });
     }
 
     s.begin.run();
@@ -403,33 +386,21 @@ export async function updateGrantsByPredicate(
   });
 }
 
-export async function consumeGrant(
-  grantId: string,
-  username: string,
-): Promise<Grant> {
+export async function consumeGrant(grantId: string, username: string): Promise<Grant> {
   return withGrantLock(async () => {
     const s = await getStmts();
     const row = s.selectById.get(grantId) as GrantRow | undefined;
     if (!row) {
-      throw Object.assign(
-        new Error('Grant not found'),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error('Grant not found'), { statusCode: 404 });
     }
     const grant = rowToGrant(row);
 
     if (grant.principalType !== 'user' || grant.principalId !== username) {
-      throw Object.assign(
-        new Error('Grant does not belong to this user'),
-        { statusCode: 403 },
-      );
+      throw Object.assign(new Error('Grant does not belong to this user'), { statusCode: 403 });
     }
 
     if (grant.used) {
-      throw Object.assign(
-        new Error('Grant has already been consumed'),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error('Grant has already been consumed'), { statusCode: 409 });
     }
 
     const usedAt = new Date().toISOString();

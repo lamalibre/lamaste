@@ -23,11 +23,11 @@ In addition to admin certificates, agent certificates with the appropriate capab
 
 Only these services can be managed through the API:
 
-| Service Name     | Description                                      |
-| ---------------- | ------------------------------------------------ |
-| `nginx`          | Reverse proxy, TLS termination, mTLS enforcement |
-| `chisel`         | WebSocket tunnel server                          |
-| `authelia`       | TOTP two-factor authentication                   |
+| Service Name                | Description                                      |
+| --------------------------- | ------------------------------------------------ |
+| `nginx`                     | Reverse proxy, TLS termination, mTLS enforcement |
+| `chisel`                    | WebSocket tunnel server                          |
+| `authelia`                  | TOTP two-factor authentication                   |
 | `lamalibre-lamaste-serverd` | The panel server itself (Fastify)                |
 
 Requests for any other service name are rejected with a 400 error. This whitelist prevents arbitrary systemd service manipulation.
@@ -120,20 +120,20 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                                      | When                                        |
-| ------ | ----------------------------------------------------------------------------------------- | ------------------------------------------- |
-| 400    | `{"error":"Unknown service"}`                                                             | Service name not in whitelist               |
-| 400    | `{"error":"Invalid action"}`                                                              | Action not one of start/stop/restart/reload |
-| 400    | `{"error":"Cannot stop the panel service from the UI — it would terminate this session"}` | Attempting to stop `lamalibre-lamaste-serverd`         |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                | Zod validation of params failed             |
-| 500    | `{"error":"Failed to restart nginx","details":"..."}`                                     | systemctl command failed                    |
+| Status | Body                                                                                      | When                                           |
+| ------ | ----------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 400    | `{"error":"Unknown service"}`                                                             | Service name not in whitelist                  |
+| 400    | `{"error":"Invalid action"}`                                                              | Action not one of start/stop/restart/reload    |
+| 400    | `{"error":"Cannot stop the panel service from the UI — it would terminate this session"}` | Attempting to stop `lamalibre-lamaste-serverd` |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                | Zod validation of params failed                |
+| 500    | `{"error":"Failed to restart nginx","details":"..."}`                                     | systemctl command failed                       |
 
 ### Available Actions
 
 | Action    | systemctl Command               | Notes                                                                       |
 | --------- | ------------------------------- | --------------------------------------------------------------------------- |
 | `start`   | `sudo systemctl start <name>`   | Start a stopped service                                                     |
-| `stop`    | `sudo systemctl stop <name>`    | Stop a running service (blocked for `lamalibre-lamaste-serverd`)                       |
+| `stop`    | `sudo systemctl stop <name>`    | Stop a running service (blocked for `lamalibre-lamaste-serverd`)            |
 | `restart` | `sudo systemctl restart <name>` | Stop then start a service                                                   |
 | `reload`  | `sudo systemctl reload <name>`  | Reload configuration without full restart (supported by nginx and authelia) |
 
@@ -236,11 +236,11 @@ If the timestamp cannot be parsed from the log line, `timestamp` is an empty str
 
 ### Allowed Combinations
 
-| Service          | start | stop   | restart | reload |
-| ---------------- | ----- | ------ | ------- | ------ |
-| `nginx`          | Yes   | Yes    | Yes     | Yes    |
-| `chisel`         | Yes   | Yes    | Yes     | Yes    |
-| `authelia`       | Yes   | Yes    | Yes     | Yes    |
+| Service                     | start | stop   | restart | reload |
+| --------------------------- | ----- | ------ | ------- | ------ |
+| `nginx`                     | Yes   | Yes    | Yes     | Yes    |
+| `chisel`                    | Yes   | Yes    | Yes     | Yes    |
+| `authelia`                  | Yes   | Yes    | Yes     | Yes    |
 | `lamalibre-lamaste-serverd` | Yes   | **No** | Yes     | Yes    |
 
 ### curl Cheat Sheet

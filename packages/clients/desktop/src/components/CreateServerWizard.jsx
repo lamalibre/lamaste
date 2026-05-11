@@ -41,9 +41,10 @@ function OverviewStep({ dismissed, setDismissed }) {
           <div>
             <p className="text-amber-400 font-medium mb-1">Before you continue</p>
             <p className="text-zinc-400 leading-relaxed">
-              This wizard will create a <strong className="text-zinc-300">DigitalOcean droplet (starting at $4/month)</strong> billed
-              to your account. The API token you provide grants Lamaste permission to create, read, and delete
-              droplets and SSH keys in your account.
+              This wizard will create a{' '}
+              <strong className="text-zinc-300">DigitalOcean droplet (starting at $4/month)</strong>{' '}
+              billed to your account. The API token you provide grants Lamaste permission to create,
+              read, and delete droplets and SSH keys in your account.
             </p>
           </div>
         </div>
@@ -57,7 +58,12 @@ function OverviewStep({ dismissed, setDismissed }) {
             <ul className="text-zinc-400 space-y-1 leading-relaxed">
               <li className="flex items-start gap-1.5">
                 <span className="text-zinc-600 select-none">&#8226;</span>
-                <span>Tokens with dangerous scopes (<code className="text-zinc-300">database:delete</code>, <code className="text-zinc-300">kubernetes:create</code>, etc.) are <strong className="text-zinc-300">rejected</strong></span>
+                <span>
+                  Tokens with dangerous scopes (
+                  <code className="text-zinc-300">database:delete</code>,{' '}
+                  <code className="text-zinc-300">kubernetes:create</code>, etc.) are{' '}
+                  <strong className="text-zinc-300">rejected</strong>
+                </span>
               </li>
               <li className="flex items-start gap-1.5">
                 <span className="text-zinc-600 select-none">&#8226;</span>
@@ -65,15 +71,25 @@ function OverviewStep({ dismissed, setDismissed }) {
               </li>
               <li className="flex items-start gap-1.5">
                 <span className="text-zinc-600 select-none">&#8226;</span>
-                <span>Your token is stored in the <strong className="text-zinc-300">OS credential store</strong> (Keychain / libsecret), never in plaintext</span>
+                <span>
+                  Your token is stored in the{' '}
+                  <strong className="text-zinc-300">OS credential store</strong> (Keychain /
+                  libsecret), never in plaintext
+                </span>
               </li>
               <li className="flex items-start gap-1.5">
                 <span className="text-zinc-600 select-none">&#8226;</span>
-                <span>SSH keys are <strong className="text-zinc-300">temporary</strong> — generated for installation, then securely deleted</span>
+                <span>
+                  SSH keys are <strong className="text-zinc-300">temporary</strong> — generated for
+                  installation, then securely deleted
+                </span>
               </li>
               <li className="flex items-start gap-1.5">
                 <span className="text-zinc-600 select-none">&#8226;</span>
-                <span>Only droplets tagged <code className="text-zinc-300">lamalibre:managed</code> + <code className="text-zinc-300">product:lamaste</code> can be destroyed by the app</span>
+                <span>
+                  Only droplets tagged <code className="text-zinc-300">lamalibre:managed</code> +{' '}
+                  <code className="text-zinc-300">product:lamaste</code> can be destroyed by the app
+                </span>
               </li>
             </ul>
           </div>
@@ -86,9 +102,10 @@ function OverviewStep({ dismissed, setDismissed }) {
           <div>
             <p className="text-cyan-400 font-medium mb-1">Strongly recommended</p>
             <p className="text-zinc-400 leading-relaxed">
-              If you have other infrastructure on DigitalOcean, <strong className="text-zinc-300">create a dedicated
-              DO team</strong> for Lamaste. API tokens are account-wide — a separate team is the only way to
-              fully isolate Lamaste from your other resources.
+              If you have other infrastructure on DigitalOcean,{' '}
+              <strong className="text-zinc-300">create a dedicated DO team</strong> for Lamaste. API
+              tokens are account-wide — a separate team is the only way to fully isolate Lamaste
+              from your other resources.
             </p>
           </div>
         </div>
@@ -181,11 +198,7 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
             disabled={(!token.trim() && !savedToken) || validating}
             className="text-xs px-3 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
           >
-            {validating ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Shield size={12} />
-            )}
+            {validating ? <Loader2 size={12} className="animate-spin" /> : <Shield size={12} />}
             Validate
           </button>
         </div>
@@ -199,7 +212,9 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
             ) : (
               <XCircle size={14} className="text-red-400" />
             )}
-            <span className={`text-xs font-medium ${validation.valid ? 'text-green-400' : 'text-red-400'}`}>
+            <span
+              className={`text-xs font-medium ${validation.valid ? 'text-green-400' : 'text-red-400'}`}
+            >
               {validation.valid ? 'Token is valid' : 'Token rejected'}
             </span>
             {validation.email && (
@@ -212,7 +227,10 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
               <p className="text-xs text-red-400 mb-1">Missing required scopes:</p>
               <div className="flex flex-wrap gap-1">
                 {validation.missingScopes.map((s) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-mono">
+                  <span
+                    key={s}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-mono"
+                  >
                     {s}
                   </span>
                 ))}
@@ -225,7 +243,10 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
               <p className="text-xs text-amber-400 mb-1">Dangerous excess scopes detected:</p>
               <div className="flex flex-wrap gap-1">
                 {validation.excessScopes.map((s) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
+                  <span
+                    key={s}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono"
+                  >
                     {s}
                   </span>
                 ))}
@@ -240,7 +261,10 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
               </p>
               <div className="flex flex-wrap gap-1 mb-2">
                 {requiredScopes.map((s) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono">
+                  <span
+                    key={s}
+                    className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono"
+                  >
                     {s}
                   </span>
                 ))}
@@ -352,9 +376,7 @@ function SizeStep({ sizes, selectedSize, setSelectedSize, loading, error }) {
   }
 
   if (!sizes?.length) {
-    return (
-      <p className="text-sm text-zinc-400 py-4">No sizes available for this region.</p>
-    );
+    return <p className="text-sm text-zinc-400 py-4">No sizes available for this region.</p>;
   }
 
   return (
@@ -378,7 +400,11 @@ function SizeStep({ sizes, selectedSize, setSelectedSize, loading, error }) {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={isSelected ? 'text-cyan-400 font-medium' : 'text-zinc-300 font-medium'}>
+                  <span
+                    className={
+                      isSelected ? 'text-cyan-400 font-medium' : 'text-zinc-300 font-medium'
+                    }
+                  >
                     {formatMemory(s.memory)}
                   </span>
                   {isDefault && (
@@ -387,7 +413,9 @@ function SizeStep({ sizes, selectedSize, setSelectedSize, loading, error }) {
                     </span>
                   )}
                 </div>
-                <span className={isSelected ? 'text-cyan-400 font-medium' : 'text-zinc-300 font-medium'}>
+                <span
+                  className={isSelected ? 'text-cyan-400 font-medium' : 'text-zinc-300 font-medium'}
+                >
                   ${s.priceMonthly}/mo
                 </span>
               </div>
@@ -444,13 +472,15 @@ function DomainStep({
   }
 
   const fqdnPreview = selectedDomain
-    ? subdomain ? `${subdomain}.${selectedDomain}` : selectedDomain
+    ? subdomain
+      ? `${subdomain}.${selectedDomain}`
+      : selectedDomain
     : null;
-  const wildcardPreview = fqdnPreview
-    ? `*.${fqdnPreview}`
-    : null;
+  const wildcardPreview = fqdnPreview ? `*.${fqdnPreview}` : null;
 
-  const domainNameValid = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(newDomainName);
+  const domainNameValid = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(
+    newDomainName,
+  );
   const subdomainValid = !subdomain || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain);
 
   return (
@@ -508,17 +538,19 @@ function DomainStep({
             <p className="text-xs text-red-400">Enter a valid domain name.</p>
           )}
           {createError && (
-            <p className="text-xs text-red-400">Failed to create domain: {createError.toString()}</p>
+            <p className="text-xs text-red-400">
+              Failed to create domain: {createError.toString()}
+            </p>
           )}
           <div className="rounded bg-amber-500/5 border border-amber-500/20 p-2">
             <div className="flex items-start gap-1.5">
               <AlertTriangle size={10} className="text-amber-400 mt-0.5 shrink-0" />
               <p className="text-[10px] text-amber-400 leading-relaxed">
-                You must point your domain&apos;s nameservers to DigitalOcean
-                (<code className="text-amber-300">ns1.digitalocean.com</code>,{' '}
+                You must point your domain&apos;s nameservers to DigitalOcean (
+                <code className="text-amber-300">ns1.digitalocean.com</code>,{' '}
                 <code className="text-amber-300">ns2.digitalocean.com</code>,{' '}
-                <code className="text-amber-300">ns3.digitalocean.com</code>)
-                for DNS records to resolve.
+                <code className="text-amber-300">ns3.digitalocean.com</code>) for DNS records to
+                resolve.
               </p>
             </div>
           </div>
@@ -527,7 +559,9 @@ function DomainStep({
 
       {selectedDomain && (
         <div>
-          <label className="text-xs text-zinc-400 block mb-1">Subdomain prefix <span className="text-zinc-600">(optional)</span></label>
+          <label className="text-xs text-zinc-400 block mb-1">
+            Subdomain prefix <span className="text-zinc-600">(optional)</span>
+          </label>
           <input
             type="text"
             value={subdomain}
@@ -536,72 +570,76 @@ function DomainStep({
             className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
           />
           {subdomain && !subdomainValid && (
-            <p className="text-xs text-red-400 mt-1">Lowercase letters, numbers, and hyphens only.</p>
+            <p className="text-xs text-red-400 mt-1">
+              Lowercase letters, numbers, and hyphens only.
+            </p>
           )}
         </div>
       )}
 
-      {fqdnPreview && (() => {
-        // Determine which existing A records conflict with the ones we need
-        const aName = subdomain || '@';
-        const wildcardName = subdomain ? `*.${subdomain}` : '*';
-        const existingA = existingRecords?.filter((r) => r.type === 'A');
-        const conflictA = existingA?.find((r) => r.name === aName);
-        const conflictWildcard = existingA?.find((r) => r.name === wildcardName);
-        const hasConflicts = !!conflictA || !!conflictWildcard;
+      {fqdnPreview &&
+        (() => {
+          // Determine which existing A records conflict with the ones we need
+          const aName = subdomain || '@';
+          const wildcardName = subdomain ? `*.${subdomain}` : '*';
+          const existingA = existingRecords?.filter((r) => r.type === 'A');
+          const conflictA = existingA?.find((r) => r.name === aName);
+          const conflictWildcard = existingA?.find((r) => r.name === wildcardName);
+          const hasConflicts = !!conflictA || !!conflictWildcard;
 
-        return (
-          <div className="space-y-2">
-            <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs space-y-1">
-              <p className="text-zinc-300 font-medium">DNS records to create</p>
-              <p className="text-zinc-400 font-mono">
-                A &rarr; {fqdnPreview}
-                {conflictA && (
-                  <span className="text-amber-400 ml-2">(exists: {conflictA.data})</span>
-                )}
-              </p>
-              <p className="text-zinc-400 font-mono">
-                A &rarr; {wildcardPreview}
-                {conflictWildcard && (
-                  <span className="text-amber-400 ml-2">(exists: {conflictWildcard.data})</span>
-                )}
-              </p>
-              {recordsLoading && (
-                <p className="text-zinc-500 flex items-center gap-1 mt-1">
-                  <Loader2 size={10} className="animate-spin" /> Checking existing records...
+          return (
+            <div className="space-y-2">
+              <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs space-y-1">
+                <p className="text-zinc-300 font-medium">DNS records to create</p>
+                <p className="text-zinc-400 font-mono">
+                  A &rarr; {fqdnPreview}
+                  {conflictA && (
+                    <span className="text-amber-400 ml-2">(exists: {conflictA.data})</span>
+                  )}
                 </p>
+                <p className="text-zinc-400 font-mono">
+                  A &rarr; {wildcardPreview}
+                  {conflictWildcard && (
+                    <span className="text-amber-400 ml-2">(exists: {conflictWildcard.data})</span>
+                  )}
+                </p>
+                {recordsLoading && (
+                  <p className="text-zinc-500 flex items-center gap-1 mt-1">
+                    <Loader2 size={10} className="animate-spin" /> Checking existing records...
+                  </p>
+                )}
+              </div>
+
+              {hasConflicts && (
+                <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                  <div className="flex items-start gap-1.5">
+                    <AlertTriangle size={12} className="text-amber-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-amber-400 leading-relaxed">
+                      Existing A records found. Override them with the new server&apos;s IP during
+                      provisioning?
+                    </p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={overrideDns}
+                      onChange={(e) => setOverrideDns(e.target.checked)}
+                      className="rounded border-zinc-600 bg-zinc-900 text-cyan-400 focus:ring-cyan-400"
+                    />
+                    <span className="text-xs text-zinc-300">Override existing records</span>
+                  </label>
+                </div>
               )}
             </div>
-
-            {hasConflicts && (
-              <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
-                <div className="flex items-start gap-1.5">
-                  <AlertTriangle size={12} className="text-amber-400 mt-0.5 shrink-0" />
-                  <p className="text-xs text-amber-400 leading-relaxed">
-                    Existing A records found. Override them with the new server&apos;s IP during provisioning?
-                  </p>
-                </div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={overrideDns}
-                    onChange={(e) => setOverrideDns(e.target.checked)}
-                    className="rounded border-zinc-600 bg-zinc-900 text-cyan-400 focus:ring-cyan-400"
-                  />
-                  <span className="text-xs text-zinc-300">Override existing records</span>
-                </label>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       <div className="rounded bg-cyan-500/5 border border-cyan-500/20 p-2">
         <div className="flex items-start gap-1.5">
           <Info size={10} className="text-cyan-400 mt-0.5 shrink-0" />
           <p className="text-[10px] text-zinc-400 leading-relaxed">
-            DNS records are <strong className="text-zinc-300">not auto-removed</strong> when the server is destroyed.
-            You must remove them manually in the DigitalOcean DNS console.
+            DNS records are <strong className="text-zinc-300">not auto-removed</strong> when the
+            server is destroyed. You must remove them manually in the DigitalOcean DNS console.
           </p>
         </div>
       </div>
@@ -613,9 +651,22 @@ function DomainStep({
 // Step 4/5: Server Label
 // ---------------------------------------------------------------------------
 
-function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region, sizeData, hasDnsAccess, selectedDoDomain, doSubdomain }) {
+function LabelStep({
+  label,
+  setLabel,
+  domain,
+  setDomain,
+  email,
+  setEmail,
+  region,
+  sizeData,
+  hasDnsAccess,
+  selectedDoDomain,
+  doSubdomain,
+}) {
   const labelValid = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]?$/.test(label);
-  const domainValid = !domain || /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
+  const domainValid =
+    !domain || /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
   const emailValid = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   const sizeDisplay = sizeData
@@ -646,12 +697,19 @@ function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region
           <div className="space-y-2">
             <div className="rounded bg-zinc-950 border border-zinc-800 p-2 text-xs">
               <p className="text-zinc-400">
-                Domain: <span className="text-cyan-400 font-mono">{doSubdomain ? `${doSubdomain}.${selectedDoDomain}` : selectedDoDomain}</span>
+                Domain:{' '}
+                <span className="text-cyan-400 font-mono">
+                  {doSubdomain ? `${doSubdomain}.${selectedDoDomain}` : selectedDoDomain}
+                </span>
               </p>
-              <p className="text-zinc-500 text-[10px] mt-0.5">DNS records will be created automatically during provisioning.</p>
+              <p className="text-zinc-500 text-[10px] mt-0.5">
+                DNS records will be created automatically during provisioning.
+              </p>
             </div>
             <div>
-              <label className="text-xs text-zinc-400 block mb-1">Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span></label>
+              <label className="text-xs text-zinc-400 block mb-1">
+                Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span>
+              </label>
               <input
                 type="email"
                 value={email}
@@ -684,7 +742,9 @@ function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region
                 )}
               </div>
               <div>
-                <label className="text-xs text-zinc-400 block mb-1">Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span></label>
+                <label className="text-xs text-zinc-400 block mb-1">
+                  Email <span className="text-zinc-600">(for Let&apos;s Encrypt)</span>
+                </label>
                 <input
                   type="email"
                   value={email}
@@ -717,21 +777,53 @@ function LabelStep({ label, setLabel, domain, setDomain, email, setEmail, region
 
 function buildProvisionSteps(hasDns) {
   const steps = [
-    { key: 'validate_token', label: 'Validating token', cmd: 'validate-token --provider digitalocean' },
+    {
+      key: 'validate_token',
+      label: 'Validating token',
+      cmd: 'validate-token --provider digitalocean',
+    },
     { key: 'generate_ssh_key', label: 'Generating SSH key', cmd: 'ssh-keygen -t ed25519' },
-    { key: 'upload_ssh_key', label: 'Uploading SSH key', cmd: 'upload-key --provider digitalocean' },
-    { key: 'create_droplet', label: 'Creating droplet', cmd: 'create-droplet --image ubuntu-24-04-x64' },
+    {
+      key: 'upload_ssh_key',
+      label: 'Uploading SSH key',
+      cmd: 'upload-key --provider digitalocean',
+    },
+    {
+      key: 'create_droplet',
+      label: 'Creating droplet',
+      cmd: 'create-droplet --image ubuntu-24-04-x64',
+    },
     { key: 'wait_droplet', label: 'Waiting for boot', cmd: 'poll-droplet --wait-for active' },
   ];
   if (hasDns) {
-    steps.push({ key: 'setup_dns', label: 'Setting up DNS records', cmd: 'create-a-record --type A,*.A' });
+    steps.push({
+      key: 'setup_dns',
+      label: 'Setting up DNS records',
+      cmd: 'create-a-record --type A,*.A',
+    });
   }
   steps.push(
     { key: 'wait_ssh', label: 'Connecting via SSH', cmd: 'ssh root@host echo ok' },
-    { key: 'install_lamaste', label: 'Installing Lamaste', cmd: 'npx @lamalibre/create-lamaste --yes' },
-    { key: 'retrieve_credentials', label: 'Retrieving credentials', cmd: 'scp root@host:/etc/lamalibre/lamaste/pki/client.p12' },
-    { key: 'enroll_admin', label: 'Enrolling admin certificate', cmd: 'security import -x admin.p12' },
-    { key: 'save_registry', label: 'Saving configuration', cmd: 'write ~/.lamalibre/lamaste/servers.json' },
+    {
+      key: 'install_lamaste',
+      label: 'Installing Lamaste',
+      cmd: 'npx @lamalibre/create-lamaste --yes',
+    },
+    {
+      key: 'retrieve_credentials',
+      label: 'Retrieving credentials',
+      cmd: 'scp root@host:/etc/lamalibre/lamaste/pki/client.p12',
+    },
+    {
+      key: 'enroll_admin',
+      label: 'Enrolling admin certificate',
+      cmd: 'security import -x admin.p12',
+    },
+    {
+      key: 'save_registry',
+      label: 'Saving configuration',
+      cmd: 'write ~/.lamalibre/lamaste/servers.json',
+    },
     { key: 'cleanup', label: 'Cleaning up', cmd: 'delete-key --provider digitalocean' },
   );
   return steps;
@@ -745,11 +837,13 @@ function BrailleSpinner() {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>;
+  return (
+    <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>
+  );
 }
 
 function ProvisionStep({ provisioning, provisionError, provisionSuccess, steps }) {
-  const currentIdx = steps.findIndex(s => s.key === provisioning);
+  const currentIdx = steps.findIndex((s) => s.key === provisioning);
   const currentStep = currentIdx >= 0 ? steps[currentIdx] : null;
 
   return (
@@ -769,15 +863,17 @@ function ProvisionStep({ provisioning, provisionError, provisionSuccess, steps }
             ) : (
               <div className="w-3 h-3 rounded-full border border-zinc-700" />
             )}
-            <span className={
-              isCurrent && provisionError
-                ? 'text-red-400'
-                : isCurrent
-                  ? 'text-cyan-400'
-                  : isPast
-                    ? 'text-zinc-400'
-                    : 'text-zinc-600'
-            }>
+            <span
+              className={
+                isCurrent && provisionError
+                  ? 'text-red-400'
+                  : isCurrent
+                    ? 'text-cyan-400'
+                    : isPast
+                      ? 'text-zinc-400'
+                      : 'text-zinc-600'
+              }
+            >
               {step.label}
             </span>
           </div>
@@ -875,7 +971,14 @@ export default function CreateServerWizard({ onClose }) {
       setHasDnsAccess(result.hasDnsAccess ?? false);
     },
     onError: (err) =>
-      setValidation({ valid: false, email: '', missingScopes: [], excessScopes: [], hasDnsAccess: false, error: err.toString() }),
+      setValidation({
+        valid: false,
+        email: '',
+        missingScopes: [],
+        excessScopes: [],
+        hasDnsAccess: false,
+        error: err.toString(),
+      }),
   });
 
   // Region loading via useQuery, triggered when stepping to region step
@@ -929,9 +1032,10 @@ export default function CreateServerWizard({ onClose }) {
       return invoke('create_cloud_domain', { provider: 'digitalocean', name: newDomainName });
     },
     onSuccess: (result) => {
-      queryClient.setQueryData(['cloud-domains', 'digitalocean'], (old) =>
-        [...(old || []), result],
-      );
+      queryClient.setQueryData(['cloud-domains', 'digitalocean'], (old) => [
+        ...(old || []),
+        result,
+      ]);
       setSelectedDoDomain(result.name);
       setNewDomainName('');
       setShowCreateDomain(false);
@@ -941,7 +1045,8 @@ export default function CreateServerWizard({ onClose }) {
   // Fetch existing DNS records when a domain is selected (to detect conflicts)
   const domainRecordsQuery = useQuery({
     queryKey: ['cloud-domain-records', 'digitalocean', selectedDoDomain],
-    queryFn: () => invoke('get_cloud_domain_records', { provider: 'digitalocean', domain: selectedDoDomain }),
+    queryFn: () =>
+      invoke('get_cloud_domain_records', { provider: 'digitalocean', domain: selectedDoDomain }),
     enabled: !!selectedDoDomain && hasDnsAccess,
     staleTime: 2 * 60 * 1000,
     retry: 1,
@@ -953,7 +1058,6 @@ export default function CreateServerWizard({ onClose }) {
   // Find the selected size's data for the summary
   const selectedSizeData = sizes?.find((s) => s.slug === selectedSize) ?? null;
 
-
   // Listen for provision progress events from the Rust backend
   useEffect(() => {
     const unlisten = listen('provision-progress', (event) => {
@@ -962,7 +1066,9 @@ export default function CreateServerWizard({ onClose }) {
         setProvisioning(s);
       }
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   const startProvision = async () => {
@@ -1039,7 +1145,9 @@ export default function CreateServerWizard({ onClose }) {
           const emailOk = !!email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
           return labelOk && emailOk;
         }
-        const domainOk = !domain || /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
+        const domainOk =
+          !domain ||
+          /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/.test(domain);
         const emailOk = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         const pairOk = !domain || !!email;
         return labelOk && domainOk && emailOk && pairOk;
@@ -1132,9 +1240,7 @@ export default function CreateServerWizard({ onClose }) {
                   <Icon size={10} />
                   {ws.label}
                 </div>
-                {i < wizardSteps.length - 1 && (
-                  <ChevronRight size={12} className="text-zinc-700" />
-                )}
+                {i < wizardSteps.length - 1 && <ChevronRight size={12} className="text-zinc-700" />}
               </div>
             );
           })}

@@ -7,7 +7,8 @@
 import { readFile } from 'node:fs/promises';
 
 /** Default paths used on the server. */
-export const CONFIG_PATH = process.env.LAMALIBRE_LAMASTE_CONFIG || '/etc/lamalibre/lamaste/panel.json';
+export const CONFIG_PATH =
+  process.env.LAMALIBRE_LAMASTE_CONFIG || '/etc/lamalibre/lamaste/panel.json';
 export const STATE_DIR = process.env.LAMALIBRE_LAMASTE_DATA_DIR || '/etc/lamalibre/lamaste';
 export const PKI_DIR = process.env.LAMALIBRE_LAMASTE_PKI_DIR || '/etc/lamalibre/lamaste/pki';
 

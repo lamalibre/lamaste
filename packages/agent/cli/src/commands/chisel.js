@@ -82,7 +82,7 @@ async function refreshCredential({ label }) {
             chiselArgs = injectChiselFingerprint(chiselArgs, config.chiselServerCertSha256Hex);
           }
           ctx.serviceConfig = generateServiceConfig(chiselArgs, label);
-          ctx.tunnels = (agentConfig.tunnels || []);
+          ctx.tunnels = agentConfig.tunnels || [];
           task.output = `${ctx.tunnels.length} tunnel(s) configured`;
         },
         rendererOptions: { persistentOutput: true },

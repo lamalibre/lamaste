@@ -15,7 +15,11 @@ import {
   getValidCapabilities,
   fingerprintCertPem,
 } from '../../lib/mtls.js';
-import { createEnrollmentToken, createDelegatedEnrollmentToken, revokeEnrollmentToken } from '../../lib/enrollment.js';
+import {
+  createEnrollmentToken,
+  createDelegatedEnrollmentToken,
+  revokeEnrollmentToken,
+} from '../../lib/enrollment.js';
 import { signAdminCSR, rotateAgentCSR } from '../../lib/csr-signing.js';
 import { getConfig, updateConfig } from '../../lib/config.js';
 import { addToRevocationList } from '../../lib/revocation.js';
@@ -68,16 +72,14 @@ const AgentGenerateBodySchema = z.object({
 });
 
 const UpdateCapabilitiesSchema = z.object({
-  capabilities: z
-    .array(z.string())
-    .superRefine((caps, ctx) => {
-      const validCaps = getValidCapabilities();
-      for (const c of caps) {
-        if (!validCaps.includes(c)) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid capability: ${c}` });
-        }
+  capabilities: z.array(z.string()).superRefine((caps, ctx) => {
+    const validCaps = getValidCapabilities();
+    for (const c of caps) {
+      if (!validCaps.includes(c)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid capability: ${c}` });
       }
-    }),
+    }
+  }),
 });
 
 const UpdateAllowedSitesSchema = z.object({
@@ -112,7 +114,11 @@ const AgentUpgradeSchema = z.object({
 });
 
 const AgentLabelParamSchema = z.object({
-  label: z.string().min(1).max(150).regex(/^[a-z0-9][a-z0-9:-]*$/, 'Invalid agent label'),
+  label: z
+    .string()
+    .min(1)
+    .max(150)
+    .regex(/^[a-z0-9][a-z0-9:-]*$/, 'Invalid agent label'),
 });
 
 const DelegatedEnrollBodySchema = z.object({
@@ -128,10 +134,7 @@ const DelegatedEnrollBodySchema = z.object({
     .string()
     .min(1)
     .max(100)
-    .regex(
-      /^[a-z0-9-]+:[a-z0-9-]+$/,
-      'Scope must follow scope:action format (e.g., sync:connect)',
-    ),
+    .regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Scope must follow scope:action format (e.g., sync:connect)'),
 });
 
 /**
@@ -291,7 +294,8 @@ export default async function certsRoutes(fastify, _opts) {
           'mTLS certificate rotation refused',
         );
         return reply.code(410).send({
-          error: 'P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert.',
+          error:
+            'P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert.',
         });
       }
 
@@ -354,7 +358,8 @@ export default async function certsRoutes(fastify, _opts) {
       const config = getConfig();
       if (config.adminAuthMode === 'hardware-bound') {
         return reply.code(410).send({
-          error: 'P12 certificate download is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert.',
+          error:
+            'P12 certificate download is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert.',
         });
       }
 
@@ -593,7 +598,13 @@ export default async function certsRoutes(fastify, _opts) {
       } catch (err) {
         const statusCode = err.statusCode || 500;
         request.log.error(
-          { admin: actor, issuedFor: `agent:${body.label}`, mode: 'enrollment-token', err, statusCode },
+          {
+            admin: actor,
+            issuedFor: `agent:${body.label}`,
+            mode: 'enrollment-token',
+            err,
+            statusCode,
+          },
           'Enrollment token issuance failed (agent hardware-bound)',
         );
         return reply.code(statusCode).send({

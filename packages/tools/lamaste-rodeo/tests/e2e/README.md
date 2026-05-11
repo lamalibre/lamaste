@@ -6,24 +6,24 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 
 ## Test Inventory
 
-| #   | Script                   | Description                                                                    | Requires DNS  |
-| --- | ------------------------ | ------------------------------------------------------------------------------ | :-----------: |
-| 01  | `01-fresh-install.sh`    | Node.js, panel service, health endpoint, static files                          |      No       |
-| 02  | `02-mtls-enforcement.sh` | mTLS enforcement: no-cert rejected, valid cert accepted, invalid cert rejected |      No       |
-| 03  | `03-onboarding-flow.sh`  | Domain setup, DNS verification, provisioning, post-completion 410 behavior     | Yes (partial) |
-| 04  | `04-tunnel-lifecycle.sh` | Tunnel CRUD: create, list, nginx vhost, validation, delete, cleanup            |      No       |
-| 05  | `05-user-lifecycle.sh`   | User CRUD: create, list, TOTP reset, update, delete, last-user protection      |      No       |
-| 06  | `06-service-control.sh`  | Service list, restart, reload, panel stop protection, invalid service/action   |      No       |
-| 07  | `07-cert-renewal.sh`     | Certificate list, force renewal, auto-renew timer status                       |      Yes      |
-| 08  | `08-mtls-rotation.sh`    | mTLS rotation, P12 download, certificate fingerprint change                    |      No       |
-| 09  | `09-ip-fallback.sh`      | IP:9292 access works independently of domain nginx configuration               |      No       |
-| 10  | `10-resilience.sh`       | Service failure detection and recovery via API                                 |      No       |
-| 11  | `11-input-validation.sh` | Input validation across all API endpoints                                      |      No       |
-| 12  | `12-user-invitations.sh` | User invitation flow: create, accept, token validation                         |      No       |
-| 13  | `13-site-lifecycle.sh`   | Static site CRUD, file upload/delete, settings, input validation               |      No       |
-| 15  | `15-plugin-lifecycle.sh` | Plugin management, push-install endpoints, enable/disable, policy CRUD         |      No       |
-| 16  | `16-enrollment-tokens.sh`| Hardware-bound cert enrollment: token creation, public enrollment, registry     |      No       |
-| 17  | `17-panel-2fa.sh`        | Built-in TOTP 2FA: setup, verify, session cookies, IP vhost toggle, reset      |      No       |
+| #   | Script                    | Description                                                                    | Requires DNS  |
+| --- | ------------------------- | ------------------------------------------------------------------------------ | :-----------: |
+| 01  | `01-fresh-install.sh`     | Node.js, panel service, health endpoint, static files                          |      No       |
+| 02  | `02-mtls-enforcement.sh`  | mTLS enforcement: no-cert rejected, valid cert accepted, invalid cert rejected |      No       |
+| 03  | `03-onboarding-flow.sh`   | Domain setup, DNS verification, provisioning, post-completion 410 behavior     | Yes (partial) |
+| 04  | `04-tunnel-lifecycle.sh`  | Tunnel CRUD: create, list, nginx vhost, validation, delete, cleanup            |      No       |
+| 05  | `05-user-lifecycle.sh`    | User CRUD: create, list, TOTP reset, update, delete, last-user protection      |      No       |
+| 06  | `06-service-control.sh`   | Service list, restart, reload, panel stop protection, invalid service/action   |      No       |
+| 07  | `07-cert-renewal.sh`      | Certificate list, force renewal, auto-renew timer status                       |      Yes      |
+| 08  | `08-mtls-rotation.sh`     | mTLS rotation, P12 download, certificate fingerprint change                    |      No       |
+| 09  | `09-ip-fallback.sh`       | IP:9292 access works independently of domain nginx configuration               |      No       |
+| 10  | `10-resilience.sh`        | Service failure detection and recovery via API                                 |      No       |
+| 11  | `11-input-validation.sh`  | Input validation across all API endpoints                                      |      No       |
+| 12  | `12-user-invitations.sh`  | User invitation flow: create, accept, token validation                         |      No       |
+| 13  | `13-site-lifecycle.sh`    | Static site CRUD, file upload/delete, settings, input validation               |      No       |
+| 15  | `15-plugin-lifecycle.sh`  | Plugin management, push-install endpoints, enable/disable, policy CRUD         |      No       |
+| 16  | `16-enrollment-tokens.sh` | Hardware-bound cert enrollment: token creation, public enrollment, registry    |      No       |
+| 17  | `17-panel-2fa.sh`         | Built-in TOTP 2FA: setup, verify, session cookies, IP vhost toggle, reset      |      No       |
 
 ## Prerequisites
 
@@ -35,14 +35,14 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 
 All tests read configuration from environment variables:
 
-| Variable         | Default                        | Description                                 |
-| ---------------- | ------------------------------ | ------------------------------------------- |
-| `BASE_URL`       | `https://127.0.0.1:9292`       | Panel base URL                              |
+| Variable         | Default                                 | Description                                 |
+| ---------------- | --------------------------------------- | ------------------------------------------- |
+| `BASE_URL`       | `https://127.0.0.1:9292`                | Panel base URL                              |
 | `CERT_PATH`      | `/etc/lamalibre/lamaste/pki/client.crt` | mTLS client certificate                     |
 | `KEY_PATH`       | `/etc/lamalibre/lamaste/pki/client.key` | mTLS client key                             |
 | `CA_PATH`        | `/etc/lamalibre/lamaste/pki/ca.crt`     | CA certificate                              |
-| `CURL_TIMEOUT`   | `30`                           | Curl timeout in seconds                     |
-| `SKIP_DNS_TESTS` | `0`                            | Set to `1` to skip tests requiring real DNS |
+| `CURL_TIMEOUT`   | `30`                                    | Curl timeout in seconds                     |
+| `SKIP_DNS_TESTS` | `0`                                     | Set to `1` to skip tests requiring real DNS |
 
 ## Running Tests
 

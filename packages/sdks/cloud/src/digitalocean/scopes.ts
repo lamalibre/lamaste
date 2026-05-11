@@ -154,20 +154,13 @@ const DANGEROUS_SCOPES: readonly string[] = [
  */
 function parseScopes(header: string | null): string[] {
   if (!header) return [];
-  return [...new Set(
-    header
-      .split(/[,\s]+/)
-      .filter(Boolean),
-  )];
+  return [...new Set(header.split(/[,\s]+/).filter(Boolean))];
 }
 
 /**
  * Probe whether a GET endpoint is accessible (200) or forbidden (403).
  */
-async function probeEndpoint(
-  path: string,
-  token: string,
-): Promise<boolean> {
+async function probeEndpoint(path: string, token: string): Promise<boolean> {
   try {
     await doGet(path, { token });
     return true;
@@ -210,13 +203,9 @@ export async function validateDOToken(token: string): Promise<TokenValidation> {
 
   // --- If we got scopes from the header, do scope-level validation ---
   if (tokenScopes !== null && tokenScopes.length > 0) {
-    const missingScopes = REQUIRED_SCOPES.filter(
-      (required) => !tokenScopes.includes(required),
-    );
+    const missingScopes = REQUIRED_SCOPES.filter((required) => !tokenScopes.includes(required));
 
-    const excessScopes = tokenScopes.filter((scope) =>
-      DANGEROUS_SCOPES.includes(scope),
-    );
+    const excessScopes = tokenScopes.filter((scope) => DANGEROUS_SCOPES.includes(scope));
 
     const hasDnsAccess = tokenScopes.includes('domain:read');
     const valid = missingScopes.length === 0 && excessScopes.length === 0;
@@ -274,10 +263,6 @@ export async function assertValidDOToken(token: string): Promise<void> {
       );
     }
 
-    throw new TokenScopeError(
-      parts.join('. '),
-      result.missingScopes,
-      result.excessScopes,
-    );
+    throw new TokenScopeError(parts.join('. '), result.missingScopes, result.excessScopes);
   }
 }

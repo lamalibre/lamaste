@@ -36,12 +36,12 @@ This is your emergency backdoor. If everything goes wrong with domains and certi
 
 Each service gets its own virtual host (vhost) — a configuration block that tells nginx how to handle requests for a specific domain:
 
-| Domain               | Internal service            | Authentication                     | Port |
-| -------------------- | --------------------------- | ---------------------------------- | ---- |
-| `https://<ip>:9292`  | Panel server (`:3100`)      | mTLS client certificate            | 9292 |
-| `panel.example.com`  | Panel server (`:3100`)      | mTLS client certificate            | 443  |
-| `auth.example.com`   | Authelia (`:9091`)          | None (it is the auth service)      | 443  |
-| `tunnel.example.com` | Chisel server (`:9090`)     | None (Chisel handles its own auth) | 443  |
+| Domain               | Internal service                | Authentication                     | Port |
+| -------------------- | ------------------------------- | ---------------------------------- | ---- |
+| `https://<ip>:9292`  | Panel server (`:3100`)          | mTLS client certificate            | 9292 |
+| `panel.example.com`  | Panel server (`:3100`)          | mTLS client certificate            | 443  |
+| `auth.example.com`   | Authelia (`:9091`)              | None (it is the auth service)      | 443  |
+| `tunnel.example.com` | Chisel server (`:9090`)         | None (Chisel handles its own auth) | 443  |
 | `myapp.example.com`  | Chisel → your machine (`:3000`) | Authelia TOTP 2FA                  | 443  |
 
 ### When things go wrong
@@ -460,9 +460,9 @@ Static sites can optionally include Authelia forward-auth protection if the `aut
 
 ### Source files
 
-| File                                           | Purpose                                             |
-| ---------------------------------------------- | --------------------------------------------------- |
-| `packages/lamaste-serverd/src/lib/nginx.js`       | Vhost write, enable/disable, test, reload, rollback |
+| File                                          | Purpose                                             |
+| --------------------------------------------- | --------------------------------------------------- |
+| `packages/lamaste-serverd/src/lib/nginx.js`   | Vhost write, enable/disable, test, reload, rollback |
 | `packages/create-lamaste/src/tasks/nginx.js`  | IP-based vhost, mTLS snippet, self-signed cert      |
 | `packages/create-lamaste/src/tasks/harden.js` | nginx package installation                          |
 
@@ -470,8 +470,8 @@ Static sites can optionally include Authelia forward-auth protection if the `aut
 
 ### Vhost files
 
-| File                    | Domain               | Auth              | Created      |
-| ----------------------- | -------------------- | ----------------- | ------------ |
+| File                             | Domain               | Auth              | Created      |
+| -------------------------------- | -------------------- | ----------------- | ------------ |
 | `lamalibre-lamaste-panel-ip`     | `_` (any) on `:9292` | mTLS              | Installation |
 | `lamalibre-lamaste-panel-domain` | `panel.example.com`  | mTLS              | Onboarding   |
 | `lamalibre-lamaste-auth`         | `auth.example.com`   | None              | Onboarding   |

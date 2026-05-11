@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "05 — Admin Journey (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "TEST_DOMAIN": {

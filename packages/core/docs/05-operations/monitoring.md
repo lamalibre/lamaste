@@ -90,11 +90,11 @@ System uptime shows how long the server has been running since its last reboot. 
 
 The dashboard shows the status of each managed service:
 
-| Service  | Systemd Unit     | Role                                             |
-| -------- | ---------------- | ------------------------------------------------ |
-| nginx    | `nginx`          | Reverse proxy, TLS termination, mTLS enforcement |
-| Chisel   | `chisel`         | WebSocket tunnel server                          |
-| Authelia | `authelia`       | TOTP two-factor authentication                   |
+| Service  | Systemd Unit                | Role                                             |
+| -------- | --------------------------- | ------------------------------------------------ |
+| nginx    | `nginx`                     | Reverse proxy, TLS termination, mTLS enforcement |
+| Chisel   | `chisel`                    | WebSocket tunnel server                          |
+| Authelia | `authelia`                  | TOTP two-factor authentication                   |
 | Panel    | `lamalibre-lamaste-serverd` | Management API and UI                            |
 
 Each service displays one of these statuses:
@@ -276,10 +276,10 @@ Alternatively, monitor the public-facing tunneled apps directly — if users can
 | `/api/services/:name/logs`    | WS     | Live log stream           |
 | `/api/health`                 | GET    | Health check              |
 
-| Log Command (SSH)                          | Purpose                 |
-| ------------------------------------------ | ----------------------- |
-| `journalctl -u nginx -f`                   | Follow nginx logs       |
-| `journalctl -u chisel -f`                  | Follow Chisel logs      |
-| `journalctl -u authelia -f`                | Follow Authelia logs    |
-| `journalctl -u lamalibre-lamaste-serverd -f`          | Follow panel logs       |
-| `journalctl -u nginx --since "1 hour ago"` | Last hour of nginx logs |
+| Log Command (SSH)                            | Purpose                 |
+| -------------------------------------------- | ----------------------- |
+| `journalctl -u nginx -f`                     | Follow nginx logs       |
+| `journalctl -u chisel -f`                    | Follow Chisel logs      |
+| `journalctl -u authelia -f`                  | Follow Authelia logs    |
+| `journalctl -u lamalibre-lamaste-serverd -f` | Follow panel logs       |
+| `journalctl -u nginx --since "1 hour ago"`   | Last hour of nginx logs |

@@ -6,11 +6,7 @@
     "suite": "e2e",
     "description": "02 — mTLS Enforcement",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "requires": ["curl", "jq", "openssl"]
   },
   "env": {},
   "constants": {},

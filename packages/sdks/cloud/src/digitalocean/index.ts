@@ -56,17 +56,13 @@ function parseDroplet(droplet: Record<string, unknown>): Server {
   const networks = droplet.networks as Record<string, unknown> | undefined;
   let ip: string | null = null;
   if (networks && Array.isArray(networks.v4)) {
-    const pub = (networks.v4 as Array<Record<string, unknown>>).find(
-      (n) => n.type === 'public',
-    );
+    const pub = (networks.v4 as Array<Record<string, unknown>>).find((n) => n.type === 'public');
     if (pub && typeof pub.ip_address === 'string') {
       ip = pub.ip_address;
     }
   }
 
-  const tags = Array.isArray(droplet.tags)
-    ? (droplet.tags as string[])
-    : [];
+  const tags = Array.isArray(droplet.tags) ? (droplet.tags as string[]) : [];
 
   const region = droplet.region as Record<string, unknown> | undefined;
   const regionSlug = typeof region?.slug === 'string' ? region.slug : '';
@@ -105,10 +101,9 @@ export class DigitalOceanProvider implements CloudProvider {
 
     // Paginate through all regions
     while (true) {
-      const { body } = await doGet(
-        `/v2/regions?page=${page}&per_page=${perPage}`,
-        { token: this.token },
-      );
+      const { body } = await doGet(`/v2/regions?page=${page}&per_page=${perPage}`, {
+        token: this.token,
+      });
 
       assertObject(body, 'regions response');
       assertField(body, 'regions', 'array', 'regions response');
@@ -142,10 +137,9 @@ export class DigitalOceanProvider implements CloudProvider {
     const perPage = 100;
 
     while (true) {
-      const { body } = await doGet(
-        `/v2/sizes?page=${page}&per_page=${perPage}`,
-        { token: this.token },
-      );
+      const { body } = await doGet(`/v2/sizes?page=${page}&per_page=${perPage}`, {
+        token: this.token,
+      });
 
       assertObject(body, 'sizes response');
       assertField(body, 'sizes', 'array', 'sizes response');
@@ -183,9 +177,7 @@ export class DigitalOceanProvider implements CloudProvider {
     return sizes.sort((a, b) => a.priceMonthly - b.priceMonthly);
   }
 
-  async probeLatency(
-    regions: readonly Region[],
-  ): Promise<readonly RegionWithLatency[]> {
+  async probeLatency(regions: readonly Region[]): Promise<readonly RegionWithLatency[]> {
     return probeRegionLatencies(regions);
   }
 
@@ -213,10 +205,7 @@ export class DigitalOceanProvider implements CloudProvider {
   }
 
   async getServer(id: string): Promise<Server> {
-    const { body } = await doGet(
-      `/v2/droplets/${encodeURIComponent(id)}`,
-      { token: this.token },
-    );
+    const { body } = await doGet(`/v2/droplets/${encodeURIComponent(id)}`, { token: this.token });
 
     assertObject(body, 'get droplet response');
     assertField(body, 'droplet', 'object', 'get droplet response');
@@ -252,10 +241,7 @@ export class DigitalOceanProvider implements CloudProvider {
       );
     }
 
-    await doDelete(
-      `/v2/droplets/${encodeURIComponent(id)}`,
-      { token: this.token },
-    );
+    await doDelete(`/v2/droplets/${encodeURIComponent(id)}`, { token: this.token });
   }
 
   async createSSHKey(name: string, publicKey: string): Promise<SSHKey> {
@@ -277,10 +263,7 @@ export class DigitalOceanProvider implements CloudProvider {
   }
 
   async deleteSSHKey(id: string): Promise<void> {
-    await doDelete(
-      `/v2/account/keys/${encodeURIComponent(id)}`,
-      { token: this.token },
-    );
+    await doDelete(`/v2/account/keys/${encodeURIComponent(id)}`, { token: this.token });
   }
 
   // --- Droplet discovery ---

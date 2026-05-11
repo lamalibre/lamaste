@@ -41,7 +41,9 @@ export default function TwoFaVerifyModal({ onVerified }) {
         setError('Verification failed. Please try again.');
       }
     } catch (err) {
-      setError(err.message === '2fa_required' ? 'Session expired' : err.message || 'Verification failed');
+      setError(
+        err.message === '2fa_required' ? 'Session expired' : err.message || 'Verification failed',
+      );
     } finally {
       setIsSubmitting(false);
       setCode('');
@@ -85,7 +87,8 @@ export default function TwoFaVerifyModal({ onVerified }) {
         </form>
 
         <p className="mt-4 text-xs text-zinc-600">
-          Lost your authenticator? Run <code className="text-zinc-500">sudo lamaste-reset-admin</code> on the server.
+          Lost your authenticator? Run{' '}
+          <code className="text-zinc-500">sudo lamaste-reset-admin</code> on the server.
         </p>
       </div>
     </div>

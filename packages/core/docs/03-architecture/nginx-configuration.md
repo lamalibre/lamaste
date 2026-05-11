@@ -565,11 +565,11 @@ The Gatekeeper authorization responses are cached by nginx to reduce subrequest 
 proxy_cache_path /var/cache/nginx/authz levels=1:2 keys_zone=lamaste_authz:1m max_size=10m inactive=5m;
 ```
 
-| Parameter    | Value   | Purpose                                                   |
-| ------------ | ------- | --------------------------------------------------------- |
-| `keys_zone`  | `1m`    | 1 MB for cache keys (sufficient for thousands of entries) |
-| `max_size`   | `10m`   | 10 MB maximum disk storage for cached responses           |
-| `inactive`   | `5m`    | Evict entries not accessed within 5 minutes               |
+| Parameter   | Value | Purpose                                                   |
+| ----------- | ----- | --------------------------------------------------------- |
+| `keys_zone` | `1m`  | 1 MB for cache keys (sufficient for thousands of entries) |
+| `max_size`  | `10m` | 10 MB maximum disk storage for cached responses           |
+| `inactive`  | `5m`  | Evict entries not accessed within 5 minutes               |
 
 **Cache key:** `$cookie_authelia_session$http_host` — ensures each user session gets its own cache entry per host, preventing authorization decisions from leaking across users or subdomains.
 
@@ -786,35 +786,35 @@ All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish 
 
 ### Created by the Installer
 
-| Vhost               | When         | Removed                 |
-| ------------------- | ------------ | ----------------------- |
+| Vhost                        | When         | Removed                 |
+| ---------------------------- | ------------ | ----------------------- |
 | `lamalibre-lamaste-panel-ip` | Installation | Never (fallback access) |
 
 ### Created During Onboarding
 
-| Vhost                   | When                | Removed                      |
-| ----------------------- | ------------------- | ---------------------------- |
+| Vhost                            | When                | Removed                      |
+| -------------------------------- | ------------------- | ---------------------------- |
 | `lamalibre-lamaste-panel-domain` | Provisioning step 4 | Never (primary panel access) |
 | `lamalibre-lamaste-auth`         | Provisioning step 4 | Never (auth portal)          |
 | `lamalibre-lamaste-tunnel`       | Provisioning step 4 | Never (tunnel endpoint)      |
 
 ### Created/Removed at Runtime
 
-| Vhost                  | Created           | Removed                 |
-| ---------------------- | ----------------- | ----------------------- |
+| Vhost                           | Created           | Removed                 |
+| ------------------------------- | ----------------- | ----------------------- |
 | `lamalibre-lamaste-app-<name>`  | POST /api/tunnels | DELETE /api/tunnels/:id |
 | `lamalibre-lamaste-site-<uuid>` | POST /api/sites   | DELETE /api/sites/:id   |
 
 ## Key Files
 
-| File                                          | Role                                                                  |
-| --------------------------------------------- | --------------------------------------------------------------------- |
-| `packages/create-lamaste/src/tasks/nginx.js` | Installer: self-signed cert, mTLS snippet, IP vhost                   |
-| `packages/lamaste-serverd/src/lib/nginx.js`      | Runtime: vhost generation, write-with-rollback, enable/disable/reload |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`      | Shared mTLS snippet                                                   |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                              |
-| `/etc/nginx/sites-available/lamalibre-lamaste-*` | Vhost configuration files                                             |
-| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`   | Symlinks to enabled vhosts                                            |
+| File                                                     | Role                                                                  |
+| -------------------------------------------------------- | --------------------------------------------------------------------- |
+| `packages/create-lamaste/src/tasks/nginx.js`             | Installer: self-signed cert, mTLS snippet, IP vhost                   |
+| `packages/lamaste-serverd/src/lib/nginx.js`              | Runtime: vhost generation, write-with-rollback, enable/disable/reload |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | Shared mTLS snippet                                                   |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                |
+| `/etc/nginx/sites-available/lamalibre-lamaste-*`         | Vhost configuration files                                             |
+| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`           | Symlinks to enabled vhosts                                            |
 
 ## Design Decisions
 

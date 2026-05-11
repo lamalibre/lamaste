@@ -34,13 +34,13 @@ Two separate, orthogonal group systems:
 
 ### Authelia Groups (Identity Tier)
 
-Fixed role tiers stored in `users.yml`. Determines *what kind of user you are*.
+Fixed role tiers stored in `users.yml`. Determines _what kind of user you are_.
 
-| Group | Purpose |
-|-------|---------|
-| `admins` | Full panel access (mTLS certificate holders) |
+| Group      | Purpose                                                                   |
+| ---------- | ------------------------------------------------------------------------- |
+| `admins`   | Full panel access (mTLS certificate holders)                              |
 | `internal` | Power users — can install standalone plugins, serve resources via tunnels |
-| `external` | Basic users — can access tunnels they've been granted access to |
+| `external` | Basic users — can access tunnels they've been granted access to           |
 
 - Managed in `users.yml`, changes require Authelia restart
 - User creation UI uses hardcoded checkboxes: admin (disables others), internal (disables external), external
@@ -48,12 +48,12 @@ Fixed role tiers stored in `users.yml`. Determines *what kind of user you are*.
 
 ### Lamaste Groups (Access Control Tier)
 
-Admin-created, arbitrary groups for fine-grained resource authorization. Determines *what resources you can access*.
+Admin-created, arbitrary groups for fine-grained resource authorization. Determines _what resources you can access_.
 
-| Example Group | Purpose |
-|---------------|---------|
-| `developers` | Access to dev/staging tunnels |
-| `design-team` | Access to design tool tunnels |
+| Example Group | Purpose                                            |
+| ------------- | -------------------------------------------------- |
+| `developers`  | Access to dev/staging tunnels                      |
+| `design-team` | Access to design tool tunnels                      |
 | `client-acme` | External client access to specific project tunnels |
 
 - Full CRUD via gatekeeper library/CLI/API
@@ -133,6 +133,7 @@ The grant system is resource-agnostic. It doesn't know what a "tunnel" or "plugi
 ### Examples
 
 **App tunnel grant (user):**
+
 ```json
 {
   "grantId": "a1b2c3...",
@@ -148,6 +149,7 @@ The grant system is resource-agnostic. It doesn't know what a "tunnel" or "plugi
 ```
 
 **App tunnel grant (group):**
+
 ```json
 {
   "grantId": "d4e5f6...",
@@ -163,6 +165,7 @@ The grant system is resource-agnostic. It doesn't know what a "tunnel" or "plugi
 ```
 
 **Plugin grant (agent-side):**
+
 ```json
 {
   "grantId": "g7h8i9...",
@@ -178,6 +181,7 @@ The grant system is resource-agnostic. It doesn't know what a "tunnel" or "plugi
 ```
 
 **Plugin grant (local/desktop):**
+
 ```json
 {
   "grantId": "j0k1l2...",
@@ -265,14 +269,14 @@ revokeGrant(grantId)
 ```js
 import { checkAccess } from '@lamalibre/lamaste-gatekeeper';
 
-checkAccess(username, resourceType, resourceId)
-  // 1. Find direct user grants: principalType='user', principalId=username
-  // 2. Find user's Lamaste groups via getGroupsForUser(username)
-  // 3. Find group grants: principalType='group', principalId in user's groups
-  // 4. Any match → { allowed: true }
-  // 5. No match → { allowed: false, resource: { type, id }, templates: [...] }
+checkAccess(username, resourceType, resourceId);
+// 1. Find direct user grants: principalType='user', principalId=username
+// 2. Find user's Lamaste groups via getGroupsForUser(username)
+// 3. Find group grants: principalType='group', principalId in user's groups
+// 4. Any match → { allowed: true }
+// 5. No match → { allowed: false, resource: { type, id }, templates: [...] }
 
-  // Templates include pre-filled messages with username and resource name
+// Templates include pre-filled messages with username and resource name
 ```
 
 ### Templates
@@ -322,6 +326,7 @@ location /internal/lamaste/authz {
 ```
 
 Cache key is `session_cookie + hostname`:
+
 - Same user, same tunnel = cached (correct)
 - Different users = separate cache entries (correct)
 - Different tunnels = separate cache entries (correct)
@@ -332,7 +337,7 @@ Cache key is `session_cookie + hostname`:
 
 ```js
 // In-memory LRU cache, keyed by Authelia session cookie hash
-const sessionCache = new Map();  // cookie_hash → { username, groups, expiresAt }
+const sessionCache = new Map(); // cookie_hash → { username, groups, expiresAt }
 
 async function validateAuthelia(cookie) {
   const key = hash(cookie);
@@ -347,23 +352,25 @@ async function validateAuthelia(cookie) {
 ```
 
 Even without nginx cache (e.g., after a deploy), gatekeeper handles 1000 requests with:
+
 - **1 Authelia HTTP call** (first request, then cached 30s)
 - **1000 in-memory grant lookups** (microseconds each — small array scan)
 
 #### Performance Comparison
 
-| Scenario | Authelia calls | Gatekeeper calls | Added latency per request |
-|----------|---------------|-------------------|--------------------------|
-| **Current (no gatekeeper)** | **1000** | N/A | ~1-2ms each |
-| nginx cache warm | 0 | 0 | ~0.1ms (nginx cache lookup) |
-| nginx cache cold, gatekeeper cache warm | 0 | 1 | ~1ms (localhost HTTP + memory lookup) |
-| Both cold (first request of session) | 1 | 1 | ~5-10ms (one-time) |
+| Scenario                                | Authelia calls | Gatekeeper calls | Added latency per request             |
+| --------------------------------------- | -------------- | ---------------- | ------------------------------------- |
+| **Current (no gatekeeper)**             | **1000**       | N/A              | ~1-2ms each                           |
+| nginx cache warm                        | 0              | 0                | ~0.1ms (nginx cache lookup)           |
+| nginx cache cold, gatekeeper cache warm | 0              | 1                | ~1ms (localhost HTTP + memory lookup) |
+| Both cold (first request of session)    | 1              | 1                | ~5-10ms (one-time)                    |
 
 **Net result:** Gatekeeper with caching turns 1000 Authelia calls into 1 (or 0 with warm cache). This is a performance improvement over the current setup, not a regression.
 
 #### Universal Caching Benefit
 
 The nginx `proxy_cache` layer applies to **all access modes**, not just restricted tunnels:
+
 - `authenticated` tunnels: gatekeeper validates Authelia cookie, returns 200. Cached 30s.
 - `restricted` tunnels: gatekeeper validates cookie + checks grants. Cached 30s.
 
@@ -499,6 +506,7 @@ WhatsApp:
 For CLI and desktop consumption (binds 127.0.0.1 only):
 
 **Groups:**
+
 - `POST /api/groups` — create group
 - `GET /api/groups` — list groups
 - `GET /api/groups/:name` — get group with members
@@ -508,12 +516,14 @@ For CLI and desktop consumption (binds 127.0.0.1 only):
 - `DELETE /api/groups/:name/members/:username` — remove member
 
 **Grants:**
+
 - `POST /api/grants` — create grant
 - `GET /api/grants` — list grants (query params for filtering)
 - `GET /api/grants/:grantId` — get grant
 - `DELETE /api/grants/:grantId` — revoke grant
 
 **Diagnostic:**
+
 - `GET /api/access/check?username=alice&resourceType=tunnel&resourceId=xxx` — test access
 
 ### File Watching
@@ -551,12 +561,12 @@ WantedBy=multi-user.target
 
 Tunnel creation form offers four access levels:
 
-| Mode | Authelia | Gatekeeper | nginx Template |
-|------|----------|------------|----------------|
-| `admin` | N/A | N/A | mTLS only (existing panel vhost pattern) |
-| `public` | No auth | No auth | Direct proxy, no auth_request |
-| `authenticated` | Yes | Pass-through | auth_request to gatekeeper, always 200 after Authelia |
-| `restricted` | Yes | Grant check | auth_request to gatekeeper, 200 or 403 based on grants |
+| Mode            | Authelia | Gatekeeper   | nginx Template                                         |
+| --------------- | -------- | ------------ | ------------------------------------------------------ |
+| `admin`         | N/A      | N/A          | mTLS only (existing panel vhost pattern)               |
+| `public`        | No auth  | No auth      | Direct proxy, no auth_request                          |
+| `authenticated` | Yes      | Pass-through | auth_request to gatekeeper, always 200 after Authelia  |
+| `restricted`    | Yes      | Grant check  | auth_request to gatekeeper, 200 or 403 based on grants |
 
 ### Tunnel Schema Changes
 
@@ -598,11 +608,13 @@ Existing `writeAgentPanelVhost()` unchanged (mTLS, no gatekeeper involvement).
 Sidebar entry under a new "Access" section.
 
 **List view:**
+
 - Table: name, description, member count, created date
 - Create button → modal with name + description
 - Row actions: edit, delete (with confirmation showing affected grant count)
 
 **Detail view (click group name):**
+
 - Group info (name, description, created by, created at)
 - Members table with remove button
 - "Add Members" button → modal with Authelia user dropdown (multi-select)
@@ -646,6 +658,7 @@ Access:    (o) Restricted — specific users and groups
 ### Grant Management (integrated, not standalone page)
 
 Grants are managed in context:
+
 - On tunnel detail: manage who can access this tunnel
 - On group detail: see which resources this group can access
 - On user access page: see which resources this user can access
@@ -711,12 +724,14 @@ At-a-glance overview of the access control system:
 Full CRUD for Lamaste access control groups.
 
 **List view:**
+
 - Table: name, description, member count, grant count (how many resources this group can access), created date
 - Search/filter bar
 - "Create Group" button → modal with name + description fields
 - Row actions: edit (rename, description), manage members, delete (with confirmation showing affected grant count)
 
 **Member management (inline expand or detail view):**
+
 - Current members list with remove button per member
 - "Add Members" button → dropdown of Authelia users (fetched from lamalibre-lamaste-serverd `/api/users`) with multi-select
 - Shows which Authelia role tier each user belongs to (admin/internal/external badge)
@@ -726,6 +741,7 @@ Full CRUD for Lamaste access control groups.
 Unified view of all grants across all resource types.
 
 **List view:**
+
 - Table: principal (user/group badge + name), resource (tunnel/plugin badge + name), context, status, created date
 - Filter bar: by principal type, principal name, resource type, resource name
 - "Create Grant" button → modal:
@@ -735,6 +751,7 @@ Unified view of all grants across all resource types.
 - Row actions: revoke (with confirmation)
 
 **Contextual views (also accessible from tunnel/group detail pages):**
+
 - "Grants for this tunnel" — filtered grant list shown on tunnel detail
 - "Grants for this group" — filtered grant list shown on group detail
 
@@ -751,22 +768,26 @@ Log of denied access attempts (if enabled in settings):
 Gatekeeper configuration managed via the desktop app:
 
 **Admin Contact Info** (used in access-request page templates):
+
 - Admin email address
 - Admin display name
 - Optional: Slack channel, Teams channel
 - Saved to `/etc/lamalibre/lamaste/gatekeeper.json`
 
 **Message Templates:**
+
 - Preview and customize the access-request message templates
 - Per-channel toggle (email, Slack, Teams, WhatsApp)
 - Template variables: `{{username}}`, `{{resource}}`, `{{adminName}}`, `{{adminEmail}}`
 
 **Cache Configuration:**
+
 - nginx cache TTL display (informational — actual value in nginx config)
 - Gatekeeper session cache TTL (configurable, default 30s)
 - "Bust Cache" button — immediately invalidates all cached auth decisions
 
 **Access Request Logging:**
+
 - Toggle on/off
 - Retention period (default 30 days)
 - "Clear Log" button
@@ -860,11 +881,11 @@ On first startup, gatekeeper checks for legacy files:
 
 ### Boundaries
 
-| Component | Binds to | Auth | Purpose |
-|-----------|----------|------|---------|
+| Component          | Binds to         | Auth                   | Purpose                       |
+| ------------------ | ---------------- | ---------------------- | ----------------------------- |
 | Gatekeeper service | `127.0.0.1:9294` | None (localhost trust) | nginx auth_request + REST API |
-| Panel-server | `127.0.0.1:9292` | mTLS | Admin operations |
-| Authelia | `127.0.0.1:9091` | Session cookie | User authentication |
+| Panel-server       | `127.0.0.1:9292` | mTLS                   | Admin operations              |
+| Authelia           | `127.0.0.1:9091` | Session cookie         | User authentication           |
 
 ### Attack Surface Analysis
 
@@ -891,15 +912,15 @@ On first startup, gatekeeper checks for legacy files:
 
 Gatekeeper and tickets are separate packages that coexist. They solve different authorization problems:
 
-| | **Tickets** | **Gatekeeper** |
-|--|------------|---------------|
-| **Who** | Agent (mTLS cert CN) | Human (Authelia username) |
-| **Authorizes** | Agent-to-agent communication | User-to-resource access |
-| **Identity** | mTLS certificate | Authelia session cookie |
-| **Mechanism** | Issue token → validate → session with heartbeats | Check grant → allow/deny (stateless) |
-| **Lifecycle** | Ephemeral (30s tokens, heartbeat sessions) | Persistent (grants live until revoked) |
-| **Concepts** | Scopes, instances, transport negotiation | Groups, access modes, request templates |
-| **nginx** | Not involved | auth_request target |
+|                | **Tickets**                                      | **Gatekeeper**                          |
+| -------------- | ------------------------------------------------ | --------------------------------------- |
+| **Who**        | Agent (mTLS cert CN)                             | Human (Authelia username)               |
+| **Authorizes** | Agent-to-agent communication                     | User-to-resource access                 |
+| **Identity**   | mTLS certificate                                 | Authelia session cookie                 |
+| **Mechanism**  | Issue token → validate → session with heartbeats | Check grant → allow/deny (stateless)    |
+| **Lifecycle**  | Ephemeral (30s tokens, heartbeat sessions)       | Persistent (grants live until revoked)  |
+| **Concepts**   | Scopes, instances, transport negotiation         | Groups, access modes, request templates |
+| **nginx**      | Not involved                                     | auth_request target                     |
 
 They share infrastructure patterns (atomic JSON writes, promise-chain mutex) but their domain logic is fundamentally different. Unifying them would create confused abstractions — every function would need to ask "am I in machine mode or human mode?"
 
@@ -910,16 +931,16 @@ They share infrastructure patterns (atomic JSON writes, promise-chain mutex) but
 
 ## Affected Packages
 
-| Package | Changes |
-|---------|---------|
-| **lamalibre-lamaste-gatekeeper** (NEW) | Full package — library, service, CLI |
-| **lamalibre-lamaste-serverd** | Refactor user-access to delegate to gatekeeper lib, remove access-control-sync, new nginx vhost templates, tunnel schema gains accessMode |
-| **lamaste-server-ui** | New Gatekeeper sidebar section (Dashboard, Groups, Grants, Access Requests, Settings), updated Users page (role radio buttons), updated tunnel creation form (access mode + user/group picker), tunnel list access badges |
-| **create-lamaste** | Install gatekeeper package + service, state file creation, nginx template updates, nginx proxy_cache zone |
-| **lamaste-agent** | Minimal — agent reports tunnel access mode in status |
-| **lamaste-desktop** | New Gatekeeper sidebar section with full management UI, Tauri commands in `gatekeeper.rs`, React pages from admin-panel |
-| **tests/e2e** | Group CRUD, grant CRUD, tunnel access modes, access-request page, caching behavior, migration |
-| **tests/e2e-three-vm** | Multi-agent restricted tunnel access, group-based access across agents |
+| Package                                | Changes                                                                                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **lamalibre-lamaste-gatekeeper** (NEW) | Full package — library, service, CLI                                                                                                                                                                                      |
+| **lamalibre-lamaste-serverd**          | Refactor user-access to delegate to gatekeeper lib, remove access-control-sync, new nginx vhost templates, tunnel schema gains accessMode                                                                                 |
+| **lamaste-server-ui**                  | New Gatekeeper sidebar section (Dashboard, Groups, Grants, Access Requests, Settings), updated Users page (role radio buttons), updated tunnel creation form (access mode + user/group picker), tunnel list access badges |
+| **create-lamaste**                     | Install gatekeeper package + service, state file creation, nginx template updates, nginx proxy_cache zone                                                                                                                 |
+| **lamaste-agent**                      | Minimal — agent reports tunnel access mode in status                                                                                                                                                                      |
+| **lamaste-desktop**                    | New Gatekeeper sidebar section with full management UI, Tauri commands in `gatekeeper.rs`, React pages from admin-panel                                                                                                   |
+| **tests/e2e**                          | Group CRUD, grant CRUD, tunnel access modes, access-request page, caching behavior, migration                                                                                                                             |
+| **tests/e2e-three-vm**                 | Multi-agent restricted tunnel access, group-based access across agents                                                                                                                                                    |
 
 ---
 

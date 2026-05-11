@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "02 — Tunnel Traffic (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "HOST_IP": {
@@ -906,11 +902,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic through nginx with Authelia (full path)\"\n# ---------------------------------------------------------------------------\n\n# Fetch the tunnel URL through nginx with Authelia session cookie\nFULL_PATH_CONTENT=$(host_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies.txt https://${TUNNEL_FQDN}/e2e-tunnel-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$FULL_PATH_CONTENT\" \"$MARKER\" \"Full-path tunnel traffic (nginx + Authelia) returns expected content\" || true\n\n# Clean up the cookie jar\nhost_exec \"rm -f /tmp/authelia-cookies.txt 2>/dev/null || true\" 2>/dev/null || true"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 02 — Tunnel Traffic (Three-VM)\n# ============================================================================\n# The crown jewel — tests actual traffic flowing through a tunnel:\n#\n# 1. Create a tunnel via API on the host VM\n# 2. Add /etc/hosts entry on the agent VM for the tunnel subdomain\n# 3. Start a simple HTTP server on the agent VM\n# 4. Start the Chisel client on the agent VM to establish the tunnel\n# 5. Authenticate with Authelia to get a session cookie\n# 6. Curl the tunnel URL from the host VM with the auth cookie\n# 7. Verify the response contains the expected content\n# 8. Clean up: stop chisel client, HTTP server, remove tunnel\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etraffic\"\nTUNNEL_PORT=18080\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMALIBRE_LAMASTE_TUNNEL_OK_$(date +%s)\"\n\nbegin_test \"02 — Tunnel Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entry on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-tunnel-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",

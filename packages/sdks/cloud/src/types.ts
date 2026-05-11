@@ -233,10 +233,7 @@ export interface StorageServerEntry {
 // Storage provisioning progress (NDJSON protocol)
 // ---------------------------------------------------------------------------
 
-export type StorageProvisionStep =
-  | 'validate_credentials'
-  | 'create_bucket'
-  | 'save_registry';
+export type StorageProvisionStep = 'validate_credentials' | 'create_bucket' | 'save_registry';
 
 export interface StorageStepEvent {
   readonly event: 'step';

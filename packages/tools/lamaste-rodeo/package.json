@@ -34,5 +34,10 @@
   "peerDependencies": {
     "@lamalibre/rodeo": "^0.1.0"
   },
+  "peerDependenciesMeta": {
+    "@lamalibre/rodeo": {
+      "optional": true
+    }
+  },
   "devDependencies": {}
 }

@@ -21,7 +21,8 @@ function paths() {
   const stateDir = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
   return {
     credentialsFile: path.join(stateDir, 'chisel-credentials.json'),
-    authFilePath: process.env.LAMALIBRE_LAMASTE_CHISEL_AUTHFILE || path.join(stateDir, 'chisel-users'),
+    authFilePath:
+      process.env.LAMALIBRE_LAMASTE_CHISEL_AUTHFILE || path.join(stateDir, 'chisel-users'),
   };
 }
 

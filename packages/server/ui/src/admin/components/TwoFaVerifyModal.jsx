@@ -83,7 +83,8 @@ export default function TwoFaVerifyModal({ onVerified }) {
         </form>
 
         <p className="mt-4 text-xs text-zinc-600">
-          Lost your authenticator? Run <code className="text-zinc-500">sudo lamaste-reset-admin</code> on the server.
+          Lost your authenticator? Run{' '}
+          <code className="text-zinc-500">sudo lamaste-reset-admin</code> on the server.
         </p>
       </div>
     </div>

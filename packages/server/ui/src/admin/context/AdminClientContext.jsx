@@ -172,11 +172,7 @@ export function useAdminClient() {
  * @param {{ client: AdminClient, children: React.ReactNode }} props
  */
 export function AdminClientProvider({ client, children }) {
-  return (
-    <AdminClientContext.Provider value={client}>
-      {children}
-    </AdminClientContext.Provider>
-  );
+  return <AdminClientContext.Provider value={client}>{children}</AdminClientContext.Provider>;
 }
 
 export default AdminClientContext;

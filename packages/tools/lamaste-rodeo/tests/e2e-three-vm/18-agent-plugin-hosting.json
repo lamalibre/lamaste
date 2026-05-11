@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "18 — Agent Plugin Hosting (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
   "constants": {},
@@ -191,10 +187,7 @@
                 {
                   "name": "test-sync",
                   "version": "0.1.0",
-                  "capabilities": [
-                    "plugin:test-sync:connect",
-                    "plugin:test-sync:read"
-                  ]
+                  "capabilities": ["plugin:test-sync:connect", "plugin:test-sync:read"]
                 }
               ]
             }
@@ -304,10 +297,7 @@
                 {
                   "name": "myplugin",
                   "version": "1.0.0",
-                  "capabilities": [
-                    "plugin:myplugin:action",
-                    "plugin:other:action"
-                  ]
+                  "capabilities": ["plugin:myplugin:action", "plugin:other:action"]
                 }
               ]
             }
@@ -379,9 +369,7 @@
                 {
                   "name": "bad",
                   "version": "1.0.0",
-                  "capabilities": [
-                    "nocolon"
-                  ]
+                  "capabilities": ["nocolon"]
                 }
               ]
             },
@@ -437,9 +425,7 @@
                 {
                   "name": "admin-plugin",
                   "version": "1.0.0",
-                  "capabilities": [
-                    "plugin:admin-plugin:manage"
-                  ]
+                  "capabilities": ["plugin:admin-plugin:manage"]
                 }
               ]
             }

@@ -22,11 +22,7 @@ export class TokenScopeError extends Error {
   readonly missingScopes: readonly string[];
   readonly excessScopes: readonly string[];
 
-  constructor(
-    message: string,
-    missingScopes: readonly string[],
-    excessScopes: readonly string[],
-  ) {
+  constructor(message: string, missingScopes: readonly string[], excessScopes: readonly string[]) {
     super(message);
     this.name = 'TokenScopeError';
     this.missingScopes = missingScopes;

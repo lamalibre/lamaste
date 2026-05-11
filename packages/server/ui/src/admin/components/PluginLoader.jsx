@@ -73,37 +73,40 @@ export default function PluginLoader({ pluginName, subPath = '', basePath, panel
 
     // Fetch and evaluate the plugin bundle via the client abstraction
     let cancelled = false;
-    client.fetchPluginBundle(pluginName).then((jsSource) => {
-      if (cancelled) return;
+    client
+      .fetchPluginBundle(pluginName)
+      .then((jsSource) => {
+        if (cancelled) return;
 
-      try {
-        // Evaluate the plugin JS in global scope
-        const fn = new Function(jsSource); // dynamic eval for plugin bundles
-        fn();
-        mountPlugin();
-      } catch {
-        if (mountRef.current) {
-          mountRef.current.textContent = '';
-          const wrapper = document.createElement('div');
-          wrapper.className = 'flex items-center justify-center h-64';
-          const msg = document.createElement('p');
-          msg.className = 'text-zinc-500 text-sm';
-          msg.textContent = `Failed to load plugin panel for "${pluginName}"`;
-          wrapper.appendChild(msg);
-          mountRef.current.appendChild(wrapper);
+        try {
+          // Evaluate the plugin JS in global scope
+          const fn = new Function(jsSource); // dynamic eval for plugin bundles
+          fn();
+          mountPlugin();
+        } catch {
+          if (mountRef.current) {
+            mountRef.current.textContent = '';
+            const wrapper = document.createElement('div');
+            wrapper.className = 'flex items-center justify-center h-64';
+            const msg = document.createElement('p');
+            msg.className = 'text-zinc-500 text-sm';
+            msg.textContent = `Failed to load plugin panel for "${pluginName}"`;
+            wrapper.appendChild(msg);
+            mountRef.current.appendChild(wrapper);
+          }
         }
-      }
-    }).catch(() => {
-      if (cancelled || !mountRef.current) return;
-      mountRef.current.textContent = '';
-      const wrapper = document.createElement('div');
-      wrapper.className = 'flex items-center justify-center h-64';
-      const msg = document.createElement('p');
-      msg.className = 'text-zinc-500 text-sm';
-      msg.textContent = `Failed to load plugin panel for "${pluginName}"`;
-      wrapper.appendChild(msg);
-      mountRef.current.appendChild(wrapper);
-    });
+      })
+      .catch(() => {
+        if (cancelled || !mountRef.current) return;
+        mountRef.current.textContent = '';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex items-center justify-center h-64';
+        const msg = document.createElement('p');
+        msg.className = 'text-zinc-500 text-sm';
+        msg.textContent = `Failed to load plugin panel for "${pluginName}"`;
+        wrapper.appendChild(msg);
+        mountRef.current.appendChild(wrapper);
+      });
 
     return () => {
       cancelled = true;
@@ -130,11 +133,7 @@ export default function PluginLoader({ pluginName, subPath = '', basePath, panel
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <div
-        ref={mountRef}
-        className="min-h-64"
-        data-plugin={pluginName}
-      >
+      <div ref={mountRef} className="min-h-64" data-plugin={pluginName}>
         <div className="flex items-center justify-center h-64">
           <p className="text-zinc-500 text-sm">Loading plugin...</p>
         </div>

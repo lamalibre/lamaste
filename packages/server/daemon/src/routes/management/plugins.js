@@ -41,25 +41,23 @@ const InstallBodySchema = z.object({
 
 // --- Push install schemas ---
 
-const IpEntrySchema = z
-  .string()
-  .refine(
-    (val) => {
-      // Accept bare IPv4 or IPv4/CIDR
-      const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
-      const cidr = /^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/;
+const IpEntrySchema = z.string().refine(
+  (val) => {
+    // Accept bare IPv4 or IPv4/CIDR
+    const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;
+    const cidr = /^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/;
 
-      if (ipv4.test(val)) return true;
+    if (ipv4.test(val)) return true;
 
-      if (cidr.test(val)) {
-        const prefix = parseInt(val.split('/')[1], 10);
-        return prefix >= 0 && prefix <= 32;
-      }
+    if (cidr.test(val)) {
+      const prefix = parseInt(val.split('/')[1], 10);
+      return prefix >= 0 && prefix <= 32;
+    }
 
-      return false;
-    },
-    { message: 'Must be a valid IPv4 address or CIDR (e.g. 192.168.1.0/24)' },
-  );
+    return false;
+  },
+  { message: 'Must be a valid IPv4 address or CIDR (e.g. 192.168.1.0/24)' },
+);
 
 const PolicyIdSchema = z
   .string()
@@ -67,7 +65,11 @@ const PolicyIdSchema = z
   .max(100)
   .regex(/^[a-z0-9-]+$/, 'Policy ID must contain only lowercase letters, numbers, and hyphens');
 
-const ScopedPackageSchema = z.string().min(1).max(200).regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope');
+const ScopedPackageSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^@lamalibre\//, 'Package must be in the @lamalibre/ scope');
 
 const CreatePolicySchema = z.object({
   name: z.string().min(1).max(100),
@@ -128,7 +130,10 @@ const PushInstallCommandSchema = z
       }
       return true;
     },
-    { message: 'packageName is required for install, update, and uninstall actions', path: ['packageName'] },
+    {
+      message: 'packageName is required for install, update, and uninstall actions',
+      path: ['packageName'],
+    },
   );
 
 export default async function pluginRoutes(fastify, _opts) {
@@ -543,8 +548,7 @@ export default async function pluginRoutes(fastify, _opts) {
       }
 
       const enabled =
-        agent.pushInstallEnabledUntil &&
-        new Date(agent.pushInstallEnabledUntil) > new Date();
+        agent.pushInstallEnabledUntil && new Date(agent.pushInstallEnabledUntil) > new Date();
 
       return {
         pushInstallEnabled: !!enabled,

@@ -215,34 +215,49 @@ export default async function routes(fastify, opts) {
   fastify.post('/tunnels', { preHandler: requireCap('tunnels:write') }, async (request) => {
     const config = await getConfig();
     return panelApi.curlAuthenticatedJson(config, [
-      '-X', 'POST',
-      '-H', 'Content-Type: application/json',
-      '-d', JSON.stringify(request.body),
+      '-X',
+      'POST',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify(request.body),
       `${config.panelUrl}/api/tunnels`,
     ]);
   });
 
-  fastify.patch('/tunnels/:id', { preHandler: requireCap('tunnels:write') }, async (request, reply) => {
-    const { id } = request.params;
-    if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
-    const config = await getConfig();
-    return panelApi.curlAuthenticatedJson(config, [
-      '-X', 'PATCH',
-      '-H', 'Content-Type: application/json',
-      '-d', JSON.stringify(request.body),
-      `${config.panelUrl}/api/tunnels/${id}`,
-    ]);
-  });
+  fastify.patch(
+    '/tunnels/:id',
+    { preHandler: requireCap('tunnels:write') },
+    async (request, reply) => {
+      const { id } = request.params;
+      if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
+      const config = await getConfig();
+      return panelApi.curlAuthenticatedJson(config, [
+        '-X',
+        'PATCH',
+        '-H',
+        'Content-Type: application/json',
+        '-d',
+        JSON.stringify(request.body),
+        `${config.panelUrl}/api/tunnels/${id}`,
+      ]);
+    },
+  );
 
-  fastify.delete('/tunnels/:id', { preHandler: requireCap('tunnels:write') }, async (request, reply) => {
-    const { id } = request.params;
-    if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
-    const config = await getConfig();
-    return panelApi.curlAuthenticatedJson(config, [
-      '-X', 'DELETE',
-      `${config.panelUrl}/api/tunnels/${id}`,
-    ]);
-  });
+  fastify.delete(
+    '/tunnels/:id',
+    { preHandler: requireCap('tunnels:write') },
+    async (request, reply) => {
+      const { id } = request.params;
+      if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
+      const config = await getConfig();
+      return panelApi.curlAuthenticatedJson(config, [
+        '-X',
+        'DELETE',
+        `${config.panelUrl}/api/tunnels/${id}`,
+      ]);
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Services
@@ -312,7 +327,8 @@ export default async function routes(fastify, opts) {
   fastify.post('/certificate/rotate', { preHandler: requireOwner }, async () => {
     const config = await getConfig();
     return panelApi.curlAuthenticatedJson(config, [
-      '-X', 'POST',
+      '-X',
+      'POST',
       `${config.panelUrl}/api/certs/mtls/rotate`,
     ]);
   });
@@ -367,49 +383,61 @@ export default async function routes(fastify, opts) {
   // Web Panel Expose/Retract
   // -----------------------------------------------------------------------
 
-  fastify.get('/panel-expose-status', { preHandler: requireCap('panel:expose') }, async (request, reply) => {
-    try {
-      const config = await getConfig();
-      return await panelApi.fetchPanelTunnelStatus(config);
-    } catch (err) {
-      request.log.error(
-        { errMsg: String(err.message ?? '') },
-        'Failed to fetch panel expose status',
-      );
-      const msg = String(err.message ?? '');
-      const is403 = msg.includes('capability') || msg.includes('403');
-      return reply.code(is403 ? 403 : 500).send({ error: 'Failed to fetch panel status' });
-    }
-  });
-
-  fastify.post('/panel-expose', { preHandler: requireCap('panel:expose') }, async (request, reply) => {
-    try {
-      const config = await getConfig();
-      const rawPort = request.body?.port || 9393;
-      const port = Number(rawPort);
-      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-        return reply.code(400).send({ error: 'Port must be an integer between 1024 and 65535' });
+  fastify.get(
+    '/panel-expose-status',
+    { preHandler: requireCap('panel:expose') },
+    async (request, reply) => {
+      try {
+        const config = await getConfig();
+        return await panelApi.fetchPanelTunnelStatus(config);
+      } catch (err) {
+        request.log.error(
+          { errMsg: String(err.message ?? '') },
+          'Failed to fetch panel expose status',
+        );
+        const msg = String(err.message ?? '');
+        const is403 = msg.includes('capability') || msg.includes('403');
+        return reply.code(is403 ? 403 : 500).send({ error: 'Failed to fetch panel status' });
       }
-      return await panelApi.exposePanelTunnel(config, port);
-    } catch (err) {
-      request.log.error({ errMsg: String(err.message ?? '') }, 'Failed to expose panel');
-      const msg = String(err.message ?? '');
-      const is409 = msg.includes('already exists');
-      return reply
-        .code(is409 ? 409 : 500)
-        .send({ error: is409 ? 'Panel tunnel already exists' : 'Failed to expose panel' });
-    }
-  });
+    },
+  );
 
-  fastify.post('/panel-retract', { preHandler: requireCap('panel:expose') }, async (request, reply) => {
-    try {
-      const config = await getConfig();
-      return await panelApi.retractPanelTunnel(config);
-    } catch (err) {
-      request.log.error({ errMsg: String(err.message ?? '') }, 'Failed to retract panel');
-      return reply.code(500).send({ error: 'Failed to retract panel' });
-    }
-  });
+  fastify.post(
+    '/panel-expose',
+    { preHandler: requireCap('panel:expose') },
+    async (request, reply) => {
+      try {
+        const config = await getConfig();
+        const rawPort = request.body?.port || 9393;
+        const port = Number(rawPort);
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+          return reply.code(400).send({ error: 'Port must be an integer between 1024 and 65535' });
+        }
+        return await panelApi.exposePanelTunnel(config, port);
+      } catch (err) {
+        request.log.error({ errMsg: String(err.message ?? '') }, 'Failed to expose panel');
+        const msg = String(err.message ?? '');
+        const is409 = msg.includes('already exists');
+        return reply
+          .code(is409 ? 409 : 500)
+          .send({ error: is409 ? 'Panel tunnel already exists' : 'Failed to expose panel' });
+      }
+    },
+  );
+
+  fastify.post(
+    '/panel-retract',
+    { preHandler: requireCap('panel:expose') },
+    async (request, reply) => {
+      try {
+        const config = await getConfig();
+        return await panelApi.retractPanelTunnel(config);
+      } catch (err) {
+        request.log.error({ errMsg: String(err.message ?? '') }, 'Failed to retract panel');
+        return reply.code(500).send({ error: 'Failed to retract panel' });
+      }
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Lifecycle
@@ -444,7 +472,9 @@ export default async function routes(fastify, opts) {
       !/^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/.test(packageName) ||
       packageName.includes('@npm:')
     ) {
-      return reply.code(400).send({ error: 'Invalid packageName: must be @lamalibre/ scoped, no aliases' });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid packageName: must be @lamalibre/ scoped, no aliases' });
     }
     try {
       const entry = await installPlugin(pluginCfg, packageName);
@@ -560,17 +590,21 @@ export default async function routes(fastify, opts) {
     }
   });
 
-  fastify.get('/plugins/:name/check-update', { preHandler: requireOwner }, async (request, reply) => {
-    const { name } = request.params;
-    if (!PLUGIN_NAME_RE.test(name)) {
-      return reply.code(400).send({ error: 'Invalid plugin name' });
-    }
-    try {
-      return await checkPluginUpdate(pluginCfg, name);
-    } catch (err) {
-      return reply.code(400).send({ error: err.message });
-    }
-  });
+  fastify.get(
+    '/plugins/:name/check-update',
+    { preHandler: requireOwner },
+    async (request, reply) => {
+      const { name } = request.params;
+      if (!PLUGIN_NAME_RE.test(name)) {
+        return reply.code(400).send({ error: 'Invalid plugin name' });
+      }
+      try {
+        return await checkPluginUpdate(pluginCfg, name);
+      } catch (err) {
+        return reply.code(400).send({ error: err.message });
+      }
+    },
+  );
 
   fastify.get('/plugins/:name/bundle', { preHandler: requireOwner }, async (request, reply) => {
     const { name } = request.params;
@@ -825,46 +859,60 @@ export default async function routes(fastify, opts) {
     return loadServiceRegistry();
   });
 
-  fastify.post('/services/custom', { preHandler: requireCap('services:write') }, async (request, reply) => {
-    const { name, port, binary, processName, category, description } = request.body || {};
-    if (!name || typeof name !== 'string') {
-      return reply.code(400).send({ error: 'name is required' });
-    }
-    if (!port || typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
-      return reply.code(400).send({ error: 'port must be an integer between 1 and 65535' });
-    }
-    if (!category || typeof category !== 'string') {
-      return reply.code(400).send({ error: 'category is required' });
-    }
-    try {
-      const service = await addCustomService({
-        name,
-        port,
-        binary: binary || undefined,
-        processName: processName || undefined,
-        category,
-        description: description || '',
-      });
-      request.log.info({ serviceId: service.id }, 'Custom service added');
-      return { ok: true, service };
-    } catch (err) {
-      return reply.code(400).send({ error: err.message });
-    }
-  });
+  fastify.post(
+    '/services/custom',
+    { preHandler: requireCap('services:write') },
+    async (request, reply) => {
+      const { name, port, binary, processName, category, description } = request.body || {};
+      if (!name || typeof name !== 'string') {
+        return reply.code(400).send({ error: 'name is required' });
+      }
+      if (
+        !port ||
+        typeof port !== 'number' ||
+        !Number.isInteger(port) ||
+        port < 1 ||
+        port > 65535
+      ) {
+        return reply.code(400).send({ error: 'port must be an integer between 1 and 65535' });
+      }
+      if (!category || typeof category !== 'string') {
+        return reply.code(400).send({ error: 'category is required' });
+      }
+      try {
+        const service = await addCustomService({
+          name,
+          port,
+          binary: binary || undefined,
+          processName: processName || undefined,
+          category,
+          description: description || '',
+        });
+        request.log.info({ serviceId: service.id }, 'Custom service added');
+        return { ok: true, service };
+      } catch (err) {
+        return reply.code(400).send({ error: err.message });
+      }
+    },
+  );
 
-  fastify.delete('/services/custom/:name', { preHandler: requireCap('services:write') }, async (request, reply) => {
-    const { name } = request.params;
-    if (!SERVICE_ID_RE.test(name)) {
-      return reply.code(400).send({ error: 'Invalid service ID' });
-    }
-    try {
-      await removeCustomService(name);
-      request.log.info({ serviceId: name }, 'Custom service removed');
-      return { ok: true };
-    } catch (err) {
-      return reply.code(400).send({ error: err.message });
-    }
-  });
+  fastify.delete(
+    '/services/custom/:name',
+    { preHandler: requireCap('services:write') },
+    async (request, reply) => {
+      const { name } = request.params;
+      if (!SERVICE_ID_RE.test(name)) {
+        return reply.code(400).send({ error: 'Invalid service ID' });
+      }
+      try {
+        await removeCustomService(name);
+        request.log.info({ serviceId: name }, 'Custom service removed');
+        return { ok: true };
+      } catch (err) {
+        return reply.code(400).send({ error: err.message });
+      }
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Server Registry

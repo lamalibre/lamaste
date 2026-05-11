@@ -16,22 +16,37 @@ import {
   ChevronsUp,
   X,
 } from 'lucide-react';
-import {
-  Cpu,
-  Terminal,
-  Folder,
-  Shield,
-} from 'lucide-react';
+import { Cpu, Terminal, Folder, Shield } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAgentClient } from '../context/AgentClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 
 // Curated plugin list — same as local plugins, filtered to agent-capable
 const KNOWN_PLUGINS = [
-  { name: 'herd', packageName: '@lamalibre/herd-server', description: 'Zero-config LLM inference pooling', icon: 'cpu' },
-  { name: 'shell', packageName: '@lamalibre/shell-server', description: 'Secure remote terminal via tmux', icon: 'terminal' },
-  { name: 'sync', packageName: '@lamalibre/sync-server', description: 'Bidirectional file sync', icon: 'folder' },
-  { name: 'gate', packageName: '@lamalibre/gate-server', description: 'VPN tunnel management', icon: 'shield' },
+  {
+    name: 'herd',
+    packageName: '@lamalibre/herd-server',
+    description: 'Zero-config LLM inference pooling',
+    icon: 'cpu',
+  },
+  {
+    name: 'shell',
+    packageName: '@lamalibre/shell-server',
+    description: 'Secure remote terminal via tmux',
+    icon: 'terminal',
+  },
+  {
+    name: 'sync',
+    packageName: '@lamalibre/sync-server',
+    description: 'Bidirectional file sync',
+    icon: 'folder',
+  },
+  {
+    name: 'gate',
+    packageName: '@lamalibre/gate-server',
+    description: 'VPN tunnel management',
+    icon: 'shield',
+  },
 ];
 
 const ICON_MAP = {
@@ -44,9 +59,7 @@ const ICON_MAP = {
 
 function StatusBadge({ status }) {
   const styles =
-    status === 'enabled'
-      ? 'bg-green-500/20 text-green-400'
-      : 'bg-zinc-500/20 text-zinc-400';
+    status === 'enabled' ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400';
 
   return (
     <span className={`text-xs px-2 py-0.5 rounded-full ${styles}`}>
@@ -103,7 +116,9 @@ function UpdateIcon({ type, size = 14 }) {
 function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
   const updateType = getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion);
   const typeLabel = { major: 'Major', minor: 'Minor', patch: 'Patch' }[updateType];
-  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[updateType];
+  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[
+    updateType
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -149,7 +164,10 @@ function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
           <button
             type="button"
             disabled={isUpdating}
-            onClick={() => { onUpdate(plugin.name); onClose(); }}
+            onClick={() => {
+              onUpdate(plugin.name);
+              onClose();
+            }}
             className="rounded px-3 py-1.5 text-xs text-white bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUpdating ? 'Updating...' : 'Update'}
@@ -167,17 +185,17 @@ const AGENT_PANEL_DEFAULT_PORT = 9393;
 // custom CSS tokens (--color-surface, --color-card, etc.) so microfrontend
 // plugins look native inside the host.
 const HOST_THEME = {
-  surface: 'oklch(0.145 0.000 0)',         // zinc-950
-  card: 'oklch(0.210 0.006 285.885)',      // zinc-900
+  surface: 'oklch(0.145 0.000 0)', // zinc-950
+  card: 'oklch(0.210 0.006 285.885)', // zinc-900
   cardHover: 'oklch(0.274 0.006 286.033)', // zinc-800
-  border: 'oklch(0.274 0.006 286.033)',    // zinc-800
-  accent: 'oklch(0.789 0.154 211.53)',     // cyan-400
-  accentDim: 'oklch(0.609 0.126 211.53)',  // cyan-500
-  textPrimary: 'oklch(1.000 0.000 0)',     // white
+  border: 'oklch(0.274 0.006 286.033)', // zinc-800
+  accent: 'oklch(0.789 0.154 211.53)', // cyan-400
+  accentDim: 'oklch(0.609 0.126 211.53)', // cyan-500
+  textPrimary: 'oklch(1.000 0.000 0)', // white
   textSecondary: 'oklch(0.552 0.016 285.938)', // zinc-400
-  success: 'oklch(0.723 0.191 149.579)',   // green-400
-  warning: 'oklch(0.795 0.184 86.047)',    // amber-400
-  error: 'oklch(0.637 0.237 25.331)',      // red-400
+  success: 'oklch(0.723 0.191 149.579)', // green-400
+  warning: 'oklch(0.795 0.184 86.047)', // amber-400
+  error: 'oklch(0.637 0.237 25.331)', // red-400
 };
 
 function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscovered }) {
@@ -313,7 +331,11 @@ function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscover
 
     // Cleanup previous mount
     if (cleanupRef.current) {
-      try { cleanupRef.current(); } catch { /* best-effort */ }
+      try {
+        cleanupRef.current();
+      } catch {
+        /* best-effort */
+      }
       cleanupRef.current = null;
     }
 
@@ -345,6 +367,7 @@ function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscover
       }
       lastMountedSubPathRef.current = subPath || '';
     } catch (err) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(`[mount] ${errorMessage(err)}`);
     }
   }, [subPath]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -362,9 +385,7 @@ function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscover
         </button>
       )}
 
-      {loading && (
-        <div className="text-zinc-500 text-sm">Loading plugin panel...</div>
-      )}
+      {loading && <div className="text-zinc-500 text-sm">Loading plugin panel...</div>}
 
       {error && (
         <div className="rounded-lg bg-zinc-900 border border-red-800/50 p-4">
@@ -387,7 +408,17 @@ function AgentPluginPanel({ pluginName, client, onBack, subPath, onPagesDiscover
   );
 }
 
-function PluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate, updateInfo, isActing, isUpdating }) {
+function PluginCard({
+  plugin,
+  onEnable,
+  onDisable,
+  onUninstall,
+  onOpen,
+  onUpdate,
+  updateInfo,
+  isActing,
+  isUpdating,
+}) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
 
@@ -416,13 +447,9 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate
         <StatusBadge status={plugin.status} />
       </div>
 
-      {plugin.displayName && (
-        <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>
-      )}
+      {plugin.displayName && <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>}
 
-      {plugin.description && (
-        <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>
-      )}
+      {plugin.description && <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>}
 
       <p className="text-zinc-500 text-xs mb-4">
         {plugin.packageName}
@@ -430,17 +457,17 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate
           <span> &middot; Installed {new Date(plugin.installedAt).toLocaleDateString()}</span>
         )}
         {plugin.panel?.pages?.length > 0 && (
-          <span> &middot; {plugin.panel.pages.length} page{plugin.panel.pages.length > 1 ? 's' : ''}</span>
+          <span>
+            {' '}
+            &middot; {plugin.panel.pages.length} page{plugin.panel.pages.length > 1 ? 's' : ''}
+          </span>
         )}
       </p>
 
       {plugin.capabilities && plugin.capabilities.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-4">
           {plugin.capabilities.map((cap) => (
-            <span
-              key={cap}
-              className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded"
-            >
+            <span key={cap} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">
               {cap}
             </span>
           ))}
@@ -464,7 +491,10 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate
                 <span className="text-red-400">Uninstall?</span>
                 <button
                   type="button"
-                  onClick={() => { setConfirmUninstall(false); onUninstall(plugin.name); }}
+                  onClick={() => {
+                    setConfirmUninstall(false);
+                    onUninstall(plugin.name);
+                  }}
                   className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
                 >
                   Yes
@@ -570,8 +600,8 @@ function PanelNotRunning({ onStart, isStarting }) {
       <AlertCircle size={32} className="text-zinc-500 mx-auto mb-4" />
       <h2 className="text-white font-semibold mb-2">Agent Plugin Server Not Running</h2>
       <p className="text-zinc-400 text-sm mb-6 max-w-md mx-auto">
-        The agent plugin server needs to be running to manage plugins.
-        Start it to install, enable, and configure plugins on this agent.
+        The agent plugin server needs to be running to manage plugins. Start it to install, enable,
+        and configure plugins on this agent.
       </p>
       <button
         type="button"
@@ -626,7 +656,10 @@ export default function AgentPluginsPage({ onOpenPlugin }) {
   // Check for updates on all installed plugins
   const installedList = pluginsQuery.data?.plugins || [];
   const updatesQuery = useQuery({
-    queryKey: ['agent-plugin-updates', installedList.map((p) => `${p.name}@${p.version}`).join(',')],
+    queryKey: [
+      'agent-plugin-updates',
+      installedList.map((p) => `${p.name}@${p.version}`).join(','),
+    ],
     queryFn: async () => {
       const results = {};
       await Promise.all(
@@ -706,25 +739,16 @@ export default function AgentPluginsPage({ onOpenPlugin }) {
     [installMutation],
   );
 
-  const handleEnable = useCallback(
-    (name) => enableMutation.mutate(name),
-    [enableMutation],
-  );
+  const handleEnable = useCallback((name) => enableMutation.mutate(name), [enableMutation]);
 
-  const handleDisable = useCallback(
-    (name) => disableMutation.mutate(name),
-    [disableMutation],
-  );
+  const handleDisable = useCallback((name) => disableMutation.mutate(name), [disableMutation]);
 
   const handleUninstall = useCallback(
     (name) => uninstallMutation.mutate(name),
     [uninstallMutation],
   );
 
-  const handleUpdate = useCallback(
-    (name) => updateMutation.mutate(name),
-    [updateMutation],
-  );
+  const handleUpdate = useCallback((name) => updateMutation.mutate(name), [updateMutation]);
 
   const plugins = pluginsQuery.data?.plugins;
   const installedNames = new Set((plugins || []).map((p) => p.packageName));
@@ -815,7 +839,7 @@ export default function AgentPluginsPage({ onOpenPlugin }) {
                     onEnable={handleEnable}
                     onDisable={handleDisable}
                     onUninstall={handleUninstall}
-                    onOpen={(name) => onOpenPlugin ? onOpenPlugin(name) : setOpenPlugin(name)}
+                    onOpen={(name) => (onOpenPlugin ? onOpenPlugin(name) : setOpenPlugin(name))}
                     onUpdate={handleUpdate}
                     updateInfo={updateInfoMap[plugin.name]}
                     isActing={isActing}
@@ -823,17 +847,15 @@ export default function AgentPluginsPage({ onOpenPlugin }) {
                   />
                 ))}
                 {/* Available but not yet installed */}
-                {KNOWN_PLUGINS
-                  .filter((kp) => !installedNames.has(kp.packageName))
-                  .map((plugin) => (
-                    <AvailablePluginCard
-                      key={plugin.name}
-                      plugin={plugin}
-                      installed={false}
-                      onInstall={handleInstall}
-                      isInstalling={installMutation.isPending}
-                    />
-                  ))}
+                {KNOWN_PLUGINS.filter((kp) => !installedNames.has(kp.packageName)).map((plugin) => (
+                  <AvailablePluginCard
+                    key={plugin.name}
+                    plugin={plugin}
+                    installed={false}
+                    onInstall={handleInstall}
+                    isInstalling={installMutation.isPending}
+                  />
+                ))}
               </div>
             )}
           </div>

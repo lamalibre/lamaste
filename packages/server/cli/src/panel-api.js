@@ -43,14 +43,19 @@ export async function panelRequest(method, path, body = null) {
     await writeFile(tmpConfigPath, `--pass "${p12Password}"\n`, { mode: 0o600 });
 
     const curlArgs = [
-      '-K', tmpConfigPath,
-      '--cert-type', 'P12',
-      '--cert', p12Path,
+      '-K',
+      tmpConfigPath,
+      '--cert-type',
+      'P12',
+      '--cert',
+      p12Path,
       '-k', // Server uses self-signed cert on localhost
       '-s', // Silent
       '-S', // Show errors
-      '-X', method,
-      '-H', 'Content-Type: application/json',
+      '-X',
+      method,
+      '-H',
+      'Content-Type: application/json',
     ];
 
     if (body) {

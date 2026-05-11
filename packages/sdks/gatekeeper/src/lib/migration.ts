@@ -37,9 +37,7 @@ interface LegacyState {
  * @param logger - Logger for progress reporting
  * @returns Number of grants migrated
  */
-export async function migrateFromLegacy(
-  logger?: GatekeeperLogger,
-): Promise<number> {
+export async function migrateFromLegacy(logger?: GatekeeperLogger): Promise<number> {
   const legacyPath = path.join(dataDir, LEGACY_FILE);
 
   let raw: string;

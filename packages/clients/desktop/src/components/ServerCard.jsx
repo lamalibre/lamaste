@@ -50,10 +50,21 @@ const UPDATE_STEPS = [
 // Server Update Dialog
 // ---------------------------------------------------------------------------
 
-function ServerUpdateDialog({ server, updateInfo, onClose, onUpdate, isUpdating, updateStep, updateError, updateSuccess }) {
+function ServerUpdateDialog({
+  server,
+  updateInfo,
+  onClose,
+  onUpdate,
+  isUpdating,
+  updateStep,
+  updateError,
+  updateSuccess,
+}) {
   const updateType = getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion);
   const typeLabel = { major: 'Major', minor: 'Minor', patch: 'Patch' }[updateType];
-  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[updateType];
+  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[
+    updateType
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -82,11 +93,15 @@ function ServerUpdateDialog({ server, updateInfo, onClose, onUpdate, isUpdating,
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-400">Current</span>
-                <span className="text-zinc-300 font-mono text-xs">v{updateInfo.currentVersion}</span>
+                <span className="text-zinc-300 font-mono text-xs">
+                  v{updateInfo.currentVersion}
+                </span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-400">Latest</span>
-                <span className={`font-mono text-xs ${typeColor}`}>v{updateInfo.latestVersion}</span>
+                <span className={`font-mono text-xs ${typeColor}`}>
+                  v{updateInfo.latestVersion}
+                </span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-zinc-400">Type</span>
@@ -276,7 +291,9 @@ export default function ServerCard({ server, onSetActive, onManage }) {
   const hasCloudControls = !!server.providerId;
   const updateInfo = updateQuery.data;
   const hasUpdate = updateInfo?.hasUpdate === true;
-  const updateType = hasUpdate ? getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion) : null;
+  const updateType = hasUpdate
+    ? getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion)
+    : null;
   const isUpdating = updateStep !== null && !updateError && !updateSuccess;
 
   return (
@@ -301,12 +318,8 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <span
-            className={`h-2 w-2 rounded-full ${online ? 'bg-green-400' : 'bg-red-400'}`}
-          />
-          <span className="text-xs text-zinc-500">
-            {online ? 'Online' : 'Offline'}
-          </span>
+          <span className={`h-2 w-2 rounded-full ${online ? 'bg-green-400' : 'bg-red-400'}`} />
+          <span className="text-xs text-zinc-500">{online ? 'Online' : 'Offline'}</span>
         </div>
       </div>
 
@@ -315,15 +328,9 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           <Globe size={12} />
           <span className="font-mono">{server.ip}</span>
         </div>
-        {server.region && (
-          <div className="text-xs text-zinc-500 ml-5">
-            Region: {server.region}
-          </div>
-        )}
+        {server.region && <div className="text-xs text-zinc-500 ml-5">Region: {server.region}</div>}
         {server.provider && (
-          <div className="text-xs text-zinc-500 ml-5">
-            Provider: {server.provider}
-          </div>
+          <div className="text-xs text-zinc-500 ml-5">Provider: {server.provider}</div>
         )}
         {updateInfo?.currentVersion && (
           <div className="text-xs text-zinc-500 ml-5">
@@ -367,7 +374,12 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs text-red-400">Are you sure?</span>
             <button
-              onClick={() => { setDestroyAction(confirmAction); setConfirmAction(null); setShowDestroyModal(true); setConfirmInput(''); }}
+              onClick={() => {
+                setDestroyAction(confirmAction);
+                setConfirmAction(null);
+                setShowDestroyModal(true);
+                setConfirmInput('');
+              }}
               className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
             >
               Yes
@@ -412,7 +424,10 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-sm">
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
               <div className="flex items-center gap-2">
-                <AlertTriangle size={14} className={destroyAction === 'destroy' ? 'text-red-400' : 'text-amber-400'} />
+                <AlertTriangle
+                  size={14}
+                  className={destroyAction === 'destroy' ? 'text-red-400' : 'text-amber-400'}
+                />
                 <h3 className="text-sm font-bold text-white">
                   {destroyAction === 'destroy' ? 'Destroy Server' : 'Remove Server'}
                 </h3>
@@ -429,13 +444,13 @@ export default function ServerCard({ server, onSetActive, onManage }) {
               {destroyAction === 'destroy' ? (
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   This will <strong className="text-red-400">permanently destroy</strong> the
-                  droplet on DigitalOcean and remove it from the local registry.
-                  This action cannot be undone.
+                  droplet on DigitalOcean and remove it from the local registry. This action cannot
+                  be undone.
                 </p>
               ) : (
                 <p className="text-xs text-zinc-400 leading-relaxed">
-                  This will remove the server from the local registry.
-                  The server itself will not be affected.
+                  This will remove the server from the local registry. The server itself will not be
+                  affected.
                 </p>
               )}
               <div>
@@ -467,9 +482,7 @@ export default function ServerCard({ server, onSetActive, onManage }) {
               </button>
               <button
                 onClick={() =>
-                  destroyAction === 'destroy'
-                    ? destroyMutation.mutate()
-                    : removeMutation.mutate()
+                  destroyAction === 'destroy' ? destroyMutation.mutate() : removeMutation.mutate()
                 }
                 disabled={
                   confirmInput !== server.label ||

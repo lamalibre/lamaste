@@ -114,7 +114,9 @@ export default function Servers({ onManage }) {
                   setShowAddMenu(false);
                   setShowLocalInstall(true);
                 }}
-                disabled={!localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry}
+                disabled={
+                  !localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry
+                }
                 className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
               >
                 <HardDrive size={12} />
@@ -147,7 +149,8 @@ export default function Servers({ onManage }) {
           <Server size={48} className="text-zinc-700 mb-4" />
           <h2 className="text-sm font-medium text-zinc-400 mb-2">No servers yet</h2>
           <p className="text-xs text-zinc-500 mb-6 text-center max-w-sm">
-            Create a new server on DigitalOcean, connect to an existing installation, or install locally.
+            Create a new server on DigitalOcean, connect to an existing installation, or install
+            locally.
           </p>
           <div className="flex gap-2 flex-wrap justify-center">
             <button
@@ -166,7 +169,9 @@ export default function Servers({ onManage }) {
             </button>
             <button
               onClick={() => setShowLocalInstall(true)}
-              disabled={!localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry}
+              disabled={
+                !localInstallQuery.data?.available || localInstallQuery.data?.alreadyInRegistry
+              }
               className="text-xs px-4 py-2 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <HardDrive size={12} />
@@ -202,15 +207,9 @@ export default function Servers({ onManage }) {
         </div>
       )}
 
-      {showCreateWizard && (
-        <CreateServerWizard onClose={() => setShowCreateWizard(false)} />
-      )}
-      {showAddManaged && (
-        <AddManagedServer onClose={() => setShowAddManaged(false)} />
-      )}
-      {showDiscoverWizard && (
-        <DiscoverServerWizard onClose={() => setShowDiscoverWizard(false)} />
-      )}
+      {showCreateWizard && <CreateServerWizard onClose={() => setShowCreateWizard(false)} />}
+      {showAddManaged && <AddManagedServer onClose={() => setShowAddManaged(false)} />}
+      {showDiscoverWizard && <DiscoverServerWizard onClose={() => setShowDiscoverWizard(false)} />}
       {showLocalInstall && (
         <LocalInstallWizard
           existingInstall={localInstallQuery.data?.existingInstall}

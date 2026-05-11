@@ -24,7 +24,9 @@ export async function grantRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       body = CreateGrantSchema.parse(request.body);
     } catch (err) {
-      return reply.code(400).send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
+      return reply
+        .code(400)
+        .send({ error: 'Invalid request body', details: (err as z.ZodError).errors });
     }
 
     try {
@@ -58,9 +60,7 @@ export async function grantRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     try {
-      const grants = await listGrants(
-        Object.keys(filter).length > 0 ? filter : undefined,
-      );
+      const grants = await listGrants(Object.keys(filter).length > 0 ? filter : undefined);
       return { grants };
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });

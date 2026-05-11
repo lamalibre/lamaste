@@ -6,12 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "12 — Enrollment Token Lifecycle (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "requires": ["multipass", "curl", "jq", "openssl"]
   },
   "env": {
     "HOST_IP": {
@@ -1032,11 +1027,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revert admin auth mode for subsequent tests\"\n# ---------------------------------------------------------------------------\n\nhost_exec \"jq '.adminAuthMode = \\\"p12\\\"' /etc/lamalibre/lamaste/panel.json > /tmp/panel-revert.json && mv /tmp/panel-revert.json /etc/lamalibre/lamaste/panel.json && chmod 640 /etc/lamalibre/lamaste/panel.json\"\nsleep 1\nlog_pass \"Reverted adminAuthMode to p12\"\n\n# Clean up temp files on host\nhost_exec \"rm -f /tmp/admin-up.key /tmp/admin-up.csr /tmp/admin-up-body.json\" 2>/dev/null || true"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 12 — Enrollment Token Lifecycle (Three-VM)\n# ============================================================================\n# Tests the hardware-bound certificate enrollment flow across VMs:\n# - Token creation on host\n# - Public enrollment endpoint reachable from agent VM without mTLS\n# - CSR-based enrollment\n# - Agent registry shows hardware-bound enrollment method\n# - Admin upgrade + P12 lockdown\n# - Revert for subsequent tests\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq openssl\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\n# Use the vm-api-helper.sh on the host VM for reliable API calls.\n# It avoids quoting issues with multipass exec + sudo bash -c.\nhost_api_get() {\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh GET \"$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh POST \"$path\" \"$b64body\"\n}\n\nhost_api_delete() {\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh DELETE \"$1\"\n}\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nbegin_test \"12 — Enrollment Token Lifecycle (Three-VM)\"\n",
   "cleanupRaw": "",

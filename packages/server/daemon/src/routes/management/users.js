@@ -268,9 +268,10 @@ export default async function usersRoutes(fastify, _opts) {
           `/api/grants?principalType=user&principalId=${encodeURIComponent(username)}`,
         );
         if (result.ok) {
-          const removed = (result.data && typeof result.data === 'object' && 'removed' in result.data)
-            ? result.data.removed
-            : 0;
+          const removed =
+            result.data && typeof result.data === 'object' && 'removed' in result.data
+              ? result.data.removed
+              : 0;
           if (removed > 0) {
             request.log.info(
               { username, removed },
@@ -298,10 +299,7 @@ export default async function usersRoutes(fastify, _opts) {
           });
         }
       } catch (err) {
-        request.log.warn(
-          { err, username },
-          'Cascade: unexpected failure calling gatekeeper',
-        );
+        request.log.warn({ err, username }, 'Cascade: unexpected failure calling gatekeeper');
         warnings.push({
           step: 'gatekeeper',
           message: `Unexpected failure: ${err.message}`,
@@ -312,10 +310,7 @@ export default async function usersRoutes(fastify, _opts) {
       //    middleware rejects every session token with iat < epoch.
       try {
         const epoch = await bumpUserEpoch(username);
-        request.log.info(
-          { username, epoch },
-          'Cascade: bumped user-access session epoch',
-        );
+        request.log.info({ username, epoch }, 'Cascade: bumped user-access session epoch');
       } catch (err) {
         request.log.warn(
           { err, username },

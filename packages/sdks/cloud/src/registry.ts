@@ -66,9 +66,7 @@ export async function saveServers(entries: readonly ServerEntry[]): Promise<void
 export async function addServer(entry: ServerEntry): Promise<void> {
   const servers = await loadServers();
 
-  const updated = entry.active
-    ? servers.map((s) => ({ ...s, active: false }))
-    : [...servers];
+  const updated = entry.active ? servers.map((s) => ({ ...s, active: false })) : [...servers];
 
   updated.push(entry);
   await saveServers(updated);
@@ -139,27 +137,21 @@ export async function migrateFromAgentConfig(): Promise<boolean> {
     ip = '';
   }
 
-  const authMethod = agentConfig.authMethod === 'keychain' ? 'keychain' as const : 'p12' as const;
+  const authMethod =
+    agentConfig.authMethod === 'keychain' ? ('keychain' as const) : ('p12' as const);
 
   const entry: ServerEntry = {
     id: crypto.randomUUID(),
-    label: agentConfig.domain
-      ? String(agentConfig.domain)
-      : ip || 'my-server',
+    label: agentConfig.domain ? String(agentConfig.domain) : ip || 'my-server',
     panelUrl: agentConfig.panelUrl as string,
     ip,
     createdAt: (agentConfig.setupAt as string) ?? new Date().toISOString(),
     active: true,
     authMethod,
-    keychainIdentity: authMethod === 'keychain'
-      ? (agentConfig.keychainIdentity as string | undefined)
-      : undefined,
-    p12Path: authMethod === 'p12'
-      ? (agentConfig.p12Path as string | undefined)
-      : undefined,
-    p12Password: authMethod === 'p12'
-      ? (agentConfig.p12Password as string | undefined)
-      : undefined,
+    keychainIdentity:
+      authMethod === 'keychain' ? (agentConfig.keychainIdentity as string | undefined) : undefined,
+    p12Path: authMethod === 'p12' ? (agentConfig.p12Path as string | undefined) : undefined,
+    p12Password: authMethod === 'p12' ? (agentConfig.p12Password as string | undefined) : undefined,
   };
 
   await saveServers([entry]);

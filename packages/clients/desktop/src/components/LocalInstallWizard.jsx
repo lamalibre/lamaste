@@ -28,19 +28,31 @@ const INSTALL_STEPS = [
   { key: 'generate_certs', label: 'Generating mTLS certificates', cmd: 'openssl genrsa + pkcs12' },
   { key: 'configure_nginx', label: 'Configuring nginx', cmd: 'nginx sites-enabled' },
   { key: 'deploy_panel', label: 'Deploying panel', cmd: 'npm install + systemctl start' },
-  { key: 'import_certs', label: 'Importing certificates', cmd: 'cp client.p12 ~/.lamalibre/lamaste/' },
+  {
+    key: 'import_certs',
+    label: 'Importing certificates',
+    cmd: 'cp client.p12 ~/.lamalibre/lamaste/',
+  },
   { key: 'save_registry', label: 'Saving configuration', cmd: 'write servers.json' },
 ];
 
 const REDEPLOY_STEPS = [
   { key: 'check_environment', label: 'Checking environment', cmd: 'detect-os && detect-ip' },
   { key: 'redeploy_panel', label: 'Redeploying panel', cmd: 'npm install + systemctl restart' },
-  { key: 'import_certs', label: 'Importing certificates', cmd: 'cp client.p12 ~/.lamalibre/lamaste/' },
+  {
+    key: 'import_certs',
+    label: 'Importing certificates',
+    cmd: 'cp client.p12 ~/.lamalibre/lamaste/',
+  },
   { key: 'save_registry', label: 'Saving configuration', cmd: 'write servers.json' },
 ];
 
 const IMPORT_STEPS = [
-  { key: 'import_certs', label: 'Importing certificates', cmd: 'cp client.p12 ~/.lamalibre/lamaste/' },
+  {
+    key: 'import_certs',
+    label: 'Importing certificates',
+    cmd: 'cp client.p12 ~/.lamalibre/lamaste/',
+  },
   { key: 'save_registry', label: 'Saving configuration', cmd: 'write servers.json' },
 ];
 
@@ -54,7 +66,9 @@ function BrailleSpinner() {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>;
+  return (
+    <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +85,10 @@ function OverviewStep({ existingInstall, label, setLabel, skipHarden, setSkipHar
             <div>
               <p className="text-amber-400 font-medium mb-1">Existing installation detected</p>
               <p className="text-zinc-400 leading-relaxed">
-                A Lamaste installation was found at <code className="text-zinc-300">/etc/lamalibre/lamaste/</code>.
-                You can import it into the desktop app without reinstalling, or run the installer
-                to update the panel files.
+                A Lamaste installation was found at{' '}
+                <code className="text-zinc-300">/etc/lamalibre/lamaste/</code>. You can import it
+                into the desktop app without reinstalling, or run the installer to update the panel
+                files.
               </p>
             </div>
           </div>
@@ -117,8 +132,9 @@ function OverviewStep({ existingInstall, label, setLabel, skipHarden, setSkipHar
           <div>
             <p className="text-amber-400 font-medium mb-1">Requires root access</p>
             <p className="text-zinc-400 leading-relaxed">
-              The installer runs via <code className="text-zinc-300">pkexec</code> and will prompt for your
-              password. System services, firewall rules, and certificates require root privileges.
+              The installer runs via <code className="text-zinc-300">pkexec</code> and will prompt
+              for your password. System services, firewall rules, and certificates require root
+              privileges.
             </p>
           </div>
         </div>
@@ -340,9 +356,7 @@ export default function LocalInstallWizard({ existingInstall, onClose }) {
                   <Icon size={10} />
                   {s}
                 </div>
-                {i < stepLabels.length - 1 && (
-                  <ChevronRight size={12} className="text-zinc-700" />
-                )}
+                {i < stepLabels.length - 1 && <ChevronRight size={12} className="text-zinc-700" />}
               </div>
             );
           })}

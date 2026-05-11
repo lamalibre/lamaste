@@ -138,12 +138,12 @@ function migrate(raw, cliOptions) {
     cliOptions['interface'] ||
     (typeof rawVms.networkInterface === 'string' ? rawVms.networkInterface : null);
   if (!networkInterface) {
-    die('network interface missing: pass --interface <name> (legacy config has no vms.networkInterface)');
+    die(
+      'network interface missing: pass --interface <name> (legacy config has no vms.networkInterface)',
+    );
   }
 
-  const subnet =
-    cliOptions['subnet'] ||
-    (typeof raw.subnet === 'string' ? raw.subnet : null);
+  const subnet = cliOptions['subnet'] || (typeof raw.subnet === 'string' ? raw.subnet : null);
   if (!subnet) {
     die('subnet missing: pass --subnet <cidr> (legacy config has no subnet)');
   }
@@ -151,7 +151,9 @@ function migrate(raw, cliOptions) {
   info(`using networkInterface=${networkInterface}`);
   info(`using subnet=${subnet}`);
   const roleEntries = Object.fromEntries(
-    Object.entries(rawVms).filter(([, v]) => v && typeof v === 'object' && typeof v.name === 'string'),
+    Object.entries(rawVms).filter(
+      ([, v]) => v && typeof v === 'object' && typeof v.name === 'string',
+    ),
   );
 
   const oldSuites = raw.suites || {};
@@ -207,9 +209,7 @@ function migrate(raw, cliOptions) {
   } else {
     const suiteEntries = Object.entries(next.suites);
     const fallbackSuite =
-      suiteEntries.find(([, s]) => s.default === true)?.[0] ||
-      suiteEntries[0]?.[0] ||
-      null;
+      suiteEntries.find(([, s]) => s.default === true)?.[0] || suiteEntries[0]?.[0] || null;
     const hotSuite = cliOptions['hot-reload-suite'] || fallbackSuite;
     const hotRole = cliOptions['hot-reload-role'] || 'host';
     if (hotSuite) {
@@ -226,8 +226,19 @@ function migrate(raw, cliOptions) {
 
   // Preserve any remaining unknown top-level keys except the ones we dropped.
   const dropKeys = new Set([
-    '$schema', 'project', 'hooks', 'paths', 'vms', 'subnet',
-    'profiles', 'tiers', 'suites', 'testDeps', 'defaults', 'packages', 'hotReload',
+    '$schema',
+    'project',
+    'hooks',
+    'paths',
+    'vms',
+    'subnet',
+    'profiles',
+    'tiers',
+    'suites',
+    'testDeps',
+    'defaults',
+    'packages',
+    'hotReload',
   ]);
   for (const [k, v] of Object.entries(raw)) {
     if (!dropKeys.has(k) && !(k in next)) next[k] = v;

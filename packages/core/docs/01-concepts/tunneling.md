@@ -195,11 +195,11 @@ The binary is a single static Go executable with no runtime dependencies.
 
 ### Source files
 
-| File                                                     | Purpose                                                   |
-| -------------------------------------------------------- | --------------------------------------------------------- |
+| File                                                        | Purpose                                                   |
+| ----------------------------------------------------------- | --------------------------------------------------------- |
 | `packages/lamaste-serverd/src/lib/chisel.js`                | Install, start, stop, restart, status, config update      |
 | `packages/lamaste-serverd/src/routes/management/tunnels.js` | Tunnel CRUD API endpoints                                 |
-| `packages/create-lamaste/src/tasks/nginx.js`            | Tunnel vhost nginx template (written during provisioning) |
+| `packages/create-lamaste/src/tasks/nginx.js`                | Tunnel vhost nginx template (written during provisioning) |
 
 ### Panel tunnels
 

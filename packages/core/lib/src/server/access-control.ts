@@ -94,9 +94,7 @@ export interface SyncAccessControlOptions {
  * need to be coalesced into a single Authelia file again, re-add the deps and
  * implement the merge — do not silently accept them again.
  */
-export async function syncAllAccessControl(
-  opts: SyncAccessControlOptions,
-): Promise<void> {
+export async function syncAllAccessControl(opts: SyncAccessControlOptions): Promise<void> {
   const { authelia, siteState, logger } = opts;
 
   try {

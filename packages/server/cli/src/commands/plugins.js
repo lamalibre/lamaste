@@ -131,7 +131,9 @@ async function installPluginCmd(packageName, { json }) {
     } else {
       console.log(` ${chalk.green('ok')}`);
       console.log(`  Plugin ${chalk.cyan(entry.name)} installed (${chalk.dim('disabled')})`);
-      console.log(`  Run ${chalk.cyan(`lamaste-server plugins enable ${entry.name}`)} to activate.`);
+      console.log(
+        `  Run ${chalk.cyan(`lamaste-server plugins enable ${entry.name}`)} to activate.`,
+      );
       console.log('');
     }
 

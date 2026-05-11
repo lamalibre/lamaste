@@ -22,11 +22,7 @@ export async function runLogs(args, { json }) {
     }
   }
 
-  const journalArgs = [
-    '-u', service,
-    '-n', lines,
-    '--no-pager',
-  ];
+  const journalArgs = ['-u', service, '-n', lines, '--no-pager'];
 
   if (follow) {
     journalArgs.push('-f');

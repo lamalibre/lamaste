@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "08 — Invitation Journey (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "TEST_DOMAIN": {
@@ -1203,11 +1199,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: delete invited user\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESPONSE=$(host_api_delete \"users/${INVITED_USERNAME}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Invited user deletion returned ok: true\" || true\n\n# Verify user is gone from the list\nUSERS_FINAL=$(host_api_get \"users\")\nFOUND_FINAL=$(echo \"$USERS_FINAL\" | jq -r --arg u \"$INVITED_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_FINAL\" \"\" \"Invited user no longer in list after deletion\" || true"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 08 — Invitation Journey (Three-VM)\n# ============================================================================\n# Tests the full invitation flow for a new user invited by an admin, with\n# public-facing steps executed from an external visitor VM:\n#\n# 1. Admin creates an invitation via POST /api/invitations\n# 2. Visitor GETs /api/invite/:token (public, no mTLS)\n# 3. Visitor POSTs /api/invite/:token/accept (public, no mTLS)\n# 4. Verify invited user appears in admin's user list\n# 5. New user authenticates from visitor VM (firstfactor + secondfactor TOTP)\n# 6. Visitor re-uses invitation token — should get 410 Gone\n# 7. Cleanup: delete invited user\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nINVITED_USERNAME=\"inviteduser\"\nINVITED_EMAIL=\"invited@test.local\"\nINVITED_PASSWORD=\"InvitedPass123!!\"\nINVITE_TOKEN=\"\"\nINVITATION_ID=\"\"\n\nbegin_test \"08 — Invitation Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-invite-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  # Delete the invited user if they were created\n  host_api_delete \"users/${INVITED_USERNAME}\" 2>/dev/null || true\n  # Delete the invitation if it was created\n  if [ -n \"$INVITATION_ID\" ] && [ \"$INVITATION_ID\" != \"null\" ]; then\n    host_api_delete \"invitations/${INVITATION_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",

@@ -187,7 +187,11 @@
         { "title": "Sites API", "slug": "api-sites", "file": "04-api-reference/sites.md" },
         { "title": "System API", "slug": "api-system", "file": "04-api-reference/system.md" },
         { "title": "Tickets API", "slug": "api-tickets", "file": "04-api-reference/tickets.md" },
-        { "title": "Gatekeeper API", "slug": "api-gatekeeper", "file": "04-api-reference/gatekeeper.md" }
+        {
+          "title": "Gatekeeper API",
+          "slug": "api-gatekeeper",
+          "file": "04-api-reference/gatekeeper.md"
+        }
       ]
     },
     {

@@ -16,11 +16,14 @@ const ConfigSchema = z.object({
     .optional()
     .default(500 * 1024 * 1024),
   adminAuthMode: z.enum(['p12', 'hardware-bound']).optional().default('p12'),
-  panel2fa: z.object({
-    enabled: z.boolean(),
-    secret: z.string().nullable(),
-    setupComplete: z.boolean(),
-  }).optional().default({ enabled: false, secret: null, setupComplete: false }),
+  panel2fa: z
+    .object({
+      enabled: z.boolean(),
+      secret: z.string().nullable(),
+      setupComplete: z.boolean(),
+    })
+    .optional()
+    .default({ enabled: false, secret: null, setupComplete: false }),
   sessionSecret: z.string().nullable().optional().default(null),
   // Per-user invalidation epochs (Unix seconds). When a user is deleted from
   // Authelia, their epoch is bumped so any in-flight user-access session token
@@ -125,11 +128,23 @@ export function updateConfig(patch) {
     const merged = structuredClone(config);
 
     for (const key of Object.keys(patch)) {
-      if (key === 'onboarding' && typeof patch.onboarding === 'object' && patch.onboarding !== null) {
+      if (
+        key === 'onboarding' &&
+        typeof patch.onboarding === 'object' &&
+        patch.onboarding !== null
+      ) {
         merged.onboarding = { ...merged.onboarding, ...patch.onboarding };
-      } else if (key === 'panel2fa' && typeof patch.panel2fa === 'object' && patch.panel2fa !== null) {
+      } else if (
+        key === 'panel2fa' &&
+        typeof patch.panel2fa === 'object' &&
+        patch.panel2fa !== null
+      ) {
         merged.panel2fa = { ...merged.panel2fa, ...patch.panel2fa };
-      } else if (key === 'userEpochs' && typeof patch.userEpochs === 'object' && patch.userEpochs !== null) {
+      } else if (
+        key === 'userEpochs' &&
+        typeof patch.userEpochs === 'object' &&
+        patch.userEpochs !== null
+      ) {
         merged.userEpochs = { ...(merged.userEpochs ?? {}), ...patch.userEpochs };
       } else {
         merged[key] = patch[key];

@@ -135,9 +135,7 @@ export function pluginCapabilityRegexFor(route: string): RegExp {
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(route)) {
     throw new Error(`Invalid plugin route for capability regex: "${route}"`);
   }
-  return new RegExp(
-    `^plugin:${route}:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`,
-  );
+  return new RegExp(`^plugin:${route}:[a-z0-9]([a-z0-9-]*[a-z0-9])?$`);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,9 +157,7 @@ export function pluginCapabilityRegexFor(route: string): RegExp {
  * from `@lamalibre/lamaste/server` for backwards-compatible imports.
  */
 export function derivePluginRoute(pluginNameOrPackage: string): string {
-  return pluginNameOrPackage
-    .replace(/^@lamalibre\//, '')
-    .replace(/-(server|agent)$/, '');
+  return pluginNameOrPackage.replace(/^@lamalibre\//, '').replace(/-(server|agent)$/, '');
 }
 
 /**

@@ -17,23 +17,18 @@
 
 import type { TicketClient } from './client.js';
 import { TicketHttpError } from './types.js';
-import type {
-  TicketLogger,
-  TicketInboxEntry,
-  SessionInfo,
-  TerminationReason,
-} from './types.js';
+import type { TicketLogger, TicketInboxEntry, SessionInfo, TerminationReason } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type SessionState =
-  | 'waiting'       // No session, polling inbox
-  | 'authorized'    // Active session, operations permitted
-  | 'grace'         // Temporary disconnection, awaiting reconnect
-  | 'terminated'    // Session terminated, need new ticket
-  | 'stopped';      // Manager stopped
+  | 'waiting' // No session, polling inbox
+  | 'authorized' // Active session, operations permitted
+  | 'grace' // Temporary disconnection, awaiting reconnect
+  | 'terminated' // Session terminated, need new ticket
+  | 'stopped'; // Manager stopped
 
 export interface TicketSessionManagerOptions {
   readonly ticketClient: TicketClient;
@@ -103,9 +98,11 @@ export class TicketSessionManager {
     this.onStateChange = options.onStateChange;
 
     this.inboxPollIntervalMs = options.inboxPollIntervalMs ?? DEFAULT_INBOX_POLL_INTERVAL_MS;
-    this.sessionHeartbeatIntervalMs = options.sessionHeartbeatIntervalMs ?? DEFAULT_SESSION_HEARTBEAT_INTERVAL_MS;
+    this.sessionHeartbeatIntervalMs =
+      options.sessionHeartbeatIntervalMs ?? DEFAULT_SESSION_HEARTBEAT_INTERVAL_MS;
     this.inboxRetryDelayMs = options.inboxRetryDelayMs ?? DEFAULT_INBOX_RETRY_DELAY_MS;
-    this.maxConsecutiveHeartbeatFailures = options.maxConsecutiveHeartbeatFailures ?? DEFAULT_MAX_CONSECUTIVE_HEARTBEAT_FAILURES;
+    this.maxConsecutiveHeartbeatFailures =
+      options.maxConsecutiveHeartbeatFailures ?? DEFAULT_MAX_CONSECUTIVE_HEARTBEAT_FAILURES;
     this.minTicketTtlMs = options.minTicketTtlMs ?? DEFAULT_MIN_TICKET_TTL_MS;
   }
 
@@ -247,9 +244,7 @@ export class TicketSessionManager {
    * picks the one with the most remaining TTL so the agent has maximum
    * time to validate and create a session.
    */
-  private findMatchingTicket(
-    tickets: readonly TicketInboxEntry[],
-  ): TicketInboxEntry | undefined {
+  private findMatchingTicket(tickets: readonly TicketInboxEntry[]): TicketInboxEntry | undefined {
     const now = Date.now();
     const candidates = tickets.filter((t) => {
       if (t.scope !== this.scope && !t.scope.startsWith(`${this.scope}:`)) {

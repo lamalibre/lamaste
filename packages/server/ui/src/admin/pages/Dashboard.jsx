@@ -64,7 +64,9 @@ export default function Dashboard() {
           icon={Database}
           label="Memory Usage"
           value={
-            stats ? `${formatBytes(stats.memory.used)} / ${formatBytes(stats.memory.total)}` : '\u2014'
+            stats
+              ? `${formatBytes(stats.memory.used)} / ${formatBytes(stats.memory.total)}`
+              : '\u2014'
           }
           isLoading={statsQuery.isLoading}
           isError={statsQuery.isError}
@@ -72,7 +74,9 @@ export default function Dashboard() {
         <StatsCard
           icon={HardDrive}
           label="Disk Usage"
-          value={stats ? `${formatBytes(stats.disk.used)} / ${formatBytes(stats.disk.total)}` : '\u2014'}
+          value={
+            stats ? `${formatBytes(stats.disk.used)} / ${formatBytes(stats.disk.total)}` : '\u2014'
+          }
           isLoading={statsQuery.isLoading}
           isError={statsQuery.isError}
         />
@@ -125,10 +129,7 @@ export default function Dashboard() {
             </span>
           </div>
           <div className="text-zinc-400">
-            Total Services:{' '}
-            <span className="text-white">
-              {services ? services.length : '—'}
-            </span>
+            Total Services: <span className="text-white">{services ? services.length : '—'}</span>
           </div>
         </div>
       </div>

@@ -103,8 +103,7 @@ export function createWebAgentClient() {
         type: 'source',
         source: r.source,
       })),
-    checkAgentPluginUpdate: (name) =>
-      apiFetch(`/plugins/${encodeURIComponent(name)}/check-update`),
+    checkAgentPluginUpdate: (name) => apiFetch(`/plugins/${encodeURIComponent(name)}/check-update`),
 
     // External links — opens in new tab in web context
     openExternal: (url) => {

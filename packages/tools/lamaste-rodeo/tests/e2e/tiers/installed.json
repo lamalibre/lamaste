@@ -24,9 +24,7 @@
             "type": "pack",
             "package": "create-lamaste"
           },
-          "capture": [
-            { "variable": "CREATE_LAMASTE_TARBALL", "from": { "kind": "result" } }
-          ]
+          "capture": [{ "variable": "CREATE_LAMASTE_TARBALL", "from": { "kind": "result" } }]
         },
         {
           "id": "transfer-tarball",

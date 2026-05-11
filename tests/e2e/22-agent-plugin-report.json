@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "22 — Agent Plugin Capability Reporting",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq"
-    ]
+    "requires": ["curl", "jq"]
   },
   "env": {},
   "constants": {},
@@ -73,9 +70,7 @@
                 {
                   "name": "test-plugin",
                   "version": "0.1.0",
-                  "capabilities": [
-                    "test-plugin:connect"
-                  ]
+                  "capabilities": ["test-plugin:connect"]
                 }
               ]
             }
@@ -231,10 +226,7 @@
                 {
                   "name": "myplugin",
                   "version": "1.0.0",
-                  "capabilities": [
-                    "myplugin:read",
-                    "otherplugin:write"
-                  ]
+                  "capabilities": ["myplugin:read", "otherplugin:write"]
                 }
               ]
             }
@@ -290,9 +282,7 @@
                 {
                   "name": "badplugin",
                   "version": "1.0.0",
-                  "capabilities": [
-                    "no-colon-here"
-                  ]
+                  "capabilities": ["no-colon-here"]
                 }
               ]
             },

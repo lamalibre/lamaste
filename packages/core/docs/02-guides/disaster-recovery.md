@@ -107,11 +107,11 @@ If another service crashed (Chisel, Authelia, nginx), the panel is still accessi
 
 2. **Go to the Services page.** The dashboard shows the health status of all services:
 
-| Service  | Systemd Unit     | Purpose                        |
-| -------- | ---------------- | ------------------------------ |
-| nginx    | `nginx`          | Reverse proxy, TLS termination |
-| Chisel   | `chisel`         | Tunnel server                  |
-| Authelia | `authelia`       | TOTP two-factor authentication |
+| Service  | Systemd Unit                | Purpose                        |
+| -------- | --------------------------- | ------------------------------ |
+| nginx    | `nginx`                     | Reverse proxy, TLS termination |
+| Chisel   | `chisel`                    | Tunnel server                  |
+| Authelia | `authelia`                  | TOTP two-factor authentication |
 | Panel    | `lamalibre-lamaste-serverd` | Admin panel backend            |
 
 3. **Check the service status.** A crashed service shows as "inactive" or "failed" with a red status badge.
@@ -417,48 +417,48 @@ When multiple things are broken, fix in this order:
 
 ### Configuration File Locations
 
-| File                                    | Purpose                               | Format       |
-| --------------------------------------- | ------------------------------------- | ------------ |
-| `/etc/lamalibre/lamaste/panel.json`              | Panel configuration, onboarding state | JSON         |
-| `/etc/lamalibre/lamaste/tunnels.json`            | Tunnel records                        | JSON array   |
-| `/etc/lamalibre/lamaste/sites.json`              | Static site records                   | JSON array   |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`      | Ticket scopes, instances, assignments | JSON         |
-| `/etc/lamalibre/lamaste/tickets.json`            | Active tickets and sessions           | JSON         |
-| `/etc/authelia/users.yml`               | Authelia user database                | YAML         |
-| `/etc/authelia/configuration.yml`       | Authelia config                       | YAML         |
-| `/etc/nginx/sites-available/lamaste-*` | nginx vhosts                          | nginx config |
-| `/etc/lamalibre/lamaste/pki/`                    | All certificates and keys             | PEM/P12      |
+| File                                        | Purpose                               | Format       |
+| ------------------------------------------- | ------------------------------------- | ------------ |
+| `/etc/lamalibre/lamaste/panel.json`         | Panel configuration, onboarding state | JSON         |
+| `/etc/lamalibre/lamaste/tunnels.json`       | Tunnel records                        | JSON array   |
+| `/etc/lamalibre/lamaste/sites.json`         | Static site records                   | JSON array   |
+| `/etc/lamalibre/lamaste/ticket-scopes.json` | Ticket scopes, instances, assignments | JSON         |
+| `/etc/lamalibre/lamaste/tickets.json`       | Active tickets and sessions           | JSON         |
+| `/etc/authelia/users.yml`                   | Authelia user database                | YAML         |
+| `/etc/authelia/configuration.yml`           | Authelia config                       | YAML         |
+| `/etc/nginx/sites-available/lamaste-*`      | nginx vhosts                          | nginx config |
+| `/etc/lamalibre/lamaste/pki/`               | All certificates and keys             | PEM/P12      |
 
 ## Quick Reference
 
-| Scenario              | First Step                            | SSH Needed? |
-| --------------------- | ------------------------------------- | ----------- |
-| Domain lost           | Access via `https://<ip>:9292`        | No          |
-| LE cert expired       | Renew from Certificates page          | No          |
-| Service crashed       | Restart from Services page            | No          |
-| Memory issues         | Check Dashboard, restart services     | Maybe       |
-| mTLS cert expired     | Generate new cert via SSH             | Yes         |
-| HW-bound admin lost   | `sudo lamaste-reset-admin` via DO console | Yes    |
-| Panel 2FA locked out  | `sudo lamaste-reset-admin` via DO console | Yes    |
-| Ticket state corrupt  | Reset JSON files, restart panel       | Yes         |
-| Panel unreachable     | SSH in, check systemd status          | Yes         |
+| Scenario             | First Step                                | SSH Needed? |
+| -------------------- | ----------------------------------------- | ----------- |
+| Domain lost          | Access via `https://<ip>:9292`            | No          |
+| LE cert expired      | Renew from Certificates page              | No          |
+| Service crashed      | Restart from Services page                | No          |
+| Memory issues        | Check Dashboard, restart services         | Maybe       |
+| mTLS cert expired    | Generate new cert via SSH                 | Yes         |
+| HW-bound admin lost  | `sudo lamaste-reset-admin` via DO console | Yes         |
+| Panel 2FA locked out | `sudo lamaste-reset-admin` via DO console | Yes         |
+| Ticket state corrupt | Reset JSON files, restart panel           | Yes         |
+| Panel unreachable    | SSH in, check systemd status              | Yes         |
 
-| Emergency Command                    | What It Does                         |
-| ------------------------------------ | ------------------------------------ |
+| Emergency Command                               | What It Does                         |
+| ----------------------------------------------- | ------------------------------------ |
 | `systemctl restart lamalibre-lamaste-serverd`   | Restart the panel server             |
-| `systemctl restart nginx`            | Restart the reverse proxy            |
-| `systemctl restart chisel`           | Restart the tunnel server            |
-| `systemctl restart authelia`         | Restart the auth service             |
-| `nginx -t`                           | Test nginx config without restarting |
+| `systemctl restart nginx`                       | Restart the reverse proxy            |
+| `systemctl restart chisel`                      | Restart the tunnel server            |
+| `systemctl restart authelia`                    | Restart the auth service             |
+| `nginx -t`                                      | Test nginx config without restarting |
 | `journalctl -u lamalibre-lamaste-serverd -n 50` | View recent panel logs               |
-| `free -h`                            | Check memory usage                   |
-| `df -h`                              | Check disk space                     |
-| `cat /etc/lamalibre/lamaste/panel.json`       | View panel configuration             |
+| `free -h`                                       | Check memory usage                   |
+| `df -h`                                         | Check disk space                     |
+| `cat /etc/lamalibre/lamaste/panel.json`         | View panel configuration             |
 
-| Design Principle | Implementation                                              |
-| ---------------- | ----------------------------------------------------------- |
+| Design Principle | Implementation                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------ |
 | IP fallback      | `https://<ip>:9292` with self-signed TLS (10-year validity); disabled when panel 2FA is on |
-| Auto-restart     | `Restart=always` in all systemd units                       |
-| Atomic writes    | Write to `.tmp`, then `rename()`                            |
-| Memory safety    | bcrypt (not argon2id), 1 GB swap                            |
-| No database      | JSON/YAML flat files — human-readable, easy to repair       |
+| Auto-restart     | `Restart=always` in all systemd units                                                      |
+| Atomic writes    | Write to `.tmp`, then `rename()`                                                           |
+| Memory safety    | bcrypt (not argon2id), 1 GB swap                                                           |
+| No database      | JSON/YAML flat files — human-readable, easy to repair                                      |

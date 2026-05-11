@@ -22,20 +22,20 @@ Register a new ticket scope (capability set with transport configuration).
 
 **Request body:**
 
-| Field                      | Type     | Required | Description                                |
-| -------------------------- | -------- | -------- | ------------------------------------------ |
-| `name`                     | string   | Yes      | Lowercase alphanumeric with hyphens (1-50 chars). Cannot use reserved names (`tunnels`, `plugins`, `health`, `tickets`, etc.) |
-| `version`                  | string   | Yes      | Version string (1-50 chars)                |
-| `description`              | string   | Yes      | Human-readable description (1-500 chars)   |
-| `scopes`                   | array    | Yes      | Capability declarations (1-50 items)       |
-| `scopes[].name`            | string   | Yes      | Capability name (e.g., `shell:connect`)    |
-| `scopes[].description`     | string   | Yes      | What this capability grants                |
-| `scopes[].instanceScoped`  | boolean  | Yes      | Whether tickets are scoped to instances    |
-| `transport`                | object   | Yes      | Transport configuration                    |
-| `transport.strategies`     | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"` |
-| `transport.preferred`      | string   | Yes      | Preferred strategy                         |
-| `transport.port`           | number   | Yes      | Port number (0 or 1024-65535)              |
-| `transport.protocol`       | string   | Yes      | `"wss"` or `"tcp"`                         |
+| Field                     | Type     | Required | Description                                                                                                                   |
+| ------------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `name`                    | string   | Yes      | Lowercase alphanumeric with hyphens (1-50 chars). Cannot use reserved names (`tunnels`, `plugins`, `health`, `tickets`, etc.) |
+| `version`                 | string   | Yes      | Version string (1-50 chars)                                                                                                   |
+| `description`             | string   | Yes      | Human-readable description (1-500 chars)                                                                                      |
+| `scopes`                  | array    | Yes      | Capability declarations (1-50 items)                                                                                          |
+| `scopes[].name`           | string   | Yes      | Capability name (e.g., `shell:connect`)                                                                                       |
+| `scopes[].description`    | string   | Yes      | What this capability grants                                                                                                   |
+| `scopes[].instanceScoped` | boolean  | Yes      | Whether tickets are scoped to instances                                                                                       |
+| `transport`               | object   | Yes      | Transport configuration                                                                                                       |
+| `transport.strategies`    | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"`                                                                                    |
+| `transport.preferred`     | string   | Yes      | Preferred strategy                                                                                                            |
+| `transport.port`          | number   | Yes      | Port number (0 or 1024-65535)                                                                                                 |
+| `transport.protocol`      | string   | Yes      | `"wss"` or `"tcp"`                                                                                                            |
 
 **Response (201):**
 
@@ -109,15 +109,15 @@ Register an instance offering a specific scope. Idempotent: re-registration with
 
 **Request body:**
 
-| Field                     | Type     | Required | Description                                |
-| ------------------------- | -------- | -------- | ------------------------------------------ |
-| `scope`                   | string   | Yes      | Capability name in `scope:action` format (e.g., `shell:connect`) |
-| `transport`               | object   | Yes      | Transport configuration                    |
-| `transport.strategies`    | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"` |
-| `transport.preferred`     | string   | No       | Preferred strategy                         |
-| `transport.direct`        | object   | No       | Direct connection details                  |
-| `transport.direct.host`   | string   | Yes*     | Public hostname or IP (1-255 chars). Private/reserved IPs are rejected (see below) |
-| `transport.direct.port`   | number   | Yes*     | Port number (1024-65535)                   |
+| Field                   | Type     | Required | Description                                                                        |
+| ----------------------- | -------- | -------- | ---------------------------------------------------------------------------------- |
+| `scope`                 | string   | Yes      | Capability name in `scope:action` format (e.g., `shell:connect`)                   |
+| `transport`             | object   | Yes      | Transport configuration                                                            |
+| `transport.strategies`  | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"`                                         |
+| `transport.preferred`   | string   | No       | Preferred strategy                                                                 |
+| `transport.direct`      | object   | No       | Direct connection details                                                          |
+| `transport.direct.host` | string   | Yes\*    | Public hostname or IP (1-255 chars). Private/reserved IPs are rejected (see below) |
+| `transport.direct.port` | number   | Yes\*    | Port number (1024-65535)                                                           |
 
 \* Required when `transport.direct` is provided.
 
@@ -204,12 +204,13 @@ Assign an agent to an instance scope, granting it permission to receive tickets 
 
 **Request body:**
 
-| Field           | Type   | Required | Description                                        |
-| --------------- | ------ | -------- | -------------------------------------------------- |
+| Field           | Type   | Required | Description                                                                                     |
+| --------------- | ------ | -------- | ----------------------------------------------------------------------------------------------- |
 | `agentLabel`    | string | Yes      | Agent or plugin-agent certificate label (1-150 chars, allows colons for `plugin-agent:` prefix) |
-| `instanceScope` | string | Yes     | Format: `scope:action:instanceid` (1-200 chars)   |
+| `instanceScope` | string | Yes      | Format: `scope:action:instanceid` (1-200 chars)                                                 |
 
 **Validation:**
+
 - Agent must exist and not be revoked
 - Agent must have the base scope capability
 - Instance must exist and not be dead
@@ -286,13 +287,14 @@ Request a ticket to authorize communication with a target agent.
 
 **Request body:**
 
-| Field        | Type   | Required | Description                          |
-| ------------ | ------ | -------- | ------------------------------------ |
-| `scope`      | string | Yes      | Capability name                      |
-| `instanceId` | string | Yes      | Hex instance ID (1-64 chars)         |
+| Field        | Type   | Required | Description                                      |
+| ------------ | ------ | -------- | ------------------------------------------------ |
+| `scope`      | string | Yes      | Capability name                                  |
+| `instanceId` | string | Yes      | Hex instance ID (1-64 chars)                     |
 | `target`     | string | Yes      | Target agent or plugin-agent label (1-150 chars) |
 
 **Multi-stage validation:**
+
 1. Source agent has base scope capability
 2. Target agent has base scope capability and is not revoked
 3. Source owns the instance
@@ -363,9 +365,9 @@ Validate and consume a ticket. This is an atomic operation — the ticket is mar
 
 **Request body:**
 
-| Field      | Type   | Required | Description                     |
-| ---------- | ------ | -------- | ------------------------------- |
-| `ticketId` | string | Yes      | Hex ticket ID (1-128 chars)     |
+| Field      | Type   | Required | Description                 |
+| ---------- | ------ | -------- | --------------------------- |
+| `ticketId` | string | Yes      | Hex ticket ID (1-128 chars) |
 
 **Response (200):**
 
@@ -440,9 +442,9 @@ Create a session from a validated (used) ticket. The caller must be the ticket's
 
 **Request body:**
 
-| Field       | Type   | Required | Description                                    |
-| ----------- | ------ | -------- | ---------------------------------------------- |
-| `ticketId`  | string | Yes      | Hex ticket ID (1-128 chars)                    |
+| Field      | Type   | Required | Description                 |
+| ---------- | ------ | -------- | --------------------------- |
+| `ticketId` | string | Yes      | Hex ticket ID (1-128 chars) |
 
 **Response (201):**
 
@@ -479,6 +481,7 @@ POST /api/tickets/sessions/:sessionId/heartbeat
 Re-validates the session's authorization and updates activity timestamp.
 
 **Validation checks:**
+
 1. Session is not dead
 2. Source certificate not revoked
 3. Source has scope capability
@@ -521,9 +524,9 @@ Update session status (e.g., entering grace period for reconnection). Re-validat
 
 **Request body:**
 
-| Field            | Type   | Required | Description                        |
-| ---------------- | ------ | -------- | ---------------------------------- |
-| `status`         | string | Yes      | `"active"` or `"grace"`           |
+| Field    | Type   | Required | Description             |
+| -------- | ------ | -------- | ----------------------- |
+| `status` | string | Yes      | `"active"` or `"grace"` |
 
 The server sets `lastActivityAt` automatically — clients cannot provide or override this field.
 
@@ -597,19 +600,19 @@ with HTTP 429.
 
 Resource limits protect the 512 MB server:
 
-| Resource          | Max   | HTTP response when exceeded |
-| ----------------- | ----- | --------------------------- |
-| Instances         | 200   | 503                         |
-| Tickets           | 1000  | 503                         |
-| Active sessions   | 500   | 503                         |
+| Resource        | Max  | HTTP response when exceeded |
+| --------------- | ---- | --------------------------- |
+| Instances       | 200  | 503                         |
+| Tickets         | 1000 | 503                         |
+| Active sessions | 500  | 503                         |
 
 ## Cleanup Timers
 
 The panel server runs periodic cleanup (every 60 seconds):
 
-| Item              | Condition                  | Action                                      |
-| ----------------- | -------------------------- | ------------------------------------------- |
-| Stale instances   | No heartbeat for 5 min     | Status → stale (tickets rejected)           |
-| Dead instances    | No heartbeat for 1 hr      | Removed with assignments, tickets, sessions |
-| Expired tickets   | Older than 1 hr            | Removed from store                          |
-| Dead sessions     | Dead for 24 hr             | Removed from store                          |
+| Item            | Condition              | Action                                      |
+| --------------- | ---------------------- | ------------------------------------------- |
+| Stale instances | No heartbeat for 5 min | Status → stale (tickets rejected)           |
+| Dead instances  | No heartbeat for 1 hr  | Removed with assignments, tickets, sessions |
+| Expired tickets | Older than 1 hr        | Removed from store                          |
+| Dead sessions   | Dead for 24 hr         | Removed from store                          |

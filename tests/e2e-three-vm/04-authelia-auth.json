@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "04 — Authelia Authentication (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "HOST_IP": {
@@ -1152,11 +1148,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Test: Authelia portal is accessible (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Verify the Authelia portal itself is reachable from external visitor\nPORTAL_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://auth.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$PORTAL_STATUS\" = \"200\" ] || [ \"$PORTAL_STATUS\" = \"302\" ]; then\n  log_pass \"Authelia portal accessible at https://auth.${TEST_DOMAIN} (HTTP $PORTAL_STATUS)\"\nelse\n  log_fail \"Authelia portal not accessible (HTTP $PORTAL_STATUS)\"\nfi"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 04 — Authelia Authentication (Three-VM)\n# ============================================================================\n# Tests that Authelia properly protects tunnel access from an external visitor:\n#\n# 1. Curl tunnel URL WITHOUT auth cookie from visitor VM — should redirect (302)\n# 2. Curl tunnel URL WITH valid auth cookie from visitor VM — should return content\n# 3. Curl tunnel URL with INVALID auth cookie from visitor VM — should redirect\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2eauth\"\nTUNNEL_PORT=18082\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMALIBRE_LAMASTE_AUTH_OK_$(date +%s)\"\n\nbegin_test \"04 — Authelia Authentication (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/e2e-auth-index.html 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"rm -f /tmp/authelia-cookies-valid.txt /tmp/authelia-cookies-invalid.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",

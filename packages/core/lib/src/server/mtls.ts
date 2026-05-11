@@ -123,10 +123,7 @@ function withRegistryLock<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * Read the expiry date from a certificate file using openssl.
  */
-export async function readCertExpiry(
-  certPath: string,
-  exec: ExecFn,
-): Promise<CertExpiry | null> {
+export async function readCertExpiry(certPath: string, exec: ExecFn): Promise<CertExpiry | null> {
   try {
     const { stdout } = await exec('sudo', [
       'openssl',
@@ -142,9 +139,7 @@ export async function readCertExpiry(
     const expiryDate = new Date(match[1]);
     if (isNaN(expiryDate.getTime())) return null;
 
-    const daysUntilExpiry = Math.floor(
-      (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-    );
+    const daysUntilExpiry = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
     return { expiresAt: expiryDate.toISOString(), daysUntilExpiry };
   } catch {
@@ -159,10 +154,7 @@ export async function readCertExpiry(
 /**
  * Get mTLS certificate info (CA and client certs).
  */
-export async function getMtlsCerts(
-  pkiDir: string,
-  exec: ExecFn,
-): Promise<MtlsCertInfo[]> {
+export async function getMtlsCerts(pkiDir: string, exec: ExecFn): Promise<MtlsCertInfo[]> {
   const certs: MtlsCertInfo[] = [];
 
   const certFiles: Array<{ type: 'mtls-ca' | 'mtls-client'; filename: string }> = [
@@ -336,18 +328,13 @@ export async function rotateClientCert(
     };
   } catch (err: unknown) {
     logger.error({ err }, 'mTLS rotation failed, cleaning up');
-    await exec('sudo', ['rm', '-f', newKeyPath, csrPath, newCertPath, newP12Path]).catch(
-      () => {},
-    );
+    await exec('sudo', ['rm', '-f', newKeyPath, csrPath, newCertPath, newP12Path]).catch(() => {});
 
     if (err instanceof MtlsError) throw err;
     const stderr =
       err instanceof Error && 'stderr' in err ? (err as { stderr: string }).stderr : '';
     const message = err instanceof Error ? err.message : String(err);
-    throw new MtlsError(
-      `mTLS rotation failed: ${stderr || message}`,
-      'ROTATION_FAILED',
-    );
+    throw new MtlsError(`mTLS rotation failed: ${stderr || message}`, 'ROTATION_FAILED');
   }
 }
 
@@ -395,10 +382,7 @@ export async function loadAgentRegistry(pkiDir: string): Promise<AgentRegistry> 
 /**
  * Atomically save the agent registry to disk.
  */
-export async function saveAgentRegistry(
-  pkiDir: string,
-  data: AgentRegistry,
-): Promise<void> {
+export async function saveAgentRegistry(pkiDir: string, data: AgentRegistry): Promise<void> {
   await atomicWriteJSON(`${agentsDir(pkiDir)}/registry.json`, data, { mode: 0o640 });
 }
 
@@ -426,11 +410,7 @@ export function getValidCapabilities(
   ticketScopeCapabilities: readonly string[],
 ): string[] {
   return [
-    ...new Set<string>([
-      ...BASE_CAPABILITIES,
-      ...pluginCapabilities,
-      ...ticketScopeCapabilities,
-    ]),
+    ...new Set<string>([...BASE_CAPABILITIES, ...pluginCapabilities, ...ticketScopeCapabilities]),
   ];
 }
 
@@ -548,9 +528,7 @@ export interface GenerateAgentCertOptions {
  * Creates a new RSA key, CSR, signs with the existing CA, and packages
  * the result as a PKCS12 bundle (legacy PBE-SHA1-3DES for macOS compat).
  */
-export function generateAgentCert(
-  opts: GenerateAgentCertOptions,
-): Promise<AgentCertResult> {
+export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<AgentCertResult> {
   const { label, pkiDir, exec, logger, capabilities, allowedSites } = opts;
   assertSafeLabel(label);
 
@@ -558,10 +536,7 @@ export function generateAgentCert(
     const registry = await loadAgentRegistry(pkiDir);
     const existing = registry.agents.find((a) => a.label === label && !a.revoked);
     if (existing) {
-      throw new MtlsError(
-        `Agent certificate with label "${label}" already exists`,
-        'AGENT_EXISTS',
-      );
+      throw new MtlsError(`Agent certificate with label "${label}" already exists`, 'AGENT_EXISTS');
     }
 
     // Verify CA key exists
@@ -571,10 +546,7 @@ export function generateAgentCert(
       try {
         await exec('sudo', ['test', '-r', `${pkiDir}/ca.key`]);
       } catch {
-        throw new MtlsError(
-          'CA key not found — cannot sign new certificate',
-          'CA_KEY_NOT_FOUND',
-        );
+        throw new MtlsError('CA key not found — cannot sign new certificate', 'CA_KEY_NOT_FOUND');
       }
     }
 
@@ -678,8 +650,7 @@ export function generateAgentCert(
 
       // 8. Read expiry
       const expiry = await readCertExpiry(certPath, exec);
-      const expiresAt =
-        expiry?.expiresAt ?? new Date(Date.now() + 730 * 86400000).toISOString();
+      const expiresAt = expiry?.expiresAt ?? new Date(Date.now() + 730 * 86400000).toISOString();
 
       // 9. Clean up CSR
       await exec('rm', ['-f', csrPath]);
@@ -704,17 +675,12 @@ export function generateAgentCert(
 
       return { label, p12Password, serial, expiresAt };
     } catch (err: unknown) {
-      logger.error(
-        { err, label },
-        'Agent certificate generation failed, cleaning up',
-      );
+      logger.error({ err, label }, 'Agent certificate generation failed, cleaning up');
       await exec('rm', ['-rf', agentDirPath]).catch(() => {});
 
       if (err instanceof MtlsError) throw err;
       const stderr =
-        err instanceof Error && 'stderr' in err
-          ? (err as { stderr: string }).stderr
-          : '';
+        err instanceof Error && 'stderr' in err ? (err as { stderr: string }).stderr : '';
       const message = err instanceof Error ? err.message : String(err);
       throw new MtlsError(
         `Agent certificate generation failed: ${stderr || message}`,
@@ -749,8 +715,7 @@ export async function listAgentCerts(pkiDir: string): Promise<AgentCertListEntry
     const isPluginAgent = agent.label.startsWith(PLUGIN_AGENT_CN_PREFIX);
     const entry: AgentCertListEntry = {
       ...agent,
-      capabilities:
-        agent.capabilities ?? (isPluginAgent ? [] : [DEFAULT_AGENT_CAPABILITY]),
+      capabilities: agent.capabilities ?? (isPluginAgent ? [] : [DEFAULT_AGENT_CAPABILITY]),
       enrollmentMethod: agent.enrollmentMethod ?? 'p12',
       expiringSoon,
       certType: isPluginAgent ? 'plugin-agent' : undefined,
@@ -799,10 +764,7 @@ export function updateAgentCapabilities(
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
 
     if (!agent) {
-      throw new MtlsError(
-        `Agent certificate "${label}" not found`,
-        'AGENT_NOT_FOUND',
-      );
+      throw new MtlsError(`Agent certificate "${label}" not found`, 'AGENT_NOT_FOUND');
     }
 
     const validCaps = getValidCapabilities(pluginCapabilities, ticketScopeCapabilities);
@@ -827,10 +789,7 @@ export function updateAgentCapabilities(
 /**
  * Get allowed sites for a specific agent.
  */
-export async function getAgentAllowedSites(
-  pkiDir: string,
-  label: string,
-): Promise<string[]> {
+export async function getAgentAllowedSites(pkiDir: string, label: string): Promise<string[]> {
   const registry = await loadAgentRegistry(pkiDir);
   const agent = registry.agents.find((a) => a.label === label && !a.revoked);
   if (!agent) return [];
@@ -849,10 +808,7 @@ export function updateAgentAllowedSites(
     const registry = await loadAgentRegistry(pkiDir);
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
     if (!agent) {
-      throw new MtlsError(
-        `Agent certificate "${label}" not found`,
-        'AGENT_NOT_FOUND',
-      );
+      throw new MtlsError(`Agent certificate "${label}" not found`, 'AGENT_NOT_FOUND');
     }
     agent.allowedSites = allowedSites;
     await saveAgentRegistry(pkiDir, registry);
@@ -889,10 +845,7 @@ export function revokeAgentCert(
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
 
     if (!agent) {
-      throw new MtlsError(
-        `Agent certificate "${label}" not found`,
-        'AGENT_NOT_FOUND',
-      );
+      throw new MtlsError(`Agent certificate "${label}" not found`, 'AGENT_NOT_FOUND');
     }
 
     // 1. Add serial to revocation list
@@ -904,9 +857,7 @@ export function revokeAgentCert(
     agent.revokedAt = new Date().toISOString();
 
     // 3. Cascade revocation to plugin-agents delegated by this agent
-    const pluginAgents = registry.agents.filter(
-      (a) => !a.revoked && a.delegatedBy === label,
-    );
+    const pluginAgents = registry.agents.filter((a) => !a.revoked && a.delegatedBy === label);
 
     for (const pa of pluginAgents) {
       logger.info(
@@ -918,14 +869,9 @@ export function revokeAgentCert(
       pa.revokedAt = new Date().toISOString();
 
       // Remove plugin-agent's key/cert/p12 files
-      await exec('rm', ['-rf', `${agentsDir(pkiDir)}/${pa.label}/`]).catch(
-        (err: unknown) => {
-          logger.warn(
-            { err, label: pa.label },
-            'Failed to remove plugin-agent certificate files',
-          );
-        },
-      );
+      await exec('rm', ['-rf', `${agentsDir(pkiDir)}/${pa.label}/`]).catch((err: unknown) => {
+        logger.warn({ err, label: pa.label }, 'Failed to remove plugin-agent certificate files');
+      });
     }
 
     if (pluginAgents.length > 0) {
@@ -939,11 +885,9 @@ export function revokeAgentCert(
     await saveAgentRegistry(pkiDir, registry);
 
     // 5. Remove agent's key/cert/p12 files
-    await exec('rm', ['-rf', `${agentsDir(pkiDir)}/${label}/`]).catch(
-      (err: unknown) => {
-        logger.warn({ err, label }, 'Failed to remove agent certificate files');
-      },
-    );
+    await exec('rm', ['-rf', `${agentsDir(pkiDir)}/${label}/`]).catch((err: unknown) => {
+      logger.warn({ err, label }, 'Failed to remove agent certificate files');
+    });
 
     return { ok: true as const, label };
   });

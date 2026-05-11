@@ -175,8 +175,12 @@ export default function Welcome({ onSkip }) {
       if (step && (status === 'running' || status === 'complete' || status === 'skipped')) {
         setAgentInstallStep(step);
       }
-    }).then((fn) => { unlisten = fn; });
-    return () => { if (unlisten) unlisten(); };
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
   }, []);
 
   const localInstallQuery = useQuery({
@@ -185,12 +189,14 @@ export default function Welcome({ onSkip }) {
     staleTime: 60000,
   });
 
-  const localAvailable = !!localInstallQuery.data?.available && !localInstallQuery.data?.alreadyInRegistry;
-  const localHint = localInstallQuery.data?.platform === 'macos'
-    ? 'Linux only'
-    : localInstallQuery.data?.alreadyInRegistry
-      ? 'Installed'
-      : undefined;
+  const localAvailable =
+    !!localInstallQuery.data?.available && !localInstallQuery.data?.alreadyInRegistry;
+  const localHint =
+    localInstallQuery.data?.platform === 'macos'
+      ? 'Linux only'
+      : localInstallQuery.data?.alreadyInRegistry
+        ? 'Installed'
+        : undefined;
 
   const startSignIn = () => {
     setSignInError('');
@@ -235,9 +241,7 @@ export default function Welcome({ onSkip }) {
   const agentInstalling = agentInstallStep !== null && !agentInstallSuccess && !agentInstallError;
   const labelValid = agentLabel.length > 0 && LABEL_REGEX.test(agentLabel);
   const canInstallAgent =
-    labelValid
-    && agentPanelUrl.trim().startsWith('https://')
-    && agentToken.trim().length > 0;
+    labelValid && agentPanelUrl.trim().startsWith('https://') && agentToken.trim().length > 0;
 
   const handleInstallAgent = async (e) => {
     e?.preventDefault();
@@ -260,10 +264,7 @@ export default function Welcome({ onSkip }) {
   };
 
   const anyWizardOpen =
-    showCreateWizard
-    || showDiscoverWizard
-    || showAddManaged
-    || showLocalInstall;
+    showCreateWizard || showDiscoverWizard || showAddManaged || showLocalInstall;
 
   return (
     <>
@@ -334,13 +335,17 @@ export default function Welcome({ onSkip }) {
                       onClick={handleContinue}
                       className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-cyan-400 px-4 py-3 text-sm font-semibold text-zinc-950 hover:bg-cyan-300 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg shadow-cyan-400/20 focus:outline-none focus:ring-2 focus:ring-cyan-400/60 focus:ring-offset-2 focus:ring-offset-zinc-950"
                     >
-                      {signInLoading ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />}
+                      {signInLoading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <LogIn size={16} />
+                      )}
                       Continue
                     </button>
                   </div>
 
                   <p className="text-[11px] text-zinc-600 leading-relaxed text-center mt-4">
-                    A link, a URL, or just the domain — we'll figure it out.
+                    A link, a URL, or just the domain — we&apos;ll figure it out.
                   </p>
 
                   <div className="mt-5 text-center">
@@ -366,12 +371,13 @@ export default function Welcome({ onSkip }) {
                       Finish signing in your browser
                     </h2>
                     <p className="text-sm text-zinc-400 leading-relaxed max-w-xs mx-auto">
-                      We'll continue automatically once you're authenticated.
+                      We&apos;ll continue automatically once you&apos;re authenticated.
                     </p>
                     {activeDomain && (
                       <p className="text-xs text-zinc-500 mt-3 inline-flex items-center gap-1.5">
                         <ExternalLink size={11} />
-                        Signing in to <span className="text-zinc-300 font-medium">{activeDomain}</span>
+                        Signing in to{' '}
+                        <span className="text-zinc-300 font-medium">{activeDomain}</span>
                       </p>
                     )}
                     <div className="mt-6">
@@ -398,7 +404,10 @@ export default function Welcome({ onSkip }) {
               >
                 <Cloud size={12} className="group-hover:text-cyan-400 transition" />
                 Set up a server
-                <ArrowRight size={11} className="text-zinc-700 group-hover:text-cyan-400 transition" />
+                <ArrowRight
+                  size={11}
+                  className="text-zinc-700 group-hover:text-cyan-400 transition"
+                />
               </button>
               <span className="text-[10px] uppercase tracking-wider text-zinc-700">
                 Administrator?
@@ -410,7 +419,10 @@ export default function Welcome({ onSkip }) {
               >
                 <Monitor size={12} className="group-hover:text-cyan-400 transition" />
                 Connect a machine
-                <ArrowRight size={11} className="text-zinc-700 group-hover:text-cyan-400 transition" />
+                <ArrowRight
+                  size={11}
+                  className="text-zinc-700 group-hover:text-cyan-400 transition"
+                />
               </button>
             </div>
           </footer>
@@ -435,9 +447,12 @@ export default function Welcome({ onSkip }) {
                 <div className="inline-flex items-center justify-center rounded-full bg-cyan-400/10 p-3 mb-4">
                   <Cloud size={24} className="text-cyan-400" />
                 </div>
-                <h1 className="text-3xl font-bold text-white tracking-tight mb-2">Set up a server</h1>
+                <h1 className="text-3xl font-bold text-white tracking-tight mb-2">
+                  Set up a server
+                </h1>
                 <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
-                  A Lamaste server runs the panel, terminates TLS, and routes tunnels. Pick whichever fits where it should live.
+                  A Lamaste server runs the panel, terminates TLS, and routes tunnels. Pick
+                  whichever fits where it should live.
                 </p>
               </header>
 
@@ -478,7 +493,10 @@ export default function Welcome({ onSkip }) {
                 >
                   <Monitor size={12} className="group-hover:text-cyan-400 transition" />
                   Connecting a machine instead?
-                  <ArrowRight size={11} className="text-zinc-700 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition" />
+                  <ArrowRight
+                    size={11}
+                    className="text-zinc-700 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition"
+                  />
                 </button>
               </div>
             </div>
@@ -504,9 +522,12 @@ export default function Welcome({ onSkip }) {
                 <div className="inline-flex items-center justify-center rounded-full bg-cyan-400/10 p-3 mb-4">
                   <Monitor size={24} className="text-cyan-400" />
                 </div>
-                <h1 className="text-3xl font-bold text-white tracking-tight mb-2">Connect a machine</h1>
+                <h1 className="text-3xl font-bold text-white tracking-tight mb-2">
+                  Connect a machine
+                </h1>
                 <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
-                  Enroll this computer as an agent. Paste your panel URL and an enrollment token from your Lamaste server.
+                  Enroll this computer as an agent. Paste your panel URL and an enrollment token
+                  from your Lamaste server.
                 </p>
               </header>
 
@@ -558,7 +579,8 @@ export default function Welcome({ onSkip }) {
                     />
                     {agentLabel && !labelValid && (
                       <p className="text-red-400 text-[11px] mt-1.5">
-                        Lowercase letters, numbers, and hyphens. Must start and end with a letter or number.
+                        Lowercase letters, numbers, and hyphens. Must start and end with a letter or
+                        number.
                       </p>
                     )}
                   </div>
@@ -566,7 +588,9 @@ export default function Welcome({ onSkip }) {
                   {agentInstallError && (
                     <div className="flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/20 px-3 py-2">
                       <AlertCircle size={14} className="text-red-400 shrink-0 mt-0.5" />
-                      <span className="text-xs text-red-400 leading-relaxed">{agentInstallError}</span>
+                      <span className="text-xs text-red-400 leading-relaxed">
+                        {agentInstallError}
+                      </span>
                     </div>
                   )}
 
@@ -582,7 +606,11 @@ export default function Welcome({ onSkip }) {
                     ) : (
                       <Rocket size={16} />
                     )}
-                    {agentInstallSuccess ? 'Installed' : agentInstalling ? 'Installing…' : 'Install agent'}
+                    {agentInstallSuccess
+                      ? 'Installed'
+                      : agentInstalling
+                        ? 'Installing…'
+                        : 'Install agent'}
                   </button>
                 </div>
 
@@ -599,11 +627,17 @@ export default function Welcome({ onSkip }) {
                       <div className="text-xs text-zinc-200 font-medium truncate">
                         {agentInstallSuccess
                           ? 'Connected'
-                          : (AGENT_INSTALL_STEPS.find((s) => s.key === agentInstallStep)?.label || 'Starting…')}
+                          : AGENT_INSTALL_STEPS.find((s) => s.key === agentInstallStep)?.label ||
+                            'Starting…'}
                       </div>
                       {!agentInstallSuccess && !agentInstallError && (
                         <div className="text-[10px] text-zinc-500">
-                          Step {Math.max(1, AGENT_INSTALL_STEPS.findIndex((s) => s.key === agentInstallStep) + 1)} of {AGENT_INSTALL_STEPS.length}
+                          Step{' '}
+                          {Math.max(
+                            1,
+                            AGENT_INSTALL_STEPS.findIndex((s) => s.key === agentInstallStep) + 1,
+                          )}{' '}
+                          of {AGENT_INSTALL_STEPS.length}
                         </div>
                       )}
                     </div>
@@ -619,7 +653,10 @@ export default function Welcome({ onSkip }) {
                 >
                   <Cloud size={12} className="group-hover:text-cyan-400 transition" />
                   Setting up a server instead?
-                  <ArrowRight size={11} className="text-zinc-700 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition" />
+                  <ArrowRight
+                    size={11}
+                    className="text-zinc-700 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition"
+                  />
                 </button>
               </div>
             </div>
@@ -627,15 +664,9 @@ export default function Welcome({ onSkip }) {
         </FadeIn>
       )}
 
-      {showCreateWizard && (
-        <CreateServerWizard onClose={() => setShowCreateWizard(false)} />
-      )}
-      {showDiscoverWizard && (
-        <DiscoverServerWizard onClose={() => setShowDiscoverWizard(false)} />
-      )}
-      {showAddManaged && (
-        <AddManagedServer onClose={() => setShowAddManaged(false)} />
-      )}
+      {showCreateWizard && <CreateServerWizard onClose={() => setShowCreateWizard(false)} />}
+      {showDiscoverWizard && <DiscoverServerWizard onClose={() => setShowDiscoverWizard(false)} />}
+      {showAddManaged && <AddManagedServer onClose={() => setShowAddManaged(false)} />}
       {showLocalInstall && (
         <LocalInstallWizard
           existingInstall={localInstallQuery.data?.existingInstall}

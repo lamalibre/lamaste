@@ -12,11 +12,7 @@ import {
  * Exempt paths that must remain accessible without a 2FA session.
  * These include the health check, the 2FA status endpoint, and the verify endpoint.
  */
-const EXEMPT_PATHS = new Set([
-  '/api/health',
-  '/api/settings/2fa',
-  '/api/settings/2fa/verify',
-]);
+const EXEMPT_PATHS = new Set(['/api/health', '/api/settings/2fa', '/api/settings/2fa/verify']);
 
 async function twofaSessionPlugin(fastify, _opts) {
   fastify.addHook('onRequest', async (request, reply) => {

@@ -11,24 +11,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import {
-  Package,
-  Play,
-  Square,
-  Zap,
-  Loader2,
-  X,
-  AlertTriangle,
-} from 'lucide-react';
+import { Package, Play, Square, Zap, Loader2, X, AlertTriangle } from 'lucide-react';
 
 const POLL_MS = 5_000;
 
 const STATE_META = {
-  'managed-running':  { dot: 'bg-emerald-500', label: 'Feria running' },
+  'managed-running': { dot: 'bg-emerald-500', label: 'Feria running' },
   'external-running': { dot: 'bg-emerald-500', label: 'Feria (external)' },
-  starting:           { dot: 'bg-amber-500 animate-pulse', label: 'Feria starting\u2026' },
-  error:              { dot: 'bg-red-500', label: 'Feria error' },
-  stopped:            { dot: 'bg-zinc-600', label: 'Feria stopped' },
+  starting: { dot: 'bg-amber-500 animate-pulse', label: 'Feria starting\u2026' },
+  error: { dot: 'bg-red-500', label: 'Feria error' },
+  stopped: { dot: 'bg-zinc-600', label: 'Feria stopped' },
 };
 
 export default function FeriaStatusPill() {
@@ -65,18 +57,21 @@ export default function FeriaStatusPill() {
   }, [open]);
 
   // ---- Actions ----
-  const runAction = useCallback(async (command) => {
-    setBusy(true);
-    try {
-      await invoke(command);
-      setOpen(false);
-    } catch {
-      // Error is reflected in the next poll cycle
-    } finally {
-      setBusy(false);
-      queryClient.invalidateQueries({ queryKey: ['feria-status'] });
-    }
-  }, [queryClient]);
+  const runAction = useCallback(
+    async (command) => {
+      setBusy(true);
+      try {
+        await invoke(command);
+        setOpen(false);
+      } catch {
+        // Error is reflected in the next poll cycle
+      } finally {
+        setBusy(false);
+        queryClient.invalidateQueries({ queryKey: ['feria-status'] });
+      }
+    },
+    [queryClient],
+  );
 
   const handleTakeoverConfirmed = useCallback(() => {
     setTakeoverConfirm(false);
@@ -150,7 +145,10 @@ export default function FeriaStatusPill() {
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => { setOpen(false); setTakeoverConfirm(true); }}
+                onClick={() => {
+                  setOpen(false);
+                  setTakeoverConfirm(true);
+                }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-amber-400 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Zap size={12} />
@@ -190,9 +188,9 @@ export default function FeriaStatusPill() {
               </button>
             </div>
             <p className="mb-4 leading-relaxed">
-              This will SIGTERM the externally-running feria on port 4873, wait 3
-              seconds, SIGKILL if still alive, then spawn a managed replacement.
-              Existing connections will be dropped.
+              This will SIGTERM the externally-running feria on port 4873, wait 3 seconds, SIGKILL
+              if still alive, then spawn a managed replacement. Existing connections will be
+              dropped.
             </p>
             <div className="flex justify-end gap-2">
               <button

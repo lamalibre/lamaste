@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "18 — JSON Installer Output (--json flag)",
     "deps": [],
-    "requires": [
-      "node",
-      "jq"
-    ]
+    "requires": ["node", "jq"]
   },
   "env": {},
   "constants": {},

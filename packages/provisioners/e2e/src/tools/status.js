@@ -25,13 +25,8 @@ export const testLogTool = {
   inputSchema: z.object({
     testName: z
       .string()
-      .describe(
-        'Test name (e.g. "01-onboarding-complete", "11-plugin-lifecycle")',
-      ),
-    runId: z
-      .string()
-      .optional()
-      .describe('Run ID (default: most recent run)'),
+      .describe('Test name (e.g. "01-onboarding-complete", "11-plugin-lifecycle")'),
+    runId: z.string().optional().describe('Run ID (default: most recent run)'),
   }),
   async handler({ testName, runId } = {}) {
     const args = ['log', 'show', testName];

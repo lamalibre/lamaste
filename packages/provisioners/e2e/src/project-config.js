@@ -42,9 +42,7 @@ let parsed;
 try {
   parsed = JSON.parse(readFileSync(configPath, 'utf8'));
 } catch (err) {
-  throw new Error(
-    `Lamaste E2E MCP: failed to parse ${configPath}: ${err.message}`,
-  );
+  throw new Error(`Lamaste E2E MCP: failed to parse ${configPath}: ${err.message}`);
 }
 
 export const PROJECT_CONFIG_PATH = configPath;

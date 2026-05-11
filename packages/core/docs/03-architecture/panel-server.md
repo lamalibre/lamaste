@@ -577,51 +577,51 @@ The shutdown sequence stops the periodic instance liveness check (`livenessInter
 
 ## Key Files
 
-| File                                                         | Role                                                           |
-| ------------------------------------------------------------ | -------------------------------------------------------------- |
-| `packages/lamaste-serverd/src/index.js`                         | Server entry, plugin + route registration                      |
-| `packages/lamaste-serverd/src/middleware/mtls.js`               | mTLS verification, revocation check, role parsing              |
-| `packages/lamaste-serverd/src/middleware/role-guard.js`         | Role-based access control (admin vs agent capabilities)        |
-| `packages/lamaste-serverd/src/middleware/onboarding-guard.js`   | Route access control by onboarding state                       |
-| `packages/lamaste-serverd/src/middleware/twofa-session.js`      | 2FA session cookie verification (after mTLS, before roleGuard) |
-| `packages/lamaste-serverd/src/middleware/errors.js`             | Global error handler (Zod, AppError, 500)                      |
-| `packages/lamaste-serverd/src/routes/onboarding/index.js`       | Onboarding route registration + guard                          |
-| `packages/lamaste-serverd/src/routes/onboarding/provision.js`   | Provisioning POST + WebSocket stream                           |
-| `packages/lamaste-serverd/src/routes/invite.js`                 | Public invite acceptance routes (no mTLS)                      |
-| `packages/lamaste-serverd/src/routes/enrollment.js`             | Public enrollment route (token + CSR, no mTLS)                 |
-| `packages/lamaste-serverd/src/routes/management.js`             | Management route registration + guard                          |
-| `packages/lamaste-serverd/src/routes/management/certs.js`       | Certificate management (mTLS, agent certs, admin auth mode)    |
-| `packages/lamaste-serverd/src/routes/management/plugins.js`     | Plugin management + push install (admin-only)                  |
-| `packages/lamaste-serverd/src/routes/management/invitations.js` | Invitation CRUD (admin-only)                                   |
-| `packages/lamaste-serverd/src/routes/management/settings.js`    | 2FA settings: setup, confirm, verify, disable (admin-only)     |
-| `packages/lamaste-serverd/src/routes/plugin-router.js`          | Dynamic plugin route mounting + disabled-plugin 503 handler    |
-| `packages/lamaste-serverd/src/lib/config.js`                    | Config loading, validation (Zod), atomic update                |
-| `packages/lamaste-serverd/src/lib/state.js`                     | tunnels.json + sites.json + invitations.json atomic read/write |
-| `packages/lamaste-serverd/src/lib/revocation.js`                | Certificate revocation list management (revoked.json)          |
-| `packages/lamaste-serverd/src/lib/invite-page.js`               | Invitation acceptance HTML page generator                      |
-| `packages/lamaste-serverd/src/lib/nginx.js`                     | Vhost generation, write-with-rollback, reload                  |
-| `packages/lamaste-serverd/src/lib/chisel.js`                    | Chisel install, service management, config update              |
-| `packages/lamaste-serverd/src/lib/authelia.js`                  | Authelia install, config, user CRUD, TOTP                      |
-| `packages/lamaste-serverd/src/lib/certbot.js`                   | Let's Encrypt issuance, renewal, listing                       |
+| File                                                            | Role                                                                        |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `packages/lamaste-serverd/src/index.js`                         | Server entry, plugin + route registration                                   |
+| `packages/lamaste-serverd/src/middleware/mtls.js`               | mTLS verification, revocation check, role parsing                           |
+| `packages/lamaste-serverd/src/middleware/role-guard.js`         | Role-based access control (admin vs agent capabilities)                     |
+| `packages/lamaste-serverd/src/middleware/onboarding-guard.js`   | Route access control by onboarding state                                    |
+| `packages/lamaste-serverd/src/middleware/twofa-session.js`      | 2FA session cookie verification (after mTLS, before roleGuard)              |
+| `packages/lamaste-serverd/src/middleware/errors.js`             | Global error handler (Zod, AppError, 500)                                   |
+| `packages/lamaste-serverd/src/routes/onboarding/index.js`       | Onboarding route registration + guard                                       |
+| `packages/lamaste-serverd/src/routes/onboarding/provision.js`   | Provisioning POST + WebSocket stream                                        |
+| `packages/lamaste-serverd/src/routes/invite.js`                 | Public invite acceptance routes (no mTLS)                                   |
+| `packages/lamaste-serverd/src/routes/enrollment.js`             | Public enrollment route (token + CSR, no mTLS)                              |
+| `packages/lamaste-serverd/src/routes/management.js`             | Management route registration + guard                                       |
+| `packages/lamaste-serverd/src/routes/management/certs.js`       | Certificate management (mTLS, agent certs, admin auth mode)                 |
+| `packages/lamaste-serverd/src/routes/management/plugins.js`     | Plugin management + push install (admin-only)                               |
+| `packages/lamaste-serverd/src/routes/management/invitations.js` | Invitation CRUD (admin-only)                                                |
+| `packages/lamaste-serverd/src/routes/management/settings.js`    | 2FA settings: setup, confirm, verify, disable (admin-only)                  |
+| `packages/lamaste-serverd/src/routes/plugin-router.js`          | Dynamic plugin route mounting + disabled-plugin 503 handler                 |
+| `packages/lamaste-serverd/src/lib/config.js`                    | Config loading, validation (Zod), atomic update                             |
+| `packages/lamaste-serverd/src/lib/state.js`                     | tunnels.json + sites.json + invitations.json atomic read/write              |
+| `packages/lamaste-serverd/src/lib/revocation.js`                | Certificate revocation list management (revoked.json)                       |
+| `packages/lamaste-serverd/src/lib/invite-page.js`               | Invitation acceptance HTML page generator                                   |
+| `packages/lamaste-serverd/src/lib/nginx.js`                     | Vhost generation, write-with-rollback, reload                               |
+| `packages/lamaste-serverd/src/lib/chisel.js`                    | Chisel install, service management, config update                           |
+| `packages/lamaste-serverd/src/lib/authelia.js`                  | Authelia install, config, user CRUD, TOTP                                   |
+| `packages/lamaste-serverd/src/lib/certbot.js`                   | Let's Encrypt issuance, renewal, listing                                    |
 | `packages/lamaste-serverd/src/lib/mtls.js`                      | mTLS cert info, client cert rotation, agent registry, capability management |
-| `packages/lamaste-serverd/src/lib/plugins.js`                   | Plugin manifest validation, install/uninstall, registry CRUD   |
-| `packages/lamaste-serverd/src/lib/push-install.js`              | Push install policies, sessions, agent enablement              |
-| `packages/lamaste-serverd/src/lib/enrollment.js`                | Enrollment token creation, validation, consumption             |
-| `packages/lamaste-serverd/src/lib/csr-signing.js`               | CSR signing for hardware-bound agent enrollment                |
-| `packages/lamaste-serverd/src/lib/constants.js`                 | Reserved API prefixes shared across plugins and tickets        |
-| `packages/lamaste-serverd/src/lib/services.js`                  | systemctl wrapper with allowlists                              |
-| `packages/lamaste-serverd/src/lib/system-stats.js`              | CPU, memory, disk stats (cached)                               |
-| `packages/lamaste-serverd/src/lib/files.js`                     | Static site file operations with path validation               |
-| `packages/lamaste-serverd/src/lib/plist.js`                     | macOS launchd plist generator                                  |
-| `packages/lamaste-serverd/src/lib/totp.js`                      | TOTP code generation and verification                          |
-| `packages/lamaste-serverd/src/lib/session.js`                   | Signed session cookie creation and validation                  |
-| `packages/lamaste-serverd/src/lib/tickets.js`                   | Ticket system: scopes, instances, assignments, sessions        |
-| `packages/lamaste-serverd/src/routes/management/tickets.js`     | Ticket management HTTP route handlers                          |
-| `packages/lamaste-serverd/src/lib/storage.js`                   | Storage server registry, plugin bindings, AES-256-GCM encryption |
-| `packages/lamaste-serverd/src/routes/management/identity.js`    | Identity system HTTP route handlers                            |
-| `packages/lamaste-serverd/src/routes/management/storage.js`     | Storage management HTTP route handlers                         |
-| `packages/lamaste-serverd/src/routes/management/system.js`      | System stats + panel update HTTP route handlers                |
-| `packages/lamaste-serverd/src/lib/app-error.js`                 | Operational error class                                        |
+| `packages/lamaste-serverd/src/lib/plugins.js`                   | Plugin manifest validation, install/uninstall, registry CRUD                |
+| `packages/lamaste-serverd/src/lib/push-install.js`              | Push install policies, sessions, agent enablement                           |
+| `packages/lamaste-serverd/src/lib/enrollment.js`                | Enrollment token creation, validation, consumption                          |
+| `packages/lamaste-serverd/src/lib/csr-signing.js`               | CSR signing for hardware-bound agent enrollment                             |
+| `packages/lamaste-serverd/src/lib/constants.js`                 | Reserved API prefixes shared across plugins and tickets                     |
+| `packages/lamaste-serverd/src/lib/services.js`                  | systemctl wrapper with allowlists                                           |
+| `packages/lamaste-serverd/src/lib/system-stats.js`              | CPU, memory, disk stats (cached)                                            |
+| `packages/lamaste-serverd/src/lib/files.js`                     | Static site file operations with path validation                            |
+| `packages/lamaste-serverd/src/lib/plist.js`                     | macOS launchd plist generator                                               |
+| `packages/lamaste-serverd/src/lib/totp.js`                      | TOTP code generation and verification                                       |
+| `packages/lamaste-serverd/src/lib/session.js`                   | Signed session cookie creation and validation                               |
+| `packages/lamaste-serverd/src/lib/tickets.js`                   | Ticket system: scopes, instances, assignments, sessions                     |
+| `packages/lamaste-serverd/src/routes/management/tickets.js`     | Ticket management HTTP route handlers                                       |
+| `packages/lamaste-serverd/src/lib/storage.js`                   | Storage server registry, plugin bindings, AES-256-GCM encryption            |
+| `packages/lamaste-serverd/src/routes/management/identity.js`    | Identity system HTTP route handlers                                         |
+| `packages/lamaste-serverd/src/routes/management/storage.js`     | Storage management HTTP route handlers                                      |
+| `packages/lamaste-serverd/src/routes/management/system.js`      | System stats + panel update HTTP route handlers                             |
+| `packages/lamaste-serverd/src/lib/app-error.js`                 | Operational error class                                                     |
 
 ## Design Decisions
 

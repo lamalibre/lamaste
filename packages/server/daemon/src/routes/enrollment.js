@@ -62,9 +62,10 @@ export default async function enrollmentRoutes(fastify, _opts) {
 
     try {
       // Build opts for delegated enrollments
-      const signOpts = tokenData.type === 'delegated'
-        ? { type: /** @type {const} */ ('delegated'), delegatedBy: tokenData.delegatedBy }
-        : undefined;
+      const signOpts =
+        tokenData.type === 'delegated'
+          ? { type: /** @type {const} */ ('delegated'), delegatedBy: tokenData.delegatedBy }
+          : undefined;
 
       const result = await signCSR(
         body.csr,
@@ -81,9 +82,10 @@ export default async function enrollmentRoutes(fastify, _opts) {
       // (when present) capture the chain of trust.
       request.log.info(
         {
-          admin: tokenData.type === 'delegated'
-            ? `agent:${tokenData.delegatedBy ?? 'unknown'}`
-            : 'enrollment-token',
+          admin:
+            tokenData.type === 'delegated'
+              ? `agent:${tokenData.delegatedBy ?? 'unknown'}`
+              : 'enrollment-token',
           issuedFor: tokenData.type === 'delegated' ? result.label : `agent:${result.label}`,
           mode: tokenData.type === 'delegated' ? 'delegated' : 'hardware-bound',
           newSerial: result.serial,
@@ -104,9 +106,7 @@ export default async function enrollmentRoutes(fastify, _opts) {
       request.log.error(
         {
           err,
-          issuedFor: tokenData.type === 'delegated'
-            ? tokenData.label
-            : `agent:${tokenData.label}`,
+          issuedFor: tokenData.type === 'delegated' ? tokenData.label : `agent:${tokenData.label}`,
           mode: tokenData.type === 'delegated' ? 'delegated' : 'hardware-bound',
         },
         'Enrollment CSR signing failed',

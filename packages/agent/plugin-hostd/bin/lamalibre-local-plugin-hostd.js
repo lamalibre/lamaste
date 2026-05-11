@@ -53,9 +53,7 @@ async function runWriteServiceConfig(port) {
 
 async function runRemoveServiceConfig() {
   await removeLocalHostServiceConfig();
-  process.stdout.write(
-    JSON.stringify({ event: 'service-config-removed' }) + '\n',
-  );
+  process.stdout.write(JSON.stringify({ event: 'service-config-removed' }) + '\n');
 }
 
 async function main() {

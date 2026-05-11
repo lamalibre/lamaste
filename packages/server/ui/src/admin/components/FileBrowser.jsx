@@ -232,9 +232,15 @@ export default function FileBrowser({ site, onBack }) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-zinc-800">
-                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4">Name</th>
-                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4 hidden sm:table-cell">Size</th>
-                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4 hidden md:table-cell">Modified</th>
+                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4">
+                  Name
+                </th>
+                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4 hidden sm:table-cell">
+                  Size
+                </th>
+                <th className="text-left text-zinc-500 text-xs uppercase font-semibold py-2 px-4 hidden md:table-cell">
+                  Modified
+                </th>
                 <th className="text-right text-zinc-500 text-xs uppercase font-semibold py-2 px-4 w-16"></th>
               </tr>
             </thead>
@@ -254,7 +260,9 @@ export default function FileBrowser({ site, onBack }) {
                       ) : (
                         <File size={14} className="text-zinc-500 shrink-0" />
                       )}
-                      <span className={`font-mono ${file.type === 'directory' ? 'text-cyan-400' : 'text-zinc-200'}`}>
+                      <span
+                        className={`font-mono ${file.type === 'directory' ? 'text-cyan-400' : 'text-zinc-200'}`}
+                      >
                         {file.name}
                       </span>
                     </span>

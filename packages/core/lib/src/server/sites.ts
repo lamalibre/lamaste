@@ -47,11 +47,7 @@ export interface CertResult {
 // ---------------------------------------------------------------------------
 
 export interface SiteNginxDeps {
-  writeStaticSiteVhost(
-    site: SiteEntry,
-    certDir: string,
-    domain: string,
-  ): Promise<void>;
+  writeStaticSiteVhost(site: SiteEntry, certDir: string, domain: string): Promise<void>;
   removeStaticSiteVhost(siteId: string): Promise<void>;
 }
 
@@ -83,15 +79,7 @@ export interface AutheliaDeps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const RESERVED_SUBDOMAINS = [
-  'panel',
-  'auth',
-  'tunnel',
-  'www',
-  'mail',
-  'ftp',
-  'api',
-] as const;
+const RESERVED_SUBDOMAINS = ['panel', 'auth', 'tunnel', 'www', 'mail', 'ftp', 'api'] as const;
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -210,26 +198,17 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
 
   const tunnels = await tunnelState.readTunnels();
   if (type === 'managed' && tunnels.find((t) => t.subdomain === name)) {
-    throw new SiteError(
-      `Name '${name}' is already in use by a tunnel`,
-      'NAME_TUNNEL_COLLISION',
-    );
+    throw new SiteError(`Name '${name}' is already in use by a tunnel`, 'NAME_TUNNEL_COLLISION');
   }
 
   const fqdn = type === 'managed' ? `${name}.${domain}` : customDomain!;
 
   if (existingSites.find((s) => s.fqdn === fqdn)) {
-    throw new SiteError(
-      `Domain '${fqdn}' is already in use by another site`,
-      'FQDN_IN_USE',
-    );
+    throw new SiteError(`Domain '${fqdn}' is already in use by another site`, 'FQDN_IN_USE');
   }
 
   if (tunnels.find((t) => `${t.subdomain}.${domain}` === fqdn)) {
-    throw new SiteError(
-      `Domain '${fqdn}' is already in use by a tunnel`,
-      'FQDN_TUNNEL_COLLISION',
-    );
+    throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
 
   const id = crypto.randomUUID();
@@ -251,7 +230,17 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
   };
 
   if (type === 'managed') {
-    return createManagedSite(site, existingSites, domain, email, nginx, certbot, files, siteState, logger);
+    return createManagedSite(
+      site,
+      existingSites,
+      domain,
+      email,
+      nginx,
+      certbot,
+      files,
+      siteState,
+      logger,
+    );
   }
 
   return createCustomSite(site, existingSites, files, siteState, logger);
@@ -465,13 +454,11 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   const newSpaMode = opts.spaMode !== undefined ? opts.spaMode : site.spaMode;
   const newAutheliaProtected =
     opts.autheliaProtected !== undefined ? opts.autheliaProtected : site.autheliaProtected;
-  const newAllowedUsers =
-    opts.allowedUsers !== undefined ? opts.allowedUsers : site.allowedUsers;
+  const newAllowedUsers = opts.allowedUsers !== undefined ? opts.allowedUsers : site.allowedUsers;
 
   const spaModeChanged = newSpaMode !== site.spaMode;
   const autheliaChanged = newAutheliaProtected !== site.autheliaProtected;
-  const usersChanged =
-    JSON.stringify(newAllowedUsers) !== JSON.stringify(site.allowedUsers);
+  const usersChanged = JSON.stringify(newAllowedUsers) !== JSON.stringify(site.allowedUsers);
 
   if (!spaModeChanged && !autheliaChanged && !usersChanged) {
     return { ok: true as const, site, message: 'No changes' };
@@ -569,10 +556,7 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
   }
 
   if (site.type !== 'custom') {
-    throw new SiteError(
-      'DNS verification is only needed for custom domains',
-      'NOT_CUSTOM',
-    );
+    throw new SiteError('DNS verification is only needed for custom domains', 'NOT_CUSTOM');
   }
 
   if (site.dnsVerified && site.certIssued) {

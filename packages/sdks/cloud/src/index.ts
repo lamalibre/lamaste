@@ -66,7 +66,14 @@ export type { StorageProvider } from './storage-provider.js';
 export { DigitalOceanProvider } from './digitalocean/index.js';
 export { validateDOToken, assertValidDOToken, REQUIRED_SCOPES } from './digitalocean/scopes.js';
 export { probeRegionLatencies } from './digitalocean/latency.js';
-export { listDomains, createDomain, listDomainRecords, deleteDomainRecord, updateARecord, setupDnsRecords } from './digitalocean/dns.js';
+export {
+  listDomains,
+  createDomain,
+  listDomainRecords,
+  deleteDomainRecord,
+  updateARecord,
+  setupDnsRecords,
+} from './digitalocean/dns.js';
 export { DigitalOceanSpacesProvider } from './digitalocean/spaces.js';
 
 // Discovery
@@ -89,12 +96,7 @@ export { update } from './updater.js';
 
 // SSH utilities (only safe functions exported; sshExec/scpDownload are internal
 // because their command/path parameters are shell-interpreted on the remote host)
-export {
-  generateKeyPair,
-  waitForSSH,
-  secureDelete,
-  cleanupKeyPair,
-} from './ssh.js';
+export { generateKeyPair, waitForSSH, secureDelete, cleanupKeyPair } from './ssh.js';
 
 // Server registry
 export {

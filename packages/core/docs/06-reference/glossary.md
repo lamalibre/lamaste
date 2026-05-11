@@ -429,36 +429,36 @@ See also: [Client Certificate](#client-certificate), [CA](#ca-certificate-author
 
 ### Alphabetical Index
 
-| Term                                       | One-Line Summary                                           |
-| ------------------------------------------ | ---------------------------------------------------------- |
-| [Atomic Write](#atomic-write)              | Write to temp file, then rename — never half-written       |
-| [Authelia](#authelia)                      | TOTP 2FA authentication server for tunneled apps           |
-| [bcrypt](#bcrypt)                          | Password hashing algorithm (~4KB RAM per hash)             |
-| [CA](#ca-certificate-authority)            | Self-signed certificate authority for mTLS                 |
-| [certbot](#certbot)                        | ACME client for free Let's Encrypt certificates            |
-| [Chisel](#chisel)                          | WebSocket-over-HTTPS tunnel (Go binary)                    |
-| [Client Certificate](#client-certificate)  | Browser-based digital ID for admin panel access            |
-| [DNS](#dns-domain-name-system)             | Maps domain names to IP addresses                          |
-| [Droplet](#droplet)                        | DigitalOcean virtual machine ($4/mo minimum)               |
-| [execa](#execa)                            | Node.js library for safe shell command execution           |
-| [fail2ban](#fail2ban)                      | Brute-force protection (bans IPs after failed attempts)    |
-| [Fastify](#fastify)                        | Node.js web framework powering the panel API               |
-| [Forward Auth](#forward-auth)              | nginx delegates auth checks to Authelia                    |
-| [FQDN](#fqdn-fully-qualified-domain-name)  | Complete domain name (e.g., `myapp.example.com`)           |
-| [launchd](#launchd)                        | macOS service manager for Chisel client                    |
-| [Let's Encrypt](#lets-encrypt)             | Free TLS certificate authority (auto-renewing)             |
-| [Listr2](#listr2)                          | Terminal task runner for the installer                     |
-| [mTLS](#mtls-mutual-tls)                   | Two-way TLS — both server and client prove identity        |
-| [nginx](#nginx)                            | Reverse proxy, TLS termination, sole public-facing service |
-| [Onboarding](#onboarding)                  | First-run wizard: domain, DNS, provisioning                |
-| [PKCS12](#pkcs12)                          | `.p12` file format for client certificate + key bundle     |
-| [Panel](#panel-lamalibre-lamaste-serverd--lamaste-server-ui) | Admin UI (React SPA) + REST API (Fastify)                  |
-| [TOTP](#totp-time-based-one-time-password) | Six-digit codes from authenticator apps                    |
-| [Tunnel](#tunnel)                          | Reverse TCP tunnel from local machine to droplet via WebSocket |
-| [UFW](#ufw-uncomplicated-firewall)         | Firewall allowing only ports 22, 443, 9292                 |
-| [Vhost](#vhost-virtual-host)               | nginx server block routing by domain name                  |
-| [WebSocket](#websocket)                    | Full-duplex communication protocol (RFC 6455)              |
-| [Zod](#zod)                                | Schema validation for API inputs                           |
+| Term                                                         | One-Line Summary                                               |
+| ------------------------------------------------------------ | -------------------------------------------------------------- |
+| [Atomic Write](#atomic-write)                                | Write to temp file, then rename — never half-written           |
+| [Authelia](#authelia)                                        | TOTP 2FA authentication server for tunneled apps               |
+| [bcrypt](#bcrypt)                                            | Password hashing algorithm (~4KB RAM per hash)                 |
+| [CA](#ca-certificate-authority)                              | Self-signed certificate authority for mTLS                     |
+| [certbot](#certbot)                                          | ACME client for free Let's Encrypt certificates                |
+| [Chisel](#chisel)                                            | WebSocket-over-HTTPS tunnel (Go binary)                        |
+| [Client Certificate](#client-certificate)                    | Browser-based digital ID for admin panel access                |
+| [DNS](#dns-domain-name-system)                               | Maps domain names to IP addresses                              |
+| [Droplet](#droplet)                                          | DigitalOcean virtual machine ($4/mo minimum)                   |
+| [execa](#execa)                                              | Node.js library for safe shell command execution               |
+| [fail2ban](#fail2ban)                                        | Brute-force protection (bans IPs after failed attempts)        |
+| [Fastify](#fastify)                                          | Node.js web framework powering the panel API                   |
+| [Forward Auth](#forward-auth)                                | nginx delegates auth checks to Authelia                        |
+| [FQDN](#fqdn-fully-qualified-domain-name)                    | Complete domain name (e.g., `myapp.example.com`)               |
+| [launchd](#launchd)                                          | macOS service manager for Chisel client                        |
+| [Let's Encrypt](#lets-encrypt)                               | Free TLS certificate authority (auto-renewing)                 |
+| [Listr2](#listr2)                                            | Terminal task runner for the installer                         |
+| [mTLS](#mtls-mutual-tls)                                     | Two-way TLS — both server and client prove identity            |
+| [nginx](#nginx)                                              | Reverse proxy, TLS termination, sole public-facing service     |
+| [Onboarding](#onboarding)                                    | First-run wizard: domain, DNS, provisioning                    |
+| [PKCS12](#pkcs12)                                            | `.p12` file format for client certificate + key bundle         |
+| [Panel](#panel-lamalibre-lamaste-serverd--lamaste-server-ui) | Admin UI (React SPA) + REST API (Fastify)                      |
+| [TOTP](#totp-time-based-one-time-password)                   | Six-digit codes from authenticator apps                        |
+| [Tunnel](#tunnel)                                            | Reverse TCP tunnel from local machine to droplet via WebSocket |
+| [UFW](#ufw-uncomplicated-firewall)                           | Firewall allowing only ports 22, 443, 9292                     |
+| [Vhost](#vhost-virtual-host)                                 | nginx server block routing by domain name                      |
+| [WebSocket](#websocket)                                      | Full-duplex communication protocol (RFC 6455)                  |
+| [Zod](#zod)                                                  | Schema validation for API inputs                               |
 
 ### Port Quick Reference
 
@@ -473,15 +473,15 @@ See also: [Client Certificate](#client-certificate), [CA](#ca-certificate-author
 
 ### Key File Paths
 
-| Path                                    | Contents                        |
-| --------------------------------------- | ------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`              | Main configuration              |
-| `/etc/lamalibre/lamaste/tunnels.json`            | Tunnel definitions              |
-| `/etc/lamalibre/lamaste/pki/`                    | All certificates and keys       |
-| `/opt/lamalibre/lamaste/`                        | Panel server + client           |
+| Path                                   | Contents                        |
+| -------------------------------------- | ------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`    | Main configuration              |
+| `/etc/lamalibre/lamaste/tunnels.json`  | Tunnel definitions              |
+| `/etc/lamalibre/lamaste/pki/`          | All certificates and keys       |
+| `/opt/lamalibre/lamaste/`              | Panel server + client           |
 | `/var/www/lamaste/`                    | Static site files               |
 | `/etc/nginx/sites-available/lamaste-*` | nginx vhosts                    |
-| `/etc/authelia/`                        | Authelia config + user database |
+| `/etc/authelia/`                       | Authelia config + user database |
 
 ### Related Documentation
 

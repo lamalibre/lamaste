@@ -16,7 +16,7 @@
  * Requires root access. Interactive confirmation unless --force is passed.
  */
 
-import { readFile, access, constants } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 import { execa } from 'execa';
@@ -62,7 +62,7 @@ export async function runUninstall(args, { json }) {
     console.log('  This action will:');
     console.log('    - Stop and remove all Lamaste services');
     console.log('    - Remove all nginx tunnel/site configurations');
-    console.log('    - Remove all certificates (mTLS and Let\'s Encrypt)');
+    console.log("    - Remove all certificates (mTLS and Let's Encrypt)");
     console.log('    - Remove Authelia configuration');
     console.log('    - Delete all Lamaste data');
     console.log('');
@@ -144,9 +144,9 @@ async function removeServices() {
 }
 
 /**
- * @param {Record<string, unknown> | null} config
+ * @param {Record<string, unknown> | null} _config
  */
-async function removeNginxConfigs(config) {
+async function removeNginxConfigs(_config) {
   // Remove lamaste-specific sites
   const patterns = [
     '/etc/nginx/sites-enabled/lamalibre-lamaste-*',
@@ -167,7 +167,8 @@ async function removeNginxConfigs(config) {
     if (Array.isArray(tunnels)) {
       for (const t of tunnels) {
         if (t.subdomain) {
-          await execa('rm', ['-f',
+          await execa('rm', [
+            '-f',
             `/etc/nginx/sites-enabled/${t.subdomain}`,
             `/etc/nginx/sites-available/${t.subdomain}`,
           ]).catch(() => {});
@@ -184,7 +185,8 @@ async function removeNginxConfigs(config) {
     if (Array.isArray(sites)) {
       for (const s of sites) {
         if (s.id) {
-          await execa('rm', ['-f',
+          await execa('rm', [
+            '-f',
             `/etc/nginx/sites-enabled/site-${s.id}`,
             `/etc/nginx/sites-available/site-${s.id}`,
           ]).catch(() => {});

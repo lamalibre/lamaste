@@ -77,58 +77,23 @@
         }
       },
       "tierAppliesTo": {
-        "node-ready": [
-          "host",
-          "agent",
-          "visitor"
-        ],
-        "installed": [
-          "host"
-        ],
-        "provisioned": [
-          "host",
-          "agent",
-          "visitor"
-        ]
+        "node-ready": ["host", "agent", "visitor"],
+        "installed": ["host"],
+        "provisioned": ["host", "agent", "visitor"]
       },
-      "monitorServices": [
-        "lamalibre-lamaste-serverd",
-        "nginx",
-        "authelia",
-        "chisel-server"
-      ],
+      "monitorServices": ["lamalibre-lamaste-serverd", "nginx", "authelia", "chisel-server"],
       "testDeps": {
         "1": [],
-        "2": [
-          1
-        ],
-        "3": [
-          1
-        ],
-        "4": [
-          1
-        ],
-        "5": [
-          1
-        ],
-        "6": [
-          1
-        ],
-        "7": [
-          1
-        ],
-        "8": [
-          1
-        ],
-        "9": [
-          1
-        ],
-        "11": [
-          1
-        ],
-        "12": [
-          1
-        ]
+        "2": [1],
+        "3": [1],
+        "4": [1],
+        "5": [1],
+        "6": [1],
+        "7": [1],
+        "8": [1],
+        "9": [1],
+        "11": [1],
+        "12": [1]
       }
     },
     "single-vm": {
@@ -145,66 +110,27 @@
         }
       },
       "tierAppliesTo": {
-        "node-ready": [
-          "host"
-        ],
-        "installed": [
-          "host"
-        ],
-        "provisioned": [
-          "host"
-        ]
+        "node-ready": ["host"],
+        "installed": ["host"],
+        "provisioned": ["host"]
       },
-      "monitorServices": [
-        "lamalibre-lamaste-serverd",
-        "nginx",
-        "authelia",
-        "chisel-server"
-      ],
+      "monitorServices": ["lamalibre-lamaste-serverd", "nginx", "authelia", "chisel-server"],
       "testDeps": {
         "1": [],
-        "2": [
-          1
-        ],
-        "3": [
-          1
-        ],
-        "4": [
-          3
-        ],
-        "5": [
-          3
-        ],
-        "6": [
-          1
-        ],
-        "7": [
-          3
-        ],
-        "8": [
-          3
-        ],
-        "9": [
-          3
-        ],
-        "10": [
-          1
-        ],
-        "11": [
-          3
-        ],
-        "12": [
-          3
-        ],
-        "13": [
-          3
-        ],
-        "15": [
-          3
-        ],
-        "16": [
-          3
-        ]
+        "2": [1],
+        "3": [1],
+        "4": [3],
+        "5": [3],
+        "6": [1],
+        "7": [3],
+        "8": [3],
+        "9": [3],
+        "10": [1],
+        "11": [3],
+        "12": [3],
+        "13": [3],
+        "15": [3],
+        "16": [3]
       }
     }
   },
@@ -222,15 +148,9 @@
         "packages/server/daemon/src/routes/management/tunnels.js",
         "packages/core/lib/src/server/tunnels.js"
       ],
-      "onboarding": [
-        "packages/server/daemon/src/routes/onboarding.js"
-      ],
-      "enrollment": [
-        "packages/server/daemon/src/routes/management/enrollment.js"
-      ],
-      "authelia": [
-        "packages/provisioners/server/src/tasks/authelia.js"
-      ],
+      "onboarding": ["packages/server/daemon/src/routes/onboarding.js"],
+      "enrollment": ["packages/server/daemon/src/routes/management/enrollment.js"],
+      "authelia": ["packages/provisioners/server/src/tasks/authelia.js"],
       "gatekeeper": [
         "packages/sdks/gatekeeper/src/index.js",
         "packages/sdks/gatekeeper/src/routes/"
@@ -243,35 +163,18 @@
         "packages/server/daemon/src/routes/management/certs.js",
         "packages/core/lib/src/server/mtls.js"
       ],
-      "user": [
-        "packages/server/daemon/src/routes/management/users.js"
-      ],
-      "invitation": [
-        "packages/server/daemon/src/routes/management/invitations.js"
-      ],
-      "nginx": [
-        "packages/provisioners/server/src/tasks/nginx.js"
-      ],
-      "chisel": [
-        "packages/agent/cli/src/commands/setup.js"
-      ],
-      "panel": [
-        "packages/server/daemon/src/index.js"
-      ],
+      "user": ["packages/server/daemon/src/routes/management/users.js"],
+      "invitation": ["packages/server/daemon/src/routes/management/invitations.js"],
+      "nginx": ["packages/provisioners/server/src/tasks/nginx.js"],
+      "chisel": ["packages/agent/cli/src/commands/setup.js"],
+      "panel": ["packages/server/daemon/src/index.js"],
       "2fa": [
         "packages/server/daemon/src/routes/management/settings.js",
         "packages/server/daemon/src/plugins/twofa-session.js"
       ],
-      "identity": [
-        "packages/sdks/identity/src/"
-      ],
-      "agent": [
-        "packages/agent/daemon/src/",
-        "packages/agent/cli/src/"
-      ],
-      "access": [
-        "packages/server/daemon/src/routes/management/user-access.js"
-      ]
+      "identity": ["packages/sdks/identity/src/"],
+      "agent": ["packages/agent/daemon/src/", "packages/agent/cli/src/"],
+      "access": ["packages/server/daemon/src/routes/management/user-access.js"]
     }
   },
   "defaults": {

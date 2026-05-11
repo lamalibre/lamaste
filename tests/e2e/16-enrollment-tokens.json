@@ -6,11 +6,7 @@
     "suite": "e2e",
     "description": "16 — Hardware-Bound Certificate Enrollment",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "requires": ["curl", "jq", "openssl"]
   },
   "env": {},
   "constants": {},

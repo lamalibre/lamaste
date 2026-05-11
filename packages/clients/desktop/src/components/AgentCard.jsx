@@ -26,9 +26,7 @@ export default function AgentCard({ agent, onManage }) {
         </div>
         <div className="flex items-center gap-1.5">
           <span
-            className={`h-2 w-2 rounded-full ${
-              agent.running ? 'bg-green-400' : 'bg-red-400'
-            }`}
+            className={`h-2 w-2 rounded-full ${agent.running ? 'bg-green-400' : 'bg-red-400'}`}
           />
           <span className="text-xs text-zinc-500">
             {agent.running ? `Running (PID ${agent.pid})` : 'Stopped'}

@@ -300,7 +300,10 @@ export function installPlugin(
 
       // --- Validate plugin name ---
       if (typeof manifest.name !== 'string' || !PLUGIN_NAME_REGEX.test(manifest.name)) {
-        throw new PluginManifestValidationError(packageName, `invalid plugin name: "${manifest.name}"`);
+        throw new PluginManifestValidationError(
+          packageName,
+          `invalid plugin name: "${manifest.name}"`,
+        );
       }
 
       if (RESERVED_NAMES.includes(manifest.name)) {
@@ -360,10 +363,7 @@ export function installPlugin(
 /**
  * Uninstall a plugin. Must be disabled first.
  */
-export function uninstallPlugin(
-  cfg: PluginLifecycleConfig,
-  name: string,
-): Promise<void> {
+export function uninstallPlugin(cfg: PluginLifecycleConfig, name: string): Promise<void> {
   return withLock(cfg.registryPath, async () => {
     const registry = await readPluginRegistry(cfg.registryPath);
     const index = registry.plugins.findIndex((p) => p.name === name);
@@ -398,10 +398,7 @@ export function uninstallPlugin(
 /**
  * Enable a plugin.
  */
-export function enablePlugin(
-  cfg: PluginLifecycleConfig,
-  name: string,
-): Promise<void> {
+export function enablePlugin(cfg: PluginLifecycleConfig, name: string): Promise<void> {
   return withLock(cfg.registryPath, async () => {
     const registry = await readPluginRegistry(cfg.registryPath);
     const plugin = registry.plugins.find((p) => p.name === name);
@@ -420,10 +417,7 @@ export function enablePlugin(
 /**
  * Disable a plugin.
  */
-export function disablePlugin(
-  cfg: PluginLifecycleConfig,
-  name: string,
-): Promise<void> {
+export function disablePlugin(cfg: PluginLifecycleConfig, name: string): Promise<void> {
   return withLock(cfg.registryPath, async () => {
     const registry = await readPluginRegistry(cfg.registryPath);
     const plugin = registry.plugins.find((p) => p.name === name);
@@ -525,10 +519,7 @@ export async function checkPluginUpdate(
 /**
  * Read a plugin's panel.js bundle from the installed package.
  */
-export async function readPluginBundle(
-  cfg: PluginLifecycleConfig,
-  name: string,
-): Promise<string> {
+export async function readPluginBundle(cfg: PluginLifecycleConfig, name: string): Promise<string> {
   const registry = await readPluginRegistry(cfg.registryPath);
   const plugin = registry.plugins.find((p) => p.name === name);
   if (!plugin) {

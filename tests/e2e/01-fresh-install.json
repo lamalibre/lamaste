@@ -6,12 +6,7 @@
     "suite": "e2e",
     "description": "01 — Fresh Install",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq",
-      "node",
-      "systemctl"
-    ]
+    "requires": ["curl", "jq", "node", "systemctl"]
   },
   "env": {},
   "constants": {},

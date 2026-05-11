@@ -40,7 +40,18 @@ const INSTALL_STEPS = [
 
 const LABEL_REGEX = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?$/;
 
-const SPINNER_FRAMES = ['\u280B', '\u2819', '\u2839', '\u2838', '\u283C', '\u2834', '\u2826', '\u2827', '\u2807', '\u280F'];
+const SPINNER_FRAMES = [
+  '\u280B',
+  '\u2819',
+  '\u2839',
+  '\u2838',
+  '\u283C',
+  '\u2834',
+  '\u2826',
+  '\u2827',
+  '\u2807',
+  '\u280F',
+];
 
 const DEFAULT_CAPABILITIES = ['tunnels:read', 'tunnels:write', 'services:read'];
 
@@ -50,7 +61,9 @@ function BrailleSpinner() {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>;
+  return (
+    <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +143,10 @@ function ServerSelectionStep({
               onChange={() => handleSourceChange('managed')}
               className="text-cyan-400 focus:ring-cyan-400"
             />
-            <Server size={12} className={serverSource === 'managed' ? 'text-cyan-400' : 'text-zinc-500'} />
+            <Server
+              size={12}
+              className={serverSource === 'managed' ? 'text-cyan-400' : 'text-zinc-500'}
+            />
             <span className={serverSource === 'managed' ? 'text-zinc-200' : 'text-zinc-400'}>
               Select a managed server
             </span>
@@ -151,7 +167,10 @@ function ServerSelectionStep({
             onChange={() => handleSourceChange('manual')}
             className="text-cyan-400 focus:ring-cyan-400"
           />
-          <Globe size={12} className={serverSource === 'manual' ? 'text-cyan-400' : 'text-zinc-500'} />
+          <Globe
+            size={12}
+            className={serverSource === 'manual' ? 'text-cyan-400' : 'text-zinc-500'}
+          />
           <span className={serverSource === 'manual' ? 'text-zinc-200' : 'text-zinc-400'}>
             Enter URL manually
           </span>
@@ -369,8 +388,11 @@ export default function InstallAgentWizard({ onClose }) {
 
       if (serverSource === 'managed') {
         // Reuse cached token on retry (avoids 409 "active token already exists")
-        if (managedTokenRef.current && managedTokenRef.current.label === label
-            && managedTokenRef.current.serverId === selectedServerId) {
+        if (
+          managedTokenRef.current &&
+          managedTokenRef.current.label === label &&
+          managedTokenRef.current.serverId === selectedServerId
+        ) {
           panelUrl = managedTokenRef.current.panelUrl;
           token = managedTokenRef.current.token;
         } else {
@@ -436,7 +458,9 @@ export default function InstallAgentWizard({ onClose }) {
   /** Best-effort revoke of managed-server enrollment token on failure. */
   const revokeTokenOnFailure = () => {
     if (serverSource === 'managed' && managedTokenRef.current) {
-      invoke('admin_revoke_enrollment_token', { label: managedTokenRef.current.label }).catch(() => {});
+      invoke('admin_revoke_enrollment_token', { label: managedTokenRef.current.label }).catch(
+        () => {},
+      );
       managedTokenRef.current = null;
     }
   };
@@ -480,9 +504,7 @@ export default function InstallAgentWizard({ onClose }) {
                   <Icon size={10} />
                   {s}
                 </div>
-                {i < stepLabels.length - 1 && (
-                  <ChevronRight size={12} className="text-zinc-700" />
-                )}
+                {i < stepLabels.length - 1 && <ChevronRight size={12} className="text-zinc-700" />}
               </div>
             );
           })}
@@ -506,8 +528,8 @@ export default function InstallAgentWizard({ onClose }) {
               setLabel={setLabel}
             />
           )}
-          {wizardStep === 1 && (
-            tokenGenerating ? (
+          {wizardStep === 1 &&
+            (tokenGenerating ? (
               <div className="flex items-center gap-2 text-xs text-zinc-400 py-8 justify-center">
                 <Loader2 size={14} className="animate-spin text-cyan-400" />
                 Generating enrollment token...
@@ -518,8 +540,7 @@ export default function InstallAgentWizard({ onClose }) {
                 installError={installError}
                 installSuccess={installSuccess}
               />
-            )
-          )}
+            ))}
         </div>
 
         {/* Footer */}
@@ -553,7 +574,6 @@ export default function InstallAgentWizard({ onClose }) {
           ) : null}
         </div>
       </div>
-
     </div>
   );
 }

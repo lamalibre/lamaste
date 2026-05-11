@@ -32,11 +32,11 @@ Lamaste has two separate group systems that serve different purposes:
 
 **Lamaste groups** are access-control groups stored in `groups.json` and managed through the Gatekeeper dashboard. These are project-oriented groups that describe what a user can access:
 
-| Example group  | Members                       |
-| -------------- | ----------------------------- |
-| `developers`   | alice, bob                    |
-| `design-team`  | carol, dave                   |
-| `beta-testers` | alice, carol, eve             |
+| Example group  | Members           |
+| -------------- | ----------------- |
+| `developers`   | alice, bob        |
+| `design-team`  | carol, dave       |
+| `beta-testers` | alice, carol, eve |
 
 The distinction matters because identity rarely maps cleanly to access. Alice might be an `internal` team member (Authelia group) who is on both the `developers` and `beta-testers` groups (Lamaste groups). Bob might be `external` but still in the `developers` group for a specific project.
 
@@ -156,10 +156,10 @@ Gatekeeper uses an in-memory session cache to solve this:
 
 Gatekeeper watches its state files using `fs.watch`:
 
-| File           | Contains                          |
-| -------------- | --------------------------------- |
-| `groups.json`  | Lamaste groups and their members |
-| `access-grants.json`  | All grants (user and group)       |
+| File                 | Contains                         |
+| -------------------- | -------------------------------- |
+| `groups.json`        | Lamaste groups and their members |
+| `access-grants.json` | All grants (user and group)      |
 
 When a file changes, Gatekeeper reloads its in-memory state and invalidates the session cache. This means changes made through the admin panel API (which writes to these files atomically) take effect immediately without restarting the Gatekeeper service.
 
@@ -178,37 +178,37 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 
 ### State files
 
-| File                               | Purpose                           | Format |
-| ---------------------------------- | --------------------------------- | ------ |
-| `/etc/lamalibre/lamaste/groups.json`        | Lamaste groups and members       | JSON   |
-| `/etc/lamalibre/lamaste/access-grants.json` | All grants                        | JSON   |
+| File                                        | Purpose                    | Format |
+| ------------------------------------------- | -------------------------- | ------ |
+| `/etc/lamalibre/lamaste/groups.json`        | Lamaste groups and members | JSON   |
+| `/etc/lamalibre/lamaste/access-grants.json` | All grants                 | JSON   |
 
 ### Source files
 
-| File                                                        | Purpose                                              |
-| ----------------------------------------------------------- | ---------------------------------------------------- |
-| `packages/lamaste-gatekeeper/src/server/index.ts`          | Fastify server setup, file watching                  |
-| `packages/lamaste-gatekeeper/src/server/routes/authz.ts`   | Authorization check endpoint (nginx auth_request)    |
-| `packages/lamaste-gatekeeper/src/server/routes/grants.ts`  | Grant CRUD API                                       |
-| `packages/lamaste-gatekeeper/src/server/routes/groups.ts`  | Group CRUD API                                       |
-| `packages/lamaste-gatekeeper/src/server/routes/access-request.ts` | Access request submission and listing          |
-| `packages/lamaste-gatekeeper/src/lib/authz.ts`             | Authorization logic (grant matching, group expansion) |
-| `packages/lamaste-gatekeeper/src/lib/grants.ts`            | Grant storage and atomic writes                      |
-| `packages/lamaste-gatekeeper/src/lib/groups.ts`            | Group storage and atomic writes                      |
-| `packages/lamaste-gatekeeper/src/lib/templates.ts`         | Access request HTML page generation                  |
-| `packages/lamaste-serverd/src/routes/management/gatekeeper-proxy.js` | Admin panel proxy to Gatekeeper API             |
-| `packages/lamaste-serverd/src/lib/nginx.js`                    | Vhost generation with Gatekeeper auth_request block  |
+| File                                                                 | Purpose                                               |
+| -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `packages/lamaste-gatekeeper/src/server/index.ts`                    | Fastify server setup, file watching                   |
+| `packages/lamaste-gatekeeper/src/server/routes/authz.ts`             | Authorization check endpoint (nginx auth_request)     |
+| `packages/lamaste-gatekeeper/src/server/routes/grants.ts`            | Grant CRUD API                                        |
+| `packages/lamaste-gatekeeper/src/server/routes/groups.ts`            | Group CRUD API                                        |
+| `packages/lamaste-gatekeeper/src/server/routes/access-request.ts`    | Access request submission and listing                 |
+| `packages/lamaste-gatekeeper/src/lib/authz.ts`                       | Authorization logic (grant matching, group expansion) |
+| `packages/lamaste-gatekeeper/src/lib/grants.ts`                      | Grant storage and atomic writes                       |
+| `packages/lamaste-gatekeeper/src/lib/groups.ts`                      | Group storage and atomic writes                       |
+| `packages/lamaste-gatekeeper/src/lib/templates.ts`                   | Access request HTML page generation                   |
+| `packages/lamaste-serverd/src/routes/management/gatekeeper-proxy.js` | Admin panel proxy to Gatekeeper API                   |
+| `packages/lamaste-serverd/src/lib/nginx.js`                          | Vhost generation with Gatekeeper auth_request block   |
 
 ## Quick Reference
 
 ### Service
 
-| Property     | Value                |
-| ------------ | -------------------- |
-| Listen       | `127.0.0.1:9294`     |
-| Runtime      | Fastify (TypeScript) |
-| State files  | `groups.json`, `access-grants.json` in `/etc/lamalibre/lamaste/` |
-| RAM usage    | Minimal (in-process) |
+| Property    | Value                                                            |
+| ----------- | ---------------------------------------------------------------- |
+| Listen      | `127.0.0.1:9294`                                                 |
+| Runtime     | Fastify (TypeScript)                                             |
+| State files | `groups.json`, `access-grants.json` in `/etc/lamalibre/lamaste/` |
+| RAM usage   | Minimal (in-process)                                             |
 
 ### Access modes
 
@@ -220,19 +220,19 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 
 ### Cache TTLs
 
-| Layer                        | TTL       | Key                           |
-| ---------------------------- | --------- | ----------------------------- |
-| Gatekeeper in-memory session | 30s       | Session cookie value          |
+| Layer                        | TTL | Key                  |
+| ---------------------------- | --- | -------------------- |
+| Gatekeeper in-memory session | 30s | Session cookie value |
 
 ### Group comparison
 
-| Property    | Authelia groups                  | Lamaste groups                     |
-| ----------- | -------------------------------- | ----------------------------------- |
-| Purpose     | Identity classification          | Access control                      |
-| Storage     | `users.yml`                      | `groups.json`                       |
+| Property    | Authelia groups                  | Lamaste groups                         |
+| ----------- | -------------------------------- | -------------------------------------- |
+| Purpose     | Identity classification          | Access control                         |
+| Storage     | `users.yml`                      | `groups.json`                          |
 | Managed by  | Authelia (via panel Users page)  | Gatekeeper (via panel Gatekeeper page) |
-| Examples    | `admins`, `internal`, `external` | `developers`, `design-team`         |
-| Granularity | Broad (who you are)              | Fine (what you access)              |
+| Examples    | `admins`, `internal`, `external` | `developers`, `design-team`            |
+| Granularity | Broad (who you are)              | Fine (what you access)                 |
 
 ### Related documentation
 

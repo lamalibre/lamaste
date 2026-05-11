@@ -62,14 +62,25 @@ export default function GatekeeperDashboardPage() {
       </div>
 
       <p className="text-sm text-zinc-500">
-        Access control overview. Manage groups and grants to control who can access your tunnels and plugins.
+        Access control overview. Manage groups and grants to control who can access your tunnels and
+        plugins.
       </p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={Users} label="Groups" value={groups.length} color="text-purple-400" />
         <StatCard icon={Key} label="Grants" value={grants.length} color="text-cyan-400" />
-        <StatCard icon={Users} label="Users with access" value={uniqueUsers.size} color="text-blue-400" />
-        <StatCard icon={Globe} label="Restricted tunnels" value={restrictedTunnels.length} color="text-orange-400" />
+        <StatCard
+          icon={Users}
+          label="Users with access"
+          value={uniqueUsers.size}
+          color="text-blue-400"
+        />
+        <StatCard
+          icon={Globe}
+          label="Restricted tunnels"
+          value={restrictedTunnels.length}
+          color="text-orange-400"
+        />
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
@@ -84,15 +95,21 @@ export default function GatekeeperDashboardPage() {
               .map((g) => (
                 <div key={g.grantId} className="flex items-center justify-between text-xs">
                   <span className="text-zinc-300">
-                    <span className={g.principalType === 'user' ? 'text-blue-400' : 'text-purple-400'}>
+                    <span
+                      className={g.principalType === 'user' ? 'text-blue-400' : 'text-purple-400'}
+                    >
                       {g.principalId}
-                    </span>
-                    {' '}<span className="text-zinc-600">can access</span>{' '}
-                    <span className={g.resourceType === 'tunnel' ? 'text-green-400' : 'text-orange-400'}>
+                    </span>{' '}
+                    <span className="text-zinc-600">can access</span>{' '}
+                    <span
+                      className={g.resourceType === 'tunnel' ? 'text-green-400' : 'text-orange-400'}
+                    >
                       {g.resourceId}
                     </span>
                   </span>
-                  <span className="text-zinc-600">{new Date(g.createdAt).toLocaleDateString()}</span>
+                  <span className="text-zinc-600">
+                    {new Date(g.createdAt).toLocaleDateString()}
+                  </span>
                 </div>
               ))}
           </div>

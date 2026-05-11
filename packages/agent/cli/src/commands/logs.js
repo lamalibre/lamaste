@@ -23,7 +23,9 @@ export async function runLogs({ label }) {
     console.log(chalk.yellow(`  No log files found for agent "${label}".`));
     console.log(chalk.dim(`  Expected: ${logFile}`));
     console.log(chalk.dim(`  Expected: ${errorLogFile}`));
-    console.log(chalk.dim(`  Has the agent been started? Run "lamaste-agent setup --label ${label}" first.`));
+    console.log(
+      chalk.dim(`  Has the agent been started? Run "lamaste-agent setup --label ${label}" first.`),
+    );
     console.log('');
     process.exit(1);
   }

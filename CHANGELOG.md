@@ -5,7 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
 ## [3.0.0] - 2026-04-29
 
 ### Changed
@@ -16,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Unix user/group:** `portlama:portlama` → `lamaste:lamaste`. Sudoers rules, `useradd` arg, systemd `User=`/`Group=`, `chown` calls. `/etc/sudoers.d/portlama` → `/etc/sudoers.d/lamaste`; `/etc/fail2ban/jail.d/portlama.conf` → `/etc/fail2ban/jail.d/lamaste.conf`.
   - **launchd / systemd:** `com.lamalibre.portlama.*` → `com.lamalibre.lamaste.*`; `lamalibre-portlama-*` → `lamalibre-lamaste-*`. Ecosystem labels (`com.lamalibre.local-plugin-host`, `lamalibre-local-plugin-host`) unchanged.
   - **Filesystem paths:** `~/.lamalibre/portlama/` → `~/.lamalibre/lamaste/`; `/etc/lamalibre/portlama/` → `/etc/lamalibre/lamaste/`; `/opt/lamalibre/portlama/` → `/opt/lamalibre/lamaste/`; `/var/www/portlama/` → `/var/www/lamaste/`. Ecosystem paths (`~/.lamalibre/local/`, `/etc/lamalibre/`) unchanged.
-  - **Environment variables:** `LAMALIBRE_PORTLAMA_*` (CONFIG, DATA_DIR, PKI_DIR, ENROLLMENT_TOKEN, P12_PASS, …) → `LAMALIBRE_LAMASTE_*`. Ecosystem vars (`LAMALIBRE_CLOUD_TOKEN`, `LAMALIBRE_FERIA_BIN`, `LAMALIBRE_SPACES_*`, `LAMALIBRE_ORG`, `LAMALIBRE_PROJECT`) unchanged.
+  - **Environment variables:** `LAMALIBRE_PORTLAMA_*` (CONFIG, DATA*DIR, PKI_DIR, ENROLLMENT_TOKEN, P12_PASS, …) → `LAMALIBRE_LAMASTE*_`. Ecosystem vars (`LAMALIBRE*CLOUD_TOKEN`, `LAMALIBRE_FERIA_BIN`, `LAMALIBRE_SPACES*_`, `LAMALIBRE_ORG`, `LAMALIBRE_PROJECT`) unchanged.
   - **Tauri:** `productName "Portlama"` → `"Lamaste"`; window title likewise; identifier `com.lamalibre.portlama.desktop` → `com.lamalibre.lamaste.desktop`; cargo crate name `portlama-desktop` → `lamaste-desktop`; bumped to 3.0.0.
   - **2FA cookie:** `portlama_2fa_session` → `lamaste_2fa_session` (no installed base — 2.0.0 unshipped).
   - **DigitalOcean tag:** `product:portlama` → `product:lamaste`. `lamalibre:managed` (ecosystem) unchanged.
@@ -27,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Vendor layout under `create-lamaste`:** `vendor/panel-server` → `vendor/serverd`; `vendor/portlama-server` → `vendor/server`; `vendor/portlama-server-ui` → `vendor/server-ui`. Install destinations on the VPS migrate from `/opt/lamalibre/portlama/{panel-server,portlama-server,portlama-server-ui}/` to `/opt/lamalibre/lamaste/{serverd,server,server-ui}/`.
   - **Repo path on GitHub** (`github.com/lamalibre/portlama`) is unchanged here. Renaming the GitHub repo is a separate coordinated action — clones, the desktop's Feria-sibling-discovery walker, and the `lamalibre/plugin-development` sibling repo will be updated together when that lands.
   - **Out of scope (intentionally unchanged):** `RESERVED_API_PREFIXES` (route names like `tunnels`, `agents`, `gatekeeper`); registry filenames (`agents.json`, `servers.json`, `storage-servers.json`); HTTP headers; Tauri event names; capability names — these are namespaced by the package they live in, not by reverse-DNS.
-
 
 ### 2026-04-28
 
@@ -546,7 +544,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add Chisel argument validation in `service-config.js` — rejects control characters, enforces `127.0.0.1`-only tunnel bindings to prevent pivoting via compromised panel response
 - Add IP:9292 vhost auto-disable when 2FA is enabled — forces domain-only access to prevent certificate-only bypass
-- Add agent cert (CN=agent:*) bypass for 2FA — agents never need a session cookie, only admin cert holders are challenged
+- Add agent cert (CN=agent:\*) bypass for 2FA — agents never need a session cookie, only admin cert holders are challenged
 
 **Affected packages:**
 

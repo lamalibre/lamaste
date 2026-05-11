@@ -120,19 +120,19 @@ The shell renders the appropriate step component and shows a progress indicator 
 
 React Router handles navigation within the `Layout` component (sidebar + content area). Management page components are imported from the shared `@lamalibre/lamaste-server-ui` package and wrapped with the `AdminClientProvider` (which supplies the web-specific data client):
 
-| Path              | Component          | Description                                                         |
-| ----------------- | ------------------ | ------------------------------------------------------------------- |
-| `/`               | `DashboardPage`    | System stats (CPU, RAM, disk, uptime) + service health indicators   |
-| `/tunnels`        | `TunnelsPage`      | Tunnel CRUD table + create form + Mac plist download                |
-| `/sites`          | `SitesPage`        | Static site CRUD + file browser + upload                            |
-| `/users`          | `UsersPage`        | Authelia user table + create/edit/delete + TOTP enrollment          |
-| `/certificates`   | `CertificatesPage` | Let's Encrypt + mTLS cert listing + renewal + rotation              |
-| `/services`       | `ServicesPage`     | Service status cards + start/stop/restart buttons + live log viewer |
-| `/tickets`        | `TicketsPage`      | Agent-to-agent ticket system management                             |
-| `/plugins`        | `PluginsPage`      | Plugin install/enable/disable + push install management             |
-| `/plugins/:pluginName/*`| `PluginLoaderRoute` | Plugin micro-frontend loader (dynamic routes per plugin)           |
-| `/settings`       | `SettingsPage`     | Panel 2FA setup, certificate management, admin settings             |
-| `/docs/*`         | `DocsPage`         | Markdown documentation viewer with sidebar navigation               |
+| Path                     | Component           | Description                                                         |
+| ------------------------ | ------------------- | ------------------------------------------------------------------- |
+| `/`                      | `DashboardPage`     | System stats (CPU, RAM, disk, uptime) + service health indicators   |
+| `/tunnels`               | `TunnelsPage`       | Tunnel CRUD table + create form + Mac plist download                |
+| `/sites`                 | `SitesPage`         | Static site CRUD + file browser + upload                            |
+| `/users`                 | `UsersPage`         | Authelia user table + create/edit/delete + TOTP enrollment          |
+| `/certificates`          | `CertificatesPage`  | Let's Encrypt + mTLS cert listing + renewal + rotation              |
+| `/services`              | `ServicesPage`      | Service status cards + start/stop/restart buttons + live log viewer |
+| `/tickets`               | `TicketsPage`       | Agent-to-agent ticket system management                             |
+| `/plugins`               | `PluginsPage`       | Plugin install/enable/disable + push install management             |
+| `/plugins/:pluginName/*` | `PluginLoaderRoute` | Plugin micro-frontend loader (dynamic routes per plugin)            |
+| `/settings`              | `SettingsPage`      | Panel 2FA setup, certificate management, admin settings             |
+| `/docs/*`                | `DocsPage`          | Markdown documentation viewer with sidebar navigation               |
 
 ## Data Fetching Patterns
 
@@ -272,19 +272,19 @@ The panel uses a dark terminal aesthetic inspired by VS Code's dark theme. All s
 
 All icons come from the `lucide-react` package. Common icons used:
 
-| Icon              | Usage                 |
-| ----------------- | --------------------- |
-| `LayoutDashboard` | Dashboard nav         |
-| `Globe`           | Tunnels nav           |
-| `FileText`        | Static Sites nav      |
-| `Users`           | Users nav             |
-| `ShieldCheck`     | Certificates nav      |
-| `Server`          | Services nav          |
-| `Ticket`          | Tickets nav           |
+| Icon              | Usage                             |
+| ----------------- | --------------------------------- |
+| `LayoutDashboard` | Dashboard nav                     |
+| `Globe`           | Tunnels nav                       |
+| `FileText`        | Static Sites nav                  |
+| `Users`           | Users nav                         |
+| `ShieldCheck`     | Certificates nav                  |
+| `Server`          | Services nav                      |
+| `Ticket`          | Tickets nav                       |
 | `Package`         | Plugins nav + default plugin icon |
-| `Settings`        | Settings nav          |
-| `BookOpen`        | Documentation nav     |
-| `Menu` / `X`      | Mobile sidebar toggle |
+| `Settings`        | Settings nav                      |
+| `BookOpen`        | Documentation nav                 |
+| `Menu` / `X`      | Mobile sidebar toggle             |
 
 ## Layout Component
 
@@ -377,21 +377,21 @@ The built `dist/` directory is served by the lamalibre-lamaste-serverd via `@fas
 
 ## Key Files
 
-| File                                                             | Role                                     |
-| ---------------------------------------------------------------- | ---------------------------------------- |
-| `packages/lamaste-server-ui/src/App.jsx`                              | Root component, mode detection, routing  |
-| `packages/lamaste-server-ui/src/main.jsx`                             | React root mount                         |
-| `packages/lamaste-server-ui/src/hooks/useOnboardingStatus.js`         | Onboarding state query hook              |
-| `packages/lamaste-server-ui/src/hooks/useProvisioningStream.js`       | WebSocket hook for provisioning progress |
-| `packages/lamaste-server-ui/src/components/layout/Layout.jsx`         | Sidebar + content outlet                 |
-| `packages/lamaste-server-ui/src/components/layout/Sidebar.jsx`        | Navigation sidebar (responsive)          |
-| `packages/lamaste-server-ui/src/components/Toast.jsx`                 | Notification toast system                |
-| `packages/lamaste-server-ui/src/pages/onboarding/OnboardingShell.jsx` | Onboarding wizard container              |
-| `packages/lamaste-server-ui/src/index.js`                     | Shared package exports (all admin pages, contexts, components) |
-| `packages/lamaste-agent-ui/src/index.js`                     | Shared package exports (all agent pages, contexts, components) |
-| `packages/lamaste-server-ui/src/pages/management/`                    | Legacy standalone pages (dead code, kept for reference) |
-| `packages/lamaste-server-ui/src/pages/docs/DocsPage.jsx`              | Documentation viewer                     |
-| `packages/lamaste-server-ui/src/components/FileBrowser.jsx`           | File tree for static sites               |
+| File                                                                  | Role                                                           |
+| --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `packages/lamaste-server-ui/src/App.jsx`                              | Root component, mode detection, routing                        |
+| `packages/lamaste-server-ui/src/main.jsx`                             | React root mount                                               |
+| `packages/lamaste-server-ui/src/hooks/useOnboardingStatus.js`         | Onboarding state query hook                                    |
+| `packages/lamaste-server-ui/src/hooks/useProvisioningStream.js`       | WebSocket hook for provisioning progress                       |
+| `packages/lamaste-server-ui/src/components/layout/Layout.jsx`         | Sidebar + content outlet                                       |
+| `packages/lamaste-server-ui/src/components/layout/Sidebar.jsx`        | Navigation sidebar (responsive)                                |
+| `packages/lamaste-server-ui/src/components/Toast.jsx`                 | Notification toast system                                      |
+| `packages/lamaste-server-ui/src/pages/onboarding/OnboardingShell.jsx` | Onboarding wizard container                                    |
+| `packages/lamaste-server-ui/src/index.js`                             | Shared package exports (all admin pages, contexts, components) |
+| `packages/lamaste-agent-ui/src/index.js`                              | Shared package exports (all agent pages, contexts, components) |
+| `packages/lamaste-server-ui/src/pages/management/`                    | Legacy standalone pages (dead code, kept for reference)        |
+| `packages/lamaste-server-ui/src/pages/docs/DocsPage.jsx`              | Documentation viewer                                           |
+| `packages/lamaste-server-ui/src/components/FileBrowser.jsx`           | File tree for static sites                                     |
 
 ## Design Decisions
 

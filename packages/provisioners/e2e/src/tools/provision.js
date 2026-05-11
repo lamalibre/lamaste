@@ -4,12 +4,7 @@
 
 import { z } from 'zod';
 import { runE2eCommand } from '../subprocess.js';
-import {
-  ROLE_NAMES,
-  TIER_NAMES,
-  PACKAGE_NAMES,
-  DEFAULT_DOMAIN,
-} from '../project-config.js';
+import { ROLE_NAMES, TIER_NAMES, PACKAGE_NAMES, DEFAULT_DOMAIN } from '../project-config.js';
 
 const domainSchema = z
   .string()
@@ -24,9 +19,7 @@ const tierSchema =
 
 const roleSchema =
   ROLE_NAMES.length > 0
-    ? z
-        .enum(ROLE_NAMES)
-        .describe('VM role name (must match a key in e2e.config.json vms)')
+    ? z.enum(ROLE_NAMES).describe('VM role name (must match a key in e2e.config.json vms)')
     : z.string().min(1).describe('VM role name');
 
 const packageSchema =
@@ -35,8 +28,7 @@ const packageSchema =
     : z.string().min(1).describe('Which package to reload');
 
 // Pick last tier as the sensible "target" default when tiers are defined.
-const defaultTier =
-  TIER_NAMES.length > 0 ? TIER_NAMES[TIER_NAMES.length - 1] : undefined;
+const defaultTier = TIER_NAMES.length > 0 ? TIER_NAMES[TIER_NAMES.length - 1] : undefined;
 
 export const provisionTool = {
   name: 'provision',
@@ -45,7 +37,7 @@ export const provisionTool = {
     'when possible, only runs stages that are needed. Auto-snapshots after each tier ' +
     'for fast future restores. Tiers are defined in e2e.config.json.',
   inputSchema: z.object({
-    targetTier: (defaultTier ? tierSchema.default(defaultTier) : tierSchema.optional()),
+    targetTier: defaultTier ? tierSchema.default(defaultTier) : tierSchema.optional(),
     domain: domainSchema,
     skipSnapshots: z.coerce
       .boolean()

@@ -181,7 +181,11 @@ function AddTunnelForm({ domain, onClose }) {
           <div className="space-y-2">
             {[
               { value: 'restricted', label: 'Restricted', desc: 'Only granted users and groups' },
-              { value: 'authenticated', label: 'All Authelia Users', desc: 'Any authenticated user can access' },
+              {
+                value: 'authenticated',
+                label: 'All Authelia Users',
+                desc: 'Any authenticated user can access',
+              },
               { value: 'public', label: 'Public', desc: 'No authentication required' },
             ].map((opt) => (
               <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
@@ -353,14 +357,20 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
                 <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{tunnel.port}</td>
                 <td className="py-3 px-4 text-sm">
                   {tunnel.type !== 'panel' && (
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs ${
-                      tunnel.accessMode === 'public' ? 'bg-green-500/10 text-green-400' :
-                      tunnel.accessMode === 'authenticated' ? 'bg-blue-500/10 text-blue-400' :
-                      'bg-orange-500/10 text-orange-400'
-                    }`}>
-                      {tunnel.accessMode === 'public' ? 'Public' :
-                       tunnel.accessMode === 'authenticated' ? 'All Users' :
-                       'Restricted'}
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-xs ${
+                        tunnel.accessMode === 'public'
+                          ? 'bg-green-500/10 text-green-400'
+                          : tunnel.accessMode === 'authenticated'
+                            ? 'bg-blue-500/10 text-blue-400'
+                            : 'bg-orange-500/10 text-orange-400'
+                      }`}
+                    >
+                      {tunnel.accessMode === 'public'
+                        ? 'Public'
+                        : tunnel.accessMode === 'authenticated'
+                          ? 'All Users'
+                          : 'Restricted'}
                     </span>
                   )}
                 </td>

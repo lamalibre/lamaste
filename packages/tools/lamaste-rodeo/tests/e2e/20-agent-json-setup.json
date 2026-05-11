@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "20 — Agent JSON Setup Output (--json flag)",
     "deps": [],
-    "requires": [
-      "node",
-      "jq"
-    ]
+    "requires": ["node", "jq"]
   },
   "env": {},
   "constants": {},

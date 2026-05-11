@@ -70,9 +70,7 @@ export default function Agents({ onManage }) {
         </div>
       )}
 
-      {showInstallWizard && (
-        <InstallAgentWizard onClose={() => setShowInstallWizard(false)} />
-      )}
+      {showInstallWizard && <InstallAgentWizard onClose={() => setShowInstallWizard(false)} />}
     </div>
   );
 }

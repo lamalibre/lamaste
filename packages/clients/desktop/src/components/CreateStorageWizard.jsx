@@ -26,7 +26,16 @@ import {
 // Step 1: Credentials — Spaces access key + secret key
 // ---------------------------------------------------------------------------
 
-function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, validated, onValidate, validating, savedCredentials }) {
+function CredentialsStep({
+  accessKey,
+  setAccessKey,
+  secretKey,
+  setSecretKey,
+  validated,
+  onValidate,
+  validating,
+  savedCredentials,
+}) {
   const [showSecret, setShowSecret] = useState(false);
 
   return (
@@ -37,8 +46,9 @@ function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, val
           <div>
             <p className="text-cyan-400 font-medium mb-1 text-xs">DigitalOcean Spaces</p>
             <p className="text-zinc-400 text-xs leading-relaxed">
-              Storage servers use <strong className="text-zinc-300">S3-compatible object storage</strong> (DigitalOcean Spaces).
-              Spaces access keys are separate from your DO API token — create them in the{' '}
+              Storage servers use{' '}
+              <strong className="text-zinc-300">S3-compatible object storage</strong> (DigitalOcean
+              Spaces). Spaces access keys are separate from your DO API token — create them in the{' '}
               <a
                 href="#"
                 onClick={async (e) => {
@@ -48,10 +58,12 @@ function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, val
                 className="text-cyan-400 hover:underline"
               >
                 DigitalOcean dashboard
-              </a>.
+              </a>
+              .
             </p>
             <p className="text-zinc-500 text-[10px] mt-1.5">
-              Spaces buckets start at ~$5/mo per 250 GB. Credentials are stored in your OS keychain, never in plaintext.
+              Spaces buckets start at ~$5/mo per 250 GB. Credentials are stored in your OS keychain,
+              never in plaintext.
             </p>
           </div>
         </div>
@@ -89,14 +101,12 @@ function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, val
           </div>
           <button
             onClick={onValidate}
-            disabled={(!accessKey && !savedCredentials) || (!secretKey && !savedCredentials) || validating}
+            disabled={
+              (!accessKey && !savedCredentials) || (!secretKey && !savedCredentials) || validating
+            }
             className="text-xs px-3 py-2 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
           >
-            {validating ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <Shield size={12} />
-            )}
+            {validating ? <Loader2 size={12} className="animate-spin" /> : <Shield size={12} />}
             Validate
           </button>
         </div>
@@ -110,7 +120,9 @@ function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, val
             ) : (
               <XCircle size={14} className="text-red-400" />
             )}
-            <span className={`text-xs font-medium ${validated ? 'text-green-400' : 'text-red-400'}`}>
+            <span
+              className={`text-xs font-medium ${validated ? 'text-green-400' : 'text-red-400'}`}
+            >
               {validated ? 'Credentials are valid' : 'Invalid credentials'}
             </span>
           </div>
@@ -142,7 +154,17 @@ function CredentialsStep({ accessKey, setAccessKey, secretKey, setSecretKey, val
 // Step 2: Configuration — Region, label, optional bucket name
 // ---------------------------------------------------------------------------
 
-function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, setLabel, bucket, setBucket, loading, error }) {
+function ConfigurationStep({
+  regions,
+  selectedRegion,
+  setSelectedRegion,
+  label,
+  setLabel,
+  bucket,
+  setBucket,
+  loading,
+  error,
+}) {
   const [showBucket, setShowBucket] = useState(!!bucket);
   const labelValid = !label || /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label);
   const bucketValid = !bucket || /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket);
@@ -200,7 +222,8 @@ function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, 
         />
         {label && !labelValid && (
           <p className="text-xs text-red-400 mt-1">
-            Lowercase letters, numbers, and hyphens only. Must start and end with a letter or number.
+            Lowercase letters, numbers, and hyphens only. Must start and end with a letter or
+            number.
           </p>
         )}
       </div>
@@ -217,7 +240,8 @@ function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, 
         ) : (
           <div>
             <label className="text-xs text-zinc-400 block mb-1">
-              Bucket Name <span className="text-zinc-600">(optional — auto-generated if empty)</span>
+              Bucket Name{' '}
+              <span className="text-zinc-600">(optional — auto-generated if empty)</span>
             </label>
             <input
               type="text"
@@ -228,7 +252,8 @@ function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, 
             />
             {bucket && !bucketValid && (
               <p className="text-xs text-red-400 mt-1">
-                3-63 characters, lowercase letters, numbers, and hyphens only. Must start and end with alphanumeric.
+                3-63 characters, lowercase letters, numbers, and hyphens only. Must start and end
+                with alphanumeric.
               </p>
             )}
           </div>
@@ -240,7 +265,11 @@ function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, 
           <p className="font-medium text-zinc-300 mb-1">Storage configuration</p>
           <p>Provider: DigitalOcean Spaces</p>
           <p>Region: {selectedRegion}</p>
-          <p>Endpoint: {regions?.find(r => r.slug === selectedRegion)?.endpoint || `https://${selectedRegion}.digitaloceanspaces.com`}</p>
+          <p>
+            Endpoint:{' '}
+            {regions?.find((r) => r.slug === selectedRegion)?.endpoint ||
+              `https://${selectedRegion}.digitaloceanspaces.com`}
+          </p>
         </div>
       )}
     </div>
@@ -252,12 +281,31 @@ function ConfigurationStep({ regions, selectedRegion, setSelectedRegion, label, 
 // ---------------------------------------------------------------------------
 
 const STORAGE_PROVISION_STEPS = [
-  { key: 'validate_credentials', label: 'Validating credentials', cmd: 'validate-spaces --provider spaces' },
+  {
+    key: 'validate_credentials',
+    label: 'Validating credentials',
+    cmd: 'validate-spaces --provider spaces',
+  },
   { key: 'create_bucket', label: 'Creating bucket', cmd: 'create-bucket --region <region>' },
-  { key: 'save_registry', label: 'Saving configuration', cmd: 'write ~/.lamalibre/lamaste/storage-servers.json' },
+  {
+    key: 'save_registry',
+    label: 'Saving configuration',
+    cmd: 'write ~/.lamalibre/lamaste/storage-servers.json',
+  },
 ];
 
-const SPINNER_FRAMES = ['\u280B', '\u2819', '\u2839', '\u2838', '\u283C', '\u2834', '\u2826', '\u2827', '\u2807', '\u280F'];
+const SPINNER_FRAMES = [
+  '\u280B',
+  '\u2819',
+  '\u2839',
+  '\u2838',
+  '\u283C',
+  '\u2834',
+  '\u2826',
+  '\u2827',
+  '\u2807',
+  '\u280F',
+];
 
 function BrailleSpinner() {
   const [frame, setFrame] = useState(0);
@@ -265,11 +313,13 @@ function BrailleSpinner() {
     const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
     return () => clearInterval(id);
   }, []);
-  return <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>;
+  return (
+    <span className="text-cyan-400 font-mono inline-block w-[1ch]">{SPINNER_FRAMES[frame]}</span>
+  );
 }
 
 function StorageProvisionStep({ provisioning, provisionError, provisionSuccess, storageServer }) {
-  const currentIdx = STORAGE_PROVISION_STEPS.findIndex(s => s.key === provisioning);
+  const currentIdx = STORAGE_PROVISION_STEPS.findIndex((s) => s.key === provisioning);
   const currentStep = currentIdx >= 0 ? STORAGE_PROVISION_STEPS[currentIdx] : null;
 
   return (
@@ -289,15 +339,17 @@ function StorageProvisionStep({ provisioning, provisionError, provisionSuccess, 
             ) : (
               <div className="w-3 h-3 rounded-full border border-zinc-700" />
             )}
-            <span className={
-              isCurrent && provisionError
-                ? 'text-red-400'
-                : isCurrent
-                  ? 'text-cyan-400'
-                  : isPast
-                    ? 'text-zinc-400'
-                    : 'text-zinc-600'
-            }>
+            <span
+              className={
+                isCurrent && provisionError
+                  ? 'text-red-400'
+                  : isCurrent
+                    ? 'text-cyan-400'
+                    : isPast
+                      ? 'text-zinc-400'
+                      : 'text-zinc-600'
+              }
+            >
               {step.label}
             </span>
           </div>
@@ -325,9 +377,15 @@ function StorageProvisionStep({ provisioning, provisionError, provisionSuccess, 
             <p className="text-xs text-green-400 font-medium">Storage server created!</p>
           </div>
           <div className="rounded bg-zinc-950 border border-zinc-800 p-3 text-xs text-zinc-400 space-y-1">
-            <p>Bucket: <span className="text-zinc-300 font-mono">{storageServer.bucket}</span></p>
-            <p>Region: <span className="text-zinc-300">{storageServer.region}</span></p>
-            <p>Endpoint: <span className="text-zinc-300 font-mono">{storageServer.endpoint}</span></p>
+            <p>
+              Bucket: <span className="text-zinc-300 font-mono">{storageServer.bucket}</span>
+            </p>
+            <p>
+              Region: <span className="text-zinc-300">{storageServer.region}</span>
+            </p>
+            <p>
+              Endpoint: <span className="text-zinc-300 font-mono">{storageServer.endpoint}</span>
+            </p>
           </div>
         </div>
       )}
@@ -406,7 +464,9 @@ export default function CreateStorageWizard({ onClose }) {
         setProvisioning(s);
       }
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   const startProvision = async () => {
@@ -430,11 +490,14 @@ export default function CreateStorageWizard({ onClose }) {
     }
   };
 
-  const wizardSteps = useMemo(() => [
-    { id: 'credentials', icon: Key, label: 'Credentials' },
-    { id: 'config', icon: MapPin, label: 'Configuration' },
-    { id: 'provision', icon: Rocket, label: 'Create' },
-  ], []);
+  const wizardSteps = useMemo(
+    () => [
+      { id: 'credentials', icon: Key, label: 'Credentials' },
+      { id: 'config', icon: MapPin, label: 'Configuration' },
+      { id: 'provision', icon: Rocket, label: 'Create' },
+    ],
+    [],
+  );
 
   const currentStepId = wizardSteps[step]?.id;
 
@@ -501,9 +564,7 @@ export default function CreateStorageWizard({ onClose }) {
                   <Icon size={10} />
                   {ws.label}
                 </div>
-                {i < wizardSteps.length - 1 && (
-                  <ChevronRight size={12} className="text-zinc-700" />
-                )}
+                {i < wizardSteps.length - 1 && <ChevronRight size={12} className="text-zinc-700" />}
               </div>
             );
           })}

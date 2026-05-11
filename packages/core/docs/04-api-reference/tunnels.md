@@ -56,16 +56,16 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field         | Type             | Description                                             |
-| ------------- | ---------------- | ------------------------------------------------------- |
-| `id`          | `string`         | UUID v4 identifier                                      |
-| `subdomain`   | `string`         | The subdomain portion (e.g., `app`)                     |
-| `fqdn`        | `string`         | Fully qualified domain name (e.g., `app.example.com`)   |
-| `port`        | `number`         | Local port on your machine that this tunnel forwards to |
-| `description` | `string \| null` | Optional human-readable description                     |
+| Field         | Type             | Description                                                   |
+| ------------- | ---------------- | ------------------------------------------------------------- |
+| `id`          | `string`         | UUID v4 identifier                                            |
+| `subdomain`   | `string`         | The subdomain portion (e.g., `app`)                           |
+| `fqdn`        | `string`         | Fully qualified domain name (e.g., `app.example.com`)         |
+| `port`        | `number`         | Local port on your machine that this tunnel forwards to       |
+| `description` | `string \| null` | Optional human-readable description                           |
 | `type`        | `string`         | Tunnel type: `'app'` (default) or `'panel'` (agent web panel) |
-| `enabled`     | `boolean`        | Whether the tunnel is active (defaults to `true`)       |
-| `createdAt`   | `string`         | ISO 8601 timestamp                                      |
+| `enabled`     | `boolean`        | Whether the tunnel is active (defaults to `true`)             |
+| `createdAt`   | `string`         | ISO 8601 timestamp                                            |
 
 ---
 
@@ -90,11 +90,11 @@ If any step fails, previous steps are rolled back where possible (nginx vhost is
 }
 ```
 
-| Field         | Type      | Validation                                                                   | Description                |
-| ------------- | --------- | ---------------------------------------------------------------------------- | -------------------------- |
-| `subdomain`   | `string`  | Lowercase alphanumeric + hyphens, max 63 chars, cannot start/end with hyphen | The subdomain to create    |
-| `port`        | `integer` | 1024 - 65535                                                                 | Local port on your machine |
-| `description` | `string`  | Max 200 chars, optional (defaults to `""`)                                   | Human-readable description |
+| Field         | Type      | Validation                                                                   | Description                                              |
+| ------------- | --------- | ---------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `subdomain`   | `string`  | Lowercase alphanumeric + hyphens, max 63 chars, cannot start/end with hyphen | The subdomain to create                                  |
+| `port`        | `integer` | 1024 - 65535                                                                 | Local port on your machine                               |
+| `description` | `string`  | Max 200 chars, optional (defaults to `""`)                                   | Human-readable description                               |
 | `type`        | `string`  | `'app'` (default) or `'panel'`, optional                                     | Tunnel type (`panel` requires `panel:expose` capability) |
 
 **Subdomain regex:**
@@ -280,25 +280,28 @@ curl -s --cert client.p12:password \
 {
   "domain": "example.com",
   "chiselServerUrl": "https://tunnel.example.com:443",
-  "chiselArgs": ["client", "--tls-skip-verify", "https://tunnel.example.com:443", "R:127.0.0.1:3000:127.0.0.1:3000"],
-  "tunnels": [
-    { "port": 3000, "subdomain": "app" }
-  ]
+  "chiselArgs": [
+    "client",
+    "--tls-skip-verify",
+    "https://tunnel.example.com:443",
+    "R:127.0.0.1:3000:127.0.0.1:3000"
+  ],
+  "tunnels": [{ "port": 3000, "subdomain": "app" }]
 }
 ```
 
-| Field            | Type       | Description                                          |
-| ---------------- | ---------- | ---------------------------------------------------- |
-| `domain`         | `string`   | Base domain                                          |
-| `chiselServerUrl`| `string`   | Full URL to the Chisel server endpoint               |
-| `chiselArgs`     | `string[]` | Chisel client arguments (used to generate service config) |
-| `tunnels`        | `array`    | Enabled tunnels with port and subdomain              |
+| Field             | Type       | Description                                               |
+| ----------------- | ---------- | --------------------------------------------------------- |
+| `domain`          | `string`   | Base domain                                               |
+| `chiselServerUrl` | `string`   | Full URL to the Chisel server endpoint                    |
+| `chiselArgs`      | `string[]` | Chisel client arguments (used to generate service config) |
+| `tunnels`         | `array`    | Enabled tunnels with port and subdomain                   |
 
 **Errors:**
 
-| Status | Body                                        | When                    |
-| ------ | ------------------------------------------- | ----------------------- |
-| 400    | `{"error":"Domain not configured"}`         | Domain has not been set |
+| Status | Body                                          | When                     |
+| ------ | --------------------------------------------- | ------------------------ |
+| 400    | `{"error":"Domain not configured"}`           | Domain has not been set  |
 | 500    | `{"error":"Failed to generate agent config"}` | Config generation failed |
 
 ---

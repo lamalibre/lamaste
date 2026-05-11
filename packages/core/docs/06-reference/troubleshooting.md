@@ -273,12 +273,12 @@ ls -la /usr/local/bin/authelia
 
 **Common causes:**
 
-| Cause                        | Log Message             | Fix                                                                  |
-| ---------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| Missing `panel.json`         | `Config file not found` | Re-run installer or create the file manually                         |
-| Invalid JSON in `panel.json` | `contains invalid JSON` | Fix the JSON syntax                                                  |
-| Port 3100 in use             | `EADDRINUSE`            | Find and stop the conflicting process: `sudo ss -tlnp sport = :3100` |
-| Missing Node.js modules      | `Cannot find module`    | `cd /opt/lamalibre/lamaste/lamalibre-lamaste-serverd && npm install --production`          |
+| Cause                        | Log Message             | Fix                                                                               |
+| ---------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
+| Missing `panel.json`         | `Config file not found` | Re-run installer or create the file manually                                      |
+| Invalid JSON in `panel.json` | `contains invalid JSON` | Fix the JSON syntax                                                               |
+| Port 3100 in use             | `EADDRINUSE`            | Find and stop the conflicting process: `sudo ss -tlnp sport = :3100`              |
+| Missing Node.js modules      | `Cannot find module`    | `cd /opt/lamalibre/lamaste/lamalibre-lamaste-serverd && npm install --production` |
 
 ### chisel fails to start
 
@@ -536,22 +536,22 @@ df -h /
 
 ## Quick Reference: Diagnostic Commands
 
-| What to Check        | Command                                                      |
-| -------------------- | ------------------------------------------------------------ |
+| What to Check        | Command                                                                 |
+| -------------------- | ----------------------------------------------------------------------- |
 | All service statuses | `sudo systemctl status nginx chisel authelia lamalibre-lamaste-serverd` |
-| Panel health         | `curl -s http://127.0.0.1:3100/api/health`                   |
-| nginx config test    | `sudo nginx -t`                                              |
-| Open ports           | `sudo ss -tlnp`                                              |
-| Memory usage         | `free -h`                                                    |
-| Disk usage           | `df -h /`                                                    |
-| DNS resolution       | `dig panel.example.com +short`                               |
-| Certificate status   | `sudo certbot certificates`                                  |
-| Server time          | `timedatectl status`                                         |
-| Swap status          | `swapon --show`                                              |
-| fail2ban status      | `sudo fail2ban-client status`                                |
+| Panel health         | `curl -s http://127.0.0.1:3100/api/health`                              |
+| nginx config test    | `sudo nginx -t`                                                         |
+| Open ports           | `sudo ss -tlnp`                                                         |
+| Memory usage         | `free -h`                                                               |
+| Disk usage           | `df -h /`                                                               |
+| DNS resolution       | `dig panel.example.com +short`                                          |
+| Certificate status   | `sudo certbot certificates`                                             |
+| Server time          | `timedatectl status`                                                    |
+| Swap status          | `swapon --show`                                                         |
+| fail2ban status      | `sudo fail2ban-client status`                                           |
 | Recent panel logs    | `journalctl -u lamalibre-lamaste-serverd -n 30`                         |
-| Recent nginx errors  | `tail -20 /var/log/nginx/error.log`                          |
-| Authelia logs        | `journalctl -u authelia -n 30`                               |
-| Chisel logs          | `journalctl -u chisel -n 30`                                 |
-| Onboarding status    | `cat /etc/lamalibre/lamaste/panel.json \| grep status`                |
-| PKI password         | `sudo cat /etc/lamalibre/lamaste/pki/.p12-password`                   |
+| Recent nginx errors  | `tail -20 /var/log/nginx/error.log`                                     |
+| Authelia logs        | `journalctl -u authelia -n 30`                                          |
+| Chisel logs          | `journalctl -u chisel -n 30`                                            |
+| Onboarding status    | `cat /etc/lamalibre/lamaste/panel.json \| grep status`                  |
+| PKI password         | `sudo cat /etc/lamalibre/lamaste/pki/.p12-password`                     |

@@ -253,7 +253,9 @@ function MtlsSection({ certs, onRotate, adminAuthMode }) {
               {isHardwareBound && (
                 <p className="text-xs text-emerald-400/70 mt-3">
                   Admin uses a hardware-bound certificate. P12 download and rotation are disabled.
-                  To revert, run <code className="bg-zinc-800 px-1 py-0.5 rounded">sudo lamaste-reset-admin</code> on the server.
+                  To revert, run{' '}
+                  <code className="bg-zinc-800 px-1 py-0.5 rounded">sudo lamaste-reset-admin</code>{' '}
+                  on the server.
                 </p>
               )}
             </div>
@@ -934,11 +936,7 @@ function AgentEnrollTokenModal({ onClose }) {
           <h3 className="text-lg font-semibold text-white">
             {result ? 'Enrollment Token' : 'Generate Enrollment Token'}
           </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-zinc-400 hover:text-white"
-          >
+          <button type="button" onClick={onClose} className="text-zinc-400 hover:text-white">
             <X size={20} />
           </button>
         </div>
@@ -946,8 +944,8 @@ function AgentEnrollTokenModal({ onClose }) {
         {!result ? (
           <>
             <p className="text-sm text-zinc-400 mb-4">
-              Generate a one-time token for hardware-bound agent enrollment.
-              The agent will generate a non-exportable keypair in macOS Keychain.
+              Generate a one-time token for hardware-bound agent enrollment. The agent will generate
+              a non-exportable keypair in macOS Keychain.
             </p>
 
             <div className="space-y-4">
@@ -986,9 +984,7 @@ function AgentEnrollTokenModal({ onClose }) {
                             className="accent-cyan-500"
                           />
                           <span className="text-zinc-300">{site.name}</span>
-                          {site.fqdn && (
-                            <span className="text-zinc-500 text-xs">{site.fqdn}</span>
-                          )}
+                          {site.fqdn && <span className="text-zinc-500 text-xs">{site.fqdn}</span>}
                         </label>
                       ))}
                     </div>
@@ -1027,9 +1023,7 @@ function AgentEnrollTokenModal({ onClose }) {
           <>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-zinc-300 mb-1">
-                  Agent Label
-                </label>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Agent Label</label>
                 <p className="text-sm text-cyan-400 font-mono">{result.label}</p>
               </div>
 
@@ -1053,9 +1047,7 @@ function AgentEnrollTokenModal({ onClose }) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-zinc-300 mb-1">
-                  Expires
-                </label>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Expires</label>
                 <p className="text-sm text-zinc-400">
                   {new Date(result.expiresAt).toLocaleString()} (10 minutes)
                 </p>
@@ -1063,7 +1055,8 @@ function AgentEnrollTokenModal({ onClose }) {
 
               <div className="rounded bg-amber-500/10 border border-amber-500/20 px-3 py-2">
                 <p className="text-sm text-amber-300">
-                  This token is single-use and expires in 10 minutes. Copy and send it to the agent machine now.
+                  This token is single-use and expires in 10 minutes. Copy and send it to the agent
+                  machine now.
                 </p>
               </div>
 
@@ -1087,7 +1080,11 @@ function AgentEnrollTokenModal({ onClose }) {
                     className="rounded bg-zinc-700 p-2 text-zinc-300 hover:bg-zinc-600"
                     title="Copy command"
                   >
-                    {copiedCmd ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                    {copiedCmd ? (
+                      <Check size={14} className="text-green-400" />
+                    ) : (
+                      <Copy size={14} />
+                    )}
                   </button>
                 </div>
                 <p className="text-xs text-zinc-500 mt-1">
@@ -1354,16 +1351,17 @@ function AgentCertsSection() {
                             <Globe size={12} />
                           </button>
                         )}
-                        {cert.status !== 'revoked' && cert.enrollmentMethod !== 'hardware-bound' && (
-                          <button
-                            type="button"
-                            onClick={() => client.downloadAgentCert(cert.label)}
-                            className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
-                            title="Download .p12"
-                          >
-                            <Download size={12} />
-                          </button>
-                        )}
+                        {cert.status !== 'revoked' &&
+                          cert.enrollmentMethod !== 'hardware-bound' && (
+                            <button
+                              type="button"
+                              onClick={() => client.downloadAgentCert(cert.label)}
+                              className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
+                              title="Download .p12"
+                            >
+                              <Download size={12} />
+                            </button>
+                          )}
                         {cert.status !== 'revoked' && (
                           <button
                             type="button"
@@ -1763,7 +1761,11 @@ export default function Certificates() {
       ) : (
         <>
           <CertTable certs={certs} onRenew={handleRenew} renewingDomain={renewingDomain} />
-          <MtlsSection certs={certs} onRotate={() => setShowRotationModal(true)} adminAuthMode={adminAuthMode} />
+          <MtlsSection
+            certs={certs}
+            onRotate={() => setShowRotationModal(true)}
+            adminAuthMode={adminAuthMode}
+          />
           <AgentCertsSection />
         </>
       )}

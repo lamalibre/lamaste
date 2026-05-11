@@ -82,11 +82,7 @@ export function useAgentClient() {
  * @param {{ client: AgentClient, children: React.ReactNode }} props
  */
 export function AgentClientProvider({ client, children }) {
-  return (
-    <AgentClientContext.Provider value={client}>
-      {children}
-    </AgentClientContext.Provider>
-  );
+  return <AgentClientContext.Provider value={client}>{children}</AgentClientContext.Provider>;
 }
 
 export default AgentClientContext;

@@ -87,11 +87,7 @@ export {
 export type { AgentRegistryEntry, AgentRegistry } from './registry.js';
 
 // Agent config
-export {
-  loadAgentConfig,
-  saveAgentConfig,
-  requireAgentConfig,
-} from './config.js';
+export { loadAgentConfig, saveAgentConfig, requireAgentConfig } from './config.js';
 export type { AgentConfig } from './config.js';
 
 // Service lifecycle (unified dispatch)
@@ -129,10 +125,7 @@ export {
 
 // Linux user-systemd helpers — make `systemctl --user` work in non-PAM root
 // shells (multipass exec, cron, npx-from-installer).
-export {
-  userSystemdEnv,
-  runUserSystemctl,
-} from './user-systemd-env.js';
+export { userSystemdEnv, runUserSystemctl } from './user-systemd-env.js';
 
 // Plugin lifecycle (unified for agent + local)
 export {

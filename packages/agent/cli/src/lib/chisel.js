@@ -86,7 +86,10 @@ export async function installChisel() {
   // tool's `chisel-*` temp files. The agent installs into a user-controlled
   // directory (no sudoers involved here), so this is consistency hygiene
   // rather than a security boundary.
-  const tmpGz = path.join(tmpdir(), `lamalibre-lamaste-chisel-${crypto.randomBytes(4).toString('hex')}.gz`);
+  const tmpGz = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-chisel-${crypto.randomBytes(4).toString('hex')}.gz`,
+  );
   const tmpBin = tmpGz.replace('.gz', '');
 
   try {

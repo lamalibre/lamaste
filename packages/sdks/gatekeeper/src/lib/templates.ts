@@ -26,15 +26,10 @@ export function getAccessRequestTemplates(
         `My username is: ${username}\n\n` +
         `Thank you.`,
     },
-    slack:
-      `Hi, could I get access to \`${resourceName}\`? My username is \`${username}\`.`,
-    teams:
-      `Hi, could I get access to **${resourceName}**? My username is **${username}**.`,
-    whatsapp:
-      `Hi, I need access to ${resourceName} (username: ${username}). Thanks!`,
-    generic:
-      `Access request for ${resourceName}\n` +
-      `Username: ${username}${contactLine}`,
+    slack: `Hi, could I get access to \`${resourceName}\`? My username is \`${username}\`.`,
+    teams: `Hi, could I get access to **${resourceName}**? My username is **${username}**.`,
+    whatsapp: `Hi, I need access to ${resourceName} (username: ${username}). Thanks!`,
+    generic: `Access request for ${resourceName}\n` + `Username: ${username}${contactLine}`,
   };
 }
 

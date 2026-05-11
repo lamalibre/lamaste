@@ -1,9 +1,4 @@
-import {
-  createGrant,
-  listGrants,
-  getGrant,
-  revokeGrant,
-} from '../../lib/grants.js';
+import { createGrant, listGrants, getGrant, revokeGrant } from '../../lib/grants.js';
 import type { PrincipalType } from '../../lib/constants.js';
 
 export async function grantCommand(args: string[]): Promise<void> {
@@ -66,9 +61,7 @@ export async function grantCommand(args: string[]): Promise<void> {
         filter.resourceId = plugin;
       }
 
-      const grants = await listGrants(
-        Object.keys(filter).length > 0 ? filter : undefined,
-      );
+      const grants = await listGrants(Object.keys(filter).length > 0 ? filter : undefined);
       console.log(JSON.stringify(grants, null, 2));
       break;
     }

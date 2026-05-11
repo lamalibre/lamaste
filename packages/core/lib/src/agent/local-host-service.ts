@@ -226,9 +226,7 @@ function generateLocalHostSystemdUnit(entryPath: string, port: number): string {
   const errorLogFile = localHostErrorLogFile();
   const logsDir = localHostLogsDir();
 
-  const execStart = [nodePath, entryPath, '--port', String(port)]
-    .map(systemdQuote)
-    .join(' ');
+  const execStart = [nodePath, entryPath, '--port', String(port)].map(systemdQuote).join(' ');
 
   return `[Unit]
 Description=Lamaste Local Plugin Host
@@ -281,8 +279,7 @@ async function systemctlStartLocalHost(): Promise<void> {
     await runUserSystemctl(['daemon-reload']);
     await runUserSystemctl(['enable', '--now', localHostSystemdUnitName()]);
   } catch (err: unknown) {
-    const message = (err as { stderr?: string; message?: string }).stderr ??
-      (err as Error).message;
+    const message = (err as { stderr?: string; message?: string }).stderr ?? (err as Error).message;
     throw new Error(`Failed to start local plugin host: ${message}`);
   }
 }

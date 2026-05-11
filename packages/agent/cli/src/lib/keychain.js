@@ -81,4 +81,3 @@ export async function generateKeypairAndCSR(label) {
     await unlink(csrPath).catch(() => {});
   }
 }
-

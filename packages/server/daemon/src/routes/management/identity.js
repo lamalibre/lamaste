@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { readUsers } from '../../lib/authelia.js';
 
 const UsernameParamSchema = z.object({
-  username: z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.-]+$/),
+  username: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-zA-Z0-9_.-]+$/),
 });
 
 /**
@@ -27,12 +31,16 @@ export default async function identityRoutes(fastify, _opts) {
       const user = headerValue(request.headers['remote-user']);
       if (!user) {
         return reply.code(400).send({
-          error: 'Identity headers not present — this endpoint requires an Authelia-protected vhost',
+          error:
+            'Identity headers not present — this endpoint requires an Authelia-protected vhost',
         });
       }
 
       const groupsRaw = headerValue(request.headers['remote-groups']) || '';
-      const groups = groupsRaw.split(',').map((g) => g.trim()).filter(Boolean);
+      const groups = groupsRaw
+        .split(',')
+        .map((g) => g.trim())
+        .filter(Boolean);
       const name = headerValue(request.headers['remote-name']) || '';
       const email = headerValue(request.headers['remote-email']) || '';
 

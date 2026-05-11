@@ -60,12 +60,12 @@ This is the most important directory. It contains:
 
 #### `/etc/nginx/` — Reverse Proxy Configuration
 
-| Path                          | Purpose                                       |
-| ----------------------------- | --------------------------------------------- |
-| `sites-available/lamaste-*`  | Lamaste vhost configurations                 |
-| `sites-enabled/lamaste-*`    | Symlinks to enabled vhosts                    |
+| Path                                   | Purpose                                       |
+| -------------------------------------- | --------------------------------------------- |
+| `sites-available/lamaste-*`            | Lamaste vhost configurations                  |
+| `sites-enabled/lamaste-*`              | Symlinks to enabled vhosts                    |
 | `snippets/lamalibre-lamaste-mtls.conf` | mTLS configuration snippet                    |
-| `nginx.conf`                  | Main nginx configuration (usually unmodified) |
+| `nginx.conf`                           | Main nginx configuration (usually unmodified) |
 
 **If you lose nginx configs**, the panel can regenerate vhosts for tunnels and sites, but you will need to re-run the provisioning or manually recreate the base vhosts (panel, auth, tunnel).
 
@@ -283,13 +283,13 @@ The existing client certificate (`.p12` file) will still work because the CA key
 
 All Lamaste state is stored as flat files with atomic writes:
 
-| File                             | Format | Write Pattern                            |
-| -------------------------------- | ------ | ---------------------------------------- |
+| File                                      | Format | Write Pattern                            |
+| ----------------------------------------- | ------ | ---------------------------------------- |
 | `/etc/lamalibre/lamaste/panel.json`       | JSON   | Write `.tmp` then `rename()`             |
 | `/etc/lamalibre/lamaste/tunnels.json`     | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
 | `/etc/lamalibre/lamaste/sites.json`       | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
 | `/etc/lamalibre/lamaste/invitations.json` | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
-| `/etc/authelia/users.yml`        | YAML   | Write via `sudo mv` from temp file       |
+| `/etc/authelia/users.yml`                 | YAML   | Write via `sudo mv` from temp file       |
 
 The atomic write pattern (write to temporary file, sync, rename) ensures that a crash during a write does not corrupt the primary file. The `rename()` system call is atomic on POSIX filesystems.
 
@@ -304,20 +304,20 @@ The atomic write pattern (write to temporary file, sync, rename) ensures that a 
 
 | Directory                     | Contains                   | Criticality                       |
 | ----------------------------- | -------------------------- | --------------------------------- |
-| `/etc/lamalibre/lamaste/`              | Config, state, PKI         | Critical — irreplaceable PKI keys |
+| `/etc/lamalibre/lamaste/`     | Config, state, PKI         | Critical — irreplaceable PKI keys |
 | `/etc/authelia/`              | User database, auth config | High — user accounts and secrets  |
 | `/etc/letsencrypt/`           | TLS certificates           | Medium — can be re-issued         |
 | `/etc/nginx/sites-available/` | Vhost configs              | Low — can be regenerated          |
 
-| Backup Command                                                          | What It Does        |
-| ----------------------------------------------------------------------- | ------------------- |
+| Backup Command                                                                   | What It Does        |
+| -------------------------------------------------------------------------------- | ------------------- |
 | `tar czf backup.tar.gz /etc/lamalibre/lamaste/ /etc/authelia/ /etc/letsencrypt/` | Full config backup  |
-| `scp root@IP:/root/backup.tar.gz ~/backups/`                            | Download backup     |
-| `tar xzf backup.tar.gz -C /`                                            | Restore from backup |
+| `scp root@IP:/root/backup.tar.gz ~/backups/`                                     | Download backup     |
+| `tar xzf backup.tar.gz -C /`                                                     | Restore from backup |
 
-| Post-Restore Step    | Command                                                                        |
-| -------------------- | ------------------------------------------------------------------------------ |
+| Post-Restore Step    | Command                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
 | Fix PKI permissions  | `sudo chmod 700 /etc/lamalibre/lamaste/pki/ && sudo chmod 600 /etc/lamalibre/lamaste/pki/ca.key` |
-| Validate nginx       | `sudo nginx -t`                                                                |
-| Restart all services | `sudo systemctl restart nginx authelia chisel lamalibre-lamaste-serverd`                  |
-| Verify health        | `curl -s http://127.0.0.1:3100/api/health`                                     |
+| Validate nginx       | `sudo nginx -t`                                                                                  |
+| Restart all services | `sudo systemctl restart nginx authelia chisel lamalibre-lamaste-serverd`                         |
+| Verify health        | `curl -s http://127.0.0.1:3100/api/health`                                                       |

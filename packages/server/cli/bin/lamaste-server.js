@@ -186,7 +186,9 @@ async function main() {
     }
     default:
       if (json) {
-        process.stdout.write(JSON.stringify({ event: 'error', message: `Unknown command: ${command}` }) + '\n');
+        process.stdout.write(
+          JSON.stringify({ event: 'error', message: `Unknown command: ${command}` }) + '\n',
+        );
       } else {
         console.error(`\n  Unknown command: ${chalk.red(command)}`);
         console.error(`  Run ${chalk.cyan('lamaste-server --help')} for usage.\n`);

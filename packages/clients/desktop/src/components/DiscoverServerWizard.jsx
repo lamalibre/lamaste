@@ -21,7 +21,8 @@ import {
 import { open } from '@tauri-apps/plugin-shell';
 import { errorMessage } from '@lamalibre/lamaste-server-ui/lib/errorMessage.js';
 
-const DOCS_CERT_RECOVERY = 'https://lamalibre.github.io/lamaste/02-guides/disaster-recovery.html#scenario-6-admin-certificate-lost-hardware-bound-or-2fa-locked-out';
+const DOCS_CERT_RECOVERY =
+  'https://lamalibre.github.io/lamaste/02-guides/disaster-recovery.html#scenario-6-admin-certificate-lost-hardware-bound-or-2fa-locked-out';
 
 export default function DiscoverServerWizard({ onClose }) {
   const queryClient = useQueryClient();
@@ -30,7 +31,6 @@ export default function DiscoverServerWizard({ onClose }) {
   const [token, setToken] = useState('');
   const [tokenLoading, setTokenLoading] = useState(true);
   const [validating, setValidating] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const [servers, setServers] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -102,7 +102,6 @@ export default function DiscoverServerWizard({ onClose }) {
 
     // Start scanning
     setStep('scanning');
-    setScanning(true);
     try {
       const results = await invoke('discover_servers', { token: token.trim() });
       setServers(results);
@@ -110,8 +109,6 @@ export default function DiscoverServerWizard({ onClose }) {
     } catch (err) {
       setError(errorMessage(err));
       setStep('token');
-    } finally {
-      setScanning(false);
     }
   }
 
@@ -284,9 +281,7 @@ export default function DiscoverServerWizard({ onClose }) {
     setStep('register');
   }
 
-  const sshAddCommand = selected?.ip
-    ? `echo '${sshPublicKey}' >> /root/.ssh/authorized_keys`
-    : '';
+  const sshAddCommand = selected?.ip ? `echo '${sshPublicKey}' >> /root/.ssh/authorized_keys` : '';
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -323,7 +318,10 @@ export default function DiscoverServerWizard({ onClose }) {
                 <input
                   type="password"
                   value={token}
-                  onChange={(e) => { setToken(e.target.value); setError(''); }}
+                  onChange={(e) => {
+                    setToken(e.target.value);
+                    setError('');
+                  }}
                   placeholder="dop_v1_..."
                   className="w-full bg-zinc-950 border border-zinc-700 rounded px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-400 font-mono"
                 />
@@ -344,11 +342,7 @@ export default function DiscoverServerWizard({ onClose }) {
                 disabled={!token.trim() || validating || tokenLoading}
                 className="text-xs px-3 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 disabled:opacity-50 flex items-center gap-1.5"
               >
-                {validating ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Search size={12} />
-                )}
+                {validating ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
                 Validate & Scan
               </button>
             </div>
@@ -375,7 +369,10 @@ export default function DiscoverServerWizard({ onClose }) {
                   Check your DigitalOcean dashboard for any untagged droplets.
                 </p>
                 <button
-                  onClick={() => { setStep('token'); setError(''); }}
+                  onClick={() => {
+                    setStep('token');
+                    setError('');
+                  }}
                   className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-white mt-4"
                 >
                   Back
@@ -384,7 +381,8 @@ export default function DiscoverServerWizard({ onClose }) {
             ) : (
               <>
                 <p className="text-xs text-zinc-400 mb-3">
-                  Found {servers.length} managed droplet{servers.length !== 1 ? 's' : ''}. Select one to register.
+                  Found {servers.length} managed droplet{servers.length !== 1 ? 's' : ''}. Select
+                  one to register.
                 </p>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {servers.map((s) => (
@@ -424,7 +422,10 @@ export default function DiscoverServerWizard({ onClose }) {
                 </div>
                 <div className="flex justify-start mt-4">
                   <button
-                    onClick={() => { setStep('token'); setError(''); }}
+                    onClick={() => {
+                      setStep('token');
+                      setError('');
+                    }}
                     className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-white flex items-center gap-1"
                   >
                     <ChevronLeft size={12} />
@@ -440,7 +441,10 @@ export default function DiscoverServerWizard({ onClose }) {
         {step === 'register' && selected && (
           <>
             <button
-              onClick={() => { setStep('results'); setError(''); }}
+              onClick={() => {
+                setStep('results');
+                setError('');
+              }}
               className="text-xs text-zinc-500 hover:text-zinc-300 flex items-center gap-1 mb-3"
             >
               <ChevronLeft size={12} />
@@ -477,9 +481,7 @@ export default function DiscoverServerWizard({ onClose }) {
 
               <div className="border-t border-zinc-800 pt-3 mt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs text-zinc-400">
-                    Admin Certificate (P12)
-                  </p>
+                  <p className="text-xs text-zinc-400">Admin Certificate (P12)</p>
                   <button
                     type="button"
                     onClick={() => open(DOCS_CERT_RECOVERY)}
@@ -526,7 +528,8 @@ export default function DiscoverServerWizard({ onClose }) {
                       Recover via SSH
                     </button>
                     <p className="text-[10px] text-zinc-600 mt-1.5 text-center">
-                      Generates an SSH key, resets the admin cert on the server, and imports it automatically.
+                      Generates an SSH key, resets the admin cert on the server, and imports it
+                      automatically.
                     </p>
                   </div>
                 )}
@@ -582,13 +585,15 @@ export default function DiscoverServerWizard({ onClose }) {
                   Open the{' '}
                   <button
                     type="button"
-                    onClick={() => open(`https://cloud.digitalocean.com/droplets/${selected.dropletId}/console`)}
+                    onClick={() =>
+                      open(`https://cloud.digitalocean.com/droplets/${selected.dropletId}/console`)
+                    }
                     className="text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-0.5"
                   >
                     DigitalOcean console
                     <ExternalLink size={8} />
-                  </button>
-                  {' '}and run:
+                  </button>{' '}
+                  and run:
                 </p>
                 <div className="relative">
                   <pre className="bg-zinc-950 border border-zinc-800 rounded p-2.5 text-[11px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap break-all">
@@ -608,9 +613,7 @@ export default function DiscoverServerWizard({ onClose }) {
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Shield size={12} className="text-cyan-400" />
-                  <p className="text-xs text-zinc-300 font-medium">
-                    Step 2: Verify connection
-                  </p>
+                  <p className="text-xs text-zinc-300 font-medium">Step 2: Verify connection</p>
                 </div>
                 <p className="text-[11px] text-zinc-500 mb-2">
                   After adding the key, click below to test SSH connectivity to {selected.ip}.
@@ -695,7 +698,10 @@ export default function DiscoverServerWizard({ onClose }) {
                 <p className="text-xs text-red-400 text-center mb-4">{error}</p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setError(''); setStep('ssh-setup'); }}
+                    onClick={() => {
+                      setError('');
+                      setStep('ssh-setup');
+                    }}
                     className="text-xs px-3 py-1.5 rounded bg-zinc-800 text-zinc-400 hover:text-white"
                   >
                     Back

@@ -77,11 +77,7 @@ interface StorageConfigFile {
 export class StorageError extends Error {
   readonly statusCode: number;
   readonly code: 'ALREADY_EXISTS' | 'NOT_FOUND' | 'BINDING_EXISTS' | 'IO_ERROR' | 'CORRUPT';
-  constructor(
-    message: string,
-    code: StorageError['code'],
-    statusCode: number,
-  ) {
+  constructor(message: string, code: StorageError['code'], statusCode: number) {
     super(message);
     this.name = 'StorageError';
     this.code = code;
@@ -299,10 +295,7 @@ export function registerStorageServer(
 /**
  * Remove a storage server and any bindings referencing it.
  */
-export function removeStorageServer(
-  dataDir: string,
-  id: string,
-): Promise<{ ok: true }> {
+export function removeStorageServer(dataDir: string, id: string): Promise<{ ok: true }> {
   return getMutex(dataDir).run(async () => {
     const config = await readStorageConfig(dataDir);
     const idx = config.servers.findIndex((s) => s.id === id);
@@ -339,11 +332,7 @@ export function bindPluginStorage(
     const config = await readStorageConfig(dataDir);
 
     if (!config.servers.some((s) => s.id === storageServerId)) {
-      throw new StorageError(
-        `Storage server "${storageServerId}" not found`,
-        'NOT_FOUND',
-        404,
-      );
+      throw new StorageError(`Storage server "${storageServerId}" not found`, 'NOT_FOUND', 404);
     }
 
     if (config.bindings.some((b) => b.pluginName === pluginName)) {
@@ -370,10 +359,7 @@ export function bindPluginStorage(
 /**
  * Remove storage binding for a plugin.
  */
-export function unbindPluginStorage(
-  dataDir: string,
-  pluginName: string,
-): Promise<{ ok: true }> {
+export function unbindPluginStorage(dataDir: string, pluginName: string): Promise<{ ok: true }> {
   return getMutex(dataDir).run(async () => {
     const config = await readStorageConfig(dataDir);
     const idx = config.bindings.findIndex((b) => b.pluginName === pluginName);

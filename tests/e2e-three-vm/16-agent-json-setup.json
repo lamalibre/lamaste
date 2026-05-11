@@ -6,10 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "16 — Agent JSON Setup Output (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "jq"
-    ]
+    "requires": ["multipass", "jq"]
   },
   "env": {
     "HOST_IP": {
@@ -858,11 +855,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: uninstall test agent\"\n# ---------------------------------------------------------------------------\n\nif agent_exec \"lamaste-agent uninstall --label '$AGENT_LABEL' 2>/dev/null; true\"; then\n  log_pass \"Agent uninstalled on agent VM\"\nelse\n  log_fail \"Agent uninstall failed on agent VM (exit $?)\"\nfi\n\nDELETE_RESULT=$(host_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null) || true\nDELETE_STATUS=$(echo \"$DELETE_RESULT\" | jq -r '.ok // .error // \"unknown\"' 2>/dev/null || echo \"unknown\")\nif [ \"$DELETE_STATUS\" = \"true\" ]; then\n  log_pass \"Agent cert revoked on host\"\nelif echo \"$DELETE_RESULT\" | jq -e '.error' &>/dev/null; then\n  log_info \"Agent cert revocation: $DELETE_STATUS (may already be revoked)\"\nelse\n  log_info \"Agent cert revocation returned: $DELETE_STATUS\"\nfi\n\nagent_exec \"rm -f /tmp/agent-json-setup.txt\" || true"
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 16 — Agent JSON Setup Output (Three-VM)\n# ============================================================================\n# Verifies that lamaste-agent setup --json produces valid NDJSON output on\n# the agent VM when run with a token from the host panel.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \\\"\\$(echo '$b64body' | base64 -d)\\\" https://127.0.0.1:9292/api/$path\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"16 — Agent JSON Setup Output (Three-VM)\"\n",
   "cleanupRaw": "",

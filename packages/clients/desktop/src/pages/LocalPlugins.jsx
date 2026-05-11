@@ -46,9 +46,7 @@ const ICON_MAP = {
 
 function StatusBadge({ status }) {
   const styles =
-    status === 'enabled'
-      ? 'bg-green-500/20 text-green-400'
-      : 'bg-zinc-500/20 text-zinc-400';
+    status === 'enabled' ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400';
 
   return (
     <span className={`text-xs px-2 py-0.5 rounded-full ${styles}`}>
@@ -61,12 +59,18 @@ const HOST_PORT = 9293;
 
 function hostStateLabel(state) {
   switch (state) {
-    case 'running': return `Running on port ${HOST_PORT}`;
-    case 'loaded': return 'Starting\u2026';
-    case 'stopped': return 'Stopped';
-    case 'notInstalled': return 'Not installed';
-    case 'error': return 'Error';
-    default: return 'Unknown';
+    case 'running':
+      return `Running on port ${HOST_PORT}`;
+    case 'loaded':
+      return 'Starting\u2026';
+    case 'stopped':
+      return 'Stopped';
+    case 'notInstalled':
+      return 'Not installed';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Unknown';
   }
 }
 
@@ -89,19 +93,19 @@ function HostStatusBar({ status, onStart, onStop, isActing }) {
             }`}
           />
           <div>
-            <span className="text-sm text-white font-medium">
-              Plugin Host
-            </span>
-            <span className="text-xs text-zinc-500 ml-2">
-              {hostStateLabel(state)}
-            </span>
+            <span className="text-sm text-white font-medium">Plugin Host</span>
+            <span className="text-xs text-zinc-500 ml-2">{hostStateLabel(state)}</span>
           </div>
         </div>
         <button
           type="button"
           disabled={isActing || !installed}
           onClick={running ? onStop : onStart}
-          title={installed ? '' : 'Plugin host is not installed. Use the sidebar footer pill to install it.'}
+          title={
+            installed
+              ? ''
+              : 'Plugin host is not installed. Use the sidebar footer pill to install it.'
+          }
           className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed ${
             running
               ? 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
@@ -173,7 +177,9 @@ function UpdateIcon({ type, size = 14 }) {
 function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
   const updateType = getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion);
   const typeLabel = { major: 'Major', minor: 'Minor', patch: 'Patch' }[updateType];
-  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[updateType];
+  const typeColor = { major: 'text-red-400', minor: 'text-amber-400', patch: 'text-cyan-400' }[
+    updateType
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -223,7 +229,10 @@ function UpdateDialog({ plugin, updateInfo, onUpdate, onClose, isUpdating }) {
           <button
             type="button"
             disabled={isUpdating}
-            onClick={() => { onUpdate(plugin.name); onClose(); }}
+            onClick={() => {
+              onUpdate(plugin.name);
+              onClose();
+            }}
             className="rounded px-3 py-1.5 text-xs text-white bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isUpdating ? 'Updating...' : 'Update'}
@@ -275,8 +284,8 @@ function MoveToAgentDialog({ pluginName, onClose, onMoved }) {
         </div>
 
         <p className="text-zinc-400 text-sm mb-4">
-          Move <span className="text-white font-semibold">{pluginName}</span> from local plugins to an agent.
-          The plugin data will be transferred and the local copy removed.
+          Move <span className="text-white font-semibold">{pluginName}</span> from local plugins to
+          an agent. The plugin data will be transferred and the local copy removed.
         </p>
 
         {loading ? (
@@ -296,7 +305,8 @@ function MoveToAgentDialog({ pluginName, onClose, onMoved }) {
             >
               {agents.map((a) => (
                 <option key={a.label} value={a.label}>
-                  {a.label}{a.domain ? ` (${a.domain})` : ''}
+                  {a.label}
+                  {a.domain ? ` (${a.domain})` : ''}
                 </option>
               ))}
             </select>
@@ -332,7 +342,18 @@ function MoveToAgentDialog({ pluginName, onClose, onMoved }) {
   );
 }
 
-function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen, onUpdate, onMoveToAgent, updateInfo, isActing, isUpdating }) {
+function InstalledPluginCard({
+  plugin,
+  onEnable,
+  onDisable,
+  onUninstall,
+  onOpen,
+  onUpdate,
+  onMoveToAgent,
+  updateInfo,
+  isActing,
+  isUpdating,
+}) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
 
@@ -361,9 +382,7 @@ function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen,
         <StatusBadge status={plugin.status} />
       </div>
 
-      {plugin.description && (
-        <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>
-      )}
+      {plugin.description && <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>}
 
       <p className="text-zinc-500 text-xs mb-4">
         {plugin.packageName}
@@ -375,10 +394,7 @@ function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen,
       {plugin.capabilities && plugin.capabilities.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-4">
           {plugin.capabilities.map((cap) => (
-            <span
-              key={cap}
-              className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded"
-            >
+            <span key={cap} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">
               {cap}
             </span>
           ))}
@@ -402,7 +418,10 @@ function InstalledPluginCard({ plugin, onEnable, onDisable, onUninstall, onOpen,
                 <span className="text-zinc-400">Uninstall?</span>
                 <button
                   type="button"
-                  onClick={() => { setConfirmUninstall(false); onUninstall(plugin.name); }}
+                  onClick={() => {
+                    setConfirmUninstall(false);
+                    onUninstall(plugin.name);
+                  }}
                   className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
                 >
                   Yes
@@ -638,9 +657,7 @@ function LocalPluginPanel({ pluginName, hostPort, onBack }) {
         </div>
       </div>
 
-      {loading && (
-        <div className="text-zinc-500 text-sm">Loading plugin panel...</div>
-      )}
+      {loading && <div className="text-zinc-500 text-sm">Loading plugin panel...</div>}
 
       {error && (
         <div className="rounded-lg bg-zinc-900 border border-red-800/50 p-4">
@@ -708,7 +725,10 @@ export default function LocalPlugins() {
   // Check for updates on all installed plugins
   const installedList = pluginsQuery.data?.plugins || [];
   const updatesQuery = useQuery({
-    queryKey: ['local-plugin-updates', installedList.map((p) => `${p.name}@${p.version}`).join(',')],
+    queryKey: [
+      'local-plugin-updates',
+      installedList.map((p) => `${p.name}@${p.version}`).join(','),
+    ],
     queryFn: async () => {
       const results = {};
       await Promise.all(
@@ -840,9 +860,7 @@ export default function LocalPlugins() {
 
       <div className="mb-6">
         <h1 className="text-xl font-bold text-white">Local Plugins</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          Run plugins locally without a server or agent
-        </p>
+        <p className="text-zinc-500 text-sm mt-1">Run plugins locally without a server or agent</p>
       </div>
 
       {/* Host status */}
@@ -856,7 +874,7 @@ export default function LocalPlugins() {
       {/* Unified plugin list */}
       <div className="mb-6">
         <h2 className="text-sm font-semibold text-zinc-300 mb-3">Plugins</h2>
-        {(pluginsQuery.isLoading || availableQuery.isLoading) ? (
+        {pluginsQuery.isLoading || availableQuery.isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <div

@@ -131,19 +131,19 @@ The central configuration file, validated by Zod on every load and update.
 
 **Field definitions:**
 
-| Field               | Type                     | Required | Description                                              |
-| ------------------- | ------------------------ | -------- | -------------------------------------------------------- |
-| `ip`                | `string`                 | Yes      | VPS public IP address (detected during install)          |
-| `domain`            | `string \| null`         | Yes      | Base domain (set during onboarding, null before)         |
-| `email`             | `string (email) \| null` | Yes      | Admin email for Let's Encrypt (set during onboarding)    |
-| `dataDir`           | `string`                 | Yes      | Path to state directory (`/etc/lamalibre/lamaste`)                |
+| Field               | Type                     | Required | Description                                                             |
+| ------------------- | ------------------------ | -------- | ----------------------------------------------------------------------- |
+| `ip`                | `string`                 | Yes      | VPS public IP address (detected during install)                         |
+| `domain`            | `string \| null`         | Yes      | Base domain (set during onboarding, null before)                        |
+| `email`             | `string (email) \| null` | Yes      | Admin email for Let's Encrypt (set during onboarding)                   |
+| `dataDir`           | `string`                 | Yes      | Path to state directory (`/etc/lamalibre/lamaste`)                      |
 | `serverId`          | `string (uuid)`          | No       | Auto-generated UUIDv4, bucket prefix for multi-server storage isolation |
-| `staticDir`         | `string`                 | No       | Path to lamaste-server-ui dist (overrides default resolution) |
-| `maxSiteSize`       | `number`                 | No       | Maximum static site size in bytes (default: 500 MB)      |
-| `adminAuthMode`     | `enum`                   | No       | `"p12"` (default) or `"hardware-bound"`                  |
-| `panel2fa`          | `object`                 | No       | Built-in TOTP 2FA configuration                         |
-| `sessionSecret`     | `string \| null`         | No       | HMAC key for signed session cookies (default: null)      |
-| `onboarding.status` | `enum`                   | Yes      | Current onboarding state                                 |
+| `staticDir`         | `string`                 | No       | Path to lamaste-server-ui dist (overrides default resolution)           |
+| `maxSiteSize`       | `number`                 | No       | Maximum static site size in bytes (default: 500 MB)                     |
+| `adminAuthMode`     | `enum`                   | No       | `"p12"` (default) or `"hardware-bound"`                                 |
+| `panel2fa`          | `object`                 | No       | Built-in TOTP 2FA configuration                                         |
+| `sessionSecret`     | `string \| null`         | No       | HMAC key for signed session cookies (default: null)                     |
+| `onboarding.status` | `enum`                   | Yes      | Current onboarding state                                                |
 
 **Zod validation:**
 
@@ -160,11 +160,14 @@ const ConfigSchema = z.object({
     .optional()
     .default(500 * 1024 * 1024),
   adminAuthMode: z.enum(['p12', 'hardware-bound']).optional().default('p12'),
-  panel2fa: z.object({
-    enabled: z.boolean(),
-    secret: z.string().nullable(),
-    setupComplete: z.boolean(),
-  }).optional().default({ enabled: false, secret: null, setupComplete: false }),
+  panel2fa: z
+    .object({
+      enabled: z.boolean(),
+      secret: z.string().nullable(),
+      setupComplete: z.boolean(),
+    })
+    .optional()
+    .default({ enabled: false, secret: null, setupComplete: false }),
   sessionSecret: z.string().nullable().optional().default(null),
   onboarding: z.object({
     status: z.enum(['FRESH', 'DOMAIN_SET', 'DNS_READY', 'PROVISIONING', 'COMPLETED']),
@@ -201,7 +204,11 @@ export async function updateConfig(patch) {
   for (const key of Object.keys(patch)) {
     if (key === 'onboarding' && typeof patch.onboarding === 'object' && patch.onboarding !== null) {
       merged.onboarding = { ...merged.onboarding, ...patch.onboarding };
-    } else if (key === 'panel2fa' && typeof patch.panel2fa === 'object' && patch.panel2fa !== null) {
+    } else if (
+      key === 'panel2fa' &&
+      typeof patch.panel2fa === 'object' &&
+      patch.panel2fa !== null
+    ) {
       merged.panel2fa = { ...merged.panel2fa, ...patch.panel2fa };
     } else {
       merged[key] = patch[key];
@@ -213,7 +220,10 @@ export async function updateConfig(patch) {
 
   // Atomic write
   const tmpPath = `${configPath}.tmp`;
-  await writeFile(tmpPath, JSON.stringify(validated, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  await writeFile(tmpPath, JSON.stringify(validated, null, 2) + '\n', {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
 
   // fsync: flush data to disk before rename
   const fd = await open(tmpPath, 'r');
@@ -359,7 +369,10 @@ Authelia user file writes go through `sudoWriteFile()` in `packages/lamaste-serv
 
 ```javascript
 async function sudoWriteFile(destPath, content, mode = '644') {
-  const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpFile = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
+  );
   await fsWriteFile(tmpFile, content, 'utf-8');
   await execa('sudo', ['mv', tmpFile, destPath]);
   await execa('sudo', ['chmod', mode, destPath]);
@@ -423,40 +436,40 @@ The storage system manages S3-compatible object storage servers and their bindin
 
 Different config files are resolved through different mechanisms:
 
-| File               | Resolution                                                                             |
-| ------------------ | -------------------------------------------------------------------------------------- |
+| File               | Resolution                                                                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
 | `panel.json`       | `LAMALIBRE_LAMASTE_CONFIG` env var → `dev/panel.json` (dev) → `/etc/lamalibre/lamaste/panel.json` (prod) |
 | `tunnels.json`     | `LAMALIBRE_LAMASTE_STATE_DIR` env var → `/etc/lamalibre/lamaste` + `/tunnels.json`                       |
 | `sites.json`       | `LAMALIBRE_LAMASTE_STATE_DIR` env var → `/etc/lamalibre/lamaste` + `/sites.json`                         |
 | `invitations.json` | `LAMALIBRE_LAMASTE_STATE_DIR` env var → `/etc/lamalibre/lamaste` + `/invitations.json`                   |
-| `users.yml`        | Hardcoded: `/etc/authelia/users.yml`                                                   |
+| `users.yml`        | Hardcoded: `/etc/authelia/users.yml`                                                                     |
 | PKI files          | `LAMALIBRE_LAMASTE_PKI_DIR` env var → `/etc/lamalibre/lamaste/pki`                                       |
 
 Environment variables allow overriding paths for development and testing without modifying code.
 
 ## File Permissions
 
-| File                | Mode   | Owner               | Rationale                               |
-| ------------------- | ------ | ------------------- | --------------------------------------- |
-| `panel.json`        | `0600` | `lamaste:lamaste` | Contains sensitive config, owner-only access |
-| `tunnels.json`      | `0600` | `lamaste:lamaste` | Written by Panel Server                 |
-| `sites.json`        | `0600` | `lamaste:lamaste` | Written by Panel Server                 |
-| `invitations.json`  | `0600` | `lamaste:lamaste` | Written by Panel Server                 |
-| `storage-config.json` | `0600` | `lamaste:lamaste` | Storage registry (credentials AES-256-GCM encrypted) |
-| `storage-master.key`  | `0600` | `lamaste:lamaste` | 32-byte master key for storage encryption |
-| `groups.json`         | `0600` | `lamaste:lamaste` | Lamaste group definitions and membership |
-| `access-grants.json`  | `0600` | `lamaste:lamaste` | Generic access grants (principal → resource) |
-| `gatekeeper.json`     | `0600` | `lamaste:lamaste` | Gatekeeper settings (cache TTL, logging) |
-| `access-request-log.json` | `0600` | `lamaste:lamaste` | Optional denied access log |
-| `pki/ca.key`        | `0600` | `root:root`         | CA private key — most sensitive file    |
-| `pki/ca.crt`        | `0644` | `root:root`         | CA cert — needs to be readable by nginx |
-| `pki/client.key`    | `0600` | `root:root`         | Client private key                      |
-| `pki/client.crt`    | `0644` | `root:root`         | Client cert                             |
-| `pki/client.p12`    | `0600` | `root:root`         | PKCS12 bundle with private key          |
-| `pki/.p12-password` | `0600` | `root:root`         | Password for PKCS12 bundle              |
-| `users.yml`         | `0600` | `root:root`         | Contains bcrypt password hashes         |
-| `configuration.yml` | `0600` | `root:root`         | Contains JWT and session secrets        |
-| `.secrets.json`     | `0600` | `root:root`         | Encryption keys                         |
+| File                      | Mode   | Owner             | Rationale                                            |
+| ------------------------- | ------ | ----------------- | ---------------------------------------------------- |
+| `panel.json`              | `0600` | `lamaste:lamaste` | Contains sensitive config, owner-only access         |
+| `tunnels.json`            | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
+| `sites.json`              | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
+| `invitations.json`        | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
+| `storage-config.json`     | `0600` | `lamaste:lamaste` | Storage registry (credentials AES-256-GCM encrypted) |
+| `storage-master.key`      | `0600` | `lamaste:lamaste` | 32-byte master key for storage encryption            |
+| `groups.json`             | `0600` | `lamaste:lamaste` | Lamaste group definitions and membership             |
+| `access-grants.json`      | `0600` | `lamaste:lamaste` | Generic access grants (principal → resource)         |
+| `gatekeeper.json`         | `0600` | `lamaste:lamaste` | Gatekeeper settings (cache TTL, logging)             |
+| `access-request-log.json` | `0600` | `lamaste:lamaste` | Optional denied access log                           |
+| `pki/ca.key`              | `0600` | `root:root`       | CA private key — most sensitive file                 |
+| `pki/ca.crt`              | `0644` | `root:root`       | CA cert — needs to be readable by nginx              |
+| `pki/client.key`          | `0600` | `root:root`       | Client private key                                   |
+| `pki/client.crt`          | `0644` | `root:root`       | Client cert                                          |
+| `pki/client.p12`          | `0600` | `root:root`       | PKCS12 bundle with private key                       |
+| `pki/.p12-password`       | `0600` | `root:root`       | Password for PKCS12 bundle                           |
+| `users.yml`               | `0600` | `root:root`       | Contains bcrypt password hashes                      |
+| `configuration.yml`       | `0600` | `root:root`       | Contains JWT and session secrets                     |
+| `.secrets.json`           | `0600` | `root:root`       | Encryption keys                                      |
 
 PKI and Authelia files are owned by root because they are written during installation (as root) or via `sudo` commands. The Panel Server reads them using `sudo` when needed (e.g., reading `users.yml` for the users API).
 
@@ -491,17 +504,17 @@ This ensures that concurrent tunnel creation requests do not trigger multiple si
 
 ## Key Files
 
-| File                                          | Role                                           |
-| --------------------------------------------- | ---------------------------------------------- |
-| `packages/lamaste-serverd/src/lib/storage.js`    | Storage server registry, plugin bindings, AES-256-GCM encryption |
-| `packages/lamaste-gatekeeper/src/lib/groups.ts` | Lamaste group read/write with atomic writes |
-| `packages/lamaste-gatekeeper/src/lib/grants.ts` | Access grant read/write with atomic writes |
-| `packages/lamaste-serverd/src/lib/config.js`     | Config loading, Zod validation, atomic updates |
-| `packages/lamaste-serverd/src/lib/state.js`      | tunnels.json + sites.json atomic read/write    |
-| `packages/lamaste-serverd/src/lib/authelia.js`   | users.yml read/write via sudo                  |
-| `packages/lamaste-serverd/src/lib/files.js`      | Static site file operations                    |
-| `packages/create-lamaste/src/tasks/panel.js` | Initial panel.json creation                    |
-| `packages/create-lamaste/src/tasks/mtls.js`  | Initial PKI file creation                      |
+| File                                            | Role                                                             |
+| ----------------------------------------------- | ---------------------------------------------------------------- |
+| `packages/lamaste-serverd/src/lib/storage.js`   | Storage server registry, plugin bindings, AES-256-GCM encryption |
+| `packages/lamaste-gatekeeper/src/lib/groups.ts` | Lamaste group read/write with atomic writes                      |
+| `packages/lamaste-gatekeeper/src/lib/grants.ts` | Access grant read/write with atomic writes                       |
+| `packages/lamaste-serverd/src/lib/config.js`    | Config loading, Zod validation, atomic updates                   |
+| `packages/lamaste-serverd/src/lib/state.js`     | tunnels.json + sites.json atomic read/write                      |
+| `packages/lamaste-serverd/src/lib/authelia.js`  | users.yml read/write via sudo                                    |
+| `packages/lamaste-serverd/src/lib/files.js`     | Static site file operations                                      |
+| `packages/create-lamaste/src/tasks/panel.js`    | Initial panel.json creation                                      |
+| `packages/create-lamaste/src/tasks/mtls.js`     | Initial PKI file creation                                        |
 
 ## Design Decisions
 

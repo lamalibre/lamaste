@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "19 — Panel Expose Lifecycle",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq"
-    ]
+    "requires": ["curl", "jq"]
   },
   "env": {},
   "constants": {},
@@ -911,10 +908,7 @@
             "path": "certs/agent",
             "body": {
               "label": "nopanel-e2e",
-              "capabilities": [
-                "tunnels:read",
-                "tunnels:write"
-              ]
+              "capabilities": ["tunnels:read", "tunnels:write"]
             }
           },
           "capture": [

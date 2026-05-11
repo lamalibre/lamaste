@@ -4,38 +4,38 @@
 
 ## File Overview
 
-| File                                     | Format     | Owner             | Mode | Purpose                       |
-| ---------------------------------------- | ---------- | ----------------- | ---- | ----------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`               | JSON       | lamaste:lamaste | 0600 | Panel server configuration    |
-| `/etc/lamalibre/lamaste/tunnels.json`             | JSON       | lamaste:lamaste | 0600 | Tunnel definitions            |
-| `/etc/lamalibre/lamaste/sites.json`               | JSON       | lamaste:lamaste | 0600 | Static site definitions       |
-| `/etc/authelia/configuration.yml`        | YAML       | root:root         | 0600 | Authelia server configuration |
-| `/etc/authelia/users.yml`                | YAML       | root:root         | 0600 | User database                 |
-| `/etc/authelia/.secrets.json`            | JSON       | root:root         | 0600 | Authelia secrets              |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`       | JSON       | lamaste:lamaste | 0600 | Ticket scope registry         |
-| `/etc/lamalibre/lamaste/tickets.json`             | JSON       | lamaste:lamaste | 0600 | Ticket and session store      |
-| `/etc/lamalibre/lamaste/invitations.json`         | JSON       | lamaste:lamaste | 0600 | Pending user invitations                                                        |
-| `/etc/lamalibre/lamaste/plugins.json`             | JSON       | lamaste:lamaste | 0600 | Plugin registry                                                                 |
-| `/etc/lamalibre/lamaste/storage-config.json`      | JSON       | lamaste:lamaste | 0600 | Storage server registry and plugin bindings (credentials AES-256-GCM encrypted) |
-| `/etc/lamalibre/lamaste/storage-master.key`       | Binary     | lamaste:lamaste | 0600 | 32-byte master key for storage credential encryption |
-| `/etc/lamalibre/lamaste/groups.json`              | JSON       | lamaste:lamaste | 0600 | Lamaste group definitions and membership |
-| `/etc/lamalibre/lamaste/access-grants.json`       | JSON       | lamaste:lamaste | 0600 | Generic access grants (principal → resource) |
-| `/etc/lamalibre/lamaste/gatekeeper.json`          | JSON       | lamaste:lamaste | 0600 | Gatekeeper settings (cache TTL, admin contact, logging) |
-| `/etc/lamalibre/lamaste/access-request-log.json`  | JSON       | lamaste:lamaste | 0600 | Optional denied access log |
-| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json` | JSON     | lamaste:lamaste | 0600 | One-time enrollment tokens for hardware-bound enrollment |
-| `/etc/lamalibre/lamaste/pki/revoked.json`         | JSON       | lamaste:lamaste | 0600 | Revoked certificate serial numbers |
-| `/etc/lamalibre/lamaste/pki/agents/registry.json` | JSON       | lamaste:lamaste | 0600 | Agent certificate metadata |
-| `/etc/nginx/sites-available/lamaste-*`  | nginx conf | root:root         | 0644 | Vhost configurations          |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf` | nginx conf | root:root         | 0644 | mTLS snippet                  |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | nginx conf | root:root | 0644 | Gatekeeper proxy_cache zone   |
-| `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service` | systemd | root:root | 0644 | Gatekeeper systemd unit       |
-| `~/.lamalibre/lamaste/servers.json`               | JSON       | user              | 0600 | Desktop app server registry   |
-| `~/.lamalibre/lamaste/agents.json`               | JSON       | user              | 0600 | Multi-agent registry          |
-| `~/.lamalibre/lamaste/agents/<label>/config.json` | JSON      | user              | 0600 | Per-agent configuration       |
-| `~/.lamalibre/lamaste/agents/<label>/client.p12`  | PKCS#12   | user              | 0600 | Per-agent mTLS certificate    |
-| `~/.lamalibre/lamaste/agents/<label>/ca.crt`      | PEM       | user              | 0644 | Per-agent CA certificate      |
-| `~/.lamalibre/lamaste/agents/<label>/logs/`       | directory | user              | 0700 | Per-agent Chisel log files    |
-| `~/.lamalibre/lamaste/agent.json`                | JSON       | user              | 0600 | Legacy single-server config   |
+| File                                                       | Format     | Owner           | Mode | Purpose                                                                         |
+| ---------------------------------------------------------- | ---------- | --------------- | ---- | ------------------------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                        | JSON       | lamaste:lamaste | 0600 | Panel server configuration                                                      |
+| `/etc/lamalibre/lamaste/tunnels.json`                      | JSON       | lamaste:lamaste | 0600 | Tunnel definitions                                                              |
+| `/etc/lamalibre/lamaste/sites.json`                        | JSON       | lamaste:lamaste | 0600 | Static site definitions                                                         |
+| `/etc/authelia/configuration.yml`                          | YAML       | root:root       | 0600 | Authelia server configuration                                                   |
+| `/etc/authelia/users.yml`                                  | YAML       | root:root       | 0600 | User database                                                                   |
+| `/etc/authelia/.secrets.json`                              | JSON       | root:root       | 0600 | Authelia secrets                                                                |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`                | JSON       | lamaste:lamaste | 0600 | Ticket scope registry                                                           |
+| `/etc/lamalibre/lamaste/tickets.json`                      | JSON       | lamaste:lamaste | 0600 | Ticket and session store                                                        |
+| `/etc/lamalibre/lamaste/invitations.json`                  | JSON       | lamaste:lamaste | 0600 | Pending user invitations                                                        |
+| `/etc/lamalibre/lamaste/plugins.json`                      | JSON       | lamaste:lamaste | 0600 | Plugin registry                                                                 |
+| `/etc/lamalibre/lamaste/storage-config.json`               | JSON       | lamaste:lamaste | 0600 | Storage server registry and plugin bindings (credentials AES-256-GCM encrypted) |
+| `/etc/lamalibre/lamaste/storage-master.key`                | Binary     | lamaste:lamaste | 0600 | 32-byte master key for storage credential encryption                            |
+| `/etc/lamalibre/lamaste/groups.json`                       | JSON       | lamaste:lamaste | 0600 | Lamaste group definitions and membership                                        |
+| `/etc/lamalibre/lamaste/access-grants.json`                | JSON       | lamaste:lamaste | 0600 | Generic access grants (principal → resource)                                    |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                   | JSON       | lamaste:lamaste | 0600 | Gatekeeper settings (cache TTL, admin contact, logging)                         |
+| `/etc/lamalibre/lamaste/access-request-log.json`           | JSON       | lamaste:lamaste | 0600 | Optional denied access log                                                      |
+| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`        | JSON       | lamaste:lamaste | 0600 | One-time enrollment tokens for hardware-bound enrollment                        |
+| `/etc/lamalibre/lamaste/pki/revoked.json`                  | JSON       | lamaste:lamaste | 0600 | Revoked certificate serial numbers                                              |
+| `/etc/lamalibre/lamaste/pki/agents/registry.json`          | JSON       | lamaste:lamaste | 0600 | Agent certificate metadata                                                      |
+| `/etc/nginx/sites-available/lamaste-*`                     | nginx conf | root:root       | 0644 | Vhost configurations                                                            |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`          | nginx conf | root:root       | 0644 | mTLS snippet                                                                    |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`   | nginx conf | root:root       | 0644 | Gatekeeper proxy_cache zone                                                     |
+| `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service` | systemd    | root:root       | 0644 | Gatekeeper systemd unit                                                         |
+| `~/.lamalibre/lamaste/servers.json`                        | JSON       | user            | 0600 | Desktop app server registry                                                     |
+| `~/.lamalibre/lamaste/agents.json`                         | JSON       | user            | 0600 | Multi-agent registry                                                            |
+| `~/.lamalibre/lamaste/agents/<label>/config.json`          | JSON       | user            | 0600 | Per-agent configuration                                                         |
+| `~/.lamalibre/lamaste/agents/<label>/client.p12`           | PKCS#12    | user            | 0600 | Per-agent mTLS certificate                                                      |
+| `~/.lamalibre/lamaste/agents/<label>/ca.crt`               | PEM        | user            | 0644 | Per-agent CA certificate                                                        |
+| `~/.lamalibre/lamaste/agents/<label>/logs/`                | directory  | user            | 0700 | Per-agent Chisel log files                                                      |
+| `~/.lamalibre/lamaste/agent.json`                          | JSON       | user            | 0600 | Legacy single-server config                                                     |
 
 ---
 
@@ -45,22 +45,22 @@ The primary configuration file for the panel server. Created by the installer, u
 
 **Schema:**
 
-| Field               | Type           | Required | Default         | Description                                           |
-| ------------------- | -------------- | -------- | --------------- | ----------------------------------------------------- |
-| `ip`                | string         | Yes      | —               | Server public IP address                              |
-| `domain`            | string \| null | Yes      | `null`          | Base domain (set during onboarding)                   |
-| `serverId`          | string         | No       | —               | Auto-generated UUIDv4, used as bucket prefix for multi-server storage isolation |
-| `email`             | string \| null | Yes      | `null`          | Admin email for Let's Encrypt (set during onboarding) |
-| `dataDir`           | string         | Yes      | `/etc/lamalibre/lamaste` | Path to data/state directory                          |
-| `staticDir`         | string         | No       | —               | Path to lamaste-server-ui dist directory                   |
-| `maxSiteSize`       | number         | No       | `524288000`     | Max static site upload size in bytes (500 MB)         |
-| `adminAuthMode`     | string         | No       | `"p12"`         | `"p12"` or `"hardware-bound"`. When `"hardware-bound"`, P12 download and rotation are disabled; admin authenticates via Keychain-backed certificate. |
-| `panel2fa`          | object         | No       | —               | Built-in TOTP 2FA configuration (see sub-fields below) |
-| `panel2fa.enabled`  | boolean        | No       | `false`         | Whether 2FA is active for admin panel access          |
-| `panel2fa.secret`   | string \| null | No       | `null`          | Base32-encoded TOTP secret                            |
-| `panel2fa.setupComplete` | boolean   | No       | `false`         | Whether the 2FA setup flow has been confirmed         |
-| `sessionSecret`     | string         | No       | —               | HMAC key for signing session cookies (auto-generated during 2FA setup) |
-| `onboarding.status` | enum           | Yes      | `FRESH`         | Current onboarding state                              |
+| Field                    | Type           | Required | Default                  | Description                                                                                                                                          |
+| ------------------------ | -------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ip`                     | string         | Yes      | —                        | Server public IP address                                                                                                                             |
+| `domain`                 | string \| null | Yes      | `null`                   | Base domain (set during onboarding)                                                                                                                  |
+| `serverId`               | string         | No       | —                        | Auto-generated UUIDv4, used as bucket prefix for multi-server storage isolation                                                                      |
+| `email`                  | string \| null | Yes      | `null`                   | Admin email for Let's Encrypt (set during onboarding)                                                                                                |
+| `dataDir`                | string         | Yes      | `/etc/lamalibre/lamaste` | Path to data/state directory                                                                                                                         |
+| `staticDir`              | string         | No       | —                        | Path to lamaste-server-ui dist directory                                                                                                             |
+| `maxSiteSize`            | number         | No       | `524288000`              | Max static site upload size in bytes (500 MB)                                                                                                        |
+| `adminAuthMode`          | string         | No       | `"p12"`                  | `"p12"` or `"hardware-bound"`. When `"hardware-bound"`, P12 download and rotation are disabled; admin authenticates via Keychain-backed certificate. |
+| `panel2fa`               | object         | No       | —                        | Built-in TOTP 2FA configuration (see sub-fields below)                                                                                               |
+| `panel2fa.enabled`       | boolean        | No       | `false`                  | Whether 2FA is active for admin panel access                                                                                                         |
+| `panel2fa.secret`        | string \| null | No       | `null`                   | Base32-encoded TOTP secret                                                                                                                           |
+| `panel2fa.setupComplete` | boolean        | No       | `false`                  | Whether the 2FA setup flow has been confirmed                                                                                                        |
+| `sessionSecret`          | string         | No       | —                        | HMAC key for signing session cookies (auto-generated during 2FA setup)                                                                               |
+| `onboarding.status`      | enum           | Yes      | `FRESH`                  | Current onboarding state                                                                                                                             |
 
 **Onboarding status values:**
 
@@ -145,16 +145,16 @@ Stores the array of configured tunnels. Created automatically when the first tun
 
 **Schema:** Array of tunnel objects.
 
-| Field         | Type           | Description                               |
-| ------------- | -------------- | ----------------------------------------- |
-| `id`          | string         | UUID                                      |
-| `subdomain`   | string         | Subdomain name (e.g., `myapp`)            |
-| `fqdn`        | string         | Full domain (e.g., `myapp.example.com`)   |
-| `port`        | number         | Local port on the tunnel client machine   |
-| `description` | string \| null | Optional description (max 200 characters) |
-| `enabled`     | boolean        | Whether the tunnel is active              |
+| Field         | Type                | Description                                                                                                                                                                                      |
+| ------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`          | string              | UUID                                                                                                                                                                                             |
+| `subdomain`   | string              | Subdomain name (e.g., `myapp`)                                                                                                                                                                   |
+| `fqdn`        | string              | Full domain (e.g., `myapp.example.com`)                                                                                                                                                          |
+| `port`        | number              | Local port on the tunnel client machine                                                                                                                                                          |
+| `description` | string \| null      | Optional description (max 200 characters)                                                                                                                                                        |
+| `enabled`     | boolean             | Whether the tunnel is active                                                                                                                                                                     |
 | `accessMode`  | string \| undefined | `"public"`, `"authenticated"`, or `"restricted"`. Controls whether nginx skips auth, requires Authelia login only, or requires Authelia login plus a Gatekeeper grant. Absent for panel tunnels. |
-| `createdAt`   | string         | ISO 8601 timestamp                        |
+| `createdAt`   | string              | ISO 8601 timestamp                                                                                                                                                                               |
 
 **Example:**
 
@@ -199,7 +199,7 @@ Stores the array of static sites hosted through Lamaste.
 | `fqdn`              | string  | Full domain (e.g., `blog.example.com`)           |
 | `spaMode`           | boolean | If true, `try_files` falls back to `/index.html` |
 | `autheliaProtected` | boolean | If true, requires Authelia authentication        |
-| `rootPath`          | string  | Document root (e.g., `/var/www/lamaste/<id>/`)  |
+| `rootPath`          | string  | Document root (e.g., `/var/www/lamaste/<id>/`)   |
 | `createdAt`         | string  | ISO 8601 timestamp                               |
 
 **Example:**
@@ -242,9 +242,16 @@ Stores the ticket scope registry: registered scopes, active instances, and agent
       "name": "shell",
       "version": "1.0.0",
       "description": "Remote shell access",
-      "scopes": [{ "name": "shell:connect", "description": "Connect to shell", "instanceScoped": true }],
-      "transport": { "strategies": ["tunnel"], "preferred": "tunnel", "port": 9000, "protocol": "wss" },
-      "hooks": {},              // Reserved for future hook configuration
+      "scopes": [
+        { "name": "shell:connect", "description": "Connect to shell", "instanceScoped": true }
+      ],
+      "transport": {
+        "strategies": ["tunnel"],
+        "preferred": "tunnel",
+        "port": 9000,
+        "protocol": "wss"
+      },
+      "hooks": {}, // Reserved for future hook configuration
       "installedAt": "2026-03-26T10:00:00.000Z"
     }
   ],
@@ -274,13 +281,13 @@ Stores the ticket scope registry: registered scopes, active instances, and agent
 
 The instance `transport` object may include a `direct` sub-object when the `direct` strategy is listed:
 
-| Field                      | Type     | Required | Description                                                     |
-| -------------------------- | -------- | -------- | --------------------------------------------------------------- |
-| `transport.strategies`     | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"`                      |
-| `transport.preferred`      | string   | No       | Preferred strategy (must be in `strategies`)                    |
-| `transport.direct`         | object   | No       | Direct connection details (required when using `direct` strategy) |
-| `transport.direct.host`    | string   | Yes*     | Public hostname or IP (1-255 chars). Private/reserved IPs rejected (SSRF prevention) |
-| `transport.direct.port`    | number   | Yes*     | Port number (1024-65535)                                        |
+| Field                   | Type     | Required | Description                                                                          |
+| ----------------------- | -------- | -------- | ------------------------------------------------------------------------------------ |
+| `transport.strategies`  | string[] | Yes      | Array of `"tunnel"`, `"relay"`, `"direct"`                                           |
+| `transport.preferred`   | string   | No       | Preferred strategy (must be in `strategies`)                                         |
+| `transport.direct`      | object   | No       | Direct connection details (required when using `direct` strategy)                    |
+| `transport.direct.host` | string   | Yes\*    | Public hostname or IP (1-255 chars). Private/reserved IPs rejected (SSRF prevention) |
+| `transport.direct.port` | number   | Yes\*    | Port number (1024-65535)                                                             |
 
 \* Required when `transport.direct` is provided.
 
@@ -296,9 +303,9 @@ Stores active tickets and sessions for agent-to-agent authorization. Created aut
 
 **Schema:**
 
-| Field      | Type  | Description                                                    |
-| ---------- | ----- | -------------------------------------------------------------- |
-| `tickets`  | array | Issued tickets (id, scope, instanceId, source, target, expiry) |
+| Field      | Type  | Description                                                               |
+| ---------- | ----- | ------------------------------------------------------------------------- |
+| `tickets`  | array | Issued tickets (id, scope, instanceId, source, target, expiry)            |
 | `sessions` | array | Active sessions (server-generated sessionId, ticketId, status, heartbeat) |
 
 **Example:**
@@ -349,14 +356,14 @@ Stores Lamaste group definitions and membership. Separate from Authelia groups �
 
 **Schema:**
 
-| Field                  | Type     | Description                                  |
-| ---------------------- | -------- | -------------------------------------------- |
-| `groups`               | array    | Array of group objects                       |
-| `groups[].name`        | string   | Group name (unique, lowercase alphanumeric, 2-63 chars)  |
-| `groups[].description` | string   | Human-readable description                   |
-| `groups[].members`     | string[] | Array of Authelia usernames                  |
-| `groups[].createdAt`   | string   | ISO 8601 timestamp                           |
-| `groups[].createdBy`   | string   | Admin who created the group                  |
+| Field                  | Type     | Description                                             |
+| ---------------------- | -------- | ------------------------------------------------------- |
+| `groups`               | array    | Array of group objects                                  |
+| `groups[].name`        | string   | Group name (unique, lowercase alphanumeric, 2-63 chars) |
+| `groups[].description` | string   | Human-readable description                              |
+| `groups[].members`     | string[] | Array of Authelia usernames                             |
+| `groups[].createdAt`   | string   | ISO 8601 timestamp                                      |
+| `groups[].createdBy`   | string   | Admin who created the group                             |
 
 **Example:**
 
@@ -384,18 +391,18 @@ Stores generic access grants mapping principals (users or groups) to resources (
 
 **Schema:**
 
-| Field                    | Type           | Description                                              |
-| ------------------------ | -------------- | -------------------------------------------------------- |
-| `grants`                 | array          | Array of grant objects                                   |
-| `grants[].grantId`       | string         | Unique identifier (e.g., `g_abc123`)                    |
-| `grants[].principalType` | string         | `"user"` or `"group"`                                   |
-| `grants[].principalId`   | string         | Authelia username or Lamaste group name                |
-| `grants[].resourceType`  | string         | `"tunnel"`, `"plugin"`, or custom resource type         |
-| `grants[].resourceId`    | string         | Resource identifier (e.g., tunnel subdomain)            |
-| `grants[].context`       | object         | Optional metadata (empty `{}` by default)               |
-| `grants[].used`          | boolean        | Whether the grant has been consumed                     |
-| `grants[].createdAt`     | string         | ISO 8601 timestamp                                      |
-| `grants[].usedAt`        | string \| null | ISO 8601 timestamp of consumption, or `null`            |
+| Field                    | Type           | Description                                     |
+| ------------------------ | -------------- | ----------------------------------------------- |
+| `grants`                 | array          | Array of grant objects                          |
+| `grants[].grantId`       | string         | Unique identifier (e.g., `g_abc123`)            |
+| `grants[].principalType` | string         | `"user"` or `"group"`                           |
+| `grants[].principalId`   | string         | Authelia username or Lamaste group name         |
+| `grants[].resourceType`  | string         | `"tunnel"`, `"plugin"`, or custom resource type |
+| `grants[].resourceId`    | string         | Resource identifier (e.g., tunnel subdomain)    |
+| `grants[].context`       | object         | Optional metadata (empty `{}` by default)       |
+| `grants[].used`          | boolean        | Whether the grant has been consumed             |
+| `grants[].createdAt`     | string         | ISO 8601 timestamp                              |
+| `grants[].usedAt`        | string \| null | ISO 8601 timestamp of consumption, or `null`    |
 
 **Example:**
 
@@ -438,15 +445,15 @@ Gatekeeper service settings. Controls cache behavior, admin contact information 
 
 **Schema:**
 
-| Field                     | Type             | Default | Description                                         |
-| ------------------------- | ---------------- | ------- | --------------------------------------------------- |
-| `adminEmail`              | string \| undefined | —    | Admin email shown on access-denied page             |
-| `adminName`               | string \| undefined | —    | Admin display name shown on access-denied page      |
-| `slackChannel`            | string \| undefined | —    | Slack channel for access request templates          |
-| `teamsChannel`            | string \| undefined | —    | Teams channel for access request templates          |
-| `sessionCacheTtlMs`       | number \| undefined | —    | In-memory session cache TTL in milliseconds (default 30000) |
-| `accessLoggingEnabled`    | boolean \| undefined | —   | Whether to log denied access attempts               |
-| `accessLogRetentionDays`  | number \| undefined | —    | How many days to retain access log entries           |
+| Field                    | Type                 | Default | Description                                                 |
+| ------------------------ | -------------------- | ------- | ----------------------------------------------------------- |
+| `adminEmail`             | string \| undefined  | —       | Admin email shown on access-denied page                     |
+| `adminName`              | string \| undefined  | —       | Admin display name shown on access-denied page              |
+| `slackChannel`           | string \| undefined  | —       | Slack channel for access request templates                  |
+| `teamsChannel`           | string \| undefined  | —       | Teams channel for access request templates                  |
+| `sessionCacheTtlMs`      | number \| undefined  | —       | In-memory session cache TTL in milliseconds (default 30000) |
+| `accessLoggingEnabled`   | boolean \| undefined | —       | Whether to log denied access attempts                       |
+| `accessLogRetentionDays` | number \| undefined  | —       | How many days to retain access log entries                  |
 
 **Example:**
 
@@ -471,13 +478,13 @@ Optional log of denied access attempts. Written by the Gatekeeper when `accessLo
 
 **Schema:** Array of access request entries.
 
-| Field          | Type   | Description                                           |
-| -------------- | ------ | ----------------------------------------------------- |
-| `timestamp`    | string | ISO 8601 timestamp of the denied request              |
-| `username`     | string | Authelia username of the denied user                  |
-| `resourceType` | string | Resource type (e.g., `"tunnel"`, `"plugin"`)          |
-| `resourceId`   | string | Resource identifier (e.g., tunnel subdomain)          |
-| `resourceFqdn` | string | Full domain the user attempted to access              |
+| Field          | Type   | Description                                  |
+| -------------- | ------ | -------------------------------------------- |
+| `timestamp`    | string | ISO 8601 timestamp of the denied request     |
+| `username`     | string | Authelia username of the denied user         |
+| `resourceType` | string | Resource type (e.g., `"tunnel"`, `"plugin"`) |
+| `resourceId`   | string | Resource identifier (e.g., tunnel subdomain) |
+| `resourceFqdn` | string | Full domain the user attempted to access     |
 
 **Example:**
 
@@ -614,25 +621,25 @@ Stores the server registry for the desktop app's multi-server support. Created b
 
 **Schema:** Array of server entry objects.
 
-| Field              | Type           | Description                                          |
-| ------------------ | -------------- | ---------------------------------------------------- |
-| `id`               | string         | UUID                                                 |
-| `label`            | string         | Display name (typically the domain)                  |
-| `panelUrl`         | string         | Panel URL (e.g., `https://203.0.113.42:9292`)        |
-| `ip`               | string         | Server IP address                                    |
-| `provider`         | string \| null | Cloud provider name (e.g., `digitalocean`)           |
-| `providerId`       | string \| null | Provider-specific resource ID (e.g., droplet ID)     |
-| `region`           | string \| null | Provider region slug                                 |
-| `createdAt`        | string         | ISO 8601 timestamp                                   |
-| `active`           | boolean        | Whether this is the currently active server          |
-| `authMethod`       | string         | `"p12"` or `"keychain"`                              |
-| `keychainIdentity` | string \| null | Keychain identity name (when `authMethod` is `"keychain"`) |
-| `p12Path`          | string \| null | Path to P12 file (when `authMethod` is `"p12"`)      |
-| `activeMode`       | string         | `"agent"` or `"admin"` — which UI mode the desktop app shows for this server. Defaults to `"agent"` |
-| `adminAuth`        | object \| null | Admin certificate details for Server mode access (see sub-fields below) |
-| `adminAuth.method` | string         | `"p12"` or `"keychain"` — how the admin cert is stored |
-| `adminAuth.p12Path` | string \| null | Path to admin P12 file (when method is `"p12"`)     |
-| `adminAuth.keychainIdentity` | string \| null | Keychain identity for admin cert (when method is `"keychain"`) |
+| Field                        | Type           | Description                                                                                         |
+| ---------------------------- | -------------- | --------------------------------------------------------------------------------------------------- |
+| `id`                         | string         | UUID                                                                                                |
+| `label`                      | string         | Display name (typically the domain)                                                                 |
+| `panelUrl`                   | string         | Panel URL (e.g., `https://203.0.113.42:9292`)                                                       |
+| `ip`                         | string         | Server IP address                                                                                   |
+| `provider`                   | string \| null | Cloud provider name (e.g., `digitalocean`)                                                          |
+| `providerId`                 | string \| null | Provider-specific resource ID (e.g., droplet ID)                                                    |
+| `region`                     | string \| null | Provider region slug                                                                                |
+| `createdAt`                  | string         | ISO 8601 timestamp                                                                                  |
+| `active`                     | boolean        | Whether this is the currently active server                                                         |
+| `authMethod`                 | string         | `"p12"` or `"keychain"`                                                                             |
+| `keychainIdentity`           | string \| null | Keychain identity name (when `authMethod` is `"keychain"`)                                          |
+| `p12Path`                    | string \| null | Path to P12 file (when `authMethod` is `"p12"`)                                                     |
+| `activeMode`                 | string         | `"agent"` or `"admin"` — which UI mode the desktop app shows for this server. Defaults to `"agent"` |
+| `adminAuth`                  | object \| null | Admin certificate details for Server mode access (see sub-fields below)                             |
+| `adminAuth.method`           | string         | `"p12"` or `"keychain"` — how the admin cert is stored                                              |
+| `adminAuth.p12Path`          | string \| null | Path to admin P12 file (when method is `"p12"`)                                                     |
+| `adminAuth.keychainIdentity` | string \| null | Keychain identity for admin cert (when method is `"keychain"`)                                      |
 
 **Example:**
 
@@ -701,6 +708,7 @@ Multi-agent registry. Created by `lamaste-agent setup`. Tracks all configured ag
 **Write pattern:** Atomic — temp file with mode 0600, `fsync()`, then `rename()`.
 
 Per-agent data is stored at `~/.lamalibre/lamaste/agents/<label>/`:
+
 - `config.json` — agent configuration (panelUrl, authMethod, credentials)
 - `client.p12` — mTLS certificate (mode 0600)
 - `ca.crt` — CA certificate (mode 0644)
@@ -710,6 +718,7 @@ Per-agent data is stored at `~/.lamalibre/lamaste/agents/<label>/`:
 - `plugins/` — per-plugin data directories
 
 Service files use per-agent names:
+
 - macOS: `com.lamalibre.lamaste.chisel-<label>` (plist label), `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist`
 - Linux: `lamalibre-lamaste-chisel-<label>` (unit name), `~/.config/systemd/user/lamalibre-lamaste-chisel-<label>.service`
 
@@ -897,59 +906,59 @@ WantedBy=multi-user.target
 
 ## File Permissions Table
 
-| Path                                    | Owner             | Mode | Notes                |
-| --------------------------------------- | ----------------- | ---- | -------------------- |
-| `/etc/lamalibre/lamaste/`                        | lamaste:lamaste | 0755 | State directory      |
-| `/etc/lamalibre/lamaste/panel.json`              | lamaste:lamaste | 0600 | Panel config         |
-| `/etc/lamalibre/lamaste/tunnels.json`            | lamaste:lamaste | 0600 | Tunnel state         |
-| `/etc/lamalibre/lamaste/sites.json`              | lamaste:lamaste | 0600 | Site state           |
-| `/etc/lamalibre/lamaste/pki/`                    | lamaste:lamaste | 0700 | PKI directory        |
-| `/etc/lamalibre/lamaste/pki/ca.key`              | root:root         | 0600 | CA private key       |
-| `/etc/lamalibre/lamaste/pki/ca.crt`              | root:root         | 0644 | CA certificate       |
-| `/etc/lamalibre/lamaste/pki/client.key`          | root:root         | 0600 | Client private key   |
-| `/etc/lamalibre/lamaste/pki/client.crt`          | root:root         | 0644 | Client certificate   |
-| `/etc/lamalibre/lamaste/pki/client.p12`          | root:root         | 0600 | PKCS12 bundle        |
-| `/etc/lamalibre/lamaste/pki/.p12-password`       | root:root         | 0600 | PKCS12 password      |
-| `/etc/lamalibre/lamaste/pki/self-signed.pem`     | root:root         | 0644 | Self-signed TLS cert |
-| `/etc/lamalibre/lamaste/pki/self-signed-key.pem` | root:root         | 0600 | Self-signed TLS key  |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`     | lamaste:lamaste | 0600 | Ticket scope registry |
-| `/etc/lamalibre/lamaste/tickets.json`           | lamaste:lamaste | 0600 | Ticket/session store  |
-| `/etc/lamalibre/lamaste/invitations.json`       | lamaste:lamaste | 0600 | Pending invitations    |
-| `/etc/lamalibre/lamaste/plugins.json`           | lamaste:lamaste | 0600 | Plugin registry        |
-| `/etc/lamalibre/lamaste/storage-config.json`    | lamaste:lamaste | 0600 | Storage registry       |
-| `/etc/lamalibre/lamaste/storage-master.key`     | lamaste:lamaste | 0600 | Storage encryption key |
-| `/etc/lamalibre/lamaste/groups.json`            | lamaste:lamaste | 0600 | Lamaste groups        |
-| `/etc/lamalibre/lamaste/access-grants.json`     | lamaste:lamaste | 0600 | Access grants          |
-| `/etc/lamalibre/lamaste/gatekeeper.json`        | lamaste:lamaste | 0600 | Gatekeeper settings    |
-| `/etc/lamalibre/lamaste/access-request-log.json` | lamaste:lamaste | 0600 | Denied access log     |
-| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json` | lamaste:lamaste | 0600 | Enrollment tokens  |
-| `/etc/lamalibre/lamaste/pki/revoked.json`       | lamaste:lamaste | 0600 | Revocation list        |
-| `/etc/lamalibre/lamaste/pki/agents/registry.json` | lamaste:lamaste | 0600 | Agent cert metadata  |
-| `/etc/authelia/configuration.yml`       | root:root         | 0600 | Auth config          |
-| `/etc/authelia/users.yml`               | root:root         | 0600 | User database        |
-| `/etc/authelia/.secrets.json`           | root:root         | 0600 | Auth secrets         |
-| `/etc/authelia/db.sqlite3`              | root:root         | 0600 | Auth session DB      |
-| `/opt/lamalibre/lamaste/`                        | lamaste:lamaste | 0755 | Install directory    |
-| `/var/www/lamaste/`                    | www-data:www-data | 0755 | Static site files    |
-| `/etc/sudoers.d/lamaste`               | root:root         | 0440 | Sudo rules           |
-| `~/.lamalibre/lamaste/servers.json`              | user              | 0600 | Server registry      |
-| `~/.lamalibre/lamaste/agent.json`               | user              | 0600 | Legacy agent config  |
-| `~/.lamalibre/lamaste/services.json`            | user              | 0600 | Service registry     |
+| Path                                                | Owner             | Mode | Notes                  |
+| --------------------------------------------------- | ----------------- | ---- | ---------------------- |
+| `/etc/lamalibre/lamaste/`                           | lamaste:lamaste   | 0755 | State directory        |
+| `/etc/lamalibre/lamaste/panel.json`                 | lamaste:lamaste   | 0600 | Panel config           |
+| `/etc/lamalibre/lamaste/tunnels.json`               | lamaste:lamaste   | 0600 | Tunnel state           |
+| `/etc/lamalibre/lamaste/sites.json`                 | lamaste:lamaste   | 0600 | Site state             |
+| `/etc/lamalibre/lamaste/pki/`                       | lamaste:lamaste   | 0700 | PKI directory          |
+| `/etc/lamalibre/lamaste/pki/ca.key`                 | root:root         | 0600 | CA private key         |
+| `/etc/lamalibre/lamaste/pki/ca.crt`                 | root:root         | 0644 | CA certificate         |
+| `/etc/lamalibre/lamaste/pki/client.key`             | root:root         | 0600 | Client private key     |
+| `/etc/lamalibre/lamaste/pki/client.crt`             | root:root         | 0644 | Client certificate     |
+| `/etc/lamalibre/lamaste/pki/client.p12`             | root:root         | 0600 | PKCS12 bundle          |
+| `/etc/lamalibre/lamaste/pki/.p12-password`          | root:root         | 0600 | PKCS12 password        |
+| `/etc/lamalibre/lamaste/pki/self-signed.pem`        | root:root         | 0644 | Self-signed TLS cert   |
+| `/etc/lamalibre/lamaste/pki/self-signed-key.pem`    | root:root         | 0600 | Self-signed TLS key    |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`         | lamaste:lamaste   | 0600 | Ticket scope registry  |
+| `/etc/lamalibre/lamaste/tickets.json`               | lamaste:lamaste   | 0600 | Ticket/session store   |
+| `/etc/lamalibre/lamaste/invitations.json`           | lamaste:lamaste   | 0600 | Pending invitations    |
+| `/etc/lamalibre/lamaste/plugins.json`               | lamaste:lamaste   | 0600 | Plugin registry        |
+| `/etc/lamalibre/lamaste/storage-config.json`        | lamaste:lamaste   | 0600 | Storage registry       |
+| `/etc/lamalibre/lamaste/storage-master.key`         | lamaste:lamaste   | 0600 | Storage encryption key |
+| `/etc/lamalibre/lamaste/groups.json`                | lamaste:lamaste   | 0600 | Lamaste groups         |
+| `/etc/lamalibre/lamaste/access-grants.json`         | lamaste:lamaste   | 0600 | Access grants          |
+| `/etc/lamalibre/lamaste/gatekeeper.json`            | lamaste:lamaste   | 0600 | Gatekeeper settings    |
+| `/etc/lamalibre/lamaste/access-request-log.json`    | lamaste:lamaste   | 0600 | Denied access log      |
+| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json` | lamaste:lamaste   | 0600 | Enrollment tokens      |
+| `/etc/lamalibre/lamaste/pki/revoked.json`           | lamaste:lamaste   | 0600 | Revocation list        |
+| `/etc/lamalibre/lamaste/pki/agents/registry.json`   | lamaste:lamaste   | 0600 | Agent cert metadata    |
+| `/etc/authelia/configuration.yml`                   | root:root         | 0600 | Auth config            |
+| `/etc/authelia/users.yml`                           | root:root         | 0600 | User database          |
+| `/etc/authelia/.secrets.json`                       | root:root         | 0600 | Auth secrets           |
+| `/etc/authelia/db.sqlite3`                          | root:root         | 0600 | Auth session DB        |
+| `/opt/lamalibre/lamaste/`                           | lamaste:lamaste   | 0755 | Install directory      |
+| `/var/www/lamaste/`                                 | www-data:www-data | 0755 | Static site files      |
+| `/etc/sudoers.d/lamaste`                            | root:root         | 0440 | Sudo rules             |
+| `~/.lamalibre/lamaste/servers.json`                 | user              | 0600 | Server registry        |
+| `~/.lamalibre/lamaste/agent.json`                   | user              | 0600 | Legacy agent config    |
+| `~/.lamalibre/lamaste/services.json`                | user              | 0600 | Service registry       |
 
 ## Quick Reference
 
-| Config File         | Read By      | Modified By                         | Restart Needed?                            |
-| ------------------- | ------------ | ----------------------------------- | ------------------------------------------ |
-| `panel.json`        | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write)         | No (hot reload)                            |
-| `tunnels.json`      | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync) | No                                         |
-| `sites.json`        | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync) | No                                         |
-| `ticket-scopes.json` | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                        |
-| `tickets.json`      | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                         |
-| `storage-config.json` | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                       |
-| `groups.json`        | gatekeeper   | lamalibre-lamaste-serverd (atomic write + mutex) | No (gatekeeper watches file)              |
-| `access-grants.json` | gatekeeper   | lamalibre-lamaste-serverd (atomic write + mutex) | No (gatekeeper watches file)              |
-| `gatekeeper.json`    | gatekeeper   | lamalibre-lamaste-serverd (atomic write)         | Yes (`systemctl restart lamalibre-lamaste-gatekeeper`) |
-| `access-request-log.json` | lamalibre-lamaste-serverd | gatekeeper (atomic write)      | No                                        |
-| `configuration.yml` | authelia     | onboarding provisioning             | Yes (`systemctl restart authelia`)         |
-| `users.yml`         | authelia     | lamalibre-lamaste-serverd (via sudo)             | Yes (`systemctl restart authelia`)         |
-| `lamaste-*` vhosts | nginx        | lamalibre-lamaste-serverd (via sudo)             | Yes (`nginx -t && systemctl reload nginx`) |
+| Config File               | Read By                   | Modified By                                      | Restart Needed?                                        |
+| ------------------------- | ------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| `panel.json`              | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write)         | No (hot reload)                                        |
+| `tunnels.json`            | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync) | No                                                     |
+| `sites.json`              | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync) | No                                                     |
+| `ticket-scopes.json`      | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                                     |
+| `tickets.json`            | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                                     |
+| `storage-config.json`     | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex) | No                                                     |
+| `groups.json`             | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex) | No (gatekeeper watches file)                           |
+| `access-grants.json`      | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex) | No (gatekeeper watches file)                           |
+| `gatekeeper.json`         | gatekeeper                | lamalibre-lamaste-serverd (atomic write)         | Yes (`systemctl restart lamalibre-lamaste-gatekeeper`) |
+| `access-request-log.json` | lamalibre-lamaste-serverd | gatekeeper (atomic write)                        | No                                                     |
+| `configuration.yml`       | authelia                  | onboarding provisioning                          | Yes (`systemctl restart authelia`)                     |
+| `users.yml`               | authelia                  | lamalibre-lamaste-serverd (via sudo)             | Yes (`systemctl restart authelia`)                     |
+| `lamaste-*` vhosts        | nginx                     | lamalibre-lamaste-serverd (via sudo)             | Yes (`nginx -t && systemctl reload nginx`)             |

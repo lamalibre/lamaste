@@ -9,7 +9,7 @@
 
 import chalk from 'chalk';
 import { execa } from 'execa';
-import { getMtlsCerts, readCertExpiry, listAgentCerts } from '@lamalibre/lamaste/server';
+import { getMtlsCerts, listAgentCerts } from '@lamalibre/lamaste/server';
 import { PKI_DIR } from '../config.js';
 import { exec } from '../exec.js';
 import { emit, emitStep, emitError, emitComplete } from '../ndjson.js';
@@ -101,9 +101,7 @@ async function certStatus({ json }) {
     for (const cert of letsencryptCerts) {
       const daysLeft = cert.daysUntilExpiry;
       const status = daysLeft <= 7 ? r('critical') : daysLeft <= 30 ? y('expiring') : g('valid');
-      console.log(
-        `  ${c(cert.domain)}  ${status}  ${d(`expires in ${daysLeft} days`)}`,
-      );
+      console.log(`  ${c(cert.domain)}  ${status}  ${d(`expires in ${daysLeft} days`)}`);
     }
   }
 
@@ -159,7 +157,6 @@ async function agentCerts({ json }) {
 
   const b = chalk.bold;
   const c = chalk.cyan;
-  const g = chalk.green;
   const r = chalk.red;
   const y = chalk.yellow;
   const d = chalk.dim;
@@ -179,9 +176,7 @@ async function agentCerts({ json }) {
     const expiring = agent.expiringSoon ? y(' [EXPIRING]') : '';
     const method = agent.enrollmentMethod === 'hardware-bound' ? d(' (hw-bound)') : '';
     const certType = agent.certType === 'plugin-agent' ? d(' (plugin)') : '';
-    console.log(
-      `  ${c(agent.label)}${certType}${method}  ${d(agent.serial)}${revoked}${expiring}`,
-    );
+    console.log(`  ${c(agent.label)}${certType}${method}  ${d(agent.serial)}${revoked}${expiring}`);
 
     if (agent.capabilities.length > 0) {
       console.log(`    ${d('capabilities:')} ${agent.capabilities.join(', ')}`);

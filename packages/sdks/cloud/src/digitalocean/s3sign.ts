@@ -11,8 +11,7 @@
 import { createHmac, createHash } from 'node:crypto';
 
 /** SHA-256 hash of an empty string — used as payload hash for all our operations. */
-const EMPTY_PAYLOAD_HASH =
-  'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+const EMPTY_PAYLOAD_HASH = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 const SERVICE = 's3';
 
@@ -33,11 +32,7 @@ function sha256Hex(data: string): string {
  *
  * kSecret  → kDate → kRegion → kService → kSigning
  */
-function getSignatureKey(
-  secretKey: string,
-  dateStamp: string,
-  region: string,
-): Buffer {
+function getSignatureKey(secretKey: string, dateStamp: string, region: string): Buffer {
   const kDate = hmacSha256(`AWS4${secretKey}`, dateStamp);
   const kRegion = hmacSha256(kDate, region);
   const kService = hmacSha256(kRegion, SERVICE);
@@ -50,7 +45,10 @@ function getSignatureKey(
  * Relies on `Date.toISOString()` always returning "YYYY-MM-DDTHH:mm:ss.sssZ".
  */
 function toAmzDate(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return date
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
 }
 
 /**
@@ -75,9 +73,7 @@ function canonicalQueryString(url: URL): string {
 
   const params: string[] = [];
   sorted.forEach((value, key) => {
-    params.push(
-      `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
-    );
+    params.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
   });
   return params.join('&');
 }
@@ -113,9 +109,7 @@ export function signS3Request(
 
   // Canonical headers (must end with newline)
   const canonicalHeaders =
-    `host:${host}\n` +
-    `x-amz-content-sha256:${EMPTY_PAYLOAD_HASH}\n` +
-    `x-amz-date:${amzDate}\n`;
+    `host:${host}\n` + `x-amz-content-sha256:${EMPTY_PAYLOAD_HASH}\n` + `x-amz-date:${amzDate}\n`;
 
   // Canonical request
   const canonicalRequest = [

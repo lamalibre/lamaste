@@ -18,25 +18,35 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  Cpu, Server, Puzzle,
-  Play, Square, RotateCcw, Download, Trash2,
-  Loader2, AlertTriangle, Copy, Check, X,
+  Cpu,
+  Server,
+  Puzzle,
+  Play,
+  Square,
+  RotateCcw,
+  Download,
+  Trash2,
+  Loader2,
+  AlertTriangle,
+  Copy,
+  Check,
+  X,
 } from 'lucide-react';
 import InstallDaemonModal from './InstallDaemonModal.jsx';
 
 const POLL_MS = 5_000;
 
 const STATE_META = {
-  running:      { dot: 'bg-emerald-500', label: 'running' },
-  loaded:       { dot: 'bg-amber-500 animate-pulse', label: 'starting\u2026' },
-  stopped:      { dot: 'bg-zinc-600', label: 'stopped' },
+  running: { dot: 'bg-emerald-500', label: 'running' },
+  loaded: { dot: 'bg-amber-500 animate-pulse', label: 'starting\u2026' },
+  stopped: { dot: 'bg-zinc-600', label: 'stopped' },
   notInstalled: { dot: 'bg-zinc-700', label: 'not installed' },
-  error:        { dot: 'bg-red-500', label: 'error' },
+  error: { dot: 'bg-red-500', label: 'error' },
 };
 
 const KIND_CONFIG = {
-  agent:      { label: 'Agent', Icon: Cpu, dataDir: '~/.lamalibre/lamaste/' },
-  server:     { label: 'Server', Icon: Server, dataDir: '~/.lamalibre/lamaste/server/' },
+  agent: { label: 'Agent', Icon: Cpu, dataDir: '~/.lamalibre/lamaste/' },
+  server: { label: 'Server', Icon: Server, dataDir: '~/.lamalibre/lamaste/server/' },
   pluginHost: { label: 'Plugin Host', Icon: Puzzle, dataDir: '~/.lamalibre/local/' },
 };
 
@@ -87,19 +97,22 @@ export default function LocalDaemonPill({ kind }) {
   }, [open]);
 
   // ---- Actions ----
-  const runAction = useCallback(async (command, extra) => {
-    setBusy(true);
-    setActionError(null);
-    try {
-      await invoke(command, { kind, ...extra });
-      queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
-    } catch (err) {
-      setActionError(typeof err === 'string' ? err : err?.message ?? 'Unknown error');
-      queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
-    } finally {
-      setBusy(false);
-    }
-  }, [kind, queryClient]);
+  const runAction = useCallback(
+    async (command, extra) => {
+      setBusy(true);
+      setActionError(null);
+      try {
+        await invoke(command, { kind, ...extra });
+        queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
+      } catch (err) {
+        setActionError(typeof err === 'string' ? err : (err?.message ?? 'Unknown error'));
+        queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [kind, queryClient],
+  );
 
   const handleInstall = useCallback(() => {
     setOpen(false);
@@ -125,7 +138,7 @@ export default function LocalDaemonPill({ kind }) {
       setUninstallConfirmOpen(false);
       queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
     } catch (err) {
-      setActionError(typeof err === 'string' ? err : err?.message ?? 'Uninstall failed');
+      setActionError(typeof err === 'string' ? err : (err?.message ?? 'Uninstall failed'));
       setUninstallConfirmOpen(false);
       queryClient.invalidateQueries({ queryKey: ['daemon-service-status', kind] });
     } finally {
@@ -287,9 +300,7 @@ export default function LocalDaemonPill({ kind }) {
       </div>
 
       {/* Install progress modal */}
-      {installModalOpen && (
-        <InstallDaemonModal kind={kind} onClose={handleInstallModalClose} />
-      )}
+      {installModalOpen && <InstallDaemonModal kind={kind} onClose={handleInstallModalClose} />}
 
       {/* Uninstall confirmation modal */}
       {uninstallConfirmOpen && (
@@ -297,7 +308,9 @@ export default function LocalDaemonPill({ kind }) {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
           role="dialog"
           aria-modal="true"
-          onKeyDown={(e) => { if (e.key === 'Escape' && !uninstallBusy) setUninstallConfirmOpen(false); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && !uninstallBusy) setUninstallConfirmOpen(false);
+          }}
         >
           <div className="w-[26rem] rounded-lg border border-red-500/30 bg-zinc-900 shadow-xl">
             <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
@@ -307,8 +320,8 @@ export default function LocalDaemonPill({ kind }) {
 
             <div className="px-4 py-4 text-xs text-zinc-300 leading-relaxed">
               <p>
-                This will stop the {pillLabel.toLowerCase()} daemon and remove its
-                service file. The daemon will no longer start automatically.
+                This will stop the {pillLabel.toLowerCase()} daemon and remove its service file. The
+                daemon will no longer start automatically.
               </p>
 
               <label className="mt-3 flex items-center gap-2 cursor-pointer">
@@ -359,7 +372,11 @@ export default function LocalDaemonPill({ kind }) {
                 onClick={handleUninstallConfirmed}
                 className="flex items-center gap-2 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {uninstallBusy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                {uninstallBusy ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Trash2 size={12} />
+                )}
                 Uninstall
               </button>
             </div>

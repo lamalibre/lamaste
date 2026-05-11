@@ -75,10 +75,7 @@ export type { AtomicWriteOptions } from './file-helpers.js';
 // Plugin host
 export { pluginHostPlugin, invalidatePluginHostCache } from './plugin-host.js';
 
-export type {
-  PluginHostAuthStrategy,
-  PluginHostOptions,
-} from './plugin-host.js';
+export type { PluginHostAuthStrategy, PluginHostOptions } from './plugin-host.js';
 
 // Branding primitives
 export * from './branding.js';

@@ -54,7 +54,9 @@ async function main() {
   // --- lamaste-server-ui: dist/ (pre-built assets) ---
   const clientDist = join(monorepoRoot, 'packages', 'server', 'ui', 'dist');
   if (!existsSync(clientDist)) {
-    throw new Error(`lamaste-server-ui/dist/ not found at ${clientDist}. Run "npm run build" first.`);
+    throw new Error(
+      `lamaste-server-ui/dist/ not found at ${clientDist}. Run "npm run build" first.`,
+    );
   }
 
   const clientDest = join(vendorDir, 'server-ui');
@@ -77,7 +79,14 @@ async function main() {
   }
 
   // --- docs: version-stamped markdown ---
-  const docsStampScript = join(monorepoRoot, 'packages', 'core', 'docs', 'scripts', 'version-stamp.js');
+  const docsStampScript = join(
+    monorepoRoot,
+    'packages',
+    'core',
+    'docs',
+    'scripts',
+    'version-stamp.js',
+  );
   if (existsSync(docsStampScript)) {
     const docsDest = join(vendorDir, 'docs');
     execFileSync('node', [docsStampScript, docsDest], {

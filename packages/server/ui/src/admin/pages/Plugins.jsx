@@ -1,15 +1,24 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Package, Power, PowerOff, Trash2, Download, AlertCircle, Shield, Pencil, X, Loader2 } from 'lucide-react';
+import {
+  Package,
+  Power,
+  PowerOff,
+  Trash2,
+  Download,
+  AlertCircle,
+  Shield,
+  Pencil,
+  X,
+  Loader2,
+} from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 
 function StatusBadge({ status }) {
   const styles =
-    status === 'enabled'
-      ? 'bg-green-500/20 text-green-400'
-      : 'bg-zinc-500/20 text-zinc-400';
+    status === 'enabled' ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400';
 
   return (
     <span className={`text-xs px-2 py-0.5 rounded-full ${styles}`}>
@@ -41,13 +50,9 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
         <StatusBadge status={plugin.status} />
       </div>
 
-      {plugin.displayName && (
-        <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>
-      )}
+      {plugin.displayName && <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>}
 
-      {plugin.description && (
-        <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>
-      )}
+      {plugin.description && <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>}
 
       <p className="text-zinc-500 text-xs mb-4">
         {plugin.packageName}
@@ -55,17 +60,17 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
           <span> &middot; Installed {new Date(plugin.installedAt).toLocaleDateString()}</span>
         )}
         {plugin.panel?.pages?.length > 0 && (
-          <span> &middot; {plugin.panel.pages.length} page{plugin.panel.pages.length > 1 ? 's' : ''}</span>
+          <span>
+            {' '}
+            &middot; {plugin.panel.pages.length} page{plugin.panel.pages.length > 1 ? 's' : ''}
+          </span>
         )}
       </p>
 
       {plugin.capabilities && plugin.capabilities.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-4">
           {plugin.capabilities.map((cap) => (
-            <span
-              key={cap}
-              className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded"
-            >
+            <span key={cap} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded">
               {cap}
             </span>
           ))}
@@ -180,7 +185,9 @@ function PolicyEditModal({ policy, onClose }) {
   const [allowedIps, setAllowedIps] = useState((policy.allowedIps || []).join('\n'));
   const [deniedIps, setDeniedIps] = useState((policy.deniedIps || []).join('\n'));
   const [allowedPlugins, setAllowedPlugins] = useState((policy.allowedPlugins || []).join('\n'));
-  const [allowedActions, setAllowedActions] = useState(policy.allowedActions || ACTIONS.slice(0, 3));
+  const [allowedActions, setAllowedActions] = useState(
+    policy.allowedActions || ACTIONS.slice(0, 3),
+  );
 
   const mutation = useMutation({
     mutationFn: (data) => client.updatePushInstallPolicy(policy.id, data),
@@ -194,7 +201,11 @@ function PolicyEditModal({ policy, onClose }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const toArray = (str) => str.split('\n').map((s) => s.trim()).filter(Boolean);
+    const toArray = (str) =>
+      str
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
     mutation.mutate({
       name,
       description,
@@ -243,7 +254,9 @@ function PolicyEditModal({ policy, onClose }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Allowed IPs (one per line)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Allowed IPs (one per line)
+            </label>
             <textarea
               value={allowedIps}
               onChange={(e) => setAllowedIps(e.target.value)}
@@ -254,7 +267,9 @@ function PolicyEditModal({ policy, onClose }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Denied IPs (one per line)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Denied IPs (one per line)
+            </label>
             <textarea
               value={deniedIps}
               onChange={(e) => setDeniedIps(e.target.value)}
@@ -264,7 +279,9 @@ function PolicyEditModal({ policy, onClose }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1">Allowed Plugins (one per line)</label>
+            <label className="block text-sm font-medium text-zinc-300 mb-1">
+              Allowed Plugins (one per line)
+            </label>
             <textarea
               value={allowedPlugins}
               onChange={(e) => setAllowedPlugins(e.target.value)}
@@ -354,21 +371,34 @@ function PushInstallPolicies() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-700 bg-zinc-900">
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">Description</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">Actions</th>
-                <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">Manage</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400">
+                  Name
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden md:table-cell">
+                  Description
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase text-zinc-400 hidden lg:table-cell">
+                  Actions
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase text-zinc-400">
+                  Manage
+                </th>
               </tr>
             </thead>
             <tbody>
               {policies.map((policy) => (
                 <tr key={policy.id} className="border-b border-zinc-700 bg-zinc-800">
                   <td className="px-4 py-3 text-zinc-200 font-semibold">{policy.name}</td>
-                  <td className="px-4 py-3 text-zinc-400 hidden md:table-cell">{policy.description || '—'}</td>
+                  <td className="px-4 py-3 text-zinc-400 hidden md:table-cell">
+                    {policy.description || '—'}
+                  </td>
                   <td className="px-4 py-3 hidden lg:table-cell">
                     <div className="flex flex-wrap gap-1">
                       {(policy.allowedActions || []).map((a) => (
-                        <span key={a} className="text-xs px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300">
+                        <span
+                          key={a}
+                          className="text-xs px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300"
+                        >
                           {a}
                         </span>
                       ))}
@@ -465,15 +495,9 @@ export default function Plugins() {
     [installMutation],
   );
 
-  const handleEnable = useCallback(
-    (name) => enableMutation.mutate(name),
-    [enableMutation],
-  );
+  const handleEnable = useCallback((name) => enableMutation.mutate(name), [enableMutation]);
 
-  const handleDisable = useCallback(
-    (name) => disableMutation.mutate(name),
-    [disableMutation],
-  );
+  const handleDisable = useCallback((name) => disableMutation.mutate(name), [disableMutation]);
 
   const handleUninstall = useCallback(
     (name) => uninstallMutation.mutate(name),
@@ -493,9 +517,7 @@ export default function Plugins() {
       <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-5 mb-8">
         <h2 className="text-sm font-semibold text-zinc-300 mb-4">Install Plugin</h2>
         <InstallForm onInstall={handleInstall} isInstalling={installMutation.isPending} />
-        {installMutation.isPending && (
-          <p className="text-xs text-zinc-500 mt-2">Installing...</p>
-        )}
+        {installMutation.isPending && <p className="text-xs text-zinc-500 mt-2">Installing...</p>}
       </div>
 
       {/* Plugin list */}

@@ -1,12 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import {
-  Database,
-  Trash2,
-  Loader2,
-  AlertTriangle,
-  X,
-} from 'lucide-react';
+import { Database, Trash2, Loader2, AlertTriangle, X } from 'lucide-react';
 import { useState } from 'react';
 
 export default function StorageServerCard({ server }) {
@@ -44,12 +38,8 @@ export default function StorageServerCard({ server }) {
         <div className="text-xs text-zinc-400">
           Bucket: <span className="font-mono text-zinc-300">{server.bucket}</span>
         </div>
-        <div className="text-xs text-zinc-500">
-          Region: {server.region}
-        </div>
-        <div className="text-xs text-zinc-500 font-mono">
-          {server.endpoint}
-        </div>
+        <div className="text-xs text-zinc-500">Region: {server.region}</div>
+        <div className="text-xs text-zinc-500 font-mono">{server.endpoint}</div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -57,7 +47,11 @@ export default function StorageServerCard({ server }) {
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs text-red-400">Are you sure?</span>
             <button
-              onClick={() => { setConfirmDestroy(false); setShowDestroyModal(true); setConfirmInput(''); }}
+              onClick={() => {
+                setConfirmDestroy(false);
+                setShowDestroyModal(true);
+                setConfirmInput('');
+              }}
               className="text-xs px-2 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30"
             >
               Yes
@@ -118,10 +112,10 @@ export default function StorageServerCard({ server }) {
             </div>
             <div className="px-4 py-4 space-y-3">
               <p className="text-xs text-zinc-400 leading-relaxed">
-                This will <strong className="text-red-400">permanently delete</strong> the
-                Spaces bucket <strong className="text-zinc-300 font-mono">{server.bucket}</strong> and
-                remove it from the local registry. The bucket must be empty.
-                This action cannot be undone.
+                This will <strong className="text-red-400">permanently delete</strong> the Spaces
+                bucket <strong className="text-zinc-300 font-mono">{server.bucket}</strong> and
+                remove it from the local registry. The bucket must be empty. This action cannot be
+                undone.
               </p>
               <div>
                 <p className="text-xs text-zinc-400 mb-1.5">
@@ -137,9 +131,7 @@ export default function StorageServerCard({ server }) {
                 />
               </div>
               {destroyMutation.isError && (
-                <p className="text-xs text-red-400">
-                  {destroyMutation.error?.toString()}
-                </p>
+                <p className="text-xs text-red-400">{destroyMutation.error?.toString()}</p>
               )}
             </div>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-zinc-800">

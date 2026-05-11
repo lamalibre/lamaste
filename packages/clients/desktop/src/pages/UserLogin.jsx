@@ -59,7 +59,7 @@ export default function UserLogin({ onBack }) {
             Finish signing in your browser
           </h1>
           <p className="text-sm text-zinc-400 leading-relaxed mb-1">
-            We'll continue automatically once you're authenticated.
+            We&apos;ll continue automatically once you&apos;re authenticated.
           </p>
           {activeDomain && (
             <p className="text-xs text-zinc-500 mt-3 inline-flex items-center gap-1.5">
@@ -93,7 +93,8 @@ export default function UserLogin({ onBack }) {
           </div>
           <h1 className="text-2xl font-bold text-white mb-2 tracking-tight">Sign in</h1>
           <p className="text-sm text-zinc-400 leading-relaxed">
-            Paste the link your administrator sent you. We'll open your browser to finish signing in.
+            Paste the link your administrator sent you. We&apos;ll open your browser to finish
+            signing in.
           </p>
         </div>
 
@@ -130,7 +131,7 @@ export default function UserLogin({ onBack }) {
         </div>
 
         <p className="text-[11px] text-zinc-600 leading-relaxed text-center mt-6">
-          A link, a URL, or just the domain — we'll figure it out.
+          A link, a URL, or just the domain — we&apos;ll figure it out.
         </p>
 
         {onBack && (

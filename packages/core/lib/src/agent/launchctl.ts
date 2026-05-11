@@ -64,8 +64,7 @@ export async function loadAgent(label: string): Promise<void> {
   try {
     await runLaunchctl(['load', plistPath(label)]);
   } catch (err: unknown) {
-    const message = (err as { stderr?: string; message?: string }).stderr ??
-      (err as Error).message;
+    const message = (err as { stderr?: string; message?: string }).stderr ?? (err as Error).message;
     throw new Error(`Failed to load agent: ${message}`);
   }
 }

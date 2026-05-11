@@ -5,14 +5,8 @@
     "name": "Tickets Lifecycle",
     "suite": "e2e-three-vm",
     "description": "23 — Tickets Lifecycle (Three-VM)",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
   "constants": {
@@ -29,12 +23,7 @@
       "value": "rodeo-tickets-target"
     }
   },
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_patch",
-    "host_api_delete"
-  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
   "cleanup": [
     {
       "id": "cleanup-instance",

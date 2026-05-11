@@ -210,7 +210,8 @@ export async function removeAgent(label: string): Promise<void> {
     if (!registry) return;
     registry.agents = registry.agents.filter((a) => a.label !== label);
     if (registry.currentLabel === label) {
-      registry.currentLabel = registry.agents.length > 0 ? (registry.agents[0]?.label ?? null) : null;
+      registry.currentLabel =
+        registry.agents.length > 0 ? (registry.agents[0]?.label ?? null) : null;
     }
     await saveRegistry(registry);
   });
@@ -295,7 +296,10 @@ export async function migrateFromLegacy(): Promise<string> {
     config['authMethod'] = 'p12';
   }
 
-  const label = deriveLabel(config['domain'] as string | undefined, config['agentLabel'] as string | undefined);
+  const label = deriveLabel(
+    config['domain'] as string | undefined,
+    config['agentLabel'] as string | undefined,
+  );
   validateLabel(label);
   const dataDir = agentDataDir(label);
   const logsDir = agentLogsDir(label);
@@ -305,11 +309,10 @@ export async function migrateFromLegacy(): Promise<string> {
   await mkdir(logsDir, { recursive: true, mode: 0o700 });
 
   // Move config
-  await writeFile(
-    agentConfigPath(label),
-    JSON.stringify(config, null, 2) + '\n',
-    { encoding: 'utf8', mode: 0o600 },
-  );
+  await writeFile(agentConfigPath(label), JSON.stringify(config, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
 
   // Move cert files if they exist
   const filesToMove = [
@@ -360,11 +363,10 @@ export async function migrateFromLegacy(): Promise<string> {
     const oldP12 = path.join(LAMASTE_DIR, 'client.p12');
     if (p12Path === oldP12) {
       config['p12Path'] = path.join(dataDir, 'client.p12');
-      await writeFile(
-        agentConfigPath(label),
-        JSON.stringify(config, null, 2) + '\n',
-        { encoding: 'utf8', mode: 0o600 },
-      );
+      await writeFile(agentConfigPath(label), JSON.stringify(config, null, 2) + '\n', {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
     }
   }
 
@@ -431,7 +433,10 @@ async function migrateServiceFile(label: string): Promise<void> {
       updated = content
         .replace(`<string>${LEGACY_PLIST_LABEL}</string>`, `<string>${plistLabel(label)}</string>`)
         .replace(`<string>${LEGACY_LOG_FILE}</string>`, `<string>${newLogFile}</string>`)
-        .replace(`<string>${LEGACY_ERROR_LOG_FILE}</string>`, `<string>${newErrorLogFile}</string>`);
+        .replace(
+          `<string>${LEGACY_ERROR_LOG_FILE}</string>`,
+          `<string>${newErrorLogFile}</string>`,
+        );
 
       // Write to new path
       const newPath = plistPath(label);

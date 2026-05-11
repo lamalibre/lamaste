@@ -46,10 +46,7 @@ function extractAutheliaCookie(cookie: string): string | null {
  * values alone, which prevents an outsider from probing/seeding the cache.
  */
 function hashCookie(cookie: string): string {
-  return crypto
-    .createHmac('sha256', COOKIE_HMAC_KEY)
-    .update(cookie)
-    .digest('hex');
+  return crypto.createHmac('sha256', COOKIE_HMAC_KEY).update(cookie).digest('hex');
 }
 
 /**
@@ -69,7 +66,7 @@ async function validateWithAuthelia(
     const { statusCode, headers } = await undiciRequest(AUTHELIA_VERIFY_URL, {
       method: 'GET',
       headers: {
-        'Cookie': cookie,
+        Cookie: cookie,
         'X-Original-URL': originalUrl,
         'X-Original-Method': 'GET',
         'X-Forwarded-For': '127.0.0.1',
@@ -111,10 +108,7 @@ function getHeader(
 /**
  * Look up a tunnel by its FQDN from the in-memory cache.
  */
-function findTunnelByFqdn(
-  tunnels: readonly TunnelInfo[],
-  fqdn: string,
-): TunnelInfo | undefined {
+function findTunnelByFqdn(tunnels: readonly TunnelInfo[], fqdn: string): TunnelInfo | undefined {
   return tunnels.find((t) => t.fqdn === fqdn);
 }
 
@@ -164,10 +158,7 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
     // ensures a misconfigured proxy chain cannot forge tunnel identity.
     const parsed = parseOriginalUrl(originalUrl);
     if (!parsed) {
-      request.log.info(
-        { requestId, reason: 'invalid_original_url' },
-        'authz denied',
-      );
+      request.log.info({ requestId, reason: 'invalid_original_url' }, 'authz denied');
       return reply.code(401).send();
     }
 
@@ -253,15 +244,10 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // restricted — check grants
-    const result = await checkAccess(
-      session.username,
-      'tunnel',
-      tunnel.id,
-      {
-        adminContact: fastify.getSettings().adminEmail,
-        adminName: fastify.getSettings().adminName,
-      },
-    );
+    const result = await checkAccess(session.username, 'tunnel', tunnel.id, {
+      adminContact: fastify.getSettings().adminEmail,
+      adminName: fastify.getSettings().adminName,
+    });
 
     if (result.allowed) {
       setAutheliaHeaders(reply, session);
@@ -296,14 +282,10 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
     // Access denied — return inline HTML page as 403 body.
     // Cache-Control: no-store so nginx never caches the denial; the matching
     // proxy_cache_valid 403 0 in the snippet is the authoritative setting.
-    const html = buildAccessRequestPage(
-      session.username,
-      parsed.hostname,
-      {
-        adminContact: fastify.getSettings().adminEmail,
-        adminName: fastify.getSettings().adminName,
-      },
-    );
+    const html = buildAccessRequestPage(session.username, parsed.hostname, {
+      adminContact: fastify.getSettings().adminEmail,
+      adminName: fastify.getSettings().adminName,
+    });
 
     return reply
       .code(403)

@@ -237,8 +237,8 @@ Once set during onboarding, the domain is used throughout the system for constru
 
 ### Source files
 
-| File                                                    | Purpose                                      |
-| ------------------------------------------------------- | -------------------------------------------- |
+| File                                                       | Purpose                                      |
+| ---------------------------------------------------------- | -------------------------------------------- |
 | `packages/lamaste-serverd/src/routes/onboarding/domain.js` | Domain + email submission endpoint           |
 | `packages/lamaste-serverd/src/routes/onboarding/dns.js`    | DNS verification endpoint                    |
 | `packages/lamaste-serverd/src/lib/certbot.js`              | Certificate issuance per subdomain           |

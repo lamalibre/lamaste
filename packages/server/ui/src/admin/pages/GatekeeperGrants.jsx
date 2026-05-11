@@ -15,7 +15,10 @@ function CreateGrantModal({ onClose }) {
   const [apiError, setApiError] = useState(null);
 
   const usersQuery = useQuery({ queryKey: ['users'], queryFn: () => client.getUsers() });
-  const groupsQuery = useQuery({ queryKey: ['gatekeeper-groups'], queryFn: () => client.getGatekeeperGroups() });
+  const groupsQuery = useQuery({
+    queryKey: ['gatekeeper-groups'],
+    queryFn: () => client.getGatekeeperGroups(),
+  });
   const tunnelsQuery = useQuery({ queryKey: ['tunnels'], queryFn: () => client.getTunnels() });
 
   const mutation = useMutation({
@@ -51,12 +54,24 @@ function CreateGrantModal({ onClose }) {
           <div>
             <label className="block text-sm text-zinc-400 mb-2">Principal</label>
             <div className="flex gap-2 mb-2">
-              <button type="button" onClick={() => { setPrincipalType('user'); setPrincipalId(''); }}
-                className={`px-3 py-1 text-xs rounded ${principalType === 'user' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrincipalType('user');
+                  setPrincipalId('');
+                }}
+                className={`px-3 py-1 text-xs rounded ${principalType === 'user' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
+              >
                 User
               </button>
-              <button type="button" onClick={() => { setPrincipalType('group'); setPrincipalId(''); }}
-                className={`px-3 py-1 text-xs rounded ${principalType === 'group' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrincipalType('group');
+                  setPrincipalId('');
+                }}
+                className={`px-3 py-1 text-xs rounded ${principalType === 'group' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
+              >
                 Group
               </button>
             </div>
@@ -67,20 +82,40 @@ function CreateGrantModal({ onClose }) {
             >
               <option value="">Select {principalType}...</option>
               {principalType === 'user'
-                ? users.map((u) => <option key={u.username} value={u.username}>{u.username}</option>)
-                : groups.map((g) => <option key={g.name} value={g.name}>{g.name}</option>)}
+                ? users.map((u) => (
+                    <option key={u.username} value={u.username}>
+                      {u.username}
+                    </option>
+                  ))
+                : groups.map((g) => (
+                    <option key={g.name} value={g.name}>
+                      {g.name}
+                    </option>
+                  ))}
             </select>
           </div>
 
           <div>
             <label className="block text-sm text-zinc-400 mb-2">Resource</label>
             <div className="flex gap-2 mb-2">
-              <button type="button" onClick={() => { setResourceType('tunnel'); setResourceId(''); }}
-                className={`px-3 py-1 text-xs rounded ${resourceType === 'tunnel' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setResourceType('tunnel');
+                  setResourceId('');
+                }}
+                className={`px-3 py-1 text-xs rounded ${resourceType === 'tunnel' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
+              >
                 Tunnel
               </button>
-              <button type="button" onClick={() => { setResourceType('plugin'); setResourceId(''); }}
-                className={`px-3 py-1 text-xs rounded ${resourceType === 'plugin' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setResourceType('plugin');
+                  setResourceId('');
+                }}
+                className={`px-3 py-1 text-xs rounded ${resourceType === 'plugin' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}
+              >
                 Plugin
               </button>
             </div>
@@ -92,7 +127,9 @@ function CreateGrantModal({ onClose }) {
               >
                 <option value="">Select tunnel...</option>
                 {tunnels.map((t) => (
-                  <option key={t.id} value={t.id}>{t.fqdn} ({t.subdomain})</option>
+                  <option key={t.id} value={t.id}>
+                    {t.fqdn} ({t.subdomain})
+                  </option>
                 ))}
               </select>
             ) : (
@@ -117,9 +154,18 @@ function CreateGrantModal({ onClose }) {
 
           {apiError && <p className="text-sm text-red-400">{apiError}</p>}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">Cancel</button>
-            <button type="submit" disabled={mutation.isPending || !principalId || !resourceId}
-              className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded disabled:opacity-50">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={mutation.isPending || !principalId || !resourceId}
+              className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded disabled:opacity-50"
+            >
               {mutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create'}
             </button>
           </div>
@@ -132,7 +178,11 @@ function CreateGrantModal({ onClose }) {
 function PrincipalBadge({ type, id }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs">
-      {type === 'user' ? <User className="w-3 h-3 text-blue-400" /> : <Users className="w-3 h-3 text-purple-400" />}
+      {type === 'user' ? (
+        <User className="w-3 h-3 text-blue-400" />
+      ) : (
+        <Users className="w-3 h-3 text-purple-400" />
+      )}
       <span className="text-zinc-200">{id}</span>
     </span>
   );
@@ -214,7 +264,9 @@ export default function GatekeeperGrantsPage() {
       </div>
 
       {grantsQuery.isLoading ? (
-        <div className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+        <div className="flex items-center gap-2 text-zinc-400">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+        </div>
       ) : grants.length === 0 ? (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center text-zinc-500">
           No grants yet.
@@ -222,17 +274,28 @@ export default function GatekeeperGrantsPage() {
       ) : (
         <div className="space-y-2">
           {grants.map((grant) => (
-            <div key={grant.grantId} className="flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-lg">
+            <div
+              key={grant.grantId}
+              className="flex items-center justify-between p-3 bg-zinc-900 border border-zinc-800 rounded-lg"
+            >
               <div className="flex items-center gap-4">
                 <PrincipalBadge type={grant.principalType} id={grant.principalId} />
                 <span className="text-zinc-600 text-xs">can access</span>
                 <ResourceBadge type={grant.resourceType} id={grant.resourceId} tunnels={tunnels} />
                 {grant.context && Object.keys(grant.context).length > 0 && (
-                  <span className="text-xs text-zinc-600">({Object.entries(grant.context).map(([k, v]) => `${k}: ${v}`).join(', ')})</span>
+                  <span className="text-xs text-zinc-600">
+                    (
+                    {Object.entries(grant.context)
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join(', ')}
+                    )
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-zinc-600">{new Date(grant.createdAt).toLocaleDateString()}</span>
+                <span className="text-xs text-zinc-600">
+                  {new Date(grant.createdAt).toLocaleDateString()}
+                </span>
                 <button
                   onClick={() => {
                     if (confirm('Revoke this grant?')) revokeMutation.mutate(grant.grantId);

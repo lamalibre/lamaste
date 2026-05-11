@@ -5,15 +5,8 @@
     "name": "Cert Upgrade Paths",
     "suite": "e2e-three-vm",
     "description": "26 — Agent Certificate Upgrade Paths (Three-VM)",
-    "deps": [
-      1
-    ],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq",
-      "openssl"
-    ]
+    "deps": [1],
+    "requires": ["multipass", "curl", "jq", "openssl"]
   },
   "env": {
     "HOST_IP": {
@@ -858,9 +851,7 @@
             "method": "PATCH",
             "path": "certs/agent/cert-upgrade-agent/allowed-sites",
             "body": {
-              "allowedSites": [
-                "cert-upgrade-site"
-              ]
+              "allowedSites": ["cert-upgrade-site"]
             }
           },
           "capture": [
@@ -1051,10 +1042,5 @@
       ]
     }
   ],
-  "apiHelpers": [
-    "host_api_get",
-    "host_api_post",
-    "host_api_patch",
-    "host_api_delete"
-  ]
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"]
 }

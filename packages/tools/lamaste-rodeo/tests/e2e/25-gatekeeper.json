@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "25 — Gatekeeper Authorization (Single-VM)",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq"
-    ]
+    "requires": ["curl", "jq"]
   },
   "env": {},
   "constants": {},
@@ -396,11 +393,7 @@
             "method": "POST",
             "path": "gatekeeper/groups/e2e-devs/members",
             "body": {
-              "usernames": [
-                "alice",
-                "bob",
-                "charlie"
-              ]
+              "usernames": ["alice", "bob", "charlie"]
             }
           },
           "capture": [

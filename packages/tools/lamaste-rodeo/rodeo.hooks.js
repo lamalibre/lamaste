@@ -82,10 +82,12 @@ export default {
     if (!agent) return;
     await Promise.all([
       mp.exec(agent, 'pkill -f "python3 -m http.server" || true', {
-        sudo: true, allowFailure: true,
+        sudo: true,
+        allowFailure: true,
       }),
       mp.exec(agent, 'pkill -f chisel || true', {
-        sudo: true, allowFailure: true,
+        sudo: true,
+        allowFailure: true,
       }),
     ]);
   },
@@ -108,8 +110,7 @@ export default {
     const state = info?.info?.[host]?.state;
     if (state !== 'Running') return {};
 
-    const serviceNames =
-      config.suites?.[ctx.suite]?.monitorServices ||
+    const serviceNames = config.suites?.[ctx.suite]?.monitorServices ||
       config.serviceStatus?.services || [
         'lamalibre-lamaste-serverd',
         'nginx',
@@ -118,11 +119,10 @@ export default {
       ];
     const entries = await Promise.all(
       serviceNames.map(async (svc) => {
-        const result = await mp.exec(
-          host,
-          `systemctl is-active ${svc} 2>/dev/null | head -1`,
-          { sudo: true, allowFailure: true },
-        );
+        const result = await mp.exec(host, `systemctl is-active ${svc} 2>/dev/null | head -1`, {
+          sudo: true,
+          allowFailure: true,
+        });
         return [svc, result.stdout.trim() || 'unknown'];
       }),
     );
@@ -151,17 +151,22 @@ export default {
           'journalctl -u lamalibre-lamaste-serverd --since "15 min ago" --no-pager -n 100',
           { sudo: true, timeout: 15_000, allowFailure: true },
         );
-        if (r.exitCode === 0 && r.stdout.trim()) logs['lamalibre-lamaste-serverd'] = r.stdout.trim();
-      } catch { /* VM may not be running */ }
+        if (r.exitCode === 0 && r.stdout.trim())
+          logs['lamalibre-lamaste-serverd'] = r.stdout.trim();
+      } catch {
+        /* VM may not be running */
+      }
 
       try {
-        const r = await mp.exec(
-          host,
-          'tail -50 /var/log/nginx/error.log',
-          { sudo: true, timeout: 10_000, allowFailure: true },
-        );
+        const r = await mp.exec(host, 'tail -50 /var/log/nginx/error.log', {
+          sudo: true,
+          timeout: 10_000,
+          allowFailure: true,
+        });
         if (r.exitCode === 0 && r.stdout.trim()) logs['nginx-error'] = r.stdout.trim();
-      } catch { /* OK */ }
+      } catch {
+        /* OK */
+      }
 
       try {
         const r = await mp.exec(
@@ -170,7 +175,9 @@ export default {
           { sudo: true, timeout: 15_000, allowFailure: true },
         );
         if (r.exitCode === 0 && r.stdout.trim()) logs['authelia'] = r.stdout.trim();
-      } catch { /* OK */ }
+      } catch {
+        /* OK */
+      }
 
       return logs;
     },
@@ -184,8 +191,8 @@ export default {
     const { state, vmNames, vmIps, domain } = ctx;
     const s = state.load();
     return {
-      HOST_IP:    vmIps[vmNames.host]    || '',
-      AGENT_IP:   vmIps[vmNames.agent]   || '',
+      HOST_IP: vmIps[vmNames.host] || '',
+      AGENT_IP: vmIps[vmNames.agent] || '',
       VISITOR_IP: vmIps[vmNames.visitor] || '',
       TEST_DOMAIN: domain,
       ADMIN_PASSWORD: 'not-used-mTLS-only',
@@ -215,12 +222,12 @@ export default {
       return { credentials: result.outputs, domain: result.domain };
     },
 
-    async 'installed'(ctx) {
+    async installed(ctx) {
       const result = await runTier({ suite: ctx.suite, tier: 'installed', ctx });
       return { credentials: result.outputs, domain: result.domain };
     },
 
-    async 'provisioned'(ctx) {
+    async provisioned(ctx) {
       const result = await runTier({ suite: ctx.suite, tier: 'provisioned', ctx });
       return { credentials: result.outputs, domain: result.domain };
     },
@@ -276,7 +283,10 @@ export default {
       // role=agent filters sections to those touching the agent VM.
       try {
         const result = await runTier({
-          suite: ctx.suite, tier: 'provisioned', ctx, role: 'agent',
+          suite: ctx.suite,
+          tier: 'provisioned',
+          ctx,
+          role: 'agent',
         });
         return {
           ok: true,
@@ -292,7 +302,10 @@ export default {
     async visitor(ctx) {
       try {
         const result = await runTier({
-          suite: ctx.suite, tier: 'provisioned', ctx, role: 'visitor',
+          suite: ctx.suite,
+          tier: 'provisioned',
+          ctx,
+          role: 'visitor',
         });
         return {
           ok: true,
@@ -315,60 +328,74 @@ export default {
   hotReload: {
     async 'lamaste-serverd'(ctx) {
       const INSTALL_DIR = '/opt/lamalibre/lamaste';
-      await ctx.mp.exec(ctx.vm, [
-        `rm -rf /tmp/hot-reload-extract`,
-        `mkdir -p /tmp/hot-reload-extract`,
-        `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
-        `cp /tmp/hot-reload-extract/package/package.json ${INSTALL_DIR}/serverd/package.json`,
-        `rm -rf ${INSTALL_DIR}/serverd/src`,
-        `cp -r /tmp/hot-reload-extract/package/src ${INSTALL_DIR}/serverd/src`,
-        `cd ${INSTALL_DIR}/serverd && npm install --production --ignore-scripts`,
-        `chown -R lamaste:lamaste ${INSTALL_DIR}/serverd`,
-        `rm -rf /tmp/hot-reload-extract`,
-      ].join(' && '), { sudo: true, timeout: 60_000 });
+      await ctx.mp.exec(
+        ctx.vm,
+        [
+          `rm -rf /tmp/hot-reload-extract`,
+          `mkdir -p /tmp/hot-reload-extract`,
+          `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
+          `cp /tmp/hot-reload-extract/package/package.json ${INSTALL_DIR}/serverd/package.json`,
+          `rm -rf ${INSTALL_DIR}/serverd/src`,
+          `cp -r /tmp/hot-reload-extract/package/src ${INSTALL_DIR}/serverd/src`,
+          `cd ${INSTALL_DIR}/serverd && npm install --production --ignore-scripts`,
+          `chown -R lamaste:lamaste ${INSTALL_DIR}/serverd`,
+          `rm -rf /tmp/hot-reload-extract`,
+        ].join(' && '),
+        { sudo: true, timeout: 60_000 },
+      );
       return { service: 'lamalibre-lamaste-serverd' };
     },
 
     async 'lamaste-server-ui'(ctx) {
       const INSTALL_DIR = '/opt/lamalibre/lamaste';
-      await ctx.mp.exec(ctx.vm, [
-        `rm -rf /tmp/hot-reload-extract`,
-        `mkdir -p /tmp/hot-reload-extract`,
-        `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
-        `rm -rf ${INSTALL_DIR}/lamaste-server-ui/dist`,
-        `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/lamaste-server-ui/dist`,
-        `chown -R lamaste:lamaste ${INSTALL_DIR}/lamaste-server-ui`,
-        `rm -rf /tmp/hot-reload-extract`,
-      ].join(' && '), { sudo: true, timeout: 60_000 });
+      await ctx.mp.exec(
+        ctx.vm,
+        [
+          `rm -rf /tmp/hot-reload-extract`,
+          `mkdir -p /tmp/hot-reload-extract`,
+          `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
+          `rm -rf ${INSTALL_DIR}/lamaste-server-ui/dist`,
+          `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/lamaste-server-ui/dist`,
+          `chown -R lamaste:lamaste ${INSTALL_DIR}/lamaste-server-ui`,
+          `rm -rf /tmp/hot-reload-extract`,
+        ].join(' && '),
+        { sudo: true, timeout: 60_000 },
+      );
       return {};
     },
 
     async 'lamaste-gatekeeper'(ctx) {
       const INSTALL_DIR = '/opt/lamalibre/lamaste';
-      await ctx.mp.exec(ctx.vm, [
-        `rm -rf /tmp/hot-reload-extract`,
-        `mkdir -p /tmp/hot-reload-extract`,
-        `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
-        `cp /tmp/hot-reload-extract/package/package.json ${INSTALL_DIR}/gatekeeper/package.json`,
-        `rm -rf ${INSTALL_DIR}/gatekeeper/dist`,
-        `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/gatekeeper/dist`,
-        `cd ${INSTALL_DIR}/gatekeeper && npm install --production --ignore-scripts`,
-        `chown -R lamaste:lamaste ${INSTALL_DIR}/gatekeeper`,
-        `rm -rf /tmp/hot-reload-extract`,
-      ].join(' && '), { sudo: true, timeout: 60_000 });
+      await ctx.mp.exec(
+        ctx.vm,
+        [
+          `rm -rf /tmp/hot-reload-extract`,
+          `mkdir -p /tmp/hot-reload-extract`,
+          `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
+          `cp /tmp/hot-reload-extract/package/package.json ${INSTALL_DIR}/gatekeeper/package.json`,
+          `rm -rf ${INSTALL_DIR}/gatekeeper/dist`,
+          `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/gatekeeper/dist`,
+          `cd ${INSTALL_DIR}/gatekeeper && npm install --production --ignore-scripts`,
+          `chown -R lamaste:lamaste ${INSTALL_DIR}/gatekeeper`,
+          `rm -rf /tmp/hot-reload-extract`,
+        ].join(' && '),
+        { sudo: true, timeout: 60_000 },
+      );
       return { service: 'lamalibre-lamaste-gatekeeper' };
     },
 
     async 'create-lamaste'(ctx) {
       await ctx.mp.exec(ctx.vm, `npm install -g ${ctx.remotePath}`, {
-        sudo: true, timeout: 60_000,
+        sudo: true,
+        timeout: 60_000,
       });
       return {};
     },
 
     async 'lamaste-agent'(ctx) {
       await ctx.mp.exec(ctx.vm, `npm install -g ${ctx.remotePath}`, {
-        sudo: true, timeout: 60_000,
+        sudo: true,
+        timeout: 60_000,
       });
       return {};
     },

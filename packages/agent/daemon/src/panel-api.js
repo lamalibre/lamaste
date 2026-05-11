@@ -139,13 +139,7 @@ async function removeCurlConfig(configPath) {
  * @returns {string[]}
  */
 function certArgs(configPath, pinSource) {
-  return [
-    '-K', configPath,
-    '-s',
-    '-f',
-    '--max-time', '30',
-    ...tlsVerifyArgs(pinSource),
-  ];
+  return ['-K', configPath, '-s', '-f', '--max-time', '30', ...tlsVerifyArgs(pinSource)];
 }
 
 /**
@@ -199,8 +193,12 @@ async function curlWithConfig(baseDir, p12Path, p12Password, extraArgs, pinSourc
 async function curlWithKeychain(keychainIdentity, extraArgs, pinSource) {
   const { safeUrl, preArgs } = extractSafeUrl(extraArgs);
   return execa('curl', [
-    '--cert', keychainIdentity,
-    '-s', '-f', '--max-time', '30',
+    '--cert',
+    keychainIdentity,
+    '-s',
+    '-f',
+    '--max-time',
+    '30',
     ...tlsVerifyArgs(pinSource),
     ...preArgs,
     safeUrl,
@@ -280,7 +278,9 @@ export function createPanelApiClient(label) {
         const { stdout } = await curlAuthenticated(baseDir, config, [url]);
         return JSON.parse(stdout);
       } catch (err) {
-        throw new Error(`Failed to fetch tunnels from panel. Details: ${err.stderr || err.message}`);
+        throw new Error(
+          `Failed to fetch tunnels from panel. Details: ${err.stderr || err.message}`,
+        );
       }
     },
 
@@ -296,7 +296,9 @@ export function createPanelApiClient(label) {
         const { stdout } = await curlAuthenticated(baseDir, config, [url]);
         return JSON.parse(stdout);
       } catch (err) {
-        throw new Error(`Failed to fetch agent config from panel. Details: ${err.stderr || err.message}`);
+        throw new Error(
+          `Failed to fetch agent config from panel. Details: ${err.stderr || err.message}`,
+        );
       }
     },
 
@@ -311,9 +313,12 @@ export function createPanelApiClient(label) {
       const url = `${panelUrl}/api/tunnels/expose-panel`;
       try {
         const { stdout } = await curlAuthenticated(baseDir, config, [
-          '-X', 'POST',
-          '-H', 'Content-Type: application/json',
-          '-d', JSON.stringify({ port }),
+          '-X',
+          'POST',
+          '-H',
+          'Content-Type: application/json',
+          '-d',
+          JSON.stringify({ port }),
           url,
         ]);
         return JSON.parse(stdout);
@@ -376,7 +381,9 @@ export function createPanelApiClient(label) {
         const { stdout } = await curlAuthenticated(baseDir, config, [url]);
         return JSON.parse(stdout);
       } catch (err) {
-        throw new Error(`Failed to fetch panel tunnel status. Details: ${err.stderr || err.message}`);
+        throw new Error(
+          `Failed to fetch panel tunnel status. Details: ${err.stderr || err.message}`,
+        );
       }
     },
   };

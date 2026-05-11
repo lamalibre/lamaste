@@ -115,12 +115,14 @@ function SidebarContent({ onLinkClick }) {
       ];
     }
     if (p.panel?.label) {
-      return [{
-        type: 'link',
-        to: `/plugins/${p.name}`,
-        icon: resolveIcon(p.panel?.icon),
-        label: p.panel.label,
-      }];
+      return [
+        {
+          type: 'link',
+          to: `/plugins/${p.name}`,
+          icon: resolveIcon(p.panel?.icon),
+          label: p.panel.label,
+        },
+      ];
     }
     return [];
   });
@@ -142,7 +144,13 @@ function SidebarContent({ onLinkClick }) {
               </span>
             </div>
           ) : (
-            <SidebarLink key={item.to} to={item.to} icon={item.icon} label={item.label} onClick={onLinkClick} />
+            <SidebarLink
+              key={item.to}
+              to={item.to}
+              icon={item.icon}
+              label={item.label}
+              onClick={onLinkClick}
+            />
           ),
         )}
       </nav>

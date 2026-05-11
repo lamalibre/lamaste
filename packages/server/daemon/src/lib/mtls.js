@@ -166,7 +166,7 @@ export async function rotateClientCert(logger) {
   throw Object.assign(
     new Error(
       'Panel-initiated admin certificate rotation is disabled for security. ' +
-      'Run `sudo lamaste-server reset-admin` on the server console to issue a new admin certificate.',
+        'Run `sudo lamaste-server reset-admin` on the server console to issue a new admin certificate.',
     ),
     { statusCode: 503 },
   );
@@ -622,7 +622,8 @@ export async function getAgentCapabilities(label) {
   if (!agent) {
     return label.startsWith(PLUGIN_AGENT_CN_PREFIX) ? [] : ['tunnels:read'];
   }
-  const stored = agent.capabilities || (label.startsWith(PLUGIN_AGENT_CN_PREFIX) ? [] : ['tunnels:read']);
+  const stored =
+    agent.capabilities || (label.startsWith(PLUGIN_AGENT_CN_PREFIX) ? [] : ['tunnels:read']);
   // Filter against currently valid capabilities so disabled-plugin caps are excluded
   const valid = getValidCapabilities();
   return stored.filter((c) => valid.includes(c));
@@ -728,9 +729,7 @@ export async function revokeAgentCert(label, logger) {
     agent.revokedAt = new Date().toISOString();
 
     // 3. Cascade revocation to plugin-agents delegated by this agent
-    const pluginAgents = registry.agents.filter(
-      (a) => !a.revoked && a.delegatedBy === label,
-    );
+    const pluginAgents = registry.agents.filter((a) => !a.revoked && a.delegatedBy === label);
 
     for (const pa of pluginAgents) {
       logger.info(
@@ -803,10 +802,9 @@ export async function rotateAgentChiselCredential(label, logger) {
     });
   }
   if (label.startsWith(PLUGIN_AGENT_CN_PREFIX)) {
-    throw Object.assign(
-      new Error('Plugin-agents do not use chisel tunnel credentials'),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error('Plugin-agents do not use chisel tunnel credentials'), {
+      statusCode: 400,
+    });
   }
   const result = await rotateChiselCredentialLib(label, logger);
   return {

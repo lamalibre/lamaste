@@ -23,22 +23,22 @@ pointing to a different Lamaste server. Per-agent data is stored at
 All commands accept the `--label <name>` flag to target a specific agent.
 Without `--label`, the current default agent is used.
 
-| Command                            | Description                                |
-| ---------------------------------- | ------------------------------------------ |
-| `setup`                            | Install Chisel and configure the tunnel    |
-| `update`                           | Re-fetch config from panel and restart     |
-| `uninstall`                        | Remove Chisel, service, and configuration  |
-| `uninstall --all`                  | Remove all agents and `~/.lamalibre/lamaste`        |
-| `status`                           | Show tunnel connection status              |
-| `logs`                             | Display recent tunnel logs                 |
-| `sites`                            | List all static sites                      |
-| `sites create <name>`              | Create a new static site (admin cert only) |
-| `sites delete <name-or-id>`        | Delete a static site (admin cert only)     |
-| `deploy <name-or-id> <local-path>` | Deploy a local directory to a site         |
+| Command                            | Description                                               |
+| ---------------------------------- | --------------------------------------------------------- |
+| `setup`                            | Install Chisel and configure the tunnel                   |
+| `update`                           | Re-fetch config from panel and restart                    |
+| `uninstall`                        | Remove Chisel, service, and configuration                 |
+| `uninstall --all`                  | Remove all agents and `~/.lamalibre/lamaste`              |
+| `status`                           | Show tunnel connection status                             |
+| `logs`                             | Display recent tunnel logs                                |
+| `sites`                            | List all static sites                                     |
+| `sites create <name>`              | Create a new static site (admin cert only)                |
+| `sites delete <name-or-id>`        | Delete a static site (admin cert only)                    |
+| `deploy <name-or-id> <local-path>` | Deploy a local directory to a site                        |
 | `plugin`                           | Manage agent plugins (install, uninstall, update, status) |
-| `panel --enable [--port 9393]`     | Enable the agent management panel web server |
-| `panel --disable`                  | Disable the agent management panel         |
-| `panel --status [--json]`          | Show agent panel status                    |
+| `panel --enable [--port 9393]`     | Enable the agent management panel web server              |
+| `panel --disable`                  | Disable the agent management panel                        |
+| `panel --status [--json]`          | Show agent panel status                                   |
 
 > The agent panel runs as a user-level service: a launchd plist under
 > `~/Library/LaunchAgents/` on macOS, and a user-mode systemd unit under
@@ -46,8 +46,8 @@ Without `--label`, the current default agent is used.
 > running after you log out, enable user lingering once with
 > `sudo loginctl enable-linger $USER` — `panel --enable` warns if it
 > detects this is missing.
-| `list`                             | List all configured agents                 |
-| `switch <label>`                   | Set the default agent                      |
+> | `list` | List all configured agents |
+> | `switch <label>` | Set the default agent |
 
 ### Sites Command
 
@@ -124,11 +124,11 @@ lamaste-agent deploy blog ./dist
 
 ## Requirements
 
-| Requirement | Details                                         |
-| ----------- | ----------------------------------------------- |
-| OS          | macOS or Ubuntu Linux (24.04 LTS)               |
-| Node.js     | >= 20.0.0                                       |
-| Access      | User account on macOS; root/sudo on Linux       |
+| Requirement | Details                                   |
+| ----------- | ----------------------------------------- |
+| OS          | macOS or Ubuntu Linux (24.04 LTS)         |
+| Node.js     | >= 20.0.0                                 |
+| Access      | User account on macOS; root/sudo on Linux |
 
 ## How It Works
 

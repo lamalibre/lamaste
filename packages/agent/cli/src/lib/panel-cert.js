@@ -82,7 +82,9 @@ export async function fetchPanelServerCertDigests(panelUrl, options = {}) {
             return;
           }
           if (!cert.raw || !Buffer.isBuffer(cert.raw)) {
-            finish(new Error(`Panel cert is missing the raw DER buffer required for fingerprinting`));
+            finish(
+              new Error(`Panel cert is missing the raw DER buffer required for fingerprinting`),
+            );
             return;
           }
 
@@ -95,15 +97,9 @@ export async function fetchPanelServerCertDigests(panelUrl, options = {}) {
           const x509 = new X509Certificate(cert.raw);
           const spkiDer = x509.publicKey.export({ type: 'spki', format: 'der' });
 
-          const pubkeySha256Base64 = crypto
-            .createHash('sha256')
-            .update(spkiDer)
-            .digest('base64');
+          const pubkeySha256Base64 = crypto.createHash('sha256').update(spkiDer).digest('base64');
 
-          const certSha256Hex = crypto
-            .createHash('sha256')
-            .update(cert.raw)
-            .digest('hex');
+          const certSha256Hex = crypto.createHash('sha256').update(cert.raw).digest('hex');
 
           // Prefer the X509Certificate's subject string (RFC 4514) over
           // the structured object on `cert.subject`, which uses an
@@ -119,9 +115,7 @@ export async function fetchPanelServerCertDigests(panelUrl, options = {}) {
 
     const timer = setTimeout(() => {
       finish(
-        new Error(
-          `Timed out after ${timeoutMs}ms connecting to ${host}:${port} for cert pinning`,
-        ),
+        new Error(`Timed out after ${timeoutMs}ms connecting to ${host}:${port} for cert pinning`),
       );
     }, timeoutMs);
     timer.unref();

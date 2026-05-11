@@ -44,9 +44,7 @@ export async function loadStorageServers(): Promise<StorageServerEntry[]> {
 /**
  * Atomically save the storage server registry.
  */
-export async function saveStorageServers(
-  entries: readonly StorageServerEntry[],
-): Promise<void> {
+export async function saveStorageServers(entries: readonly StorageServerEntry[]): Promise<void> {
   await atomicWriteJSON(storageRegistryPath(), entries, {
     mkdirp: true,
     dirMode: 0o700,
@@ -61,9 +59,7 @@ export async function saveStorageServers(
 /**
  * Add a storage server to the registry.
  */
-export async function addStorageServer(
-  entry: StorageServerEntry,
-): Promise<void> {
+export async function addStorageServer(entry: StorageServerEntry): Promise<void> {
   const servers = await loadStorageServers();
   servers.push(entry);
   await saveStorageServers(servers);
@@ -81,9 +77,7 @@ export async function removeStorageServer(id: string): Promise<void> {
 /**
  * Get a storage server by ID, or null if not found.
  */
-export async function getStorageServer(
-  id: string,
-): Promise<StorageServerEntry | null> {
+export async function getStorageServer(id: string): Promise<StorageServerEntry | null> {
   const servers = await loadStorageServers();
   return servers.find((s) => s.id === id) ?? null;
 }

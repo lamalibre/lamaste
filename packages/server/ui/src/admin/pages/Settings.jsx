@@ -13,7 +13,10 @@ export default function Settings({ hasDomain }) {
   const toast = useToast();
   const queryClient = useQueryClient();
 
-  const statusQuery = useQuery({ queryKey: ['settings-2fa'], queryFn: () => client.get2faStatus() });
+  const statusQuery = useQuery({
+    queryKey: ['settings-2fa'],
+    queryFn: () => client.get2faStatus(),
+  });
 
   const [setupData, setSetupData] = useState(null);
   const [confirmCode, setConfirmCode] = useState('');
@@ -172,7 +175,12 @@ export default function Settings({ hasDomain }) {
 
             <div className="mb-4 flex justify-center">
               <div className="rounded-lg bg-zinc-950 p-4">
-                <QRCodeSVG value={setupData.uri} size={200} bgColor="transparent" fgColor="#ffffff" />
+                <QRCodeSVG
+                  value={setupData.uri}
+                  size={200}
+                  bgColor="transparent"
+                  fgColor="#ffffff"
+                />
               </div>
             </div>
 
@@ -318,7 +326,9 @@ export default function Settings({ hasDomain }) {
         </div>
 
         {!isValidVersion && updateVersion.length > 0 && (
-          <p className="mt-2 text-xs text-red-400">Version must be in semver format (e.g. 1.0.43)</p>
+          <p className="mt-2 text-xs text-red-400">
+            Version must be in semver format (e.g. 1.0.43)
+          </p>
         )}
 
         {updateMutation.error && (
@@ -334,8 +344,9 @@ export default function Settings({ hasDomain }) {
                 <h3 className="text-lg font-semibold text-white">Confirm Update</h3>
               </div>
               <p className="mb-4 text-sm text-zinc-400">
-                This will update the panel server to version <strong className="text-white">{updateVersion}</strong> and
-                restart the service. The panel will be unavailable for 1-2 minutes.
+                This will update the panel server to version{' '}
+                <strong className="text-white">{updateVersion}</strong> and restart the service. The
+                panel will be unavailable for 1-2 minutes.
               </p>
               <div className="flex justify-end gap-3">
                 <button

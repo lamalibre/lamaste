@@ -325,26 +325,26 @@ For a system-level service that runs at boot, the plist would go to `/Library/La
 
 ## Quick Reference
 
-| Action             | Command                                                             |
-| ------------------ | ------------------------------------------------------------------- |
-| **Install Chisel** | `brew install chisel`                                               |
+| Action             | Command                                                                      |
+| ------------------ | ---------------------------------------------------------------------------- |
+| **Install Chisel** | `brew install chisel`                                                        |
 | **Install plist**  | `cp com.lamalibre.lamaste.chisel.plist ~/Library/LaunchAgents/`              |
 | **Start client**   | `launchctl load ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist`   |
 | **Stop client**    | `launchctl unload ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist` |
-| **Restart client** | Unload then load                                                    |
-| **Check status**   | `launchctl list \| grep chisel`                                     |
-| **View logs**      | `tail -f /usr/local/var/log/chisel.log`                             |
-| **View errors**    | `cat /usr/local/var/log/chisel.error.log`                           |
+| **Restart client** | Unload then load                                                             |
+| **Check status**   | `launchctl list \| grep chisel`                                              |
+| **View logs**      | `tail -f /usr/local/var/log/chisel.log`                                      |
+| **View errors**    | `cat /usr/local/var/log/chisel.error.log`                                    |
 
-| File              | Path                                               |
-| ----------------- | -------------------------------------------------- |
+| File              | Path                                                        |
+| ----------------- | ----------------------------------------------------------- |
 | **Plist**         | `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist` |
-| **Chisel binary** | `/usr/local/bin/chisel`                            |
-| **Standard log**  | `/usr/local/var/log/chisel.log`                    |
-| **Error log**     | `/usr/local/var/log/chisel.error.log`              |
+| **Chisel binary** | `/usr/local/bin/chisel`                                     |
+| **Standard log**  | `/usr/local/var/log/chisel.log`                             |
+| **Error log**     | `/usr/local/var/log/chisel.error.log`                       |
 
-| Plist Key   | Value                 | Meaning            |
-| ----------- | --------------------- | ------------------ |
+| Plist Key   | Value                          | Meaning            |
+| ----------- | ------------------------------ | ------------------ |
 | `Label`     | `com.lamalibre.lamaste.chisel` | Service identifier |
-| `KeepAlive` | `true`                | Restart on crash   |
-| `RunAtLoad` | `true`                | Start on login     |
+| `KeepAlive` | `true`                         | Restart on crash   |
+| `RunAtLoad` | `true`                         | Start on login     |

@@ -45,7 +45,9 @@ function CreateGroupModal({ onClose }) {
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-cyan-500"
               autoFocus
             />
-            <p className="text-xs text-zinc-500 mt-1">Lowercase letters, numbers, hyphens. 2-63 chars.</p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Lowercase letters, numbers, hyphens. 2-63 chars.
+            </p>
           </div>
           <div>
             <label className="block text-sm text-zinc-400 mb-1">Description</label>
@@ -59,7 +61,11 @@ function CreateGroupModal({ onClose }) {
           </div>
           {apiError && <p className="text-sm text-red-400">{apiError}</p>}
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+            >
               Cancel
             </button>
             <button
@@ -120,7 +126,10 @@ function AddMembersModal({ groupName, currentMembers, onClose }) {
             availableUsers
               .filter((u) => !input || u.includes(input.toLowerCase()))
               .map((username) => (
-                <div key={username} className="flex items-center justify-between p-2 bg-zinc-800 rounded">
+                <div
+                  key={username}
+                  className="flex items-center justify-between p-2 bg-zinc-800 rounded"
+                >
                   <span className="text-sm text-zinc-200">{username}</span>
                   <button
                     onClick={() => handleAdd(username)}
@@ -193,11 +202,14 @@ export default function GatekeeperGroupsPage() {
       </div>
 
       <p className="text-sm text-zinc-500">
-        Lamaste access control groups. Assign users to groups, then grant groups access to tunnels and plugins.
+        Lamaste access control groups. Assign users to groups, then grant groups access to tunnels
+        and plugins.
       </p>
 
       {groupsQuery.isLoading ? (
-        <div className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading...</div>
+        <div className="flex items-center gap-2 text-zinc-400">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+        </div>
       ) : groups.length === 0 ? (
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 text-center text-zinc-500">
           No groups yet. Create one to get started.
@@ -214,15 +226,21 @@ export default function GatekeeperGroupsPage() {
                   <Users className="w-4 h-4 text-zinc-500" />
                   <div>
                     <div className="text-sm font-medium text-zinc-100">{group.name}</div>
-                    {group.description && <div className="text-xs text-zinc-500">{group.description}</div>}
+                    {group.description && (
+                      <div className="text-xs text-zinc-500">{group.description}</div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-zinc-500">{group.members?.length || 0} members</span>
+                  <span className="text-xs text-zinc-500">
+                    {group.members?.length || 0} members
+                  </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete group "${group.name}"? This will revoke all its grants.`)) {
+                      if (
+                        confirm(`Delete group "${group.name}"? This will revoke all its grants.`)
+                      ) {
                         deleteMutation.mutate(group.name);
                       }
                     }}
@@ -255,7 +273,9 @@ export default function GatekeeperGroupsPage() {
                         >
                           {member}
                           <button
-                            onClick={() => removeMemberMutation.mutate({ name: group.name, username: member })}
+                            onClick={() =>
+                              removeMemberMutation.mutate({ name: group.name, username: member })
+                            }
                             className="text-zinc-500 hover:text-red-400"
                           >
                             <UserMinus className="w-3 h-3" />

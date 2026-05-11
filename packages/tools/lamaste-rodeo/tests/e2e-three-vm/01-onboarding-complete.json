@@ -6,12 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "01 — Onboarding Complete Verification (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq",
-      "dig"
-    ]
+    "requires": ["multipass", "curl", "jq", "dig"]
   },
   "env": {
     "HOST_IP": {
@@ -582,9 +577,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visitor VM connectivity\"\n# ---------------------------------------------------------------------------\n\n# Verify visitor VM can reach the host VM (no mTLS certs — should get rejected but reachable)\nVISITOR_PING=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${HOST_IP}:9292 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_PING\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach host VM at ${HOST_IP}:9292 (HTTP $VISITOR_PING)\"\nelse\n  log_fail \"Visitor VM cannot reach host VM at ${HOST_IP}:9292\"\nfi\n\n# Verify visitor can reach Authelia portal (no mTLS required for auth vhost)\nVISITOR_AUTH=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://auth.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_AUTH\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach Authelia at auth.${TEST_DOMAIN} (HTTP $VISITOR_AUTH)\"\nelse\n  log_fail \"Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}\"\nfi"
     }
   ],
-  "apiHelpers": [
-    "host_api_get"
-  ],
+  "apiHelpers": ["host_api_get"],
   "headerRaw": "# ============================================================================\n# 01 — Onboarding Complete Verification (Three-VM)\n# ============================================================================\n# Verifies that setup-host.sh completed successfully:\n# - Onboarding status is COMPLETED\n# - All core services are running (nginx, chisel, authelia, lamalibre-lamaste-serverd)\n# - Self-signed certificates exist at expected paths\n# - Panel is accessible via domain with mTLS\n# - DNS resolves TEST_DOMAIN to HOST_IP\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq dig\n\n# ---------------------------------------------------------------------------\n# VM exec helpers — run commands on host/agent VMs via multipass\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\n# mTLS API helpers — execute curl on the host VM using its local certs\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"01 — Onboarding Complete Verification (Three-VM)\"\n",
   "cleanupRaw": "",

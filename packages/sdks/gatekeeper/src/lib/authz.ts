@@ -36,23 +36,15 @@ export async function checkAccess(
   // Check 2: Group grant — resolve user's Lamaste groups
   const userGroups = await getGroupsForUser(username);
   if (userGroups.length > 0) {
-    const groupGrants = resourceGrants.filter(
-      (g) => g.principalType === 'group',
-    );
-    const hasGroupGrant = groupGrants.some((g) =>
-      userGroups.includes(g.principalId),
-    );
+    const groupGrants = resourceGrants.filter((g) => g.principalType === 'group');
+    const hasGroupGrant = groupGrants.some((g) => userGroups.includes(g.principalId));
     if (hasGroupGrant) {
       return { allowed: true };
     }
   }
 
   // Denied — generate templates
-  const templates = getAccessRequestTemplates(
-    username,
-    resourceId,
-    templateOptions,
-  );
+  const templates = getAccessRequestTemplates(username, resourceId, templateOptions);
 
   return {
     allowed: false,

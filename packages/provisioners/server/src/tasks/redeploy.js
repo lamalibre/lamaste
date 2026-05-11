@@ -67,7 +67,10 @@ export function redeployTasks(ctx, task) {
       title: 'Stopping panel service',
       task: async (_ctx, subtask) => {
         try {
-          const { stdout: status } = await execa('systemctl', ['is-active', 'lamalibre-lamaste-serverd']);
+          const { stdout: status } = await execa('systemctl', [
+            'is-active',
+            'lamalibre-lamaste-serverd',
+          ]);
           if (status.trim() === 'active') {
             await execa('systemctl', ['stop', 'lamalibre-lamaste-serverd']);
             subtask.output = 'Service stopped';
@@ -141,7 +144,8 @@ export function redeployTasks(ctx, task) {
         const cliDest = join(installDir, 'server');
 
         if (!existsSync(cliSrc)) {
-          subtask.output = 'lamaste-server CLI not bundled — skipping (upgrade create-lamaste to fix)';
+          subtask.output =
+            'lamaste-server CLI not bundled — skipping (upgrade create-lamaste to fix)';
           return;
         }
 
@@ -187,7 +191,9 @@ export function redeployTasks(ctx, task) {
 
         const prebuiltDist = join(clientSrc, 'dist');
         if (!existsSync(join(prebuiltDist, 'index.html'))) {
-          throw new Error('Pre-built lamaste-server-ui dist not found. The package may be corrupted.');
+          throw new Error(
+            'Pre-built lamaste-server-ui dist not found. The package may be corrupted.',
+          );
         }
 
         subtask.output = 'Copying lamaste-server-ui dist...';
@@ -277,13 +283,7 @@ export function redeployTasks(ctx, task) {
           subtask.output = `Validating ${w.name} syntax...`;
           await execa('bash', ['-n', src]);
           subtask.output = `Installing ${w.name} to ${w.dest}...`;
-          await execa('install', [
-            '-o', 'root',
-            '-g', 'root',
-            '-m', '0755',
-            src,
-            w.dest,
-          ]);
+          await execa('install', ['-o', 'root', '-g', 'root', '-m', '0755', src, w.dest]);
         }
 
         subtask.output = 'Writing sudoers rules...';
@@ -316,7 +316,10 @@ export function redeployTasks(ctx, task) {
         subtask.output = 'Waiting for service to start...';
         await sleep(3000);
 
-        const { stdout: status } = await execa('systemctl', ['is-active', 'lamalibre-lamaste-serverd']);
+        const { stdout: status } = await execa('systemctl', [
+          'is-active',
+          'lamalibre-lamaste-serverd',
+        ]);
         if (status.trim() !== 'active') {
           const { stdout: logs } = await execa('journalctl', [
             '-u',

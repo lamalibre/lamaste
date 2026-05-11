@@ -1,5 +1,10 @@
 import chalk from 'chalk';
-import { assertSupportedPlatform, setCurrentAgent, validateLabel, listAgents } from '@lamalibre/lamaste/agent';
+import {
+  assertSupportedPlatform,
+  setCurrentAgent,
+  validateLabel,
+  listAgents,
+} from '@lamalibre/lamaste/agent';
 
 /**
  * Switch the current (default) agent.

@@ -6,7 +6,5 @@
   },
   "include": ["src/agent/**/*.ts"],
   "exclude": ["src/server/**", "src/*.ts"],
-  "references": [
-    { "path": "./tsconfig.shared.json" }
-  ]
+  "references": [{ "path": "./tsconfig.shared.json" }]
 }

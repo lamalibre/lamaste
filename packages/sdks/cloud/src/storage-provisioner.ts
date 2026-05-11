@@ -65,11 +65,7 @@ function emitStep(
   emit({ event: 'step', step, status, ...(data ? { data } : {}) });
 }
 
-function emitError(
-  step: StorageProvisionStep,
-  message: string,
-  recoverable: boolean,
-): void {
+function emitError(step: StorageProvisionStep, message: string, recoverable: boolean): void {
   emit({ event: 'error', step, message, recoverable });
 }
 
@@ -85,7 +81,9 @@ function safeErrorMessage(err: unknown, fallback: string): string {
     return err.message;
   }
   // Log the real error to stderr for debugging, emit generic message to stdout
-  process.stderr.write(`[lamaste-cloud] ${fallback}: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.stderr.write(
+    `[lamaste-cloud] ${fallback}: ${err instanceof Error ? err.message : String(err)}\n`,
+  );
   return fallback;
 }
 
@@ -175,7 +173,10 @@ export async function provisionStorage(
     if (!storageRegion) {
       throw new CloudError(
         `Unknown Spaces region "${region}". ` +
-          `Available: ${spacesProvider.getRegions().map((r) => r.slug).join(', ')}`,
+          `Available: ${spacesProvider
+            .getRegions()
+            .map((r) => r.slug)
+            .join(', ')}`,
       );
     }
 
@@ -184,15 +185,17 @@ export async function provisionStorage(
     try {
       await spacesProvider.validateCredentials(accessKey, secretKey);
     } catch (err: unknown) {
-      emitError('validate_credentials', safeErrorMessage(err, 'Credential validation failed'), false);
+      emitError(
+        'validate_credentials',
+        safeErrorMessage(err, 'Credential validation failed'),
+        false,
+      );
       throw err;
     }
     emitStep('validate_credentials', 'done');
 
     // Step 2: Create bucket
-    const bucket =
-      options.bucket ??
-      `lamaste-${label}-${crypto.randomBytes(4).toString('hex')}`;
+    const bucket = options.bucket ?? `lamaste-${label}-${crypto.randomBytes(4).toString('hex')}`;
 
     if (!BUCKET_REGEX.test(bucket)) {
       throw new CloudError(

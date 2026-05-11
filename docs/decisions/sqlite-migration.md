@@ -161,7 +161,10 @@ async function runMigrations(db, migrationsDir) {
   )`);
 
   const applied = new Set(
-    db.prepare('SELECT name FROM schema_migrations').all().map((r) => r.name),
+    db
+      .prepare('SELECT name FROM schema_migrations')
+      .all()
+      .map((r) => r.name),
   );
   const files = (await readdir(migrationsDir))
     .filter((f) => /^\d{4}_[a-z0-9_]+\.sql$/.test(f))
@@ -175,9 +178,11 @@ async function runMigrations(db, migrationsDir) {
     db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(sql);
-      db.prepare(
-        'INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)',
-      ).run(id, file, new Date().toISOString());
+      db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
+        id,
+        file,
+        new Date().toISOString(),
+      );
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
@@ -200,7 +205,7 @@ v2.0 has not shipped, so no installed base carries pre-SQLite state.
 This is the load-bearing constraint for Step 3. **Each domain agent
 adds a NEW numbered migration file. No agent ever edits a prior
 migration.** File-level disjoint = parallel-safe under git's three-way
-merge. The integer prefix is contended only for *next number*; resolve at
+merge. The integer prefix is contended only for _next number_; resolve at
 merge time by renumbering the later-merging branch (the SQL is
 agent-private, so renumbering does not break callers).
 
@@ -577,7 +582,7 @@ re-validating the SQLite call sites.
 **Two DBs across one rodeo run.** Both must initialise cleanly on the
 same fresh install. The lazy-open design means each DB is created on
 the first call from its owning daemon — nothing in the install path
-needs to pre-create them. But the install path *does* need to ensure
+needs to pre-create them. But the install path _does_ need to ensure
 the parent directory `/etc/lamalibre/lamaste/` exists with the right
 ownership and `0o750` mode before either daemon starts. That's already
 the case today (the JSON state files have the same requirement); call
@@ -589,7 +594,7 @@ runtime.
 justification. Confirmed: with two separate DB files, gatekeeper's
 read transactions never block on serverd's write transactions —
 different files, different WAL queues, different shared-memory regions.
-What gatekeeper *still* shares with serverd is the `tunnels.json` file
+What gatekeeper _still_ shares with serverd is the `tunnels.json` file
 that gatekeeper reads via `fs.watch` for live config refresh; that file
 stays JSON (out of migration scope). If a future iteration wants to move
 `tunnels.json` to SQLite, the design tension re-opens — flag at that

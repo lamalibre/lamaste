@@ -50,7 +50,9 @@ export async function readPushInstallConfig() {
 
     return {
       enabled: parsed.enabled ?? false,
-      policies: Array.isArray(parsed.policies) ? parsed.policies : [structuredClone(DEFAULT_POLICY)],
+      policies: Array.isArray(parsed.policies)
+        ? parsed.policies
+        : [structuredClone(DEFAULT_POLICY)],
       defaultPolicy: parsed.defaultPolicy || 'default',
     };
   } catch (err) {
@@ -156,10 +158,9 @@ export function updatePushInstallConfigFields(updates) {
     if (updates.defaultPolicy !== undefined) {
       const policy = config.policies.find((p) => p.id === updates.defaultPolicy);
       if (!policy) {
-        throw Object.assign(
-          new Error(`Policy "${updates.defaultPolicy}" not found`),
-          { statusCode: 400 },
-        );
+        throw Object.assign(new Error(`Policy "${updates.defaultPolicy}" not found`), {
+          statusCode: 400,
+        });
       }
       config.defaultPolicy = updates.defaultPolicy;
     }
@@ -195,10 +196,7 @@ export function createPushInstallPolicy(policyData) {
 
     const existing = config.policies.find((p) => p.id === id);
     if (existing) {
-      throw Object.assign(
-        new Error(`Policy "${id}" already exists`),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error(`Policy "${id}" already exists`), { statusCode: 409 });
     }
 
     const policy = {
@@ -223,10 +221,7 @@ export function updatePushInstallPolicy(id, updates) {
     const policy = config.policies.find((p) => p.id === id);
 
     if (!policy) {
-      throw Object.assign(
-        new Error(`Policy "${id}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Policy "${id}" not found`), { statusCode: 404 });
     }
 
     // Apply updates (only defined fields)
@@ -250,18 +245,12 @@ export function deletePushInstallPolicy(id) {
     const config = await readPushInstallConfig();
 
     if (id === 'default') {
-      throw Object.assign(
-        new Error('Cannot delete the default policy'),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error('Cannot delete the default policy'), { statusCode: 400 });
     }
 
     const index = config.policies.findIndex((p) => p.id === id);
     if (index === -1) {
-      throw Object.assign(
-        new Error(`Policy "${id}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Policy "${id}" not found`), { statusCode: 404 });
     }
 
     config.policies.splice(index, 1);
@@ -291,20 +280,14 @@ export async function enableAgentPushInstall(label, durationMinutes, policyId) {
   const config = await withPushInstallLock(() => readPushInstallConfig());
 
   if (!config.enabled) {
-    throw Object.assign(
-      new Error('Push install is not enabled globally'),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error('Push install is not enabled globally'), { statusCode: 400 });
   }
 
   // Resolve which policy to assign
   const resolvedPolicyId = policyId || config.defaultPolicy;
   const policy = config.policies.find((p) => p.id === resolvedPolicyId);
   if (!policy) {
-    throw Object.assign(
-      new Error(`Policy "${resolvedPolicyId}" not found`),
-      { statusCode: 404 },
-    );
+    throw Object.assign(new Error(`Policy "${resolvedPolicyId}" not found`), { statusCode: 404 });
   }
 
   // Modify agent registry under the registry lock (shared with mtls.js)
@@ -313,10 +296,7 @@ export async function enableAgentPushInstall(label, durationMinutes, policyId) {
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
 
     if (!agent) {
-      throw Object.assign(
-        new Error(`Agent certificate "${label}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Agent certificate "${label}" not found`), { statusCode: 404 });
     }
 
     const until = new Date(Date.now() + durationMinutes * 60 * 1000);
@@ -343,10 +323,7 @@ export async function disableAgentPushInstall(label) {
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
 
     if (!agent) {
-      throw Object.assign(
-        new Error(`Agent certificate "${label}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Agent certificate "${label}" not found`), { statusCode: 404 });
     }
 
     delete agent.pushInstallEnabledUntil;

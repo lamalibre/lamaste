@@ -187,9 +187,7 @@ async function saveState(dataDir: string, state: UserAccessState): Promise<void>
   await atomicWriteJSON(statePath(dataDir), state, { mode: 0o600 });
 }
 
-function cleanExpiredOTPs(
-  tokens: Record<string, OtpToken>,
-): Record<string, OtpToken> {
+function cleanExpiredOTPs(tokens: Record<string, OtpToken>): Record<string, OtpToken> {
   const cutoff = Date.now() - OTP_CLEANUP_MS;
   const fresh: Record<string, OtpToken> = {};
   for (const [key, entry] of Object.entries(tokens)) {
@@ -210,9 +208,7 @@ function countActiveOTPs(tokens: Record<string, OtpToken>): number {
 
 function cleanOldGrants(grants: UserAccessGrant[]): UserAccessGrant[] {
   const cutoff = Date.now() - GRANT_RETENTION_MS;
-  return grants.filter(
-    (g) => !g.used || new Date(g.usedAt || g.createdAt).getTime() > cutoff,
-  );
+  return grants.filter((g) => !g.used || new Date(g.usedAt || g.createdAt).getTime() > cutoff);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,10 +290,7 @@ export function listGrants(dataDir: string): Promise<UserAccessGrant[]> {
 }
 
 /** List grants for a specific user. */
-export function listGrantsForUser(
-  dataDir: string,
-  username: string,
-): Promise<UserAccessGrant[]> {
+export function listGrantsForUser(dataDir: string, username: string): Promise<UserAccessGrant[]> {
   return getMutex(dataDir).run(async () => {
     const state = await loadState(dataDir);
     return state.grants.filter((g) => g.username === username);

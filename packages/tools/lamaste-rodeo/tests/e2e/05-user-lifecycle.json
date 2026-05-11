@@ -6,10 +6,7 @@
     "suite": "e2e",
     "description": "05 — User Lifecycle",
     "deps": [],
-    "requires": [
-      "curl",
-      "jq"
-    ]
+    "requires": ["curl", "jq"]
   },
   "env": {
     "TEST_USER": {

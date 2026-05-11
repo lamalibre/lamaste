@@ -53,10 +53,13 @@ function TotpModal({ totpUri, onClose }) {
   const formattedSecret = secret.replace(/(.{4})/g, '$1 ').trim();
 
   function handleCopy() {
-    navigator.clipboard.writeText(secret).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+    navigator.clipboard
+      .writeText(secret)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
   }
 
   return (
@@ -427,10 +430,13 @@ function InviteLinkModal({ inviteUrl, token, onClose }) {
 
   function handleCopy() {
     const textToCopy = inviteUrl || token;
-    navigator.clipboard.writeText(textToCopy).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {});
+    navigator.clipboard
+      .writeText(textToCopy)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {});
   }
 
   return (
@@ -898,7 +904,11 @@ function IdentitySection() {
       >
         <Fingerprint size={18} className="text-cyan-400" />
         Identity & Groups
-        {expanded ? <ChevronUp size={16} className="text-zinc-500 ml-auto" /> : <ChevronDown size={16} className="text-zinc-500 ml-auto" />}
+        {expanded ? (
+          <ChevronUp size={16} className="text-zinc-500 ml-auto" />
+        ) : (
+          <ChevronDown size={16} className="text-zinc-500 ml-auto" />
+        )}
       </button>
 
       {expanded && (
@@ -906,7 +916,9 @@ function IdentitySection() {
           {/* Current Admin Identity */}
           {selfQuery.data && (
             <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
-              <h3 className="text-sm font-medium text-zinc-400 mb-2">Your Identity (via Authelia)</h3>
+              <h3 className="text-sm font-medium text-zinc-400 mb-2">
+                Your Identity (via Authelia)
+              </h3>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <span className="text-zinc-500">Username:</span>
                 <span className="text-zinc-200">{selfQuery.data.username || '—'}</span>
@@ -925,7 +937,8 @@ function IdentitySection() {
           {selfQuery.isError && (
             <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-4">
               <p className="text-xs text-zinc-500">
-                Identity information is only available when accessing the panel through an Authelia-protected domain.
+                Identity information is only available when accessing the panel through an
+                Authelia-protected domain.
               </p>
             </div>
           )}

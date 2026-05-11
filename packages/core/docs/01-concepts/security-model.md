@@ -75,18 +75,18 @@ Lamaste supports three types of certificates with different access levels:
 
 Agent certificates are generated from the panel UI and should be used instead of the admin certificate when connecting agents. Plugin-agent certificates are created when an existing agent delegates enrollment for a plugin's agents (e.g., a Sync server vouching for its Sync agents). Each agent is assigned granular capabilities that control what it can access:
 
-| Capability       | Grants                                     |
-| ---------------- | ------------------------------------------ |
-| `tunnels:read`   | List tunnels, download plist (always-on)   |
-| `tunnels:write`  | Create and delete tunnels                  |
-| `services:read`  | View service status                        |
-| `services:write` | Start/stop/restart services                |
-| `system:read`    | View system stats (CPU, RAM, disk)         |
-| `sites:read`     | List assigned sites and browse their files |
-| `sites:write`    | Upload and delete files on assigned sites  |
+| Capability       | Grants                                                                                 |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `tunnels:read`   | List tunnels, download plist (always-on)                                               |
+| `tunnels:write`  | Create and delete tunnels                                                              |
+| `services:read`  | View service status                                                                    |
+| `services:write` | Start/stop/restart services                                                            |
+| `system:read`    | View system stats (CPU, RAM, disk)                                                     |
+| `sites:read`     | List assigned sites and browse their files                                             |
+| `sites:write`    | Upload and delete files on assigned sites                                              |
 | `panel:expose`   | Expose agent management panel at `agent-<label>.<domain>` via mTLS-protected subdomain |
-| `identity:read`  | Parse Authelia identity headers on plugin routes |
-| `identity:query` | Query panel for Authelia user metadata           |
+| `identity:read`  | Parse Authelia identity headers on plugin routes                                       |
+| `identity:query` | Query panel for Authelia user metadata                                                 |
 
 Capabilities are stored server-side and can be updated without reissuing the certificate. Regular agents default to `["tunnels:read"]`, while plugin-agents start with no capabilities at all — the admin must explicitly grant capabilities. Plugins can declare additional capabilities in their manifest (flat array or nested `{ agent: [...] }` format); these are merged with base capabilities dynamically and available for assignment to agent certificates. Ticket scopes also contribute capabilities dynamically: when a scope like `shell` declares `scopes: [{ name: 'shell:connect' }]`, the capability `shell:connect` becomes available for assignment alongside base and plugin capabilities. Users, certificates, agent management, and logs always remain admin-only. Site creation and deletion are also admin-only operations.
 
@@ -345,7 +345,7 @@ Cost factor 12 means 2^12 = 4096 iterations. Benchmarks on typical hardware:
 | Cost factor | Time per hash | Suitable for                    |
 | ----------- | ------------- | ------------------------------- |
 | 10          | ~65ms         | High-traffic sites              |
-| 12          | ~250ms        | Lamaste (good balance)         |
+| 12          | ~250ms        | Lamaste (good balance)          |
 | 14          | ~1000ms       | Very high security requirements |
 
 At cost 12, an attacker with a stolen hash trying 4 passwords per second would need ~8 years to try 100 million passwords. This is sufficient for a self-hosted system that also has fail2ban and network-level protections.
@@ -378,15 +378,15 @@ nginx is the only service with a public-facing socket. It listens on:
 
 Sensitive files use restrictive permissions:
 
-| File                              | Mode  | Rationale                                  |
-| --------------------------------- | ----- | ------------------------------------------ |
+| File                                       | Mode  | Rationale                                  |
+| ------------------------------------------ | ----- | ------------------------------------------ |
 | `/etc/lamalibre/lamaste/pki/ca.key`        | `600` | CA private key — can sign new client certs |
 | `/etc/lamalibre/lamaste/pki/client.key`    | `600` | Client private key                         |
 | `/etc/lamalibre/lamaste/pki/client.p12`    | `600` | PKCS12 bundle with private key             |
 | `/etc/lamalibre/lamaste/pki/.p12-password` | `600` | Password for the .p12 file                 |
-| `/etc/authelia/configuration.yml` | `600` | Contains JWT and session secrets           |
-| `/etc/authelia/.secrets.json`     | `600` | Secret backup                              |
-| `/etc/authelia/users.yml`         | `600` | Password hashes                            |
+| `/etc/authelia/configuration.yml`          | `600` | Contains JWT and session secrets           |
+| `/etc/authelia/.secrets.json`              | `600` | Secret backup                              |
+| `/etc/authelia/users.yml`                  | `600` | Password hashes                            |
 | `/etc/lamalibre/lamaste/pki/`              | `700` | PKI directory itself                       |
 
 Mode `600` means only the file owner (root) can read or write. Mode `700` means only the directory owner can list, read, or modify contents.
@@ -431,7 +431,10 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 
 ```javascript
 async function sudoWriteFile(destPath, content, mode = '644') {
-  const tmpFile = path.join(tmpdir(), `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`);
+  const tmpFile = path.join(
+    tmpdir(),
+    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
+  );
   await fsWriteFile(tmpFile, content, 'utf-8');
   await execa('sudo', ['mv', tmpFile, destPath]);
   await execa('sudo', ['chmod', mode, destPath]);
@@ -442,36 +445,36 @@ The `mv` command is atomic on the same filesystem — the file appears at its fi
 
 ### Source files
 
-| File                                           | Purpose                            |
-| ---------------------------------------------- | ---------------------------------- |
-| `packages/create-lamaste/src/tasks/harden.js` | Swap, UFW, fail2ban, SSH hardening |
-| `packages/create-lamaste/src/tasks/mtls.js`   | PKI generation, file permissions   |
-| `packages/create-lamaste/src/tasks/nginx.js`  | mTLS snippet, self-signed cert     |
-| `packages/lamaste-serverd/src/lib/authelia.js`    | bcrypt hashing, atomic writes      |
-| `packages/lamaste-serverd/src/lib/mtls.js`               | Certificate rotation with rollback              |
-| `packages/lamaste-serverd/src/lib/nginx.js`              | Vhost write-with-rollback pattern               |
-| `packages/lamaste-serverd/src/middleware/mtls.js`        | Request-level mTLS check                        |
-| `packages/lamaste-serverd/src/lib/totp.js`               | Panel 2FA TOTP verification and replay protection |
-| `packages/lamaste-serverd/src/lib/session.js`            | HMAC-SHA256 session cookie signing              |
+| File                                                       | Purpose                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------ |
+| `packages/create-lamaste/src/tasks/harden.js`              | Swap, UFW, fail2ban, SSH hardening                     |
+| `packages/create-lamaste/src/tasks/mtls.js`                | PKI generation, file permissions                       |
+| `packages/create-lamaste/src/tasks/nginx.js`               | mTLS snippet, self-signed cert                         |
+| `packages/lamaste-serverd/src/lib/authelia.js`             | bcrypt hashing, atomic writes                          |
+| `packages/lamaste-serverd/src/lib/mtls.js`                 | Certificate rotation with rollback                     |
+| `packages/lamaste-serverd/src/lib/nginx.js`                | Vhost write-with-rollback pattern                      |
+| `packages/lamaste-serverd/src/middleware/mtls.js`          | Request-level mTLS check                               |
+| `packages/lamaste-serverd/src/lib/totp.js`                 | Panel 2FA TOTP verification and replay protection      |
+| `packages/lamaste-serverd/src/lib/session.js`              | HMAC-SHA256 session cookie signing                     |
 | `packages/lamaste-serverd/src/middleware/twofa-session.js` | 2FA session enforcement (after mTLS, before roleGuard) |
 
 ## Quick Reference
 
 ### Security layers
 
-| Layer                | Technology                  | Blocks                             |
-| -------------------- | --------------------------- | ---------------------------------- |
-| Firewall             | UFW                         | Connections to non-allowed ports   |
-| Intrusion prevention | fail2ban                    | Repeated failed login attempts     |
-| SSH hardening        | sshd_config                 | Password-based SSH access          |
-| TLS encryption       | Let's Encrypt / self-signed | Traffic interception and tampering |
-| Admin auth           | mTLS client certificates    | Unauthorized admin access          |
-| Admin 2FA (optional) | Built-in TOTP               | Stolen certificate abuse           |
-| Agent-to-agent auth  | Tickets (time-limited, single-use) | Unauthorized cross-agent access |
-| App auth             | Authelia TOTP 2FA           | Unauthorized app access            |
-| Service isolation    | `127.0.0.1` binding         | Direct access to internal services |
-| File permissions     | `chmod 600`                 | Unauthorized secret access         |
-| Atomic writes        | `mv` pattern                | Partial file reads by services     |
+| Layer                | Technology                         | Blocks                             |
+| -------------------- | ---------------------------------- | ---------------------------------- |
+| Firewall             | UFW                                | Connections to non-allowed ports   |
+| Intrusion prevention | fail2ban                           | Repeated failed login attempts     |
+| SSH hardening        | sshd_config                        | Password-based SSH access          |
+| TLS encryption       | Let's Encrypt / self-signed        | Traffic interception and tampering |
+| Admin auth           | mTLS client certificates           | Unauthorized admin access          |
+| Admin 2FA (optional) | Built-in TOTP                      | Stolen certificate abuse           |
+| Agent-to-agent auth  | Tickets (time-limited, single-use) | Unauthorized cross-agent access    |
+| App auth             | Authelia TOTP 2FA                  | Unauthorized app access            |
+| Service isolation    | `127.0.0.1` binding                | Direct access to internal services |
+| File permissions     | `chmod 600`                        | Unauthorized secret access         |
+| Atomic writes        | `mv` pattern                       | Partial file reads by services     |
 
 ### Firewall rules
 

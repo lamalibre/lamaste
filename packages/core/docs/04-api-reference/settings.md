@@ -38,23 +38,23 @@ Rate-limited requests receive:
 }
 ```
 
-| Field        | Type     | Description                               |
-| ------------ | -------- | ----------------------------------------- |
-| `retryAfter` | `number` | Seconds until the ban expires             |
+| Field        | Type     | Description                   |
+| ------------ | -------- | ----------------------------- |
+| `retryAfter` | `number` | Seconds until the ban expires |
 
 ## Session Cookie
 
 When `POST /api/settings/2fa/verify` succeeds, the server sets a `lamaste_2fa_session` cookie:
 
-| Property     | Value            |
-| ------------ | ---------------- |
+| Property     | Value                 |
+| ------------ | --------------------- |
 | Name         | `lamaste_2fa_session` |
-| Signing      | HMAC-SHA256      |
-| HttpOnly     | Yes              |
-| Secure       | Yes              |
-| SameSite     | Strict           |
-| Absolute TTL | 12 hours         |
-| Inactivity   | 2 hours          |
+| Signing      | HMAC-SHA256           |
+| HttpOnly     | Yes                   |
+| Secure       | Yes                   |
+| SameSite     | Strict                |
+| Absolute TTL | 12 hours              |
+| Inactivity   | 2 hours               |
 
 If a request arrives with a valid mTLS certificate but without a valid 2FA session cookie (when 2FA is enabled), the API returns:
 
@@ -90,9 +90,9 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field           | Type      | Description                                       |
-| --------------- | --------- | ------------------------------------------------- |
-| `enabled`       | `boolean` | Whether 2FA is currently active                   |
+| Field           | Type      | Description                                        |
+| --------------- | --------- | -------------------------------------------------- |
+| `enabled`       | `boolean` | Whether 2FA is currently active                    |
 | `setupComplete` | `boolean` | Whether the initial setup and confirmation is done |
 
 ---
@@ -124,14 +124,14 @@ curl -s -X POST --cert client.p12:password \
 | Field       | Type     | Description                                            |
 | ----------- | -------- | ------------------------------------------------------ |
 | `uri`       | `string` | `otpauth://` URI — encode as QR code for scanning      |
-| `manualKey` | `string` | Base32-encoded secret for manual entry in the auth app  |
+| `manualKey` | `string` | Base32-encoded secret for manual entry in the auth app |
 
 **Errors:**
 
-| Status | Body                                                                  | When                            |
-| ------ | --------------------------------------------------------------------- | ------------------------------- |
-| 400    | `{"error": "Domain must be configured before enabling 2FA", "details": {"hint": "..."}}` | No domain has been provisioned  |
-| 409    | `{"error": "2FA is already enabled"}`                                 | 2FA is already active           |
+| Status | Body                                                                                     | When                           |
+| ------ | ---------------------------------------------------------------------------------------- | ------------------------------ |
+| 400    | `{"error": "Domain must be configured before enabling 2FA", "details": {"hint": "..."}}` | No domain has been provisioned |
+| 409    | `{"error": "2FA is already enabled"}`                                                    | 2FA is already active          |
 
 ---
 
@@ -170,14 +170,14 @@ The response also sets the `lamaste_2fa_session` cookie (see [Session Cookie](#s
 
 **Errors:**
 
-| Status | Body                                                                              | When                                |
-| ------ | --------------------------------------------------------------------------------- | ----------------------------------- |
-| 400    | `{"error": "Code must be exactly 6 digits"}`                                      | Code format invalid                 |
-| 400    | `{"error": "No 2FA setup in progress. Call POST /settings/2fa/setup first."}`     | No secret has been generated yet    |
-| 401    | `{"error": "Invalid TOTP code"}`                                                  | TOTP code is incorrect or expired   |
-| 409    | `{"error": "2FA is already enabled"}`                                             | 2FA is already active               |
-| 429    | `{"error": "Too many attempts. Try again later."}`                                | Rate limit exceeded                 |
-| 500    | `{"error": "Failed to disable IP vhost. 2FA was not enabled."}`                   | nginx config update failed          |
+| Status | Body                                                                          | When                              |
+| ------ | ----------------------------------------------------------------------------- | --------------------------------- |
+| 400    | `{"error": "Code must be exactly 6 digits"}`                                  | Code format invalid               |
+| 400    | `{"error": "No 2FA setup in progress. Call POST /settings/2fa/setup first."}` | No secret has been generated yet  |
+| 401    | `{"error": "Invalid TOTP code"}`                                              | TOTP code is incorrect or expired |
+| 409    | `{"error": "2FA is already enabled"}`                                         | 2FA is already active             |
+| 429    | `{"error": "Too many attempts. Try again later."}`                            | Rate limit exceeded               |
+| 500    | `{"error": "Failed to disable IP vhost. 2FA was not enabled."}`               | nginx config update failed        |
 
 ---
 
@@ -216,12 +216,12 @@ The response also sets the `lamaste_2fa_session` cookie (see [Session Cookie](#s
 
 **Errors:**
 
-| Status | Body                                                | When                                |
-| ------ | --------------------------------------------------- | ----------------------------------- |
-| 400    | `{"error": "Code must be exactly 6 digits"}`        | Code format invalid                 |
-| 400    | `{"error": "2FA is not enabled"}`                   | 2FA has not been activated          |
-| 401    | `{"error": "Invalid TOTP code"}`                    | TOTP code is incorrect or expired   |
-| 429    | `{"error": "Too many attempts. Try again later."}`  | Rate limit exceeded                 |
+| Status | Body                                               | When                              |
+| ------ | -------------------------------------------------- | --------------------------------- |
+| 400    | `{"error": "Code must be exactly 6 digits"}`       | Code format invalid               |
+| 400    | `{"error": "2FA is not enabled"}`                  | 2FA has not been activated        |
+| 401    | `{"error": "Invalid TOTP code"}`                   | TOTP code is incorrect or expired |
+| 429    | `{"error": "Too many attempts. Try again later."}` | Rate limit exceeded               |
 
 ---
 
@@ -260,23 +260,23 @@ curl -s -X POST --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                | When                                |
-| ------ | --------------------------------------------------- | ----------------------------------- |
-| 400    | `{"error": "Code must be exactly 6 digits"}`        | Code format invalid                 |
-| 400    | `{"error": "2FA is not enabled"}`                   | 2FA was not active                  |
-| 401    | `{"error": "Invalid TOTP code"}`                    | TOTP code is incorrect or expired   |
-| 401    | `{"error": "2fa_required"}`                         | No valid 2FA session cookie         |
-| 429    | `{"error": "Too many attempts. Try again later."}`  | Rate limit exceeded                 |
+| Status | Body                                               | When                              |
+| ------ | -------------------------------------------------- | --------------------------------- |
+| 400    | `{"error": "Code must be exactly 6 digits"}`       | Code format invalid               |
+| 400    | `{"error": "2FA is not enabled"}`                  | 2FA was not active                |
+| 401    | `{"error": "Invalid TOTP code"}`                   | TOTP code is incorrect or expired |
+| 401    | `{"error": "2fa_required"}`                        | No valid 2FA session cookie       |
+| 429    | `{"error": "Too many attempts. Try again later."}` | Rate limit exceeded               |
 
 ## Quick Reference
 
-| Method | Path                       | Auth                                  | Rate Limited | Description                       |
-| ------ | -------------------------- | ------------------------------------- | ------------ | --------------------------------- |
-| GET    | `/api/settings/2fa`        | mTLS (exempt from 2FA session)        | No           | Get 2FA status                    |
-| POST   | `/api/settings/2fa/setup`  | mTLS (2FA not yet active during use)  | No           | Generate TOTP secret              |
-| POST   | `/api/settings/2fa/confirm`| mTLS (2FA not yet active during use)  | Yes          | Confirm initial code, enable 2FA  |
-| POST   | `/api/settings/2fa/verify` | mTLS (exempt from 2FA session)        | Yes          | Verify code, issue session cookie |
-| POST   | `/api/settings/2fa/disable`| mTLS + 2FA session                    | Yes          | Disable 2FA                       |
+| Method | Path                        | Auth                                 | Rate Limited | Description                       |
+| ------ | --------------------------- | ------------------------------------ | ------------ | --------------------------------- |
+| GET    | `/api/settings/2fa`         | mTLS (exempt from 2FA session)       | No           | Get 2FA status                    |
+| POST   | `/api/settings/2fa/setup`   | mTLS (2FA not yet active during use) | No           | Generate TOTP secret              |
+| POST   | `/api/settings/2fa/confirm` | mTLS (2FA not yet active during use) | Yes          | Confirm initial code, enable 2FA  |
+| POST   | `/api/settings/2fa/verify`  | mTLS (exempt from 2FA session)       | Yes          | Verify code, issue session cookie |
+| POST   | `/api/settings/2fa/disable` | mTLS + 2FA session                   | Yes          | Disable 2FA                       |
 
 ### Response Shapes
 

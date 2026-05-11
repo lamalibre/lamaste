@@ -191,8 +191,7 @@ export function validateManifest(raw) {
 // could resolve outside the @lamalibre/ scope. Optional version suffix
 // (`@1.2.3`, `@beta`, etc.) is allowed; alias schemes (`@npm:`, `@github:`,
 // etc.) and shell metacharacters are not.
-const LAMALIBRE_PACKAGE_RE =
-  /^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/;
+const LAMALIBRE_PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9._-]{0,213}(@[A-Za-z0-9._-]+)?$/;
 
 function assertSafeLamalibrePackage(packageName) {
   if (typeof packageName !== 'string' || packageName.length === 0 || packageName.length > 256) {
@@ -207,10 +206,7 @@ function assertSafeLamalibrePackage(packageName) {
   // Defense-in-depth against npm alias syntax even if the regex above shifts.
   const versionSuffix = packageName.indexOf('@', 1);
   if (versionSuffix !== -1 && packageName.slice(versionSuffix).startsWith('@npm:')) {
-    throw Object.assign(
-      new Error('npm: alias references are not permitted'),
-      { statusCode: 400 },
-    );
+    throw Object.assign(new Error('npm: alias references are not permitted'), { statusCode: 400 });
   }
 }
 
@@ -224,10 +220,9 @@ export function installPlugin(packageName, logger) {
     // Check if already installed
     const existingRow = s.selectByPackageName.get(packageName);
     if (existingRow) {
-      throw Object.assign(
-        new Error(`Plugin "${packageName}" is already installed`),
-        { statusCode: 409 },
-      );
+      throw Object.assign(new Error(`Plugin "${packageName}" is already installed`), {
+        statusCode: 409,
+      });
     }
 
     // Ensure STATE_DIR has a package.json so npm does not walk up the tree
@@ -249,10 +244,7 @@ export function installPlugin(packageName, logger) {
       });
     } catch (err) {
       logger.error({ packageName, stderr: err.stderr, err: err.message }, 'npm install failed');
-      throw Object.assign(
-        new Error(`Failed to install "${packageName}"`),
-        { statusCode: 500 },
-      );
+      throw Object.assign(new Error(`Failed to install "${packageName}"`), { statusCode: 500 });
     }
 
     // Read the plugin manifest from the installed package
@@ -273,19 +265,17 @@ export function installPlugin(packageName, logger) {
           { statusCode: 400 },
         );
       }
-      throw Object.assign(
-        new Error(`Plugin manifest not found in "${packageName}"`),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error(`Plugin manifest not found in "${packageName}"`), {
+        statusCode: 400,
+      });
     }
 
     // Reject names that collide with core API route prefixes
     if (RESERVED_API_PREFIXES.includes(manifest.name)) {
       await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
-      throw Object.assign(
-        new Error(`Plugin name "${manifest.name}" is reserved`),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error(`Plugin name "${manifest.name}" is reserved`), {
+        statusCode: 400,
+      });
     }
 
     // Reject displayName that matches reserved navigation labels
@@ -293,7 +283,9 @@ export function installPlugin(packageName, logger) {
       if (RESERVED_NAV_LABELS.includes(manifest.displayName.toLowerCase())) {
         await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
         throw Object.assign(
-          new Error(`Plugin display name "${manifest.displayName}" conflicts with a core navigation label`),
+          new Error(
+            `Plugin display name "${manifest.displayName}" conflicts with a core navigation label`,
+          ),
           { statusCode: 400 },
         );
       }
@@ -303,7 +295,9 @@ export function installPlugin(packageName, logger) {
     if (manifest.panel?.apiPrefix && manifest.panel.apiPrefix !== `/api/${manifest.name}`) {
       await execa('npm', ['uninstall', packageName], { cwd: STATE_DIR }).catch(() => {});
       throw Object.assign(
-        new Error(`Plugin apiPrefix must be "/api/${manifest.name}" but got "${manifest.panel.apiPrefix}"`),
+        new Error(
+          `Plugin apiPrefix must be "/api/${manifest.name}" but got "${manifest.panel.apiPrefix}"`,
+        ),
         { statusCode: 400 },
       );
     }
@@ -390,19 +384,15 @@ export function uninstallPlugin(name, logger) {
     const row = s.selectByName.get(name);
 
     if (!row) {
-      throw Object.assign(
-        new Error(`Plugin "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Plugin "${name}" not found`), { statusCode: 404 });
     }
 
     const plugin = rowToPlugin(row);
 
     if (plugin.status === 'enabled') {
-      throw Object.assign(
-        new Error(`Plugin "${name}" must be disabled before uninstalling`),
-        { statusCode: 400 },
-      );
+      throw Object.assign(new Error(`Plugin "${name}" must be disabled before uninstalling`), {
+        statusCode: 400,
+      });
     }
 
     // Uninstall the npm package
@@ -436,10 +426,7 @@ export function uninstallPlugin(name, logger) {
       const route = derivePluginRoute(plugin.name);
       const diffs = await revokePluginCapabilitiesFromAgents(PKI_DIR, route);
       if (diffs.length > 0) {
-        logger.info(
-          { name, route, diffs },
-          'Revoked plugin capabilities from agents on uninstall',
-        );
+        logger.info({ name, route, diffs }, 'Revoked plugin capabilities from agents on uninstall');
       }
     } catch (err) {
       logger.warn(
@@ -466,10 +453,7 @@ export function enablePlugin(name, logger) {
     const row = s.selectByName.get(name);
 
     if (!row) {
-      throw Object.assign(
-        new Error(`Plugin "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Plugin "${name}" not found`), { statusCode: 404 });
     }
 
     if (row.status === 'enabled') {
@@ -503,10 +487,7 @@ export function disablePlugin(name, logger) {
     const row = s.selectByName.get(name);
 
     if (!row) {
-      throw Object.assign(
-        new Error(`Plugin "${name}" not found`),
-        { statusCode: 404 },
-      );
+      throw Object.assign(new Error(`Plugin "${name}" not found`), { statusCode: 404 });
     }
 
     if (row.status === 'disabled') {
@@ -535,9 +516,7 @@ export function disablePlugin(name, logger) {
 export async function getEnabledPlugins() {
   const s = await getStmts();
   const rows = s.selectAll.all();
-  return rows
-    .filter((r) => r.status === 'enabled')
-    .map(rowToPlugin);
+  return rows.filter((r) => r.status === 'enabled').map(rowToPlugin);
 }
 
 /**

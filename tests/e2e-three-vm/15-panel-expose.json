@@ -6,11 +6,7 @@
     "suite": "e2e-three-vm",
     "description": "15 — Panel Expose (Three-VM)",
     "deps": [],
-    "requires": [
-      "multipass",
-      "curl",
-      "jq"
-    ]
+    "requires": ["multipass", "curl", "jq"]
   },
   "env": {
     "HOST_IP": {
@@ -254,11 +250,7 @@
             "path": "certs/agent",
             "body": {
               "label": "panel-expose-e2e",
-              "capabilities": [
-                "tunnels:read",
-                "tunnels:write",
-                "panel:expose"
-              ]
+              "capabilities": ["tunnels:read", "tunnels:write", "panel:expose"]
             }
           },
           "capture": [

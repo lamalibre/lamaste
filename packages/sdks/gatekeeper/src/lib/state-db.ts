@@ -81,10 +81,7 @@ export async function getGatekeeperDb(): Promise<DatabaseSync> {
  * migration runs inside `BEGIN IMMEDIATE` … `COMMIT`; a failure rolls the
  * statement back and rethrows with the migration filename in the message.
  */
-export async function ensureMigrations(
-  db: DatabaseSync,
-  migrationsDir: string,
-): Promise<void> {
+export async function ensureMigrations(db: DatabaseSync, migrationsDir: string): Promise<void> {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
@@ -116,9 +113,11 @@ export async function ensureMigrations(
     db.exec('BEGIN IMMEDIATE');
     try {
       db.exec(sql);
-      db.prepare(
-        'INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)',
-      ).run(id, file, new Date().toISOString());
+      db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
+        id,
+        file,
+        new Date().toISOString(),
+      );
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');

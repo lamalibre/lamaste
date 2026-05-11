@@ -51,7 +51,9 @@ export const CapabilityStringSchema = z
   .refine((val) => {
     const segments = val.split(':');
     const middle = segments[1];
-    return middle !== undefined && !(CORE_CAPABILITY_NAMESPACES as readonly string[]).includes(middle);
+    return (
+      middle !== undefined && !(CORE_CAPABILITY_NAMESPACES as readonly string[]).includes(middle)
+    );
   }, 'Plugin capability short-name must not collide with a reserved core namespace');
 
 // ---------------------------------------------------------------------------
@@ -90,18 +92,11 @@ export const ManifestSchema = z
       .string()
       .min(1)
       .max(100)
-      .regex(
-        /^[\x20-\x7E]+$/,
-        'Display name must contain only printable ASCII characters',
-      )
+      .regex(/^[\x20-\x7E]+$/, 'Display name must contain only printable ASCII characters')
       .optional(),
     version: z.string().min(1).max(50),
     description: z.string().max(500).optional().default(''),
-    capabilities: z
-      .array(CapabilityStringSchema)
-      .max(50)
-      .optional()
-      .default([]),
+    capabilities: z.array(CapabilityStringSchema).max(50).optional().default([]),
     packages: z
       .object({
         server: z
@@ -157,7 +152,10 @@ export const ManifestSchema = z
             type: z.enum(['string', 'number', 'boolean']),
             default: z.union([z.string(), z.number(), z.boolean()]).optional(),
             description: z.string().max(500).optional(),
-            enum: z.array(z.union([z.string(), z.number()])).max(100).optional(),
+            enum: z
+              .array(z.union([z.string(), z.number()]))
+              .max(100)
+              .optional(),
           })
           .refine(
             (entry) => {

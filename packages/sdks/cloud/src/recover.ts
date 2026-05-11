@@ -22,13 +22,7 @@
 import { dirname, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { tmpDir } from '@lamalibre/lamaste/agent';
-import {
-  generateKeyPair,
-  sshExec,
-  scpDownload,
-  cleanupKeyPair,
-  secureDelete,
-} from './ssh.js';
+import { generateKeyPair, sshExec, scpDownload, cleanupKeyPair, secureDelete } from './ssh.js';
 
 export interface RecoveryKeyPair {
   readonly publicKey: string;
@@ -86,13 +80,7 @@ export async function recoverAdmin(
   knownHostsPath: string,
 ): Promise<RecoveryResult> {
   // Run the reset command — generates new admin keypair, P12, restarts serverd, reloads nginx
-  await sshExec(
-    ip,
-    privateKeyPath,
-    'sudo lamaste-reset-admin',
-    120_000,
-    knownHostsPath,
-  );
+  await sshExec(ip, privateKeyPath, 'sudo lamaste-reset-admin', 120_000, knownHostsPath);
 
   // Read the P12 password from the known server-side location
   const { stdout: password } = await sshExec(

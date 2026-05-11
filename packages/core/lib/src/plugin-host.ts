@@ -209,9 +209,7 @@ export async function pluginHostPlugin(
             ...extraOpts,
           };
 
-          const effectiveAuthHook = authHookFactory
-            ? authHookFactory(pluginName)
-            : authHook;
+          const effectiveAuthHook = authHookFactory ? authHookFactory(pluginName) : authHook;
 
           if (auth === 'mtls' && effectiveAuthHook) {
             // Two-level encapsulation: auth guard on outer scope
@@ -244,32 +242,32 @@ export async function pluginHostPlugin(
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        fastify.log.error(
-          { plugin: pluginName, err: msg },
-          'Failed to mount plugin server routes',
-        );
+        fastify.log.error({ plugin: pluginName, err: msg }, 'Failed to mount plugin server routes');
       }
     }
 
     // --- Serve panel bundle ---
     if (serverPkg) {
       const capturedServerPkg = serverPkg;
-      fastify.get(`/${pluginName}/panel.js`, async (_request: FastifyRequest, reply: FastifyReply) => {
-        try {
-          if (!capturedServerPkg.startsWith('@lamalibre/')) {
-            return reply.code(403).send({ error: 'Plugin server package scope violation' });
+      fastify.get(
+        `/${pluginName}/panel.js`,
+        async (_request: FastifyRequest, reply: FastifyReply) => {
+          try {
+            if (!capturedServerPkg.startsWith('@lamalibre/')) {
+              return reply.code(403).send({ error: 'Plugin server package scope violation' });
+            }
+            const require = createRequire(path.join(baseDir, '/'));
+            const panelPath = require.resolve(`${capturedServerPkg}/panel.js`);
+            const content = await readFile(panelPath, 'utf-8');
+            return reply
+              .header('Content-Type', 'application/javascript')
+              .header('Cache-Control', `public, max-age=${PANEL_BUNDLE_CACHE_SECONDS}`)
+              .send(content);
+          } catch {
+            return reply.code(404).send({ error: 'Plugin panel bundle not found' });
           }
-          const require = createRequire(path.join(baseDir, '/'));
-          const panelPath = require.resolve(`${capturedServerPkg}/panel.js`);
-          const content = await readFile(panelPath, 'utf-8');
-          return reply
-            .header('Content-Type', 'application/javascript')
-            .header('Cache-Control', `public, max-age=${PANEL_BUNDLE_CACHE_SECONDS}`)
-            .send(content);
-        } catch {
-          return reply.code(404).send({ error: 'Plugin panel bundle not found' });
-        }
-      });
+        },
+      );
     }
   }
 
@@ -292,9 +290,7 @@ export async function pluginHostPlugin(
 
     const currentRegistry = await readRegistry();
     cachedDisabledPlugins = new Set(
-      currentRegistry.plugins
-        .filter((p) => p.status !== 'enabled')
-        .map((p) => p.name),
+      currentRegistry.plugins.filter((p) => p.status !== 'enabled').map((p) => p.name),
     );
     cacheExpiry = now + DISABLED_PLUGIN_CACHE_TTL_MS;
     return cachedDisabledPlugins;
@@ -342,14 +338,9 @@ async function loadPluginModule(
 
   let pluginFn = (serverModule['default'] ?? serverModule) as unknown;
 
-  if (
-    typeof pluginFn !== 'function' &&
-    typeof serverModule['buildPlugin'] === 'function'
-  ) {
+  if (typeof pluginFn !== 'function' && typeof serverModule['buildPlugin'] === 'function') {
     pluginFn = (serverModule['buildPlugin'] as () => unknown)();
   }
 
-  return typeof pluginFn === 'function'
-    ? (pluginFn as (...args: unknown[]) => unknown)
-    : undefined;
+  return typeof pluginFn === 'function' ? (pluginFn as (...args: unknown[]) => unknown) : undefined;
 }

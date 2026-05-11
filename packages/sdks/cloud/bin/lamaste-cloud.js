@@ -21,7 +21,11 @@ import { DigitalOceanProvider } from '../dist/digitalocean/index.js';
 import { DigitalOceanSpacesProvider } from '../dist/digitalocean/spaces.js';
 import { validateDOToken } from '../dist/digitalocean/scopes.js';
 import { loadServers } from '../dist/registry.js';
-import { loadStorageServers, getStorageServer, removeStorageServer } from '../dist/storage-registry.js';
+import {
+  loadStorageServers,
+  getStorageServer,
+  removeStorageServer,
+} from '../dist/storage-registry.js';
 import os from 'node:os';
 
 function usage() {
@@ -103,7 +107,19 @@ async function main() {
       }
 
       const platform = os.platform() === 'darwin' ? 'darwin' : 'linux';
-      await provision({ provider, token, region, label, size, domain, email, platform, doDomain, doSubdomain, overrideDns });
+      await provision({
+        provider,
+        token,
+        region,
+        label,
+        size,
+        domain,
+        email,
+        platform,
+        doDomain,
+        doSubdomain,
+        overrideDns,
+      });
       break;
     }
 
@@ -182,7 +198,7 @@ async function main() {
     case 'servers': {
       const servers = await loadServers();
       // Redact sensitive fields before writing to stdout
-      const redacted = servers.map(({ p12Password, ...rest }) => rest);
+      const redacted = servers.map(({ p12Password: _p12Password, ...rest }) => rest);
       process.stdout.write(JSON.stringify(redacted) + '\n');
       break;
     }
@@ -229,7 +245,9 @@ async function main() {
       const secretKey = process.env.LAMALIBRE_SPACES_SECRET_KEY;
 
       if (!accessKey || !secretKey) {
-        console.error('Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required');
+        console.error(
+          'Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required',
+        );
         process.exit(1);
       }
       if (!region || !label) {
@@ -246,7 +264,9 @@ async function main() {
       const secretKey = process.env.LAMALIBRE_SPACES_SECRET_KEY;
 
       if (!accessKey || !secretKey) {
-        console.error('Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required');
+        console.error(
+          'Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required',
+        );
         process.exit(1);
       }
 
@@ -273,7 +293,9 @@ async function main() {
         process.exit(1);
       }
       if (!accessKey || !secretKey) {
-        console.error('Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required');
+        console.error(
+          'Error: LAMALIBRE_SPACES_ACCESS_KEY and LAMALIBRE_SPACES_SECRET_KEY environment variables are required',
+        );
         process.exit(1);
       }
 

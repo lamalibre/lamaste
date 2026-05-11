@@ -12,7 +12,15 @@ export default function AddManagedServer({ onClose }) {
     mutationFn: () =>
       invoke('add_managed_server', {
         panelUrl: panelUrl.trim(),
-        label: label.trim() || panelUrl.replace(/https?:\/\//, '').split(':')[0].replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'my-server',
+        label:
+          label.trim() ||
+          panelUrl
+            .replace(/https?:\/\//, '')
+            .split(':')[0]
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 64) ||
+          'my-server',
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] });
@@ -35,7 +43,8 @@ export default function AddManagedServer({ onClose }) {
         </div>
 
         <p className="text-xs text-zinc-400 mb-4">
-          Connect to an existing Lamaste installation. The panel must be reachable from this machine.
+          Connect to an existing Lamaste installation. The panel must be reachable from this
+          machine.
         </p>
 
         <div className="space-y-3">

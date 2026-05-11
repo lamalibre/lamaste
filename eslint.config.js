@@ -31,7 +31,7 @@ export default [
     },
   },
 
-  // 3. Node.js config for server-side packages
+  // 3. Node.js config for server-side packages and build scripts
   {
     files: [
       'packages/provisioners/server/**/*.js',
@@ -39,9 +39,16 @@ export default [
       'packages/server/cli/**/*.js',
       'packages/agent/cli/**/*.js',
       'packages/agent/daemon/**/*.js',
+      'packages/agent/plugin-hostd/**/*.js',
       'packages/provisioners/desktop/**/*.js',
       'packages/provisioners/admin/**/*.js',
       'packages/provisioners/agent/**/*.js',
+      'packages/provisioners/e2e/**/*.js',
+      'packages/sdks/cloud/bin/**/*.js',
+      'packages/core/docs/scripts/**/*.js',
+      'packages/tools/lamaste-rodeo/**/*.js',
+      'website/**/*.js',
+      'e2e.hooks.js',
     ],
     languageOptions: {
       globals: {

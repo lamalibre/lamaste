@@ -47,7 +47,10 @@ export default async function systemRoutes(fastify, _opts) {
       const serverCaps = await getPluginCapabilities();
       const merged = [...new Set([...serverCaps, ...persistedCaps])];
       setPluginCapabilities(merged);
-      fastify.log.info({ count: persistedCaps.length }, 'Loaded persisted agent plugin capabilities');
+      fastify.log.info(
+        { count: persistedCaps.length },
+        'Loaded persisted agent plugin capabilities',
+      );
     }
   } catch (err) {
     fastify.log.warn({ err: err.message }, 'Failed to load agent-reported capabilities');
@@ -104,19 +107,20 @@ export default async function systemRoutes(fastify, _opts) {
       // pattern of template-literal shell scripts. scriptPath is server-derived
       // (dataDir + random hex) but we still quote it defensively.
       const escapedScriptPath = scriptPath.replace(/'/g, "'\\''");
-      const script = [
-        '#!/bin/bash',
-        'set -e',
-        '',
-        '# Give the HTTP response time to flush',
-        'sleep 2',
-        '',
-        '# Run the installer in redeploy mode — it stops and restarts the panel service',
-        `npx --yes '@lamalibre/create-lamaste@${version}' --yes 2>&1 || true`,
-        '',
-        '# Self-cleanup',
-        `rm -f '${escapedScriptPath}'`,
-      ].join('\n') + '\n';
+      const script =
+        [
+          '#!/bin/bash',
+          'set -e',
+          '',
+          '# Give the HTTP response time to flush',
+          'sleep 2',
+          '',
+          '# Run the installer in redeploy mode — it stops and restarts the panel service',
+          `npx --yes '@lamalibre/create-lamaste@${version}' --yes 2>&1 || true`,
+          '',
+          '# Self-cleanup',
+          `rm -f '${escapedScriptPath}'`,
+        ].join('\n') + '\n';
 
       await writeFile(scriptPath, script, { mode: 0o700 });
 
@@ -125,18 +129,17 @@ export default async function systemRoutes(fastify, _opts) {
       // Uses sudo because the panel runs as the lamaste user, and
       // systemd-run needs root to create system-level transient units.
       const unitName = `lamalibre-lamaste-update-${scriptId}`;
-      execFile('sudo', [
-        'systemd-run',
-        '--unit', unitName,
-        '--no-block',
-        '/usr/bin/bash', scriptPath,
-      ], (err) => {
-        if (err) {
-          request.log.error({ err, version }, 'Failed to launch update unit');
-          // Clean up the update script if systemd-run fails
-          unlink(scriptPath).catch(() => {});
-        }
-      });
+      execFile(
+        'sudo',
+        ['systemd-run', '--unit', unitName, '--no-block', '/usr/bin/bash', scriptPath],
+        (err) => {
+          if (err) {
+            request.log.error({ err, version }, 'Failed to launch update unit');
+            // Clean up the update script if systemd-run fails
+            unlink(scriptPath).catch(() => {});
+          }
+        },
+      );
 
       request.log.info({ version, unit: unitName }, 'Panel update initiated via systemd-run');
 
@@ -177,7 +180,9 @@ export default async function systemRoutes(fastify, _opts) {
     async (request, reply) => {
       const result = PluginReportSchema.safeParse(request.body);
       if (!result.success) {
-        return reply.code(400).send({ error: 'Invalid plugin report', details: result.error.issues });
+        return reply
+          .code(400)
+          .send({ error: 'Invalid plugin report', details: result.error.issues });
       }
       const { plugins } = result.data;
 

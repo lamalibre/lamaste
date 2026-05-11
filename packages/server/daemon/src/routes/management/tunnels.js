@@ -5,12 +5,7 @@
  * Read-only endpoints and HTTP-specific auth checks remain here.
  */
 import { z } from 'zod';
-import {
-  createTunnel,
-  deleteTunnel,
-  toggleTunnel,
-  TunnelError,
-} from '@lamalibre/lamaste/server';
+import { createTunnel, deleteTunnel, toggleTunnel, TunnelError } from '@lamalibre/lamaste/server';
 import { getConfig } from '../../lib/config.js';
 import { readTunnels, writeTunnels } from '../../lib/state.js';
 import {
@@ -65,7 +60,10 @@ const CreateTunnelSchema = z
       .string()
       .min(1)
       .max(200)
-      .regex(/^@lamalibre\/[a-z0-9][a-z0-9._-]*$/, 'Invalid plugin name — must be @lamalibre/ scoped with valid npm characters')
+      .regex(
+        /^@lamalibre\/[a-z0-9][a-z0-9._-]*$/,
+        'Invalid plugin name — must be @lamalibre/ scoped with valid npm characters',
+      )
       .optional(),
     agentLabel: z
       .string()
@@ -73,15 +71,11 @@ const CreateTunnelSchema = z
       .max(63)
       .regex(/^[a-z0-9][a-z0-9-]*$/, 'Invalid agent label format')
       .optional(),
-    accessMode: z
-      .enum(['public', 'authenticated', 'restricted'])
-      .optional()
-      .default('restricted'),
+    accessMode: z.enum(['public', 'authenticated', 'restricted']).optional().default('restricted'),
   })
-  .refine(
-    (d) => d.type !== 'plugin' || (d.pluginName && d.agentLabel),
-    { message: 'pluginName and agentLabel are required for plugin tunnels' },
-  );
+  .refine((d) => d.type !== 'plugin' || (d.pluginName && d.agentLabel), {
+    message: 'pluginName and agentLabel are required for plugin tunnels',
+  });
 
 const ExposePanelSchema = z.object({
   port: z
@@ -176,9 +170,7 @@ export default async function tunnelRoutes(fastify, _opts) {
         };
       } catch (err) {
         request.log.error(err, 'Failed to generate agent config');
-        return reply
-          .code(500)
-          .send({ error: 'Failed to generate agent config' });
+        return reply.code(500).send({ error: 'Failed to generate agent config' });
       }
     },
   );
@@ -209,7 +201,8 @@ export default async function tunnelRoutes(fastify, _opts) {
             instructions: {
               download: 'Save the plist file to ~/Library/LaunchAgents/',
               install: 'launchctl load ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist',
-              uninstall: 'launchctl unload ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist',
+              uninstall:
+                'launchctl unload ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist',
               logs: 'tail -f /usr/local/var/log/chisel.log',
               status: 'launchctl list | grep chisel',
               prerequisite:
@@ -221,7 +214,10 @@ export default async function tunnelRoutes(fastify, _opts) {
         const plist = generatePlist(enabledTunnels, config.domain);
         return reply
           .type('application/x-plist')
-          .header('Content-Disposition', 'attachment; filename="com.lamalibre.lamaste.chisel.plist"')
+          .header(
+            'Content-Disposition',
+            'attachment; filename="com.lamalibre.lamaste.chisel.plist"',
+          )
           .send(plist);
       } catch (err) {
         request.log.error(err, 'Failed to generate Mac plist');
@@ -284,12 +280,16 @@ export default async function tunnelRoutes(fastify, _opts) {
 
       // Non-restricted access modes are admin-only
       if (accessMode !== 'restricted' && request.certRole !== 'admin') {
-        return reply.code(403).send({ error: 'Only administrators can set tunnel access mode to public or authenticated' });
+        return reply.code(403).send({
+          error: 'Only administrators can set tunnel access mode to public or authenticated',
+        });
       }
 
       // Plugin tunnels are admin-only
       if (type === 'plugin' && request.certRole !== 'admin') {
-        return reply.code(403).send({ error: 'Plugin tunnels can only be created by administrators' });
+        return reply
+          .code(403)
+          .send({ error: 'Plugin tunnels can only be created by administrators' });
       }
 
       // Panel tunnels require panel:expose capability and must match the requesting agent's label
@@ -301,7 +301,9 @@ export default async function tunnelRoutes(fastify, _opts) {
         if (request.certRole === 'agent' && request.certLabel) {
           const expectedSubdomain = `agent-${request.certLabel}`;
           if (subdomain !== expectedSubdomain) {
-            return reply.code(403).send({ error: 'Agents can only create panel tunnels for their own label' });
+            return reply
+              .code(403)
+              .send({ error: 'Agents can only create panel tunnels for their own label' });
           }
         }
       }
@@ -370,7 +372,9 @@ export default async function tunnelRoutes(fastify, _opts) {
       if (tunnel.type === 'panel') {
         const caps = request.certCapabilities || [];
         if (request.certRole !== 'admin' && !caps.includes('panel:expose')) {
-          return reply.code(403).send({ error: 'Cannot toggle panel tunnel without panel:expose capability' });
+          return reply
+            .code(403)
+            .send({ error: 'Cannot toggle panel tunnel without panel:expose capability' });
         }
       }
 
@@ -420,7 +424,9 @@ export default async function tunnelRoutes(fastify, _opts) {
       if (tunnel.type === 'panel') {
         const caps = request.certCapabilities || [];
         if (request.certRole !== 'admin' && !caps.includes('panel:expose')) {
-          return reply.code(403).send({ error: 'Cannot delete panel tunnel without panel:expose capability' });
+          return reply
+            .code(403)
+            .send({ error: 'Cannot delete panel tunnel without panel:expose capability' });
         }
       }
 
@@ -460,9 +466,7 @@ export default async function tunnelRoutes(fastify, _opts) {
       const label = request.certLabel;
       const tunnels = await readTunnels();
       const subdomain = label ? `agent-${label}` : null;
-      const panelTunnel = tunnels.find(
-        (t) => t.type === 'panel' && t.subdomain === subdomain,
-      );
+      const panelTunnel = tunnels.find((t) => t.type === 'panel' && t.subdomain === subdomain);
 
       if (!panelTunnel) {
         return { enabled: false, fqdn: null, port: null };
@@ -487,7 +491,9 @@ export default async function tunnelRoutes(fastify, _opts) {
       const label = request.certLabel;
 
       if (!label) {
-        return reply.code(400).send({ error: 'Agent label is required (must use agent certificate)' });
+        return reply
+          .code(400)
+          .send({ error: 'Agent label is required (must use agent certificate)' });
       }
 
       const subdomain = `agent-${label}`;
@@ -501,9 +507,7 @@ export default async function tunnelRoutes(fastify, _opts) {
 
       // Check if a panel tunnel already exists for this agent
       const existing = await readTunnels();
-      const existingPanel = existing.find(
-        (t) => t.type === 'panel' && t.subdomain === subdomain,
-      );
+      const existingPanel = existing.find((t) => t.type === 'panel' && t.subdomain === subdomain);
       if (existingPanel) {
         return reply.code(409).send({
           error: 'Agent panel tunnel already exists',
@@ -554,14 +558,14 @@ export default async function tunnelRoutes(fastify, _opts) {
       const label = request.certLabel;
 
       if (!label) {
-        return reply.code(400).send({ error: 'Agent label is required (must use agent certificate)' });
+        return reply
+          .code(400)
+          .send({ error: 'Agent label is required (must use agent certificate)' });
       }
 
       const subdomain = `agent-${label}`;
       const tunnels = await readTunnels();
-      const panelTunnel = tunnels.find(
-        (t) => t.type === 'panel' && t.subdomain === subdomain,
-      );
+      const panelTunnel = tunnels.find((t) => t.type === 'panel' && t.subdomain === subdomain);
 
       if (!panelTunnel) {
         return reply.code(404).send({ error: 'No panel tunnel found for this agent' });

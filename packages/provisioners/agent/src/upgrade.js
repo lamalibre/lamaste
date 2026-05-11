@@ -94,17 +94,21 @@ async function promptKeychainPassword() {
  * @returns {Promise<string>}
  */
 async function extractLabelFromP12(p12Path, p12Password) {
-  const { stdout } = await execa('openssl', [
-    'pkcs12',
-    '-in',
-    p12Path,
-    '-nokeys',
-    '-clcerts',
-    '-passin',
-    'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-  ], {
-    env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: p12Password },
-  });
+  const { stdout } = await execa(
+    'openssl',
+    [
+      'pkcs12',
+      '-in',
+      p12Path,
+      '-nokeys',
+      '-clcerts',
+      '-passin',
+      'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
+    ],
+    {
+      env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: p12Password },
+    },
+  );
 
   // Parse subject line for CN=agent:<label>
   const { stdout: subjectOut } = await execa('openssl', ['x509', '-subject', '-noout'], {
@@ -154,7 +158,10 @@ async function updateLocalAgentAuth(label, keychainIdentity) {
     delete config.p12Password;
 
     const tmpConfig = configPath + '.tmp';
-    await writeFile(tmpConfig, JSON.stringify(config, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    await writeFile(tmpConfig, JSON.stringify(config, null, 2) + '\n', {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
     const fd1 = await open(tmpConfig, 'r');
     await fd1.sync();
     await fd1.close();
@@ -177,7 +184,10 @@ async function updateLocalAgentAuth(label, keychainIdentity) {
         delete agent.p12Password;
 
         const tmpRegistry = registryPath + '.tmp';
-        await writeFile(tmpRegistry, JSON.stringify(registry, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+        await writeFile(tmpRegistry, JSON.stringify(registry, null, 2) + '\n', {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
         const fd2 = await open(tmpRegistry, 'r');
         await fd2.sync();
         await fd2.close();
@@ -203,7 +213,7 @@ export async function upgrade() {
 
   console.log('');
   console.log(chalk.bold('  Lamaste Agent — Hardware-Bound Certificate Upgrade'));
-  console.log(chalk.dim('  Bind your agent certificate to this Mac\'s Keychain.'));
+  console.log(chalk.dim("  Bind your agent certificate to this Mac's Keychain."));
   console.log(chalk.dim('  The private key will be non-extractable.'));
   console.log('');
   console.log(
@@ -212,9 +222,7 @@ export async function upgrade() {
   console.log(
     chalk.yellow('  The old P12 certificate will be revoked. This operation is reversible'),
   );
-  console.log(
-    chalk.yellow('  only by generating a new agent certificate from the panel.'),
-  );
+  console.log(chalk.yellow('  only by generating a new agent certificate from the panel.'));
   console.log('');
 
   const panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)');
@@ -355,39 +363,38 @@ export async function upgrade() {
           await writeFile(caPath, ctx.caCertPem, { mode: 0o600 });
 
           // Create temporary P12 for import
-          await execa('openssl', [
-            'pkcs12',
-            '-export',
-            '-keypbe',
-            'PBE-SHA1-3DES',
-            '-certpbe',
-            'PBE-SHA1-3DES',
-            '-macalg',
-            'sha1',
-            '-out',
-            p12ImportPath,
-            '-inkey',
-            ctx.keyPath,
-            '-in',
-            certPath,
-            '-certfile',
-            caPath,
-            '-name',
-            identityName,
-            '-passout',
-            'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-          ], {
-            env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: importPassword },
-          });
+          await execa(
+            'openssl',
+            [
+              'pkcs12',
+              '-export',
+              '-keypbe',
+              'PBE-SHA1-3DES',
+              '-certpbe',
+              'PBE-SHA1-3DES',
+              '-macalg',
+              'sha1',
+              '-out',
+              p12ImportPath,
+              '-inkey',
+              ctx.keyPath,
+              '-in',
+              certPath,
+              '-certfile',
+              caPath,
+              '-name',
+              identityName,
+              '-passout',
+              'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
+            ],
+            {
+              env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: importPassword },
+            },
+          );
 
           // Trust the CA so macOS considers the identity valid
           try {
-            await execa('security', [
-              'add-trusted-cert',
-              '-p',
-              'ssl',
-              caPath,
-            ]);
+            await execa('security', ['add-trusted-cert', '-p', 'ssl', caPath]);
           } catch {
             // May require admin approval — import still succeeds
           }
@@ -490,25 +497,30 @@ export async function upgrade() {
   console.log(c('  ╠══════════════════════════════════════════════════════════╣'));
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
   console.log(
-    c('  ║') + `  ${b('Label:')}    ${ctx.label}` + ' '.repeat(Math.max(0, 44 - ctx.label.length)) + c('║'),
+    c('  ║') +
+      `  ${b('Label:')}    ${ctx.label}` +
+      ' '.repeat(Math.max(0, 44 - ctx.label.length)) +
+      c('║'),
   );
   console.log(
-    c('  ║') + `  ${b('Identity:')} ${ctx.identity}` + ' '.repeat(Math.max(0, 41 - ctx.identity.length)) + c('║'),
+    c('  ║') +
+      `  ${b('Identity:')} ${ctx.identity}` +
+      ' '.repeat(Math.max(0, 41 - ctx.identity.length)) +
+      c('║'),
   );
   console.log(
     c('  ║') + `  ${b('Key:')}      Non-extractable (Keychain-bound)` + ' '.repeat(12) + c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
   console.log(
-    c('  ║') + `  ${d('The agent will now use the Keychain identity for')}` + ' '.repeat(5) + c('║'),
+    c('  ║') +
+      `  ${d('The agent will now use the Keychain identity for')}` +
+      ' '.repeat(5) +
+      c('║'),
   );
-  console.log(
-    c('  ║') + `  ${d('mTLS authentication with the panel.')}` + ' '.repeat(18) + c('║'),
-  );
+  console.log(c('  ║') + `  ${d('mTLS authentication with the panel.')}` + ' '.repeat(18) + c('║'));
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
-  console.log(
-    c('  ║') + `  ${b('Recovery:')}` + ' '.repeat(47) + c('║'),
-  );
+  console.log(c('  ║') + `  ${b('Recovery:')}` + ' '.repeat(47) + c('║'));
   console.log(
     c('  ║') + `    ${d('Generate a new agent cert from the panel and')}` + ' '.repeat(8) + c('║'),
   );

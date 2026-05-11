@@ -59,15 +59,15 @@ Lamalibre is the umbrella ecosystem; Lamaste is one product within it (others �
 
 The single source of truth is `packages/core/lib/src/branding.ts` (TS) and `packages/clients/desktop/src-tauri/src/branding.rs` (Rust) — `ecosystemBundleId()` / `productBundleId()` / `ecosystemUnit()` / `productUnit()` helpers plus `userEcosystemRoot()` / `userProductRoot()` / `etcEcosystemRoot()` / `etcProductRoot()`. Never hardcode a bundle id, unit name, or path elsewhere.
 
-| Category | Ecosystem | Product |
-|---|---|---|
-| Keychain (macOS) | `com.lamalibre.cloud`, `com.lamalibre.storage` | `com.lamalibre.lamaste.server`, `com.lamalibre.lamaste.admin` |
-| launchd | `com.lamalibre.local-plugin-host` | `com.lamalibre.lamaste.agentd`, `com.lamalibre.lamaste.panel-<label>` |
-| systemd | `lamalibre-local-plugin-host` | `lamalibre-lamaste-serverd`, `lamalibre-lamaste-gatekeeper` |
-| FS path | `~/.lamalibre/local/`, `/etc/lamalibre/` | `~/.lamalibre/lamaste/`, `/etc/lamalibre/lamaste/` |
-| Env var | `LAMALIBRE_CLOUD_TOKEN`, `LAMALIBRE_FERIA_BIN` | `LAMALIBRE_LAMASTE_CONFIG`, `LAMALIBRE_LAMASTE_DATA_DIR` |
-| Deep link | `lamalibre://callback?product=lamaste#…` | (no product-only scheme) |
-| DO tag | `lamalibre:managed` | `product:lamaste` (both required) |
+| Category         | Ecosystem                                      | Product                                                               |
+| ---------------- | ---------------------------------------------- | --------------------------------------------------------------------- |
+| Keychain (macOS) | `com.lamalibre.cloud`, `com.lamalibre.storage` | `com.lamalibre.lamaste.server`, `com.lamalibre.lamaste.admin`         |
+| launchd          | `com.lamalibre.local-plugin-host`              | `com.lamalibre.lamaste.agentd`, `com.lamalibre.lamaste.panel-<label>` |
+| systemd          | `lamalibre-local-plugin-host`                  | `lamalibre-lamaste-serverd`, `lamalibre-lamaste-gatekeeper`           |
+| FS path          | `~/.lamalibre/local/`, `/etc/lamalibre/`       | `~/.lamalibre/lamaste/`, `/etc/lamalibre/lamaste/`                    |
+| Env var          | `LAMALIBRE_CLOUD_TOKEN`, `LAMALIBRE_FERIA_BIN` | `LAMALIBRE_LAMASTE_CONFIG`, `LAMALIBRE_LAMASTE_DATA_DIR`              |
+| Deep link        | `lamalibre://callback?product=lamaste#…`       | (no product-only scheme)                                              |
+| DO tag           | `lamalibre:managed`                            | `product:lamaste` (both required)                                     |
 
 ### Core Library Pattern
 
@@ -77,8 +77,8 @@ The single source of truth is `packages/core/lib/src/branding.ts` (TS) and `pack
 {
   "name": "@lamalibre/lamaste",
   "exports": {
-    ".":        "./dist/index.js",
-    "./agent":  "./dist/agent/index.js",
+    ".": "./dist/index.js",
+    "./agent": "./dist/agent/index.js",
     "./server": "./dist/server/index.js"
   }
 }
@@ -91,6 +91,7 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 ```
 
 **Root (`@lamalibre/lamaste`):**
+
 - Types: `AdminClient`, `AgentClient` TypeScript interfaces, plugin manifest types, capability types
 - Constants: Reserved API prefixes, curated plugin list, capability names
 - Schemas: Plugin manifest Zod schema (single source of truth)
@@ -98,6 +99,7 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 - File Helpers: Atomic write (temp → fsync → rename), promise-chain mutex
 
 **Agent subpath (`@lamalibre/lamaste/agent`):**
+
 - Platform: Path helpers, platform detection
 - Registry: Agent registry CRUD, label validation, legacy migration
 - Config: Agent config I/O
@@ -109,6 +111,7 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 - Mode: Server mode and admin cert file operations
 
 **Server subpath (`@lamalibre/lamaste/server`):**
+
 - Plugins: Server-side plugin lifecycle (uses shared schema from root)
 - Tunnels: Tunnel creation workflow with rollback
 - Sites: Site creation with managed/custom domain branching
@@ -117,20 +120,21 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 - Provisioning: Provisioning orchestrator
 
 **Isolation enforced via TypeScript project references:**
+
 - `src/agent/` cannot import from `src/server/` and vice versa
 - `src/index.ts` (shared core) cannot import from either domain
 - Build fails on cross-domain imports — same guarantee as separate packages
 
 ### Agent Side vs Server Side Symmetry
 
-| Layer | Agent side | Server side |
-|---|---|---|
-| **Domain logic** | `@lamalibre/lamaste/agent` | `@lamalibre/lamaste/server` |
-| **Operational CLI** | `lamaste-agent` | `lamaste-server` (new) |
-| **Long-running daemon** | `lamaste-agentd` on :9393 (extracted) | `lamaste-serverd` on :3100 (renamed) |
-| **UI components** | `lamaste-agent-ui` (renamed) | `lamaste-server-ui` (merged) |
-| **Provisioner** | `create-lamaste-agent` (renamed) | `create-lamaste` |
-| **Desktop consumes via** | REST to :9393 / CLI subprocess | REST to :3100 / `curl_panel` |
+| Layer                    | Agent side                            | Server side                          |
+| ------------------------ | ------------------------------------- | ------------------------------------ |
+| **Domain logic**         | `@lamalibre/lamaste/agent`            | `@lamalibre/lamaste/server`          |
+| **Operational CLI**      | `lamaste-agent`                       | `lamaste-server` (new)               |
+| **Long-running daemon**  | `lamaste-agentd` on :9393 (extracted) | `lamaste-serverd` on :3100 (renamed) |
+| **UI components**        | `lamaste-agent-ui` (renamed)          | `lamaste-server-ui` (merged)         |
+| **Provisioner**          | `create-lamaste-agent` (renamed)      | `create-lamaste`                     |
+| **Desktop consumes via** | REST to :9393 / CLI subprocess        | REST to :3100 / `curl_panel`         |
 
 ### Rules
 
@@ -160,6 +164,7 @@ Every plugin follows a consistent **monorepo** structure with up to 7 packages:
 ### Dual-Mode Pattern
 
 All plugins run in two modes:
+
 - **Standalone:** Own port, own CA, own auth — no Lamaste required
 - **Plugin:** Integrated via mTLS, shared registry, panel pages within Lamaste
 
@@ -211,6 +216,7 @@ is `@lamalibre/feria-serverd`. The `npx @lamalibre/create-feria` provisioner is 
 zero-prompt installer.
 
 **Storage layout (unchanged):**
+
 ```
 ~/.feria/
 ├── packages/@lamalibre/*/     # npm package tarballs + metadata
@@ -220,6 +226,7 @@ zero-prompt installer.
 ```
 
 **Commands (run from the sibling feria repo, or via the global `feria-server` binary):**
+
 ```bash
 feria-server                                       # start registry on :4873, configure .npmrc
 feria-server release -w <workflow.yml> version=…   # run GH Actions workflow locally → build + store artifacts
@@ -233,14 +240,15 @@ feria-server setup / teardown / status             # manage .npmrc without start
 
 **Dev → Test → Ship lifecycle:**
 
-| Phase | Feria state | Registry | What happens |
-|-------|-------------|----------|-------------|
-| **Develop** | Running | `@lamalibre:registry=http://localhost:4873` | Code changes, builds, local testing |
-| **Bump + Publish** | Running | Feria | `/bump-versions` bumps patch, publishes all affected packages to Feria |
-| **E2E Tests** | Running | Feria | VMs install from Feria via `npx @lamalibre/create-lamaste`, `npm install @lamalibre/lamaste-agent`, etc. |
-| **Ship** | Stopped | `@lamalibre:registry` removed | `feria-server teardown` restores .npmrc, then `npm publish` goes to npmjs.org |
+| Phase              | Feria state | Registry                                    | What happens                                                                                             |
+| ------------------ | ----------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Develop**        | Running     | `@lamalibre:registry=http://localhost:4873` | Code changes, builds, local testing                                                                      |
+| **Bump + Publish** | Running     | Feria                                       | `/bump-versions` bumps patch, publishes all affected packages to Feria                                   |
+| **E2E Tests**      | Running     | Feria                                       | VMs install from Feria via `npx @lamalibre/create-lamaste`, `npm install @lamalibre/lamaste-agent`, etc. |
+| **Ship**           | Stopped     | `@lamalibre:registry` removed               | `feria-server teardown` restores .npmrc, then `npm publish` goes to npmjs.org                            |
 
 **Key points:**
+
 - Feria MUST be running before E2E tests — VMs resolve `@lamalibre/*` packages from it
 - `feria-server release` builds desktop binaries via the workflow runner and stores them for `create-lamaste-desktop`
 - `feria-server teardown` is required before shipping to npm — otherwise `npm publish` would go to Feria instead of npmjs.org
@@ -248,21 +256,21 @@ feria-server setup / teardown / status             # manage .npmrc without start
 
 ## Tech Stack
 
-| Layer          | Technology                                  |
-| -------------- | ------------------------------------------- |
-| Core library   | TypeScript, Zod, subpath exports            |
-| Installer      | Node.js ESM, Listr2, execa                  |
-| Server daemon  | Fastify 5, Zod validation, WebSocket        |
-| Server UI      | React 18, Vite, Tailwind, react-query       |
-| Tunnel server  | Chisel (Go binary, WebSocket-over-HTTPS)    |
-| Auth           | Authelia (TOTP 2FA, bcrypt)                 |
-| Reverse proxy  | nginx (TLS termination, mTLS, forward auth) |
-| TLS            | Let's Encrypt / certbot                     |
-| Panel auth     | mTLS client certificates                    |
-| Ticket SDK     | TypeScript, undici (mTLS HTTP client)        |
-| Cloud SDK      | TypeScript, undici (DO REST API + S3-compatible storage API, provider abstraction) |
-| State          | JSON files + YAML (no database)             |
-| Target OS      | Ubuntu 24.04 LTS                            |
+| Layer         | Technology                                                                         |
+| ------------- | ---------------------------------------------------------------------------------- |
+| Core library  | TypeScript, Zod, subpath exports                                                   |
+| Installer     | Node.js ESM, Listr2, execa                                                         |
+| Server daemon | Fastify 5, Zod validation, WebSocket                                               |
+| Server UI     | React 18, Vite, Tailwind, react-query                                              |
+| Tunnel server | Chisel (Go binary, WebSocket-over-HTTPS)                                           |
+| Auth          | Authelia (TOTP 2FA, bcrypt)                                                        |
+| Reverse proxy | nginx (TLS termination, mTLS, forward auth)                                        |
+| TLS           | Let's Encrypt / certbot                                                            |
+| Panel auth    | mTLS client certificates                                                           |
+| Ticket SDK    | TypeScript, undici (mTLS HTTP client)                                              |
+| Cloud SDK     | TypeScript, undici (DO REST API + S3-compatible storage API, provider abstraction) |
+| State         | JSON files + YAML (no database)                                                    |
+| Target OS     | Ubuntu 24.04 LTS                                                                   |
 
 ## Coding Conventions
 
@@ -628,16 +636,16 @@ than fragmenting this binary.
 
 ## Environment Variables
 
-| Variable                            | Package             | Purpose                                                  |
-| ----------------------------------- | ------------------- | -------------------------------------------------------- |
-| `LAMALIBRE_LAMASTE_CONFIG`         | lamaste-serverd    | Path to panel.json (default: `/etc/lamalibre/lamaste/panel.json`) |
-| `NODE_ENV`                          | lamaste-serverd    | `development` skips mTLS check                           |
-| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | lamaste-agent    | Enrollment token for `setup --token` (avoids process listing exposure) |
-| `LAMALIBRE_CLOUD_TOKEN`             | lamaste-cloud      | Cloud provider API token (never CLI args)                |
-| `LAMALIBRE_SPACES_ACCESS_KEY`       | lamaste-cloud      | Spaces access key for storage commands (never CLI args)  |
-| `LAMALIBRE_SPACES_SECRET_KEY`       | lamaste-cloud      | Spaces secret key for storage commands (never CLI args)  |
-| `LAMALIBRE_FERIA_BIN`               | lamaste-desktop    | Override path to feria-server binary (escape hatch)      |
-| `LAMALIBRE_LAMASTE_DATA_DIR`       | lamaste-gatekeeper | Data directory (default: `/etc/lamalibre/lamaste`)      |
+| Variable                             | Package            | Purpose                                                                |
+| ------------------------------------ | ------------------ | ---------------------------------------------------------------------- |
+| `LAMALIBRE_LAMASTE_CONFIG`           | lamaste-serverd    | Path to panel.json (default: `/etc/lamalibre/lamaste/panel.json`)      |
+| `NODE_ENV`                           | lamaste-serverd    | `development` skips mTLS check                                         |
+| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | lamaste-agent      | Enrollment token for `setup --token` (avoids process listing exposure) |
+| `LAMALIBRE_CLOUD_TOKEN`              | lamaste-cloud      | Cloud provider API token (never CLI args)                              |
+| `LAMALIBRE_SPACES_ACCESS_KEY`        | lamaste-cloud      | Spaces access key for storage commands (never CLI args)                |
+| `LAMALIBRE_SPACES_SECRET_KEY`        | lamaste-cloud      | Spaces secret key for storage commands (never CLI args)                |
+| `LAMALIBRE_FERIA_BIN`                | lamaste-desktop    | Override path to feria-server binary (escape hatch)                    |
+| `LAMALIBRE_LAMASTE_DATA_DIR`         | lamaste-gatekeeper | Data directory (default: `/etc/lamalibre/lamaste`)                     |
 
 ## License
 

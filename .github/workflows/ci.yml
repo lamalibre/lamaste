@@ -26,8 +26,16 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
 
+      # The package-lock.json is generated on macOS and only contains
+      # @rollup/rollup-darwin-arm64 as a fully resolved node_modules entry.
+      # Both `npm ci` and `npm install` (when a lockfile is present) refuse to
+      # install the missing platform-specific rollup native binary on the
+      # Ubuntu runner — npm bug #4828. Removing the lockfile lets npm resolve
+      # optional deps fresh against the runner's platform.
       - name: Install dependencies
-        run: npm ci
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
 
       - name: Check formatting
         run: npm run format:check

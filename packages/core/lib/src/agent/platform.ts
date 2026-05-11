@@ -93,15 +93,19 @@ export function agentTmpDir(): string {
 // ---------------------------------------------------------------------------
 
 export const LEGACY_PLIST_LABEL = productBundleId('chisel');
-export const LEGACY_PLIST_PATH = path.join(HOME, 'Library', 'LaunchAgents', `${LEGACY_PLIST_LABEL}.plist`);
+export const LEGACY_PLIST_PATH = path.join(
+  HOME,
+  'Library',
+  'LaunchAgents',
+  `${LEGACY_PLIST_LABEL}.plist`,
+);
 export const LEGACY_LOG_FILE = path.join(LOGS_DIR, 'chisel.log');
 export const LEGACY_ERROR_LOG_FILE = path.join(LOGS_DIR, 'chisel.error.log');
 export const LEGACY_SYSTEMD_UNIT_PATH = `/etc/systemd/system/${productUnit('chisel')}.service`;
 
 /** Platform-appropriate legacy service config path. */
-export const LEGACY_SERVICE_CONFIG_PATH = process.platform === 'darwin'
-  ? LEGACY_PLIST_PATH
-  : LEGACY_SYSTEMD_UNIT_PATH;
+export const LEGACY_SERVICE_CONFIG_PATH =
+  process.platform === 'darwin' ? LEGACY_PLIST_PATH : LEGACY_SYSTEMD_UNIT_PATH;
 
 // ---------------------------------------------------------------------------
 // Per-agent path helpers

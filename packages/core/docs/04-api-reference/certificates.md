@@ -222,11 +222,11 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                                                     | When                                             |
-| ------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Status | Body                                                                                                                                           | When                                             |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | 410    | `{"error":"P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert."}` | `adminAuthMode` is `hardware-bound`              |
-| 500    | `{"error":"mTLS rotation failed: ..."}`                                                                  | Certificate generation or file operations failed |
-| 500    | `{"error":"CA key not found — cannot sign new certificate"}`                                             | CA key missing from PKI directory                |
+| 500    | `{"error":"mTLS rotation failed: ..."}`                                                                                                        | Certificate generation or file operations failed |
+| 500    | `{"error":"CA key not found — cannot sign new certificate"}`                                                                                   | CA key missing from PKI directory                |
 
 ---
 
@@ -252,11 +252,11 @@ The response body is the raw binary PKCS#12 file.
 
 **Errors:**
 
-| Status | Body                                                                                                     | When                                                |
-| ------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Status | Body                                                                                                                                           | When                                                |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
 | 410    | `{"error":"P12 certificate download is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert."}` | `adminAuthMode` is `hardware-bound`                 |
-| 404    | `{"error":"No client certificate found"}`                                                                | The `.p12` file does not exist at the expected path |
-| 500    | `{"error":"Failed to download certificate"}`                                                             | File read failed                                    |
+| 404    | `{"error":"No client certificate found"}`                                                                                                      | The `.p12` file does not exist at the expected path |
+| 500    | `{"error":"Failed to download certificate"}`                                                                                                   | File read failed                                    |
 
 ---
 
@@ -374,19 +374,19 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field              | Type       | Description                                                                         |
-| ------------------ | ---------- | ----------------------------------------------------------------------------------- |
-| `label`            | `string`   | Agent identifier (matches certificate CN `agent:<label>`)                           |
-| `serial`           | `string`   | Certificate serial number                                                           |
-| `capabilities`     | `string[]` | Granted capabilities                                                                |
-| `allowedSites`     | `string[]` | Site names this agent can access for file operations                                |
-| `enrollmentMethod` | `string`   | `"p12"`, `"hardware-bound"`, or `"delegated"` — how the agent certificate was issued |
-| `delegatedBy`      | `string \| undefined` | For delegated certs: the label of the delegating agent                        |
-| `certType`         | `string \| undefined` | `"plugin-agent"` for delegated certs, absent for regular agents               |
-| `createdAt`        | `string`   | ISO 8601 creation timestamp                                                         |
-| `expiresAt`        | `string`   | ISO 8601 expiry timestamp                                                           |
-| `revoked`          | `boolean`  | Whether the certificate has been revoked                                            |
-| `expiringSoon`     | `boolean`  | `true` if the certificate is not revoked and fewer than 30 days remain until expiry |
+| Field              | Type                  | Description                                                                          |
+| ------------------ | --------------------- | ------------------------------------------------------------------------------------ |
+| `label`            | `string`              | Agent identifier (matches certificate CN `agent:<label>`)                            |
+| `serial`           | `string`              | Certificate serial number                                                            |
+| `capabilities`     | `string[]`            | Granted capabilities                                                                 |
+| `allowedSites`     | `string[]`            | Site names this agent can access for file operations                                 |
+| `enrollmentMethod` | `string`              | `"p12"`, `"hardware-bound"`, or `"delegated"` — how the agent certificate was issued |
+| `delegatedBy`      | `string \| undefined` | For delegated certs: the label of the delegating agent                               |
+| `certType`         | `string \| undefined` | `"plugin-agent"` for delegated certs, absent for regular agents                      |
+| `createdAt`        | `string`              | ISO 8601 creation timestamp                                                          |
+| `expiresAt`        | `string`              | ISO 8601 expiry timestamp                                                            |
+| `revoked`          | `boolean`             | Whether the certificate has been revoked                                             |
+| `expiringSoon`     | `boolean`             | `true` if the certificate is not revoked and fewer than 30 days remain until expiry  |
 
 ---
 
@@ -429,8 +429,8 @@ Updates the capabilities for an existing agent certificate. Capabilities are sto
 }
 ```
 
-| Field          | Type       | Required | Description                                      |
-| -------------- | ---------- | -------- | ------------------------------------------------ |
+| Field          | Type       | Required | Description                                                                                                       |
+| -------------- | ---------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
 | `capabilities` | `string[]` | Yes      | New capability list. Must include `tunnels:read` for regular agents. Plugin-agents have no mandatory capabilities |
 
 ```bash
@@ -580,16 +580,16 @@ curl -s --cert client.p12:password \
 | Field       | Type      | Description                                        |
 | ----------- | --------- | -------------------------------------------------- |
 | `ok`        | `boolean` | `true` if the token was generated successfully     |
-| `token`     | `string`  | Single-use enrollment token. Only shown once        |
+| `token`     | `string`  | Single-use enrollment token. Only shown once       |
 | `label`     | `string`  | The agent label the token is associated with       |
 | `expiresAt` | `string`  | ISO 8601 timestamp when the token expires (10 min) |
 
 **Errors:**
 
-| Status | Body                                                                      | When                                                    |
-| ------ | ------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{...}}`                           | Invalid label format or missing `tunnels:read`          |
-| 409    | `{"error":"Agent certificate with label \"macbook-pro\" already exists"}` | Label already in use (non-revoked)                      |
+| Status | Body                                                                      | When                                           |
+| ------ | ------------------------------------------------------------------------- | ---------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                           | Invalid label format or missing `tunnels:read` |
+| 409    | `{"error":"Agent certificate with label \"macbook-pro\" already exists"}` | Label already in use (non-revoked)             |
 
 **Note:** If a pending (unused, unexpired) enrollment token already exists for the same label, it is silently replaced by the new token. This allows retried installations without requiring explicit token revocation first.
 
@@ -612,9 +612,9 @@ The returned token is passed out-of-band to the plugin agent, which submits it a
 }
 ```
 
-| Field              | Type     | Required | Description                                                                                                       |
-| ------------------ | -------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `pluginAgentLabel` | `string` | Yes      | 1-50 characters, must start with a letter or number, lowercase letters, numbers, and hyphens only                 |
+| Field              | Type     | Required | Description                                                                                                                       |
+| ------------------ | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `pluginAgentLabel` | `string` | Yes      | 1-50 characters, must start with a letter or number, lowercase letters, numbers, and hyphens only                                 |
 | `scope`            | `string` | Yes      | Ticket scope capability in `scope:action` format (e.g., `sync:connect`). Must be a registered ticket scope, not a base capability |
 
 ```bash
@@ -635,23 +635,23 @@ curl -s --cert agent.p12:password \
 }
 ```
 
-| Field               | Type      | Description                                         |
-| ------------------- | --------- | --------------------------------------------------- |
-| `ok`                | `boolean` | `true` if the token was generated successfully      |
-| `enrollmentToken`   | `string`  | Single-use delegated enrollment token. Only shown once |
-| `expiresAt`         | `string`  | ISO 8601 timestamp when the token expires (10 min)  |
-| `pluginAgentLabel`  | `string`  | The plugin agent label                              |
+| Field              | Type      | Description                                            |
+| ------------------ | --------- | ------------------------------------------------------ |
+| `ok`               | `boolean` | `true` if the token was generated successfully         |
+| `enrollmentToken`  | `string`  | Single-use delegated enrollment token. Only shown once |
+| `expiresAt`        | `string`  | ISO 8601 timestamp when the token expires (10 min)     |
+| `pluginAgentLabel` | `string`  | The plugin agent label                                 |
 
 **Errors:**
 
-| Status | Body                                                                                          | When                                                           |
-| ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{...}}`                                               | Invalid label or scope format                                  |
-| 403    | `{"error":"Plugin agents cannot delegate enrollment"}`                                        | Caller is a plugin-agent (recursive delegation blocked)        |
-| 403    | `{"error":"Agent label not found in certificate"}`                                            | Calling certificate has no agent label                         |
-| 403    | `{"error":"Insufficient delegation authority"}`                                               | Agent does not own an active ticket instance for the scope     |
+| Status | Body                                                                                            | When                                                        |
+| ------ | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                                                 | Invalid label or scope format                               |
+| 403    | `{"error":"Plugin agents cannot delegate enrollment"}`                                          | Caller is a plugin-agent (recursive delegation blocked)     |
+| 403    | `{"error":"Agent label not found in certificate"}`                                              | Calling certificate has no agent label                      |
+| 403    | `{"error":"Insufficient delegation authority"}`                                                 | Agent does not own an active ticket instance for the scope  |
 | 409    | `{"error":"Agent certificate with label \"plugin-agent:macbook-pro:rpi-sync\" already exists"}` | Plugin-agent label already has an active (non-revoked) cert |
-| 500    | `{"error":"Delegated enrollment token generation failed"}`                                    | Token generation error                                         |
+| 500    | `{"error":"Delegated enrollment token generation failed"}`                                      | Token generation error                                      |
 
 **How it works:**
 
@@ -688,16 +688,16 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field     | Type      | Description                                                  |
-| --------- | --------- | ------------------------------------------------------------ |
-| `ok`      | `boolean` | Always `true`                                                |
+| Field     | Type      | Description                                                                                  |
+| --------- | --------- | -------------------------------------------------------------------------------------------- |
+| `ok`      | `boolean` | Always `true`                                                                                |
 | `revoked` | `boolean` | `true` if an active token was found and removed, `false` if no matching active token existed |
 
 **Errors:**
 
-| Status | Body                                 | When                 |
-| ------ | ------------------------------------ | -------------------- |
-| 400    | `{"error":"Validation failed",...}`  | Invalid label format |
+| Status | Body                                | When                 |
+| ------ | ----------------------------------- | -------------------- |
+| 400    | `{"error":"Validation failed",...}` | Invalid label format |
 
 ---
 
@@ -714,10 +714,10 @@ Completes hardware-bound certificate enrollment. The agent submits the enrollmen
 }
 ```
 
-| Field   | Type     | Required | Description                                                |
-| ------- | -------- | -------- | ---------------------------------------------------------- |
-| `token` | `string` | Yes      | The enrollment token from `POST /api/certs/agent/enroll`   |
-| `csr`   | `string` | Yes      | PEM-encoded PKCS#10 Certificate Signing Request            |
+| Field   | Type     | Required | Description                                              |
+| ------- | -------- | -------- | -------------------------------------------------------- |
+| `token` | `string` | Yes      | The enrollment token from `POST /api/certs/agent/enroll` |
+| `csr`   | `string` | Yes      | PEM-encoded PKCS#10 Certificate Signing Request          |
 
 ```bash
 curl -s -k \
@@ -739,30 +739,30 @@ curl -s -k \
 }
 ```
 
-| Field       | Type      | Description                                             |
-| ----------- | --------- | ------------------------------------------------------- |
-| `ok`        | `boolean` | `true` if enrollment succeeded                          |
-| `cert`      | `string`  | PEM-encoded signed client certificate                   |
-| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification         |
-| `label`     | `string`  | The agent label                                         |
-| `serial`    | `string`  | Certificate serial number                               |
-| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)                  |
+| Field       | Type      | Description                                     |
+| ----------- | --------- | ----------------------------------------------- |
+| `ok`        | `boolean` | `true` if enrollment succeeded                  |
+| `cert`      | `string`  | PEM-encoded signed client certificate           |
+| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification |
+| `label`     | `string`  | The agent label                                 |
+| `serial`    | `string`  | Certificate serial number                       |
+| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)          |
 
 **Important:** The token is consumed upon successful enrollment and cannot be reused. The agent stores the returned certificate alongside its locally generated private key.
 
 **Errors:**
 
-| Status | Body                                                                      | When                                                   |
-| ------ | ------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 400    | `{"error":"Validation failed","details":{...}}`                           | Missing or malformed `token` or `csr` field            |
+| Status | Body                                                                      | When                                                     |
+| ------ | ------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                           | Missing or malformed `token` or `csr` field              |
 | 400    | `{"error":"Validation failed","details":{...}}`                           | CSR field missing PEM header or other validation failure |
-| 400    | `{"error":"CSR too large"}`                                               | CSR exceeds 8192 bytes                                 |
-| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}`     | CSR fails OpenSSL validation                           |
-| 401    | `{"error":"Invalid enrollment token"}`                                    | Token not found                                        |
-| 401    | `{"error":"Enrollment token has already been used"}`                      | Token already consumed                                 |
-| 401    | `{"error":"Enrollment token has expired"}`                                | Token past expiry                                      |
-| 500    | `{"error":"Enrollment failed"}`                                           | Server-side signing error (details hidden)             |
-| 409    | `{"error":"Agent certificate with label \"macbook-pro\" already exists"}` | Label already has an active (non-revoked) certificate  |
+| 400    | `{"error":"CSR too large"}`                                               | CSR exceeds 8192 bytes                                   |
+| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}`     | CSR fails OpenSSL validation                             |
+| 401    | `{"error":"Invalid enrollment token"}`                                    | Token not found                                          |
+| 401    | `{"error":"Enrollment token has already been used"}`                      | Token already consumed                                   |
+| 401    | `{"error":"Enrollment token has expired"}`                                | Token past expiry                                        |
+| 500    | `{"error":"Enrollment failed"}`                                           | Server-side signing error (details hidden)               |
+| 409    | `{"error":"Agent certificate with label \"macbook-pro\" already exists"}` | Label already has an active (non-revoked) certificate    |
 
 ---
 
@@ -801,25 +801,25 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field       | Type      | Description                                             |
-| ----------- | --------- | ------------------------------------------------------- |
-| `ok`        | `boolean` | `true` if the upgrade succeeded                         |
-| `cert`      | `string`  | PEM-encoded signed admin certificate                    |
-| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification         |
-| `serial`    | `string`  | Certificate serial number of the new certificate        |
-| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)                  |
+| Field       | Type      | Description                                      |
+| ----------- | --------- | ------------------------------------------------ |
+| `ok`        | `boolean` | `true` if the upgrade succeeded                  |
+| `cert`      | `string`  | PEM-encoded signed admin certificate             |
+| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification  |
+| `serial`    | `string`  | Certificate serial number of the new certificate |
+| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)           |
 
 **Important:** This operation is irreversible in normal use. After upgrade, the old P12 certificate is revoked and `adminAuthMode` is set to `hardware-bound`. The admin must use the hardware-bound certificate for all future panel access.
 
 **Errors:**
 
-| Status | Body                                                     | When                                                    |
-| ------ | -------------------------------------------------------- | ------------------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{...}}`          | Missing or malformed `csr` field                        |
-| 400    | `{"error":"CSR too large"}`                              | CSR exceeds 8192 bytes                                  |
+| Status | Body                                                                  | When                                        |
+| ------ | --------------------------------------------------------------------- | ------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                       | Missing or malformed `csr` field            |
+| 400    | `{"error":"CSR too large"}`                                           | CSR exceeds 8192 bytes                      |
 | 400    | `{"error":"Invalid CSR: structure or signature verification failed"}` | CSR fails OpenSSL validation                |
-| 409    | `{"error":"Admin is already using hardware-bound authentication"}` | `adminAuthMode` is already `hardware-bound`             |
-| 500    | `{"error":"Admin upgrade failed"}`                       | OpenSSL signing or file operation failed                |
+| 409    | `{"error":"Admin is already using hardware-bound authentication"}`    | `adminAuthMode` is already `hardware-bound` |
+| 500    | `{"error":"Admin upgrade failed"}`                                    | OpenSSL signing or file operation failed    |
 
 ---
 
@@ -844,9 +844,9 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field            | Type     | Description                                                   |
-| ---------------- | -------- | ------------------------------------------------------------- |
-| `adminAuthMode`  | `string` | `"p12"` (default) or `"hardware-bound"` (after CSR upgrade)  |
+| Field           | Type     | Description                                                 |
+| --------------- | -------- | ----------------------------------------------------------- |
+| `adminAuthMode` | `string` | `"p12"` (default) or `"hardware-bound"` (after CSR upgrade) |
 
 ---
 
@@ -887,24 +887,24 @@ curl -s --cert agent.p12:password \
 }
 ```
 
-| Field       | Type      | Description                                             |
-| ----------- | --------- | ------------------------------------------------------- |
-| `ok`        | `boolean` | `true` if the upgrade succeeded                         |
-| `cert`      | `string`  | PEM-encoded signed agent certificate                    |
-| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification         |
-| `serial`    | `string`  | Certificate serial number of the new certificate        |
-| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)                  |
+| Field       | Type      | Description                                      |
+| ----------- | --------- | ------------------------------------------------ |
+| `ok`        | `boolean` | `true` if the upgrade succeeded                  |
+| `cert`      | `string`  | PEM-encoded signed agent certificate             |
+| `caCert`    | `string`  | PEM-encoded CA certificate for TLS verification  |
+| `serial`    | `string`  | Certificate serial number of the new certificate |
+| `expiresAt` | `string`  | ISO 8601 expiry date (2-year validity)           |
 
 **Errors:**
 
-| Status | Body                                                                                     | When                                                    |
-| ------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{...}}`                                          | Missing or malformed `csr` field                        |
-| 400    | `{"error":"CSR too large"}`                                                              | CSR exceeds 8192 bytes                                  |
-| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}`                    | CSR fails OpenSSL validation                            |
-| 403    | `{"error":"Agent label not found in certificate"}`                                       | Calling certificate has no agent label                  |
-| 404    | `{"error":"Agent certificate \"macbook-pro\" not found"}`                                | No active (non-revoked) agent with this label           |
-| 500    | `{"error":"Agent certificate upgrade failed"}`                                           | OpenSSL signing or file operation failed                |
+| Status | Body                                                                  | When                                          |
+| ------ | --------------------------------------------------------------------- | --------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                       | Missing or malformed `csr` field              |
+| 400    | `{"error":"CSR too large"}`                                           | CSR exceeds 8192 bytes                        |
+| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}` | CSR fails OpenSSL validation                  |
+| 403    | `{"error":"Agent label not found in certificate"}`                    | Calling certificate has no agent label        |
+| 404    | `{"error":"Agent certificate \"macbook-pro\" not found"}`             | No active (non-revoked) agent with this label |
+| 500    | `{"error":"Agent certificate upgrade failed"}`                        | OpenSSL signing or file operation failed      |
 
 ---
 
@@ -952,26 +952,26 @@ curl -s --cert agent.p12:password \
 
 ## Quick Reference
 
-| Method | Path                                          | Description                            |
-| ------ | --------------------------------------------- | -------------------------------------- |
-| GET    | `/api/certs`                                  | List all certs (sorted by expiry)      |
-| GET    | `/api/certs/auto-renew-status`                | Check certbot timer status             |
-| POST   | `/api/certs/:domain/renew`                    | Force-renew a Let's Encrypt cert       |
-| POST   | `/api/certs/mtls/rotate`                       | Rotate mTLS client certificate         |
-| GET    | `/api/certs/mtls/download`                     | Download client.p12 file               |
-| POST   | `/api/certs/agent`                             | Generate agent certificate (P12)       |
-| GET    | `/api/certs/agent`                             | List agent certificates                |
-| GET    | `/api/certs/agent/:label/download`             | Download agent .p12 file               |
-| PATCH  | `/api/certs/agent/:label/capabilities`         | Update agent capabilities              |
-| PATCH  | `/api/certs/agent/:label/allowed-sites`        | Update agent site access               |
-| DELETE | `/api/certs/agent/:label`                      | Revoke agent certificate               |
-| POST   | `/api/certs/agent/enroll`                      | Generate enrollment token (admin-only) |
-| POST   | `/api/certs/agent/enroll-delegated`            | Delegated enrollment token (agent-only)|
-| DELETE | `/api/certs/agent/enroll/:label`               | Revoke unused enrollment token         |
-| POST   | `/api/certs/agent/upgrade-cert`                | Upgrade agent cert to hardware-bound   |
-| POST   | `/api/enroll`                                  | Enroll agent with token (public)       |
-| POST   | `/api/certs/admin/upgrade-to-hardware-bound`   | Upgrade admin to hardware-bound        |
-| GET    | `/api/certs/admin/auth-mode`                   | Get admin auth mode                    |
+| Method | Path                                         | Description                             |
+| ------ | -------------------------------------------- | --------------------------------------- |
+| GET    | `/api/certs`                                 | List all certs (sorted by expiry)       |
+| GET    | `/api/certs/auto-renew-status`               | Check certbot timer status              |
+| POST   | `/api/certs/:domain/renew`                   | Force-renew a Let's Encrypt cert        |
+| POST   | `/api/certs/mtls/rotate`                     | Rotate mTLS client certificate          |
+| GET    | `/api/certs/mtls/download`                   | Download client.p12 file                |
+| POST   | `/api/certs/agent`                           | Generate agent certificate (P12)        |
+| GET    | `/api/certs/agent`                           | List agent certificates                 |
+| GET    | `/api/certs/agent/:label/download`           | Download agent .p12 file                |
+| PATCH  | `/api/certs/agent/:label/capabilities`       | Update agent capabilities               |
+| PATCH  | `/api/certs/agent/:label/allowed-sites`      | Update agent site access                |
+| DELETE | `/api/certs/agent/:label`                    | Revoke agent certificate                |
+| POST   | `/api/certs/agent/enroll`                    | Generate enrollment token (admin-only)  |
+| POST   | `/api/certs/agent/enroll-delegated`          | Delegated enrollment token (agent-only) |
+| DELETE | `/api/certs/agent/enroll/:label`             | Revoke unused enrollment token          |
+| POST   | `/api/certs/agent/upgrade-cert`              | Upgrade agent cert to hardware-bound    |
+| POST   | `/api/enroll`                                | Enroll agent with token (public)        |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin to hardware-bound         |
+| GET    | `/api/certs/admin/auth-mode`                 | Get admin auth mode                     |
 
 ### Certificate Object Shape
 

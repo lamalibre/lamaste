@@ -7,11 +7,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { Agent as UndiciAgent, fetch, type Dispatcher } from 'undici';
-import type {
-  IdentityLogger,
-  IdentityCertConfig,
-  UserMetadata,
-} from './types.js';
+import type { IdentityLogger, IdentityCertConfig, UserMetadata } from './types.js';
 import { IdentityHttpError } from './types.js';
 
 // ---------------------------------------------------------------------------

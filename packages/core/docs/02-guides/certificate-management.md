@@ -40,7 +40,7 @@ These are issued during onboarding and when you create tunnels or static sites. 
 
 | Certificate        | Subject            | Purpose                                                |
 | ------------------ | ------------------ | ------------------------------------------------------ |
-| CA certificate     | `CN=Lamaste CA`   | Signs all client certificates (10-year validity)       |
+| CA certificate     | `CN=Lamaste CA`    | Signs all client certificates (10-year validity)       |
 | Admin certificate  | `CN=admin`         | Full panel access via browser (2-year validity)        |
 | Agent certificates | `CN=agent:<label>` | Scoped access for Mac tunnel clients (2-year validity) |
 | Self-signed TLS    | `CN=<server-ip>`   | IP-based panel HTTPS (10-year validity)                |
@@ -225,8 +225,8 @@ Revocation is immediate — the certificate serial is added to a revocation list
 
 ### Certificate File Locations
 
-| File                | Path                                          | Permission      |
-| ------------------- | --------------------------------------------- | --------------- |
+| File                | Path                                                   | Permission      |
+| ------------------- | ------------------------------------------------------ | --------------- |
 | CA key              | `/etc/lamalibre/lamaste/pki/ca.key`                    | 600             |
 | CA certificate      | `/etc/lamalibre/lamaste/pki/ca.crt`                    | 644             |
 | Client key          | `/etc/lamalibre/lamaste/pki/client.key`                | 600             |
@@ -235,30 +235,30 @@ Revocation is immediate — the certificate serial is added to a revocation list
 | P12 password        | `/etc/lamalibre/lamaste/pki/.p12-password`             | 600             |
 | Self-signed key     | `/etc/lamalibre/lamaste/pki/self-signed-key.pem`       | 600             |
 | Self-signed cert    | `/etc/lamalibre/lamaste/pki/self-signed.pem`           | 644             |
-| Let's Encrypt certs | `/etc/letsencrypt/live/<domain>/`             | certbot-managed |
+| Let's Encrypt certs | `/etc/letsencrypt/live/<domain>/`                      | certbot-managed |
 | Revocation list     | `/etc/lamalibre/lamaste/pki/revoked.json`              | 600             |
 | Agent registry      | `/etc/lamalibre/lamaste/pki/agents/registry.json`      | 600             |
 | Agent certs         | `/etc/lamalibre/lamaste/pki/agents/<label>/client.p12` | 600             |
 
 ### API Endpoints
 
-| Method   | Path                                    | Purpose                            |
-| -------- | --------------------------------------- | ---------------------------------- |
-| `GET`    | `/api/certs`                            | List all certificates (LE + mTLS)  |
-| `GET`    | `/api/certs/auto-renew-status`          | Certbot timer status               |
-| `POST`   | `/api/certs/:domain/renew`              | Force-renew a Let's Encrypt cert   |
-| `POST`   | `/api/certs/mtls/rotate`                | Rotate the mTLS client certificate |
-| `GET`    | `/api/certs/mtls/download`              | Download client.p12                |
-| `POST`   | `/api/certs/agent`                      | Generate agent certificate         |
-| `GET`    | `/api/certs/agent`                      | List agent certificates            |
-| `GET`    | `/api/certs/agent/:label/download`      | Download agent .p12                |
-| `PATCH`  | `/api/certs/agent/:label/capabilities`  | Update agent capabilities          |
-| `PATCH`  | `/api/certs/agent/:label/allowed-sites` | Update agent site access           |
-| `DELETE` | `/api/certs/agent/:label`               | Revoke agent certificate           |
-| `POST`   | `/api/certs/agent/enroll`               | Generate enrollment token (admin)  |
-| `POST`   | `/api/enroll`                           | Enroll agent with token (public)   |
-| `POST`   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)    |
-| `GET`    | `/api/certs/admin/auth-mode`            | Get admin auth mode (admin)        |
+| Method   | Path                                         | Purpose                            |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `GET`    | `/api/certs`                                 | List all certificates (LE + mTLS)  |
+| `GET`    | `/api/certs/auto-renew-status`               | Certbot timer status               |
+| `POST`   | `/api/certs/:domain/renew`                   | Force-renew a Let's Encrypt cert   |
+| `POST`   | `/api/certs/mtls/rotate`                     | Rotate the mTLS client certificate |
+| `GET`    | `/api/certs/mtls/download`                   | Download client.p12                |
+| `POST`   | `/api/certs/agent`                           | Generate agent certificate         |
+| `GET`    | `/api/certs/agent`                           | List agent certificates            |
+| `GET`    | `/api/certs/agent/:label/download`           | Download agent .p12                |
+| `PATCH`  | `/api/certs/agent/:label/capabilities`       | Update agent capabilities          |
+| `PATCH`  | `/api/certs/agent/:label/allowed-sites`      | Update agent site access           |
+| `DELETE` | `/api/certs/agent/:label`                    | Revoke agent certificate           |
+| `POST`   | `/api/certs/agent/enroll`                    | Generate enrollment token (admin)  |
+| `POST`   | `/api/enroll`                                | Enroll agent with token (public)   |
+| `POST`   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin auth (admin)         |
+| `GET`    | `/api/certs/admin/auth-mode`                 | Get admin auth mode (admin)        |
 
 ### Certificate Response Format
 

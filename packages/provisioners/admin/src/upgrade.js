@@ -121,7 +121,13 @@ async function runUpgradeSteps(ctx, onStep) {
     const configPath1 = await createCurlConfig(ctx.p12Path, ctx.p12Password);
     try {
       const { stdout } = await execa('curl', [
-        '-K', configPath1, '-s', '-f', '--max-time', '30', '-k',
+        '-K',
+        configPath1,
+        '-s',
+        '-f',
+        '--max-time',
+        '30',
+        '-k',
         `${ctx.panelUrl}/api/health`,
       ]);
       const health = JSON.parse(stdout);
@@ -135,7 +141,13 @@ async function runUpgradeSteps(ctx, onStep) {
     const configPath2 = await createCurlConfig(ctx.p12Path, ctx.p12Password);
     try {
       const { stdout } = await execa('curl', [
-        '-K', configPath2, '-s', '-f', '--max-time', '30', '-k',
+        '-K',
+        configPath2,
+        '-s',
+        '-f',
+        '--max-time',
+        '30',
+        '-k',
         `${ctx.panelUrl}/api/certs/admin/auth-mode`,
       ]);
       const data = JSON.parse(stdout);
@@ -153,8 +165,14 @@ async function runUpgradeSteps(ctx, onStep) {
     await execa('openssl', ['genrsa', '-out', keyPath, '4096']);
     await chmod(keyPath, 0o600);
     await execa('openssl', [
-      'req', '-new', '-key', keyPath, '-out', csrPath,
-      '-subj', '/CN=admin/O=Lamaste',
+      'req',
+      '-new',
+      '-key',
+      keyPath,
+      '-out',
+      csrPath,
+      '-subj',
+      '/CN=admin/O=Lamaste',
     ]);
     csrPem = await readFile(csrPath, 'utf-8');
     onStep('generate-keypair', 'complete', 'Keypair generated (4096-bit RSA)');
@@ -164,9 +182,19 @@ async function runUpgradeSteps(ctx, onStep) {
     const configPath3 = await createCurlConfig(ctx.p12Path, ctx.p12Password);
     try {
       const { stdout } = await execa('curl', [
-        '-K', configPath3, '-s', '-f', '--max-time', '60', '-k',
-        '-X', 'POST', '-H', 'Content-Type: application/json',
-        '-d', JSON.stringify({ csr: csrPem }),
+        '-K',
+        configPath3,
+        '-s',
+        '-f',
+        '--max-time',
+        '60',
+        '-k',
+        '-X',
+        'POST',
+        '-H',
+        'Content-Type: application/json',
+        '-d',
+        JSON.stringify({ csr: csrPem }),
         `${ctx.panelUrl}/api/certs/admin/upgrade-to-hardware-bound`,
       ]);
       const result = JSON.parse(stdout);
@@ -175,7 +203,11 @@ async function runUpgradeSteps(ctx, onStep) {
       }
       certPem = result.cert;
       caCertPem = result.caCert;
-      onStep('upgrade-cert', 'complete', `Certificate signed (serial: ${result.serial}, expires: ${result.expiresAt})`);
+      onStep(
+        'upgrade-cert',
+        'complete',
+        `Certificate signed (serial: ${result.serial}, expires: ${result.expiresAt})`,
+      );
     } finally {
       await unlink(configPath3).catch(() => {});
     }
@@ -193,24 +225,41 @@ async function runUpgradeSteps(ctx, onStep) {
     const outputDir = resolve(outputP12Path, '..');
     await mkdir(outputDir, { recursive: true, mode: 0o700 });
 
-    await execa('openssl', [
-      'pkcs12', '-export',
-      '-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES', '-macalg', 'sha1',
-      '-out', outputP12Path,
-      '-inkey', keyPath,
-      '-in', certPath,
-      '-certfile', caPath,
-      '-name', 'admin',
-      '-passout', 'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-    ], { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: newP12Password } });
+    await execa(
+      'openssl',
+      [
+        'pkcs12',
+        '-export',
+        '-keypbe',
+        'PBE-SHA1-3DES',
+        '-certpbe',
+        'PBE-SHA1-3DES',
+        '-macalg',
+        'sha1',
+        '-out',
+        outputP12Path,
+        '-inkey',
+        keyPath,
+        '-in',
+        certPath,
+        '-certfile',
+        caPath,
+        '-name',
+        'admin',
+        '-passout',
+        'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
+      ],
+      { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: newP12Password } },
+    );
 
     await chmod(outputP12Path, 0o600);
 
     // Verify the new P12 is valid
-    await execa('openssl', [
-      'pkcs12', '-in', outputP12Path,
-      '-nokeys', '-passin', 'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-    ], { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: newP12Password } });
+    await execa(
+      'openssl',
+      ['pkcs12', '-in', outputP12Path, '-nokeys', '-passin', 'env:LAMALIBRE_LAMASTE_TMP_P12_PASS'],
+      { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: newP12Password } },
+    );
 
     onStep('create-p12', 'complete', `P12 created at ${outputP12Path}`);
 
@@ -227,36 +276,68 @@ async function runUpgradeSteps(ctx, onStep) {
 
         // Create a separate P12 for Keychain import (with -x non-extractable)
         const importPassword = crypto.randomBytes(16).toString('hex');
-        await execa('openssl', [
-          'pkcs12', '-export',
-          '-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES', '-macalg', 'sha1',
-          '-out', p12ImportPath,
-          '-inkey', keyPath,
-          '-in', certPath,
-          '-certfile', caPath,
-          '-name', identityName,
-          '-passout', 'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
-        ], { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: importPassword } });
+        await execa(
+          'openssl',
+          [
+            'pkcs12',
+            '-export',
+            '-keypbe',
+            'PBE-SHA1-3DES',
+            '-certpbe',
+            'PBE-SHA1-3DES',
+            '-macalg',
+            'sha1',
+            '-out',
+            p12ImportPath,
+            '-inkey',
+            keyPath,
+            '-in',
+            certPath,
+            '-certfile',
+            caPath,
+            '-name',
+            identityName,
+            '-passout',
+            'env:LAMALIBRE_LAMASTE_TMP_P12_PASS',
+          ],
+          { env: { ...process.env, LAMALIBRE_LAMASTE_TMP_P12_PASS: importPassword } },
+        );
 
         // Import with -x (non-extractable) and browser access
         await execa('security', [
-          'import', p12ImportPath, '-x',
-          '-T', '/Applications/Safari.app',
-          '-T', '/Applications/Google Chrome.app',
-          '-T', '/usr/bin/curl',
-          '-P', importPassword,
+          'import',
+          p12ImportPath,
+          '-x',
+          '-T',
+          '/Applications/Safari.app',
+          '-T',
+          '/Applications/Google Chrome.app',
+          '-T',
+          '/usr/bin/curl',
+          '-P',
+          importPassword,
         ]);
 
         // Set key partition list for browser access (best-effort)
         try {
           await execa('security', [
-            'set-key-partition-list', '-S', 'apple:', '-k', '', '-D', identityName,
+            'set-key-partition-list',
+            '-S',
+            'apple:',
+            '-k',
+            '',
+            '-D',
+            identityName,
           ]);
         } catch {
           // May fail if Keychain is locked — import still succeeded
         }
 
-        onStep('keychain-import', 'complete', `Identity "${identityName}" imported (non-extractable)`);
+        onStep(
+          'keychain-import',
+          'complete',
+          `Identity "${identityName}" imported (non-extractable)`,
+        );
       } catch {
         onStep('keychain-import', 'skipped', 'Keychain import failed (best-effort)');
       }
@@ -288,18 +369,12 @@ export async function upgrade() {
 
   console.log('');
   console.log(chalk.bold('  Lamaste Admin — Hardware-Bound Certificate Upgrade'));
-  console.log(chalk.dim('  Bind your admin certificate to this Mac\'s Keychain.'));
+  console.log(chalk.dim("  Bind your admin certificate to this Mac's Keychain."));
   console.log(chalk.dim('  The private key will be non-extractable.'));
   console.log('');
-  console.log(
-    chalk.yellow('  WARNING: This is a one-way operation. After upgrading, the P12'),
-  );
-  console.log(
-    chalk.yellow('  download and rotation will be disabled on the panel. Recovery'),
-  );
-  console.log(
-    chalk.yellow('  requires running lamaste-reset-admin on the server via DO console.'),
-  );
+  console.log(chalk.yellow('  WARNING: This is a one-way operation. After upgrading, the P12'));
+  console.log(chalk.yellow('  download and rotation will be disabled on the panel. Recovery'));
+  console.log(chalk.yellow('  requires running lamaste-reset-admin on the server via DO console.'));
   console.log('');
 
   const panelUrl = await prompt('Panel URL (e.g. https://1.2.3.4:9292)');
@@ -333,7 +408,7 @@ export async function upgrade() {
     'upgrade-cert': 'Upgrading admin certificate on panel',
     'create-p12': 'Creating P12 for API access',
     'keychain-import': 'Importing certificate into Keychain',
-    'cleanup': 'Cleaning up',
+    cleanup: 'Cleaning up',
   };
 
   const tasks = new Listr(
@@ -406,17 +481,26 @@ export async function upgrade() {
   console.log(c('  ╠══════════════════════════════════════════════════════════╣'));
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
   console.log(
-    c('  ║') + `  ${b('Identity:')} ${result.identity}` + ' '.repeat(Math.max(0, 43 - result.identity.length)) + c('║'),
+    c('  ║') +
+      `  ${b('Identity:')} ${result.identity}` +
+      ' '.repeat(Math.max(0, 43 - result.identity.length)) +
+      c('║'),
   );
   console.log(
     c('  ║') + `  ${b('Key:')}      Non-extractable (Keychain-bound)` + ' '.repeat(12) + c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
   console.log(
-    c('  ║') + `  ${b('P12 File:')} ${d(result.p12Path)}` + ' '.repeat(Math.max(0, 43 - result.p12Path.length)) + c('║'),
+    c('  ║') +
+      `  ${b('P12 File:')} ${d(result.p12Path)}` +
+      ' '.repeat(Math.max(0, 43 - result.p12Path.length)) +
+      c('║'),
   );
   console.log(
-    c('  ║') + `  ${b('Password:')} ${d(result.p12Password)}` + ' '.repeat(Math.max(0, 43 - result.p12Password.length)) + c('║'),
+    c('  ║') +
+      `  ${b('Password:')} ${d(result.p12Password)}` +
+      ' '.repeat(Math.max(0, 43 - result.p12Password.length)) +
+      c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
   console.log(
@@ -426,12 +510,8 @@ export async function upgrade() {
     c('  ║') + `  ${d('for mTLS. Desktop/CLI tools use the P12 file.')}` + ' '.repeat(8) + c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
-  console.log(
-    c('  ║') + `  ${b('Recovery:')}` + ' '.repeat(47) + c('║'),
-  );
-  console.log(
-    c('  ║') + `    ${d('sudo lamaste-reset-admin')}` + ' '.repeat(29) + c('║'),
-  );
+  console.log(c('  ║') + `  ${b('Recovery:')}` + ' '.repeat(47) + c('║'));
+  console.log(c('  ║') + `    ${d('sudo lamaste-reset-admin')}` + ' '.repeat(29) + c('║'));
   console.log(
     c('  ║') + `    ${d('(run on the server via DO console)')}` + ' '.repeat(18) + c('║'),
   );
@@ -473,7 +553,11 @@ export async function upgradeJson(options) {
   const resolvedPasswordFile = resolve(passwordFile || `${resolvedOutP12}.password`);
 
   if (!existsSync(resolvedP12)) {
-    const line = JSON.stringify({ event: 'error', message: `P12 file not found at: ${resolvedP12}`, recoverable: false });
+    const line = JSON.stringify({
+      event: 'error',
+      message: `P12 file not found at: ${resolvedP12}`,
+      recoverable: false,
+    });
     process.stdout.write(line + '\n');
     process.exit(1);
   }

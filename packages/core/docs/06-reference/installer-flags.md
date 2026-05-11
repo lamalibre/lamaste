@@ -110,10 +110,10 @@ See also: [Uninstalling](../05-operations/uninstalling.md) for the full document
 
 ## Environment Variables
 
-| Variable          | Default                    | Description                                                                                                                                         |
-| ----------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable                   | Default                             | Description                                                                                                                                                      |
+| -------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LAMALIBRE_LAMASTE_CONFIG` | `/etc/lamalibre/lamaste/panel.json` | Override the panel config file path (lamalibre-lamaste-serverd)                                                                                                  |
-| `NODE_ENV`        | —                          | Set to `development` (or leave unset) to skip mTLS verification and use dev config path; set to `production` for production behavior (lamalibre-lamaste-serverd) |
+| `NODE_ENV`                 | —                                   | Set to `development` (or leave unset) to skip mTLS verification and use dev config path; set to `production` for production behavior (lamalibre-lamaste-serverd) |
 
 These environment variables affect the **panel server** at runtime, not the installer itself. They are listed here because they are the only environment-level configuration Lamaste uses.
 

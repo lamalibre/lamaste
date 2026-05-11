@@ -14,8 +14,7 @@ const suiteSchema =
     : z.string().min(1).describe('Which test suite');
 
 // test_run_all and test_list additionally accept 'all' — run every suite.
-const suiteOrAllValues =
-  SUITE_NAMES.length > 0 ? [...SUITE_NAMES, 'all'] : ['all'];
+const suiteOrAllValues = SUITE_NAMES.length > 0 ? [...SUITE_NAMES, 'all'] : ['all'];
 const suiteOrAllSchema = z
   .enum(suiteOrAllValues)
   .describe('Which suite(s) to run — a suite name or "all" for every suite');
@@ -35,8 +34,8 @@ export const testRunTool = {
   inputSchema: z.object({
     test: z.coerce.number().int().min(1).describe('Test number to run (e.g. 11)'),
     suite: defaultSuite ? suiteSchema.default(defaultSuite) : suiteSchema,
-    skipDeps: z
-      .coerce.boolean()
+    skipDeps: z.coerce
+      .boolean()
       .default(false)
       .describe(
         'Skip dependency tests (use if you know prerequisites are met, e.g. from a snapshot)',
@@ -67,8 +66,7 @@ export const testRunAllTool = {
 
 export const testListTool = {
   name: 'test_list',
-  description:
-    'List all available tests with their dependency graph and filenames.',
+  description: 'List all available tests with their dependency graph and filenames.',
   inputSchema: z.object({
     suite: suiteOrAllSchema.default('all'),
   }),
@@ -99,12 +97,10 @@ export const testPublishTool = {
     'with skipRecreate=true.',
   inputSchema: z.object({
     domain: domainSchema,
-    skipRecreate: z
-      .coerce.boolean()
+    skipRecreate: z.coerce
+      .boolean()
       .default(false)
-      .describe(
-        'Skip VM recreation (use if VMs are already running with production profile)',
-      ),
+      .describe('Skip VM recreation (use if VMs are already running with production profile)'),
   }),
   async handler({ domain, skipRecreate } = {}) {
     const args = ['test', 'publish'];

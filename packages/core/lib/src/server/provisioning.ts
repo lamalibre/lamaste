@@ -181,9 +181,7 @@ export interface ProvisionServerOptions {
  * in the result. Callers should clear it from memory after delivering
  * it to the user.
  */
-export async function provisionServer(
-  opts: ProvisionServerOptions,
-): Promise<ProvisioningResult> {
+export async function provisionServer(opts: ProvisionServerOptions): Promise<ProvisioningResult> {
   const {
     domain,
     email,
@@ -363,10 +361,7 @@ export async function provisionServer(
       },
     });
 
-    logger.error(
-      { err, task: failedTaskId },
-      'Provisioning failed',
-    );
+    logger.error({ err, task: failedTaskId }, 'Provisioning failed');
 
     throw err;
   }

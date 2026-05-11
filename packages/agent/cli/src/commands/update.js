@@ -130,9 +130,12 @@ export async function runUpdate({ label }) {
           }));
           try {
             await curlAuthenticatedJson(config, [
-              '-X', 'POST',
-              '-H', 'Content-Type: application/json',
-              '-d', JSON.stringify({ plugins: pluginReport }),
+              '-X',
+              'POST',
+              '-H',
+              'Content-Type: application/json',
+              '-d',
+              JSON.stringify({ plugins: pluginReport }),
               `${config.panelUrl}/api/agents/plugins/report`,
             ]);
             task.output = `Reported ${enabledPlugins.length} plugin(s)`;

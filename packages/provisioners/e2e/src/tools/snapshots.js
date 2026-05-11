@@ -6,8 +6,7 @@ import { z } from 'zod';
 import { runE2eCommand } from '../subprocess.js';
 import { ROLE_NAMES, TIER_NAMES } from '../project-config.js';
 
-const roleItemSchema =
-  ROLE_NAMES.length > 0 ? z.enum(ROLE_NAMES) : z.string().min(1);
+const roleItemSchema = ROLE_NAMES.length > 0 ? z.enum(ROLE_NAMES) : z.string().min(1);
 
 const tierSchema =
   TIER_NAMES.length > 0
@@ -31,10 +30,7 @@ export const snapshotCreateTool = {
       .optional()
       .describe('Snapshot name (e.g. "post-setup"). Required unless tier is set.'),
     tier: tierSchema.optional(),
-    vms: z
-      .array(roleItemSchema)
-      .optional()
-      .describe('Which VMs to snapshot (default: all roles)'),
+    vms: z.array(roleItemSchema).optional().describe('Which VMs to snapshot (default: all roles)'),
   }),
   async handler({ name, tier, vms } = {}) {
     const args = ['snapshot', 'create'];
@@ -58,10 +54,7 @@ export const snapshotRestoreTool = {
       .optional()
       .describe('Snapshot name to restore. Required unless tier is set.'),
     tier: tierSchema.optional(),
-    vms: z
-      .array(roleItemSchema)
-      .optional()
-      .describe('Which VMs to restore (default: all roles)'),
+    vms: z.array(roleItemSchema).optional().describe('Which VMs to restore (default: all roles)'),
   }),
   async handler({ name, tier, vms } = {}) {
     const args = ['snapshot', 'restore'];

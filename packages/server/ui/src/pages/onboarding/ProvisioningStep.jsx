@@ -45,6 +45,7 @@ export default function ProvisioningStep({ onComplete }) {
   // Start provisioning on mount
   useEffect(() => {
     if (started) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot init guarded by `started`
     setStarted(true);
 
     fetch('/api/onboarding/provision', {
