@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "installed",
+    "name": "Single-VM installed",
+    "description": "Pack create-lamaste, transfer to the host, install globally, and run the installer.",
+    "dependsOn": "node-ready"
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Static IP of the single-VM host (injected by the tier runner from ctx.vmIps[host])."
+    }
+  },
+  "sections": [
+    {
+      "id": "install-lamaste",
+      "label": "Install Lamaste via create-lamaste",
+      "steps": [
+        {
+          "id": "pack-create-lamaste",
+          "label": "Pack create-lamaste tarball on the orchestrator host",
+          "target": "local",
+          "op": {
+            "type": "pack",
+            "package": "create-lamaste"
+          },
+          "capture": [
+            { "variable": "CREATE_LAMASTE_TARBALL", "from": { "kind": "result" } }
+          ]
+        },
+        {
+          "id": "transfer-tarball",
+          "label": "Transfer create-lamaste tarball to the host VM",
+          "target": "host",
+          "op": {
+            "type": "transfer",
+            "source": { "kind": "var", "name": "CREATE_LAMASTE_TARBALL" },
+            "dest": "/tmp/create-lamaste.tgz"
+          }
+        },
+        {
+          "id": "install-tarball",
+          "label": "Install create-lamaste globally from the tarball",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "npm install -g /tmp/create-lamaste.tgz"
+          }
+        },
+        {
+          "id": "run-create-lamaste",
+          "label": "Run create-lamaste installer",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "create-lamaste --dev --skip-harden --yes"
+          }
+        },
+        {
+          "id": "patch-panel-ip",
+          "label": "Patch panel.json IP to match the VM static IP",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "patch-panel-ip"
+          },
+          "bash": "set -euo pipefail\nif [ -n \"${HOST_IP:-}\" ]; then\n  sed -i \"s/\\\"ip\\\": *\\\"[^\\\"]*\\\"/\\\"ip\\\": \\\"${HOST_IP}\\\"/\" /etc/lamalibre/lamaste/panel.json\nfi\n"
+        },
+        {
+          "id": "restart-panel",
+          "label": "Restart lamalibre-lamaste-serverd to pick up the patched IP",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl restart lamalibre-lamaste-serverd"
+          },
+          "continueOnError": true
+        }
+      ]
+    }
+  ]
+}

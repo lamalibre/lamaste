@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Portlama E2E Three-VM Test — Agent VM Setup
+# Lamaste E2E Three-VM Test — Agent VM Setup
 # ============================================================================
-# Installs portlama-agent from a tarball and enrolls using a one-time token.
+# Installs lamaste-agent from a tarball and enrolls using a one-time token.
 #
 # Prerequisites:
 #   - The orchestrator must have transferred the agent tarball to
-#     /tmp/portlama-agent.tgz before running this script.
+#     /tmp/lamalibre-lamaste-agent.tgz before running this script.
 #
 # Usage:
 #   sudo bash setup-agent.sh <HOST_IP> <TEST_DOMAIN> <ENROLLMENT_TOKEN>
 #
 # Arguments:
 #   HOST_IP          — IP address of the host VM
-#   TEST_DOMAIN      — Test domain name (e.g., test.portlama.local)
+#   TEST_DOMAIN      — Test domain name (e.g., test.lamaste.local)
 #   ENROLLMENT_TOKEN — One-time enrollment token from the panel
 # ============================================================================
 
@@ -25,7 +25,7 @@ set -euo pipefail
 if [ $# -lt 3 ]; then
   echo "Usage: $0 <HOST_IP> <TEST_DOMAIN> <ENROLLMENT_TOKEN>"
   echo "  HOST_IP          IP address of the host VM"
-  echo "  TEST_DOMAIN      Test domain (e.g., test.portlama.local)"
+  echo "  TEST_DOMAIN      Test domain (e.g., test.lamaste.local)"
   echo "  ENROLLMENT_TOKEN One-time enrollment token from the panel"
   exit 1
 fi
@@ -60,11 +60,11 @@ if [ -z "${ENROLLMENT_TOKEN}" ]; then
   log_fatal "ENROLLMENT_TOKEN must not be empty."
 fi
 
-if [ ! -f /tmp/portlama-agent.tgz ]; then
-  log_fatal "Agent tarball not found at /tmp/portlama-agent.tgz. The orchestrator must transfer it before running this script."
+if [ ! -f /tmp/lamalibre-lamaste-agent.tgz ]; then
+  log_fatal "Agent tarball not found at /tmp/lamalibre-lamaste-agent.tgz. The orchestrator must transfer it before running this script."
 fi
 
-log_header "Portlama E2E — Agent VM Setup"
+log_header "Lamaste E2E — Agent VM Setup"
 log_kv "Host IP" "${HOST_IP}"
 log_kv "Test Domain" "${TEST_DOMAIN}"
 
@@ -74,12 +74,12 @@ log_kv "Test Domain" "${TEST_DOMAIN}"
 log_step "[1/5] Configuring /etc/hosts..."
 
 # Add entries to /etc/hosts for immediate use
-sed -i '/# portlama-e2e-test$/d' /etc/hosts
+sed -i '/# lamaste-e2e-test$/d' /etc/hosts
 {
-  echo "${HOST_IP}  ${TEST_DOMAIN}  # portlama-e2e-test"
-  echo "${HOST_IP}  panel.${TEST_DOMAIN}  # portlama-e2e-test"
-  echo "${HOST_IP}  auth.${TEST_DOMAIN}  # portlama-e2e-test"
-  echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # portlama-e2e-test"
+  echo "${HOST_IP}  ${TEST_DOMAIN}  # lamaste-e2e-test"
+  echo "${HOST_IP}  panel.${TEST_DOMAIN}  # lamaste-e2e-test"
+  echo "${HOST_IP}  auth.${TEST_DOMAIN}  # lamaste-e2e-test"
+  echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # lamaste-e2e-test"
 } >> /etc/hosts
 
 # Also inject into the cloud-init hosts template so entries survive snapshot
@@ -87,12 +87,12 @@ sed -i '/# portlama-e2e-test$/d' /etc/hosts
 # on every boot — entries here are preserved automatically.
 TMPL="/etc/cloud/templates/hosts.debian.tmpl"
 if [ -f "${TMPL}" ]; then
-  sed -i '/# portlama-e2e-test$/d' "${TMPL}"
+  sed -i '/# lamaste-e2e-test$/d' "${TMPL}"
   {
-    echo "${HOST_IP}  ${TEST_DOMAIN}  # portlama-e2e-test"
-    echo "${HOST_IP}  panel.${TEST_DOMAIN}  # portlama-e2e-test"
-    echo "${HOST_IP}  auth.${TEST_DOMAIN}  # portlama-e2e-test"
-    echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # portlama-e2e-test"
+    echo "${HOST_IP}  ${TEST_DOMAIN}  # lamaste-e2e-test"
+    echo "${HOST_IP}  panel.${TEST_DOMAIN}  # lamaste-e2e-test"
+    echo "${HOST_IP}  auth.${TEST_DOMAIN}  # lamaste-e2e-test"
+    echo "${HOST_IP}  tunnel.${TEST_DOMAIN}  # lamaste-e2e-test"
   } >> "${TMPL}"
 fi
 
@@ -114,18 +114,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Install portlama-agent from tarball
+# Step 3: Install lamaste-agent from tarball
 # ---------------------------------------------------------------------------
-log_step "[3/5] Installing portlama-agent from tarball..."
+log_step "[3/5] Installing lamaste-agent from tarball..."
 
-run_cmd "Install portlama-agent globally" npm install -g /tmp/portlama-agent.tgz
-AGENT_VERSION=$(portlama-agent --help 2>/dev/null | head -1 || echo "installed")
-log_ok "portlama-agent installed: ${AGENT_VERSION}"
+run_cmd "Install lamaste-agent globally" npm install -g /tmp/lamalibre-lamaste-agent.tgz
+AGENT_VERSION=$(lamaste-agent --help 2>/dev/null | head -1 || echo "installed")
+log_ok "lamaste-agent installed: ${AGENT_VERSION}"
 
 # ---------------------------------------------------------------------------
 # Step 4: Run token-based enrollment
 # ---------------------------------------------------------------------------
-log_step "[4/5] Running portlama-agent setup with enrollment token..."
+log_step "[4/5] Running lamaste-agent setup with enrollment token..."
 
 # Run the token-based setup — this will:
 # - Generate keypair and CSR
@@ -136,12 +136,12 @@ log_step "[4/5] Running portlama-agent setup with enrollment token..."
 # - Start the agent service
 # Pass token via env var to keep it out of process listings
 AGENT_LABEL="e2e-agent"
-PORTLAMA_ENROLLMENT_TOKEN="${ENROLLMENT_TOKEN}" portlama-agent setup --label "${AGENT_LABEL}" --panel-url "https://${HOST_IP}:9292"
+LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN="${ENROLLMENT_TOKEN}" lamaste-agent setup --label "${AGENT_LABEL}" --panel-url "https://${HOST_IP}:9292"
 
-log_ok "portlama-agent setup completed (label: ${AGENT_LABEL})"
+log_ok "lamaste-agent setup completed (label: ${AGENT_LABEL})"
 
 # Verify agent is running (multi-agent: service name includes the label)
-SERVICE_NAME="portlama-chisel-${AGENT_LABEL}"
+SERVICE_NAME="lamalibre-lamaste-chisel-${AGENT_LABEL}"
 AGENT_STATUS=$(systemctl is-active "${SERVICE_NAME}" 2>/dev/null || echo "inactive")
 if [ "$AGENT_STATUS" = "active" ]; then
   log_ok "systemd service ${SERVICE_NAME} is active"
@@ -171,8 +171,8 @@ log_header "Agent VM Setup Summary"
 log_kv "Host IP" "${HOST_IP}"
 log_kv "Test Domain" "${TEST_DOMAIN}"
 log_kv "Node.js" "$(node --version 2>/dev/null)"
-log_kv "portlama-agent" "installed"
-log_kv "systemd service" "$(systemctl is-active portlama-chisel-e2e-agent 2>/dev/null || echo 'unknown')"
+log_kv "lamaste-agent" "installed"
+log_kv "systemd service" "$(systemctl is-active lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo 'unknown')"
 log_kv "Python" "$(python3 --version 2>/dev/null)"
 log_kv "Panel reachable" "yes (enrolled via token)"
 log_ok "The agent VM is ready for E2E tests."

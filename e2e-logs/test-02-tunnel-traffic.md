@@ -1,4 +1,4 @@
-# Portlama E2E: 02 — Tunnel Traffic (Three-VM)
+# Lamaste E2E: 02 — Tunnel Traffic (Three-VM)
 
 > Started at `2026-03-30 13:08:40 UTC`
 
@@ -10,12 +10,12 @@
 
 ✅ `13:08:43` Tunnel creation returned ok: true  
 ✅ `13:08:43` Tunnel has an ID  
-ℹ️ `13:08:43` Created tunnel ID: 0b261503-70c1-4d4e-b767-bc3d29fb7a7f (e2etraffic.test.portlama.local)  
+ℹ️ `13:08:43` Created tunnel ID: 0b261503-70c1-4d4e-b767-bc3d29fb7a7f (e2etraffic.test.lamaste.local)  
 
 ## Configure agent VM for tunnel
 
-✅ `13:08:43` Added tunnel.test.portlama.local to agent /etc/hosts  
-✅ `13:08:43` Added e2etraffic.test.portlama.local to agent /etc/hosts  
+✅ `13:08:43` Added tunnel.test.lamaste.local to agent /etc/hosts  
+✅ `13:08:43` Added e2etraffic.test.lamaste.local to agent /etc/hosts  
 
 ## Start HTTP server on agent VM
 

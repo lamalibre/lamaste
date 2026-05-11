@@ -5,13 +5,13 @@
 
 ---
 
-# Portlama E2E — Host VM Setup
+# Lamaste E2E — Host VM Setup
 
 
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 | **Scripts** | `/tmp/e2e` |
 
 🔵 `13:05:20` **[1/10] Configuring system DNS...**  
@@ -125,7 +125,7 @@ Executing: /usr/lib/systemd/systemd-sysv-install enable dnsmasq
 ```
 </details>
 
-✅ `13:05:26` DNS verified: test.portlama.local -> 10.13.37.1  
+✅ `13:05:26` DNS verified: test.lamaste.local -> 10.13.37.1  
 🔵 `13:05:26` **[3/10] Installing certbot shim...**  
 ✅ `13:05:26` certbot shim installed at /usr/bin/certbot  
 🔵 `13:05:26` **[4/10] Creating dummy certbot.timer...**  
@@ -160,7 +160,7 @@ $ systemctl start certbot.timer
 🔵 `13:05:26` **[5/10] Waiting for panel server to be ready...**  
 ✅ `13:05:26` Panel server is ready  
 🔵 `13:05:26` **[6/10] Running onboarding — setting domain...**  
-✅ `13:05:26` Domain set to test.portlama.local  
+✅ `13:05:26` Domain set to test.lamaste.local  
 ℹ️ `13:05:26` Verifying DNS...  
 ✅ `13:05:26` DNS verified  
 ℹ️ `13:05:26` Starting provisioning...  
@@ -171,7 +171,7 @@ $ systemctl start certbot.timer
 🔵 `13:05:39` **[8/10] Generating agent enrollment token...**  
 ✅ `13:05:39` Enrollment token generated (label: test-agent)  
 🔵 `13:05:39` **[9/10] Saving credentials...**  
-✅ `13:05:39` Credentials saved to /tmp/portlama-test-credentials.json  
+✅ `13:05:39` Credentials saved to /tmp/lamaste-test-credentials.json  
 🔵 `13:05:39` **[10/10] Setup complete!**  
 
 ---
@@ -182,15 +182,15 @@ $ systemctl start certbot.timer
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 | **Panel URL (IP)** | `https://10.13.37.1:9292` |
-| **Panel URL (DNS)** | `https://panel.test.portlama.local` |
-| **Auth URL** | `https://auth.test.portlama.local` |
-| **Tunnel URL** | `https://tunnel.test.portlama.local` |
+| **Panel URL (DNS)** | `https://panel.test.lamaste.local` |
+| **Auth URL** | `https://auth.test.lamaste.local` |
+| **Tunnel URL** | `https://tunnel.test.lamaste.local` |
 | **Test User** | `testuser / TestPassword-E2E-123` |
 | **Agent Label** | `test-agent` |
 | **Enrollment Token** | `(generated, one-time use)` |
-| **Credentials file** | `/tmp/portlama-test-credentials.json` |
+| **Credentials file** | `/tmp/lamaste-test-credentials.json` |
 | **Log file** | `/tmp/setup-host.md` |
 
 ℹ️ `13:05:39` Next: transfer credentials to the agent VM, then run setup-agent.sh on the agent VM.  

@@ -5,13 +5,13 @@
 
 ---
 
-# Portlama E2E — Visitor VM Setup
+# Lamaste E2E — Visitor VM Setup
 
 
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 
 🔵 `13:06:08` **[1/3] Installing dependencies...**  
 <details>
@@ -67,10 +67,10 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 
 ✅ `13:06:14` curl, jq, oathtool installed  
 🔵 `13:06:14` **[2/3] Configuring /etc/hosts...**  
-✅ `13:06:14` /etc/hosts configured with test.portlama.local entries (persists across reboots)  
+✅ `13:06:14` /etc/hosts configured with test.lamaste.local entries (persists across reboots)  
 🔵 `13:06:14` **[3/3] Verifying connectivity to host...**  
 ✅ `13:06:14` Host VM reachable at 10.13.37.1:9292 (HTTP 400 — mTLS correctly rejects unauthenticated client)  
-✅ `13:06:14` Domain panel.test.portlama.local resolves correctly (HTTP 400)  
+✅ `13:06:14` Domain panel.test.lamaste.local resolves correctly (HTTP 400)  
 
 ---
 
@@ -80,10 +80,10 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 | **Dependencies** | `curl, jq, oathtool` |
 | **mTLS certs** | `NONE (intentionally — simulates external visitor)` |
-| **/etc/hosts** | `configured for test.portlama.local subdomains` |
+| **/etc/hosts** | `configured for test.lamaste.local subdomains` |
 | **Log file** | `/tmp/setup-visitor.md` |
 
 ✅ `13:06:14` The visitor VM is ready for E2E tests.  

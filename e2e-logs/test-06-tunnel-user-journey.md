@@ -1,4 +1,4 @@
-# Portlama E2E: 06 — Tunnel User Journey (Three-VM)
+# Lamaste E2E: 06 — Tunnel User Journey (Three-VM)
 
 > Started at `2026-03-30 13:10:31 UTC`
 
@@ -10,9 +10,9 @@
 
 ✅ `13:10:35` Tunnel creation returned ok: true  
 ✅ `13:10:35` Tunnel has an ID  
-ℹ️ `13:10:35` Created tunnel ID: 7f0b7786-6929-4789-9041-fa4f2e0b8c9d (e2ejourney.test.portlama.local)  
+ℹ️ `13:10:35` Created tunnel ID: 7f0b7786-6929-4789-9041-fa4f2e0b8c9d (e2ejourney.test.lamaste.local)  
 ✅ `13:10:35` Added DNS entries to agent /etc/hosts  
-✅ `13:10:35` Added e2ejourney.test.portlama.local to visitor /etc/hosts  
+✅ `13:10:35` Added e2ejourney.test.lamaste.local to visitor /etc/hosts  
 ✅ `13:10:37` HTTP server running on agent at port 18090  
 ℹ️ `13:10:42` Waiting for Chisel tunnel to establish...  
 ✅ `13:10:42` Chisel tunnel established (port 18090 accessible on host)  
@@ -27,7 +27,7 @@
 ## Step 3: Unauthenticated access redirects to Authelia (from visitor VM)
 
 ✅ `13:10:44` Unauthenticated request redirected/rejected (HTTP 302)  
-✅ `13:10:44` Redirect URL contains auth.test.portlama.local  
+✅ `13:10:44` Redirect URL contains auth.test.lamaste.local  
 ✅ `13:10:44` Tunnel content is NOT visible without authentication  
 
 ## Step 4: First factor authentication from visitor VM (username/password)

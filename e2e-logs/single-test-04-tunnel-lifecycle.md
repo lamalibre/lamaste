@@ -1,4 +1,4 @@
-# Portlama E2E: 04 — Tunnel Lifecycle
+# Lamaste E2E: 04 — Tunnel Lifecycle
 
 > Started at `2026-03-30 13:06:17 UTC`
 
@@ -22,7 +22,7 @@
 
 ## Verify nginx configuration
 
-✅ `13:06:19` Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774875977  
+✅ `13:06:19` Nginx vhost exists at /etc/nginx/sites-enabled/lamaste-app-e2etest-1774875977  
 ✅ `13:06:19` nginx -t passes after tunnel creation  
 
 ## Validation: reserved subdomain

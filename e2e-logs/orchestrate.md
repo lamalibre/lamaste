@@ -9,12 +9,12 @@
 
 ---
 
-# Portlama Three-VM E2E Test Orchestrator
+# Lamaste Three-VM E2E Test Orchestrator
 
 
 | Key | Value |
 |-----|-------|
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 | **VM Specs** | `2 vCPU, 2G RAM, 10G disk` |
 | **Cleanup** | `false` |
 | **Skip Create** | `false` |
@@ -28,12 +28,12 @@
 
 ## Phase 1: Creating VMs
 
-ℹ️ `13:02:03` Launching portlama-host...  
-✅ `13:02:31` portlama-host created  
-ℹ️ `13:02:31` Launching portlama-agent...  
-✅ `13:02:57` portlama-agent created  
-ℹ️ `13:02:57` Launching portlama-visitor...  
-✅ `13:03:24` portlama-visitor created  
+ℹ️ `13:02:03` Launching lamaste-host...  
+✅ `13:02:31` lamaste-host created  
+ℹ️ `13:02:31` Launching lamaste-agent...  
+✅ `13:02:57` lamaste-agent created  
+ℹ️ `13:02:57` Launching lamaste-visitor...  
+✅ `13:03:24` lamaste-visitor created  
 ℹ️ `13:03:24` Applying static IPs...  
 ✅ `13:03:25` Static IPs applied (10.13.37.1/2/3)  
 ℹ️ `13:03:25` Host IP:    10.13.37.1  
@@ -42,18 +42,18 @@
 
 ## Phase 2: Setting up VMs
 
-🔵 `13:03:25` **Bundling vendor into create-portlama...**  
+🔵 `13:03:25` **Bundling vendor into create-lamaste...**  
 ✅ `13:03:26` Vendor bundled  
-🔵 `13:03:26` **Packing create-portlama tarball...**  
-✅ `13:03:26` Tarball ready: /tmp/lamalibre-create-portlama-1.0.42.tgz  
-🔵 `13:03:26` **Packing portlama-agent tarball...**  
-✅ `13:03:26` Agent tarball ready: /tmp/lamalibre-portlama-agent-1.0.16.tgz  
-🔵 `13:03:26` **Checking npm on portlama-host...**  
+🔵 `13:03:26` **Packing create-lamaste tarball...**  
+✅ `13:03:26` Tarball ready: /tmp/lamalibre-create-lamaste-1.0.42.tgz  
+🔵 `13:03:26` **Packing lamaste-agent tarball...**  
+✅ `13:03:26` Agent tarball ready: /tmp/lamalibre-lamaste-agent-1.0.16.tgz  
+🔵 `13:03:26` **Checking npm on lamaste-host...**  
 <details>
-<summary>✅ <code>13:03:28</code> apt-get update on portlama-host</summary>
+<summary>✅ <code>13:03:28</code> apt-get update on lamaste-host</summary>
 
 ```
-$ multipass exec portlama-host -- sudo apt-get update
+$ multipass exec lamaste-host -- sudo apt-get update
 Hit:1 http://ports.ubuntu.com/ubuntu-ports noble InRelease
 Hit:2 http://ports.ubuntu.com/ubuntu-ports noble-updates InRelease
 Hit:3 http://ports.ubuntu.com/ubuntu-ports noble-backports InRelease
@@ -63,10 +63,10 @@ Reading package lists...
 </details>
 
 <details>
-<summary>✅ <code>13:04:22</code> apt install npm on portlama-host</summary>
+<summary>✅ <code>13:04:22</code> apt install npm on lamaste-host</summary>
 
 ```
-$ multipass exec portlama-host -- sudo apt-get install -y npm
+$ multipass exec lamaste-host -- sudo apt-get install -y npm
 Reading package lists...
 Building dependency tree...
 Reading state information...
@@ -3086,16 +3086,16 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 ```
 </details>
 
-🔵 `13:04:22` **Transferring installer tarball to portlama-host...**  
+🔵 `13:04:22` **Transferring installer tarball to lamaste-host...**  
 ✅ `13:04:22` Tarball transferred  
-🔵 `13:04:22` **Installing create-portlama from tarball on portlama-host...**  
+🔵 `13:04:22` **Installing create-lamaste from tarball on lamaste-host...**  
 <details>
-<summary>✅ <code>13:04:24</code> npm install -g tarball on portlama-host</summary>
+<summary>✅ <code>13:04:24</code> npm install -g tarball on lamaste-host</summary>
 
 ```
-$ multipass exec portlama-host -- sudo npm install -g /tmp/create-portlama.tgz
+$ multipass exec lamaste-host -- sudo npm install -g /tmp/create-lamaste.tgz
 npm WARN EBADENGINE Unsupported engine {
-npm WARN EBADENGINE   package: '@lamalibre/create-portlama@1.0.42',
+npm WARN EBADENGINE   package: '@lamalibre/create-lamaste@1.0.42',
 npm WARN EBADENGINE   required: { node: '>=20.0.0' },
 npm WARN EBADENGINE   current: { node: 'v18.19.1', npm: '9.2.0' }
 npm WARN EBADENGINE }
@@ -3107,29 +3107,29 @@ added 48 packages in 2s
 ```
 </details>
 
-🔵 `13:04:24` **Running create-portlama on portlama-host...**  
-✅ `13:05:12` Portlama installed on portlama-host  
+🔵 `13:04:24` **Running create-lamaste on lamaste-host...**  
+✅ `13:05:12` Lamaste installed on lamaste-host  
 🔵 `13:05:12` **Patching panel.json with static IP (10.13.37.1)...**  
 ✅ `13:05:13` panel.json patched with static IP  
 🔵 `13:05:13` **Transferring test scripts to VMs...**  
 ✅ `13:05:19` Test scripts transferred to all VMs  
-🔵 `13:05:19` **Running setup-host.sh on portlama-host...**  
+🔵 `13:05:19` **Running setup-host.sh on lamaste-host...**  
 ✅ `13:05:39` Host VM setup complete  
-ℹ️ `13:05:39` Extracting credentials from portlama-host...  
+ℹ️ `13:05:39` Extracting credentials from lamaste-host...  
 ✅ `13:05:40` Credentials extracted (enrollment token obtained)  
-ℹ️ `13:05:40` Transferring portlama-agent tarball to portlama-agent...  
+ℹ️ `13:05:40` Transferring lamaste-agent tarball to lamaste-agent...  
 ✅ `13:05:40` Agent tarball transferred  
-🔵 `13:05:40` **Running setup-agent.sh on portlama-agent...**  
+🔵 `13:05:40` **Running setup-agent.sh on lamaste-agent...**  
 ✅ `13:06:08` Agent VM setup complete  
-🔵 `13:06:08` **Running setup-visitor.sh on portlama-visitor...**  
+🔵 `13:06:08` **Running setup-visitor.sh on lamaste-visitor...**  
 ✅ `13:06:15` Visitor VM setup complete  
 
-## Phase 3: Running single-VM E2E tests on portlama-host
+## Phase 3: Running single-VM E2E tests on lamaste-host
 
-ℹ️ `13:06:15` Transferring single-VM E2E test scripts to portlama-host...  
+ℹ️ `13:06:15` Transferring single-VM E2E test scripts to lamaste-host...  
 ✅ `13:06:16` Single-VM test scripts transferred  
-ℹ️ `13:06:16` Running tests/e2e/run-all.sh on portlama-host...  
-ℹ️ `13:08:10` Collecting per-test log files from portlama-host...  
+ℹ️ `13:06:16` Running tests/e2e/run-all.sh on lamaste-host...  
+ℹ️ `13:08:10` Collecting per-test log files from lamaste-host...  
 ✅ `13:08:14` Single-VM E2E tests passed  
 
 ## Phase 4: Running three-VM E2E tests from macOS
@@ -3138,7 +3138,7 @@ added 48 packages in 2s
 ℹ️ `13:08:14`   HOST_IP=10.13.37.1  
 ℹ️ `13:08:14`   AGENT_IP=10.13.37.2  
 ℹ️ `13:08:14`   VISITOR_IP=10.13.37.3  
-ℹ️ `13:08:14`   TEST_DOMAIN=test.portlama.local  
+ℹ️ `13:08:14`   TEST_DOMAIN=test.lamaste.local  
 ℹ️ `13:08:14`   TEST_USER=testuser  
 ✅ `13:13:03` Three-VM E2E tests passed  
 
@@ -3149,8 +3149,8 @@ added 48 packages in 2s
 
 | Key | Value |
 |-----|-------|
-| **VMs** | `portlama-host (10.13.37.1), portlama-agent (10.13.37.2), portlama-visitor (10.13.37.3)` |
-| **Test Domain** | `test.portlama.local` |
+| **VMs** | `lamaste-host (10.13.37.1), lamaste-agent (10.13.37.2), lamaste-visitor (10.13.37.3)` |
+| **Test Domain** | `test.lamaste.local` |
 
 ✅ `13:13:03` Single-VM E2E: PASSED  
 ✅ `13:13:03` Three-VM E2E: PASSED  
@@ -3204,5 +3204,5 @@ added 48 packages in 2s
 | **three-vm-e2e** | `<repo>/e2e-logs/three-vm-e2e.md` |
 
 ℹ️ `13:13:03` VMs kept for debugging. Delete manually with:  
-ℹ️ `13:13:03`   multipass delete portlama-host portlama-agent portlama-visitor && multipass purge  
+ℹ️ `13:13:03`   multipass delete lamaste-host lamaste-agent lamaste-visitor && multipass purge  
 ✅ `13:13:03` OVERALL: PASSED  

@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 23,
+    "name": "Tickets Lifecycle",
+    "suite": "e2e-three-vm",
+    "description": "23 — Tickets Lifecycle (Three-VM)",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {
+    "TICKET_SCOPE_NAME": {
+      "value": "rodeo-tickets"
+    },
+    "SUB_SCOPE": {
+      "value": "plugin:rodeo-tickets:connect"
+    },
+    "SOURCE_LABEL": {
+      "value": "rodeo-tickets-source"
+    },
+    "TARGET_LABEL": {
+      "value": "rodeo-tickets-target"
+    }
+  },
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_patch",
+    "host_api_delete"
+  ],
+  "cleanup": [
+    {
+      "id": "cleanup-instance",
+      "label": "DELETE /api/tickets/instances/${INSTANCE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "INSTANCE_ID"
+      },
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tickets/instances/${INSTANCE_ID}"
+      }
+    },
+    {
+      "id": "cleanup-scope",
+      "label": "DELETE /api/tickets/scopes/${TICKET_SCOPE_NAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tickets/scopes/${TICKET_SCOPE_NAME}"
+      }
+    },
+    {
+      "id": "cleanup-source-cert",
+      "label": "DELETE /api/certs/agent/${SOURCE_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${SOURCE_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-target-cert",
+      "label": "DELETE /api/certs/agent/${TARGET_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${TARGET_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-pems",
+      "label": "Delete /tmp/e2e-tickets-*.pem",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "rm -f /tmp/e2e-tickets-*.pem 2>/dev/null || true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "0-init-vars",
+      "label": "0. Initialize cleanup variables",
+      "steps": [],
+      "bash": "# Initialize cleanup variables to avoid 'unbound variable' errors if early failures trigger EXIT trap.\nINSTANCE_ID=\"\"\nINSTANCE_SCOPE=\"\"\nTICKET_ID=\"\"\nSESSION_ID=\"\""
+    },
+    {
+      "id": "1-register-ticket-scope",
+      "label": "1. Register ticket scope",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Register ticket scope\"\n# ---------------------------------------------------------------------------\n\nSCOPE_CREATE_RESP=$(host_api_post \"tickets/scopes\" '{\"name\":\"'\"${TICKET_SCOPE_NAME}\"'\",\"version\":\"1.0.0\",\"description\":\"Rodeo e2e ticket lifecycle test scope\",\"scopes\":[{\"name\":\"'\"${SUB_SCOPE}\"'\",\"description\":\"Connect sub-scope for rodeo test\",\"instanceScoped\":true}],\"transport\":{\"strategies\":[\"tunnel\"],\"preferred\":\"tunnel\",\"port\":0,\"protocol\":\"wss\"}}')\nassert_json_field \"$SCOPE_CREATE_RESP\" '.ok' 'true' \"POST /api/tickets/scopes response has ok: true\" || true\nassert_contains \"$SCOPE_CREATE_RESP\" \"$SUB_SCOPE\" \"Scope create response lists the registered sub-scope name\" || true"
+    },
+    {
+      "id": "2-list-ticket-scopes",
+      "label": "2. List ticket scopes",
+      "steps": [
+        {
+          "id": "s2-1",
+          "label": "GET /api/tickets/scopes",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tickets/scopes"
+          },
+          "capture": [
+            {
+              "variable": "SCOPES_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "s2-2",
+          "label": "Scopes list contains our scope",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SCOPES_LIST"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "TICKET_SCOPE_NAME"
+              },
+              "message": "GET /api/tickets/scopes response contains registered scope name"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3-create-agent-certs",
+      "label": "3. Create source and target agent certs with sub-scope capability",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. Create source and target agent certs with sub-scope capability\"\n# ---------------------------------------------------------------------------\n\nSOURCE_CERT_RESP=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${SOURCE_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"'\"${SUB_SCOPE}\"'\"]}')\nassert_json_field \"$SOURCE_CERT_RESP\" '.ok' 'true' \"Source agent cert creation returns ok: true\" || true\nSOURCE_P12_PASS=$(echo \"$SOURCE_CERT_RESP\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\n\nTARGET_CERT_RESP=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${TARGET_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"'\"${SUB_SCOPE}\"'\"]}')\nassert_json_field \"$TARGET_CERT_RESP\" '.ok' 'true' \"Target agent cert creation returns ok: true\" || true\nTARGET_P12_PASS=$(echo \"$TARGET_CERT_RESP\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\n\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}'\"\nlog_pass \"Extracted PEM cert/key pairs for source and target agents\""
+    },
+    {
+      "id": "4-register-instance",
+      "label": "4. Register instance via source agent cert",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"4. Register instance via source agent cert\"\n# ---------------------------------------------------------------------------\n\nINST_RAW=$(host_exec \"curl -sk --max-time 30 -w '\\n%{http_code}' --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"transport\\\":{\\\"strategies\\\":[\\\"tunnel\\\"],\\\"preferred\\\":\\\"tunnel\\\"}}' https://127.0.0.1:9292/api/tickets/instances\")\nINST_STATUS=$(printf '%s' \"$INST_RAW\" | tail -n1)\nINST_BODY=$(printf '%s' \"$INST_RAW\" | sed '$d')\nassert_eq \"$INST_STATUS\" \"201\" \"POST /api/tickets/instances returns 201 for new instance\" || true\nINSTANCE_ID=$(echo \"$INST_BODY\" | jq -r '.instanceId' 2>/dev/null || echo \"\")\nINSTANCE_SCOPE=$(echo \"$INST_BODY\" | jq -r '.instanceScope' 2>/dev/null || echo \"\")\nassert_not_eq \"$INSTANCE_ID\" \"\" \"Instance registration returned a non-empty instanceId\" || true\nassert_not_eq \"$INSTANCE_SCOPE\" \"\" \"Instance registration returned a non-empty instanceScope\" || true\nassert_contains \"$INSTANCE_SCOPE\" \"$SUB_SCOPE\" \"Instance scope embeds the registered sub-scope prefix\" || true"
+    },
+    {
+      "id": "5-instance-reregister",
+      "label": "5. Re-registering same instance returns 200 (idempotent)",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. Re-registering same instance returns 200 (idempotent)\"\n# ---------------------------------------------------------------------------\n\nINST2_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"transport\\\":{\\\"strategies\\\":[\\\"tunnel\\\"],\\\"preferred\\\":\\\"tunnel\\\"}}' https://127.0.0.1:9292/api/tickets/instances\" 2>/dev/null || echo \"000\")\nassert_eq \"$INST2_STATUS\" \"200\" \"Re-registering same (scope, agent) returns 200 (idempotent path)\" || true"
+    },
+    {
+      "id": "6-instance-heartbeat",
+      "label": "6. Instance heartbeat",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"6. Instance heartbeat\"\n# ---------------------------------------------------------------------------\n\nHB_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/instances/${INSTANCE_ID}/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$HB_STATUS\" \"200\" \"POST /api/tickets/instances/:id/heartbeat returns 200\" || true\n\n# Heartbeat on non-existent instance returns 404 (defense-in-depth check path)\nHB_404=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/instances/deadbeefdeadbeefdeadbeefdeadbeef/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$HB_404\" \"404\" \"Heartbeat on non-existent instance returns 404\" || true"
+    },
+    {
+      "id": "7-list-assignments-empty",
+      "label": "7. Admin lists assignments (initially empty for our scope)",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"7. Admin lists assignments (filtered by our agent)\"\n# ---------------------------------------------------------------------------\n\nASSIGN_LIST=$(host_api_get \"tickets/assignments?agentLabel=${TARGET_LABEL}\")\nassert_json_field \"$ASSIGN_LIST\" '.assignments' '[]' \"GET /api/tickets/assignments filtered by our target label is initially empty\" || true"
+    },
+    {
+      "id": "8-assignment-validation",
+      "label": "8. Assignment validation — malformed instanceScope is rejected",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"8. Assignment validation — malformed instanceScope is rejected\"\n# ---------------------------------------------------------------------------\n\n# Submit an assignment with a syntactically-invalid instanceScope: expect Zod 400.\nBAD_ASSIGN_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"agentLabel\\\":\\\"${TARGET_LABEL}\\\",\\\"instanceScope\\\":\\\"not-a-valid-scope\\\"}' https://127.0.0.1:9292/api/tickets/assignments\" 2>/dev/null || echo \"000\")\nassert_eq \"$BAD_ASSIGN_STATUS\" \"400\" \"POST /api/tickets/assignments with malformed instanceScope returns 400\" || true\n\n# DELETE with a non-existent agentLabel/instanceScope pair that matches the regex returns 404.\nDEL_404=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/assignments/no-such-agent/plugin:rodeo-tickets:connect:deadbeef\" 2>/dev/null || echo \"000\")\nassert_eq \"$DEL_404\" \"404\" \"DELETE /api/tickets/assignments/:agent/:scope for non-existent row returns 404\" || true"
+    },
+    {
+      "id": "9-ticket-request-without-assignment",
+      "label": "9. Ticket request without assignment returns 404",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"9. Ticket request without assignment returns 404\"\n# ---------------------------------------------------------------------------\n\n# Source agent requesting a ticket for target that has no assignment must fail with 404\n# (the panel collapses 'not assigned', 'not found', and 'self-ticket' to the same 404 on purpose).\nTK_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"instanceId\\\":\\\"${INSTANCE_ID}\\\",\\\"target\\\":\\\"${TARGET_LABEL}\\\"}' https://127.0.0.1:9292/api/tickets\" 2>/dev/null || echo \"000\")\nassert_eq \"$TK_STATUS\" \"404\" \"POST /api/tickets without a matching assignment returns 404\" || true"
+    },
+    {
+      "id": "10-admin-lists",
+      "label": "10. Admin reads tickets/sessions lists and inbox",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"10. Admin lists tickets and sessions; agent reads own inbox\"\n# ---------------------------------------------------------------------------\n\nTICKETS_LIST=$(host_api_get \"tickets\")\nassert_json_field_not_empty \"$TICKETS_LIST\" '.tickets' \"GET /api/tickets (admin) returns a tickets field\" || true\n\nSESS_LIST=$(host_api_get \"tickets/sessions\")\nassert_json_field_not_empty \"$SESS_LIST\" '.sessions' \"GET /api/tickets/sessions (admin) returns a sessions field\" || true\n\n# Target agent reads own inbox — must return empty tickets array (no ticket was issued)\nINBOX_BODY=$(host_exec \"curl -skf --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/inbox\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$INBOX_BODY\" '.tickets' '[]' \"Target agent inbox is empty when no assignment exists\" || true"
+    },
+    {
+      "id": "11-ticket-validate-revoke-negative",
+      "label": "11. Ticket validate/revoke negative paths",
+      "steps": [],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"11. Ticket validate/revoke negative paths\"\n# ---------------------------------------------------------------------------\n\n# Validate a syntactically valid but unknown ticketId — must be rejected with the generic error code (401).\nVAL_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/validate\" 2>/dev/null || echo \"000\")\nassert_eq \"$VAL_STATUS\" \"401\" \"POST /api/tickets/validate on unknown ticket returns 401 (generic denial)\" || true\n\n# Session creation with an unused-but-unknown ticket returns 400.\nSESS_CREATE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/sessions\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_CREATE_STATUS\" \"400\" \"POST /api/tickets/sessions on unknown ticket returns 400\" || true\n\n# Session heartbeat on unknown sessionId returns 404.\nSESS_HB_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_HB_STATUS\" \"404\" \"POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404\" || true\n\n# PATCH session on unknown sessionId returns 404.\nSESS_PATCH_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"status\\\":\\\"grace\\\"}' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_PATCH_STATUS\" \"404\" \"PATCH /api/tickets/sessions/:id on unknown session returns 404\" || true\n\n# Revoke an unknown ticketId returns 404.\nREVOKE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" 2>/dev/null || echo \"000\")\nassert_eq \"$REVOKE_STATUS\" \"404\" \"DELETE /api/tickets/:id on unknown ticket returns 404\" || true"
+    },
+    {
+      "id": "12-complete",
+      "label": "12. Lifecycle coverage complete",
+      "steps": [
+        {
+          "id": "s12-1",
+          "label": "Tickets lifecycle coverage complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Tickets lifecycle coverage complete; cleanup handled by EXIT trap"
+          }
+        }
+      ]
+    }
+  ]
+}

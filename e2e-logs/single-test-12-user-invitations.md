@@ -1,4 +1,4 @@
-# Portlama E2E: 12 — User Invitations
+# Lamaste E2E: 12 — User Invitations
 
 > Started at `2026-03-30 13:07:00 UTC`
 

@@ -1,4 +1,4 @@
-# Portlama E2E: 05 — Admin Journey (Three-VM)
+# Lamaste E2E: 05 — Admin Journey (Three-VM)
 
 > Started at `2026-03-30 13:10:08 UTC`
 
@@ -14,9 +14,9 @@
 
 ## 2. Panel accessible via panel.DOMAIN (mTLS)
 
-✅ `13:10:09` Panel via panel.test.portlama.local returns HTTP 200  
-✅ `13:10:09` Panel via panel.test.portlama.local contains React mount point  
-✅ `13:10:09` Panel via panel.test.portlama.local contains title tag  
+✅ `13:10:09` Panel via panel.test.lamaste.local returns HTTP 200  
+✅ `13:10:09` Panel via panel.test.lamaste.local contains React mount point  
+✅ `13:10:09` Panel via panel.test.lamaste.local contains title tag  
 
 ## 3. Panel without mTLS cert rejected
 
@@ -62,7 +62,7 @@
 ✅ `13:10:27` Service 'nginx' is listed  
 ✅ `13:10:27` Service 'chisel' is listed  
 ✅ `13:10:27` Service 'authelia' is listed  
-✅ `13:10:27` Service 'portlama-panel' is listed  
+✅ `13:10:27` Service 'lamaste-panel' is listed  
 
 ## 8. Certificate management
 

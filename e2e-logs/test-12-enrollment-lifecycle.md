@@ -1,4 +1,4 @@
-# Portlama E2E: 12 — Enrollment Token Lifecycle (Three-VM)
+# Lamaste E2E: 12 — Enrollment Token Lifecycle (Three-VM)
 
 > Started at `2026-03-30 13:11:44 UTC`
 
@@ -34,10 +34,10 @@
 
 ✅ `13:11:45` Agent shows enrollmentMethod: hardware-bound  
 
-## Verify portlama-agent status shows enrolled agent
+## Verify lamaste-agent status shows enrolled agent
 
-✅ `13:11:45` portlama-agent status shows config present  
-✅ `13:11:45` systemd service portlama-chisel-e2e-agent is enabled  
+✅ `13:11:45` lamaste-agent status shows config present  
+✅ `13:11:45` systemd service lamaste-chisel-e2e-agent is enabled  
 ✅ `13:11:46` Agent config file exists after setup  
 
 ## Clean up: revoke test agent

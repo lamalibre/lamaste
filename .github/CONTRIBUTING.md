@@ -1,4 +1,4 @@
-# Contributing to Portlama
+# Contributing to Lamaste
 
 Thank you for considering contributing. This document explains how to get started,
 what we care about, and how to submit changes.
@@ -6,8 +6,8 @@ what we care about, and how to submit changes.
 ## Development Setup
 
 ```bash
-git clone https://github.com/YOUR_ORG/portlama.git
-cd portlama
+git clone https://github.com/YOUR_ORG/lamaste.git
+cd lamaste
 npm install
 ```
 
@@ -31,7 +31,7 @@ cat > dev/panel.json <<EOF
   "nginxConfigDir": "/tmp/nginx-available",
   "nginxEnabledDir": "/tmp/nginx-enabled",
   "certbotEmail": "dev@localhost",
-  "pkiDir": "/tmp/portlama-pki"
+  "pkiDir": "/tmp/lamaste-pki"
 }
 EOF
 export CONFIG_FILE=dev/panel.json
@@ -54,9 +54,9 @@ with implementation guides for the remaining work.
 Check the `🔲 TODO` items in:
 
 - `CLAUDE.md` (root) — complete task list
-- `packages/create-portlama/CLAUDE.md` — installer phases 2, 3, 4, 7
-- `packages/panel-server/CLAUDE.md` — certbot.js, logs route, error middleware
-- `packages/panel-client/CLAUDE.md` — Users.jsx, Certs.jsx, missing config files
+- `packages/provisioners/server/CLAUDE.md` — installer phases 2, 3, 4, 7
+- `packages/server/daemon/CLAUDE.md` — certbot.js, logs route, error middleware
+- `packages/server/ui/CLAUDE.md` — Users.jsx, Certs.jsx, missing config files
 
 ## Code Standards
 
@@ -72,7 +72,7 @@ Check the `🔲 TODO` items in:
 1. Fork the repo and create a branch: `git checkout -b feat/my-feature`
 2. Make your changes
 3. Run syntax checks: `node --check packages/**/*.js`
-4. Test the installer dry-run: `node packages/create-portlama/bin/create-portlama.js --help`
+4. Test the installer dry-run: `node packages/provisioners/server/bin/create-lamaste.js --help`
 5. Submit a PR with a clear description of what changed and why
 
 ## PR Checklist

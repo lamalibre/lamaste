@@ -22,12 +22,12 @@ require_commands multipass curl jq openssl
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-agent_exec() { multipass exec portlama-agent -- sudo bash -c "$1"; }
+agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 
 # Use the vm-api-helper.sh on the host VM for reliable API calls.
 # It avoids quoting issues with multipass exec + sudo bash -c.
 host_api_get() {
-  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh GET "$1"
+  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh GET "$1"
 }
 
 host_api_post() {
@@ -35,14 +35,14 @@ host_api_post() {
   local body="$2"
   local b64body
   b64body=$(echo -n "$body" | base64)
-  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh POST "$path" "$b64body"
+  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh POST "$path" "$b64body"
 }
 
 host_api_delete() {
-  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh DELETE "$1"
+  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh DELETE "$1"
 }
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
 
 begin_test "12 — Enrollment Token Lifecycle (Three-VM)"
 
@@ -87,7 +87,7 @@ log_section "Public enrollment reachable from agent VM without mTLS"
 # ---------------------------------------------------------------------------
 
 # Agent VM calls the host's enrollment endpoint WITHOUT any client cert
-AGENT_ENROLL_STATUS=$(multipass exec portlama-agent -- curl -sk -o /dev/null -w '%{http_code}' \
+AGENT_ENROLL_STATUS=$(multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' \
   --max-time 30 \
   -X POST \
   -H 'Content-Type: application/json' \
@@ -107,20 +107,20 @@ log_section "Generate CSR on agent VM and enroll"
 
 # Generate keypair + CSR on agent VM
 agent_exec "openssl genrsa -out /tmp/enroll-test.key 2048 2>/dev/null"
-agent_exec "openssl req -new -key /tmp/enroll-test.key -out /tmp/enroll-test.csr -subj '/CN=agent:pending/O=Portlama' 2>/dev/null"
+agent_exec "openssl req -new -key /tmp/enroll-test.key -out /tmp/enroll-test.csr -subj '/CN=agent:pending/O=Lamaste' 2>/dev/null"
 
 # Read CSR from agent VM
-CSR_PEM=$(multipass exec portlama-agent -- cat /tmp/enroll-test.csr)
+CSR_PEM=$(multipass exec lamaste-agent -- cat /tmp/enroll-test.csr)
 
 # Build JSON body and transfer to agent VM via temp file
 ENROLL_BODY=$(jq -n --arg token "$TOKEN" --arg csr "$CSR_PEM" '{token: $token, csr: $csr}')
 LOCAL_BODY_TMP=$(mktemp /tmp/enroll-body-XXXXXXXX.json)
 echo "$ENROLL_BODY" > "$LOCAL_BODY_TMP"
-multipass transfer "$LOCAL_BODY_TMP" portlama-agent:/tmp/enroll-body.json
+multipass transfer "$LOCAL_BODY_TMP" lamaste-agent:/tmp/enroll-body.json
 rm -f "$LOCAL_BODY_TMP"
 
 # Enroll from agent VM (no mTLS cert needed)
-ENROLL_RESPONSE=$(multipass exec portlama-agent -- curl -sk \
+ENROLL_RESPONSE=$(multipass exec lamaste-agent -- curl -sk \
   --max-time 60 \
   -X POST \
   -H 'Content-Type: application/json' \
@@ -144,7 +144,7 @@ assert_not_eq "$SERIAL" "" "Enrollment returns serial" || true
 log_section "Token replay rejected"
 # ---------------------------------------------------------------------------
 
-REPLAY_STATUS=$(multipass exec portlama-agent -- curl -sk -o /dev/null -w '%{http_code}' \
+REPLAY_STATUS=$(multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' \
   --max-time 30 \
   -X POST \
   -H 'Content-Type: application/json' \
@@ -162,40 +162,40 @@ METHOD=$(echo "$AGENTS" | jq -r "[.agents[] | select(.label==\"${TOKEN_LABEL}\" 
 assert_eq "$METHOD" "hardware-bound" "Agent shows enrollmentMethod: hardware-bound" || true
 
 # ---------------------------------------------------------------------------
-log_section "Verify portlama-agent status shows enrolled agent"
+log_section "Verify lamaste-agent status shows enrolled agent"
 # ---------------------------------------------------------------------------
 
-# The agent VM was enrolled during setup-agent.sh using portlama-agent setup --token.
-# Verify the portlama-agent CLI can report its status correctly.
+# The agent VM was enrolled during setup-agent.sh using lamaste-agent setup --token.
+# Verify the lamaste-agent CLI can report its status correctly.
 # Note: the agent may show "not loaded" if no tunnels are configured (chisel needs
 # at least one remote). We check for "Config: present" to confirm setup completed.
-AGENT_STATUS_OUTPUT=$(agent_exec "portlama-agent status 2>&1 || true")
+AGENT_STATUS_OUTPUT=$(agent_exec "lamaste-agent status 2>&1 || true")
 if echo "$AGENT_STATUS_OUTPUT" | grep -q "Config:.*present"; then
-  log_pass "portlama-agent status shows config present"
+  log_pass "lamaste-agent status shows config present"
 else
-  log_fail "portlama-agent status does not show config present"
+  log_fail "lamaste-agent status does not show config present"
   log_info "Status output: $AGENT_STATUS_OUTPUT"
 fi
 
 # Verify systemd service is enabled (it may not be active if no tunnels are configured)
 # Multi-agent: service name includes the label set during setup-agent.sh
-SYSTEMD_ENABLED=$(agent_exec "systemctl is-enabled portlama-chisel-e2e-agent 2>/dev/null || echo disabled")
+SYSTEMD_ENABLED=$(agent_exec "systemctl is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled")
 if [ "$SYSTEMD_ENABLED" = "enabled" ]; then
-  log_pass "systemd service portlama-chisel-e2e-agent is enabled"
+  log_pass "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled"
 else
-  log_fail "systemd service portlama-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
+  log_fail "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
 fi
 
 # Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)
-CONFIG_EXISTS=$(agent_exec "test -f ~/.portlama/agents/e2e-agent/config.json && echo yes || echo no")
+CONFIG_EXISTS=$(agent_exec "test -f ~/.lamalibre/lamaste/agents/e2e-agent/config.json && echo yes || echo no")
 assert_eq "$CONFIG_EXISTS" "yes" "Agent config file exists after setup" || true
 
 # ---------------------------------------------------------------------------
 log_section "Clean up: revoke test agent"
 # ---------------------------------------------------------------------------
 
-multipass exec portlama-host -- sudo curl -sk --max-time 10 \
-  --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt \
+multipass exec lamaste-host -- sudo curl -sk --max-time 10 \
+  --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt \
   -X DELETE "https://127.0.0.1:9292/api/certs/agent/${TOKEN_LABEL}" 2>/dev/null || true
 agent_exec "rm -f /tmp/enroll-test.key /tmp/enroll-test.csr /tmp/enroll-body.json" 2>/dev/null || true
 log_pass "Cleaned up test agent and temp files"
@@ -205,17 +205,17 @@ log_section "Admin upgrade to hardware-bound"
 # ---------------------------------------------------------------------------
 
 # Generate admin CSR on host
-host_exec "openssl genrsa -out /tmp/admin-up.key 2048 2>/dev/null && openssl req -new -key /tmp/admin-up.key -out /tmp/admin-up.csr -subj '/CN=admin/O=Portlama' 2>/dev/null"
+host_exec "openssl genrsa -out /tmp/admin-up.key 2048 2>/dev/null && openssl req -new -key /tmp/admin-up.key -out /tmp/admin-up.csr -subj '/CN=admin/O=Lamaste' 2>/dev/null"
 ADMIN_CSR=$(host_exec "cat /tmp/admin-up.csr")
 
 # Build body and transfer to host
 ADMIN_BODY=$(jq -n --arg csr "$ADMIN_CSR" '{csr: $csr}')
 LOCAL_ADMIN_TMP=$(mktemp /tmp/admin-up-body-XXXXXXXX.json)
 echo "$ADMIN_BODY" > "$LOCAL_ADMIN_TMP"
-multipass transfer "$LOCAL_ADMIN_TMP" portlama-host:/tmp/admin-up-body.json
+multipass transfer "$LOCAL_ADMIN_TMP" lamaste-host:/tmp/admin-up-body.json
 rm -f "$LOCAL_ADMIN_TMP"
 
-UPGRADE_RESPONSE=$(host_exec "curl -sk --max-time 60 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d @/tmp/admin-up-body.json https://127.0.0.1:9292/api/certs/admin/upgrade-to-hardware-bound" || echo '{"ok":false}')
+UPGRADE_RESPONSE=$(host_exec "curl -sk --max-time 60 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d @/tmp/admin-up-body.json https://127.0.0.1:9292/api/certs/admin/upgrade-to-hardware-bound" || echo '{"ok":false}')
 
 UPGRADE_OK=$(echo "$UPGRADE_RESPONSE" | jq -r '.ok // "false"' 2>/dev/null || echo "false")
 if [ "$UPGRADE_OK" = "true" ]; then
@@ -228,7 +228,7 @@ fi
 log_section "P12 lockdown: rotate returns 410"
 # ---------------------------------------------------------------------------
 
-ROTATE_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST https://127.0.0.1:9292/api/certs/mtls/rotate" 2>/dev/null || echo "000")
+ROTATE_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST https://127.0.0.1:9292/api/certs/mtls/rotate" 2>/dev/null || echo "000")
 
 # After admin upgrade, the old admin cert is revoked. The rotate endpoint
 # returns 410 if the cert is still accepted, or the connection fails entirely
@@ -245,7 +245,7 @@ fi
 log_section "Revert admin auth mode for subsequent tests"
 # ---------------------------------------------------------------------------
 
-host_exec "jq '.adminAuthMode = \"p12\"' /etc/portlama/panel.json > /tmp/panel-revert.json && mv /tmp/panel-revert.json /etc/portlama/panel.json && chmod 640 /etc/portlama/panel.json"
+host_exec "jq '.adminAuthMode = \"p12\"' /etc/lamalibre/lamaste/panel.json > /tmp/panel-revert.json && mv /tmp/panel-revert.json /etc/lamalibre/lamaste/panel.json && chmod 640 /etc/lamalibre/lamaste/panel.json"
 sleep 1
 log_pass "Reverted adminAuthMode to p12"
 

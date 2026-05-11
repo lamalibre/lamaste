@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "installed",
+    "name": "Three-VM installed",
+    "description": "Pack create-lamaste from the workspace, install it on the host VM, run it in dev mode, and patch panel.json with the static host IP. HOST_IP must be present in the tier-runner var scope (injected from ctx.vmIps[host]).",
+    "dependsOn": "node-ready"
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Static IP of the host VM, injected by the tier runner from ctx.vmIps[vmNames.host]."
+    }
+  },
+  "sections": [
+    {
+      "id": "install-lamaste",
+      "label": "Install Lamaste on host via create-lamaste",
+      "steps": [
+        {
+          "id": "pack-create-lamaste",
+          "label": "Pack create-lamaste from workspace",
+          "target": "local",
+          "op": { "type": "pack", "package": "create-lamaste" },
+          "capture": [
+            {
+              "variable": "CREATE_LAMASTE_TARBALL",
+              "from": { "kind": "result" }
+            }
+          ]
+        },
+        {
+          "id": "transfer-create-lamaste",
+          "label": "Transfer create-lamaste tarball to host",
+          "target": "host",
+          "op": {
+            "type": "transfer",
+            "source": { "kind": "var", "name": "CREATE_LAMASTE_TARBALL" },
+            "dest": "/tmp/create-lamaste.tgz"
+          }
+        },
+        {
+          "id": "install-create-lamaste",
+          "label": "Install create-lamaste globally",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "npm install -g /tmp/create-lamaste.tgz\n"
+        },
+        {
+          "id": "run-create-lamaste",
+          "label": "Run create-lamaste --dev --skip-harden --yes",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "create-lamaste --dev --skip-harden --yes\n"
+        },
+        {
+          "id": "patch-panel-ip",
+          "label": "Patch panel.json IP to static host IP",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "sed -i 's/\"ip\": *\"[^\"]*\"/\"ip\": \"${HOST_IP}\"/' /etc/lamalibre/lamaste/panel.json\n"
+        },
+        {
+          "id": "restart-panel",
+          "label": "Restart lamalibre-lamaste-serverd to pick up new IP",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "systemctl restart lamalibre-lamaste-serverd || true\n",
+          "continueOnError": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,710 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 28,
+    "name": "Agents Me Endpoints",
+    "suite": "e2e-three-vm",
+    "description": "28 — Agents /me/* self-service and chisel credential rotation (Three-VM)",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {
+    "AGENT_LABEL": {
+      "value": "agents-me-28"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Revoke agent cert",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Securely delete extracted PEM files",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "shred -u /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem 2>/dev/null || rm -f /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "1-pre-flight",
+      "label": "1. Pre-flight — verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-preflight-get",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-preflight-assert",
+          "label": "Onboarding must be COMPLETED",
+          "target": "local",
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ONBOARDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "COMPLETED"
+              },
+              "message": "Onboarding status is COMPLETED"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "2-create-agent-cert",
+      "label": "2. Create agent cert with known capabilities + allowedSites",
+      "steps": [
+        {
+          "id": "step-create-cert",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": {
+              "label": "agents-me-28",
+              "capabilities": [
+                "tunnels:read",
+                "sites:read"
+              ],
+              "allowedSites": [
+                "site-alpha",
+                "site-beta"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-cert-ok",
+          "label": "POST /certs/agent returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /certs/agent returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-cert-label",
+          "label": "Agent cert label matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Response label matches agent label"
+            }
+          }
+        },
+        {
+          "id": "step-p12pass-extract",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-p12-notempty",
+          "label": "Response has a non-empty p12Password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".p12Password",
+              "message": "Response carries a p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-extract-pem",
+          "label": "Extract PEM cert/key from .p12 and restrict perms",
+          "target": "host",
+          "bash": "P12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-agents-me-28-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-agents-me-28-key.pem\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"chmod 0600 '${AGENT_CERT_PATH}' '${AGENT_KEY_PATH}'\"\nlog_pass \"Extracted PEM cert and key from .p12\"",
+          "op": {
+            "type": "exec",
+            "command": "true"
+          }
+        }
+      ]
+    },
+    {
+      "id": "3-me-capabilities",
+      "label": "3. GET /agents/me/capabilities with agent cert",
+      "steps": [
+        {
+          "id": "step-me-caps-call",
+          "label": "GET /agents/me/capabilities as agent",
+          "target": "host",
+          "bash": "ME_CAPS_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/capabilities\")",
+          "op": {
+            "type": "exec",
+            "command": "true"
+          }
+        },
+        {
+          "id": "step-me-caps-role",
+          "label": "/me/capabilities role is agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ME_CAPS_RESPONSE"
+              },
+              "path": ".role",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "/me/capabilities returns role=agent for an agent cert"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-tunnels",
+          "label": "/me/capabilities includes tunnels:read",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CAPS_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "tunnels:read"
+              },
+              "message": "/me/capabilities response contains tunnels:read"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-sites",
+          "label": "/me/capabilities includes sites:read",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CAPS_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "sites:read"
+              },
+              "message": "/me/capabilities response contains sites:read"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-count-compute",
+          "label": "Compute capability count",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$ME_CAPS_RESPONSE\" | jq '.capabilities | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "ME_CAPS_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-me-caps-count-assert",
+          "label": "/me/capabilities returns exactly the two capabilities admin set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CAPS_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "/me/capabilities returns exactly 2 capabilities (the set admin provided)"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-alpha",
+          "label": "/me/capabilities allowedSites includes site-alpha",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CAPS_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "site-alpha"
+              },
+              "message": "/me/capabilities allowedSites includes site-alpha"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-beta",
+          "label": "/me/capabilities allowedSites includes site-beta",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CAPS_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "site-beta"
+              },
+              "message": "/me/capabilities allowedSites includes site-beta"
+            }
+          }
+        },
+        {
+          "id": "step-me-caps-sites-count",
+          "label": "Compute allowedSites count",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$ME_CAPS_RESPONSE\" | jq '.allowedSites | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "ME_SITES_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-me-caps-sites-count-assert",
+          "label": "/me/capabilities returns exactly the two allowedSites admin set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ME_SITES_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "/me/capabilities returns exactly 2 allowedSites (the set admin provided)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "4-me-chisel-credential",
+      "label": "4. GET /agents/me/chisel-credential with agent cert",
+      "steps": [
+        {
+          "id": "step-me-chisel-call",
+          "label": "GET /agents/me/chisel-credential as agent",
+          "target": "host",
+          "bash": "ME_CHISEL_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")",
+          "op": {
+            "type": "exec",
+            "command": "true"
+          }
+        },
+        {
+          "id": "step-me-chisel-user",
+          "label": "/me/chisel-credential has non-empty user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ME_CHISEL_RESPONSE"
+              },
+              "path": ".user",
+              "message": "/me/chisel-credential returns a non-empty user"
+            }
+          }
+        },
+        {
+          "id": "step-me-chisel-password",
+          "label": "/me/chisel-credential has non-empty password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ME_CHISEL_RESPONSE"
+              },
+              "path": ".password",
+              "message": "/me/chisel-credential returns a non-empty password"
+            }
+          }
+        },
+        {
+          "id": "step-me-chisel-user-matches",
+          "label": "/me/chisel-credential references agent label",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ME_CHISEL_RESPONSE"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "/me/chisel-credential user references the agent label"
+            }
+          }
+        },
+        {
+          "id": "step-me-chisel-pw1-extract",
+          "label": "Capture first-round password",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PW_BEFORE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ME_CHISEL_RESPONSE"
+              },
+              "expression": ".password"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "5-admin-rotate",
+      "label": "5. POST /agents/:label/chisel-credential/rotate (admin)",
+      "steps": [
+        {
+          "id": "step-rotate-call",
+          "label": "POST /api/agents/agents-me-28/chisel-credential/rotate",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/${AGENT_LABEL}/chisel-credential/rotate",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-rotate-ok",
+          "label": "Rotate response ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Rotate returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-rotate-label",
+          "label": "Rotate response label matches agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Rotate response label matches the agent"
+            }
+          }
+        },
+        {
+          "id": "step-rotate-password-nonempty",
+          "label": "Rotate response has new password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "path": ".password",
+              "message": "Rotate response carries a non-empty new password"
+            }
+          }
+        },
+        {
+          "id": "step-rotate-pw-capture",
+          "label": "Capture rotated password",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PW_ROTATED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "expression": ".password"
+            }
+          }
+        },
+        {
+          "id": "step-rotate-diff",
+          "label": "Rotated password differs from previous",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_ROTATED"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_BEFORE"
+              },
+              "message": "Rotated chisel password differs from pre-rotation password"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "6-me-chisel-after-rotate",
+      "label": "6. Agent re-fetches /me/chisel-credential — sees rotated password",
+      "steps": [
+        {
+          "id": "step-me-chisel-recall",
+          "label": "GET /agents/me/chisel-credential (post-rotate)",
+          "target": "host",
+          "bash": "ME_CHISEL_AFTER=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")",
+          "op": {
+            "type": "exec",
+            "command": "true"
+          }
+        },
+        {
+          "id": "step-me-chisel-after-extract",
+          "label": "Capture post-rotate password",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PW_AFTER",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ME_CHISEL_AFTER"
+              },
+              "expression": ".password"
+            }
+          }
+        },
+        {
+          "id": "step-me-chisel-after-matches-rotated",
+          "label": "Agent sees rotated password via /me/chisel-credential",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_ROTATED"
+              },
+              "message": "Agent's /me/chisel-credential returns the rotated password"
+            }
+          }
+        },
+        {
+          "id": "step-me-chisel-after-differs-pre",
+          "label": "Post-rotate password differs from pre-rotate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_BEFORE"
+              },
+              "message": "Post-rotate /me/chisel-credential differs from the pre-rotation value"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ]
+}

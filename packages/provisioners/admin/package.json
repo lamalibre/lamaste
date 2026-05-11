@@ -1,0 +1,43 @@
+{
+  "name": "@lamalibre/create-lamaste-admin",
+  "version": "2.0.0",
+  "description": "Upgrade Lamaste admin authentication to hardware-bound (Keychain) certificate",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "create-lamaste-admin": "bin/create-lamaste-admin.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "execa": "^9.0.0",
+    "listr2": "^8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/provisioners/admin"
+  },
+  "homepage": "https://github.com/lamalibre/lamaste#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/lamaste/issues"
+  },
+  "keywords": [
+    "lamaste",
+    "admin",
+    "keychain",
+    "mtls",
+    "hardware-bound",
+    "certificate"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

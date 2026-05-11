@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "provisioned",
+    "name": "Three-VM provisioned",
+    "description": "Run setup-host.sh on the host (DNS, certbot shim, onboarding, test user, enrollment token), then in parallel pack and enroll the agent and configure the visitor. HOST_IP and TEST_DOMAIN must be present in the tier-runner var scope (injected from ctx.vmIps[host] and ctx.domain).",
+    "dependsOn": "installed"
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Static IP of the host VM, injected by the tier runner from ctx.vmIps[vmNames.host]."
+    },
+    "TEST_DOMAIN": {
+      "description": "Resolved test domain for the suite, injected by the tier runner from ctx.domain."
+    }
+  },
+  "assets": {
+    "host": [
+      "setup-host.sh",
+      "logging.sh",
+      "vm-api-helper.sh",
+      "vm-api-status-helper.sh",
+      "certbot-shim.sh"
+    ],
+    "agent": [
+      "setup-agent.sh",
+      "logging.sh"
+    ],
+    "visitor": [
+      "setup-visitor.sh",
+      "logging.sh"
+    ]
+  },
+  "outputs": {
+    "hostIp": { "from": "HOST_IP_CRED", "scope": "credentials" },
+    "testDomain": { "from": "TEST_DOMAIN_CRED", "scope": "credentials" },
+    "enrollmentToken": { "from": "ENROLLMENT_TOKEN", "scope": "credentials" },
+    "testUser": { "from": "TEST_USER_CRED", "scope": "credentials" },
+    "testUserPassword": { "from": "TEST_USER_PASSWORD_CRED", "scope": "credentials" },
+    "agentLabel": { "from": "AGENT_LABEL_CRED", "scope": "credentials" }
+  },
+  "sections": [
+    {
+      "id": "host-setup",
+      "label": "Run setup-host.sh and capture credentials",
+      "steps": [
+        {
+          "id": "stage-host-helpers",
+          "label": "Place vm-api helpers at /tmp for setup-host.sh",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "cp /tmp/e2e/vm-api-helper.sh /tmp/vm-api-helper.sh 2>/dev/null || true\ncp /tmp/e2e/vm-api-status-helper.sh /tmp/vm-api-status-helper.sh 2>/dev/null || true\nchmod +x /tmp/vm-api-helper.sh /tmp/vm-api-status-helper.sh 2>/dev/null || true\n",
+          "continueOnError": true
+        },
+        {
+          "id": "run-setup-host",
+          "label": "Execute setup-host.sh",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "bash /tmp/e2e/setup-host.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\""
+          }
+        },
+        {
+          "id": "read-credentials-file",
+          "label": "Read /tmp/lamalibre-lamaste-test-credentials.json",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/lamalibre-lamaste-test-credentials.json"
+          },
+          "capture": [
+            {
+              "variable": "CREDENTIALS_JSON",
+              "from": { "kind": "result" }
+            }
+          ]
+        },
+        {
+          "id": "extract-host-ip",
+          "label": "Extract hostIp from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HOST_IP_CRED",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".hostIp"
+            }
+          }
+        },
+        {
+          "id": "extract-test-domain",
+          "label": "Extract testDomain from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TEST_DOMAIN_CRED",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".testDomain"
+            }
+          }
+        },
+        {
+          "id": "extract-enrollment-token",
+          "label": "Extract enrollmentToken from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLLMENT_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".enrollmentToken"
+            }
+          }
+        },
+        {
+          "id": "extract-test-user",
+          "label": "Extract testUser from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TEST_USER_CRED",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".testUser"
+            }
+          }
+        },
+        {
+          "id": "extract-test-user-password",
+          "label": "Extract testUserPassword from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TEST_USER_PASSWORD_CRED",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".testUserPassword"
+            }
+          }
+        },
+        {
+          "id": "extract-agent-label",
+          "label": "Extract agentLabel from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AGENT_LABEL_CRED",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".agentLabel"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "prepare-agent",
+      "label": "Pack and stage lamaste-agent on the agent VM",
+      "steps": [
+        {
+          "id": "pack-lamaste-agent",
+          "label": "Pack lamaste-agent from workspace",
+          "target": "local",
+          "op": { "type": "pack", "package": "lamaste-agent" },
+          "capture": [
+            {
+              "variable": "AGENT_TARBALL",
+              "from": { "kind": "result" }
+            }
+          ]
+        },
+        {
+          "id": "transfer-lamaste-agent",
+          "label": "Transfer lamaste-agent tarball to agent VM",
+          "target": "agent",
+          "op": {
+            "type": "transfer",
+            "source": { "kind": "var", "name": "AGENT_TARBALL" },
+            "dest": "/tmp/lamalibre-lamaste-agent.tgz"
+          }
+        }
+      ]
+    },
+    {
+      "id": "setup-agent-and-visitor",
+      "label": "Run setup-agent.sh and setup-visitor.sh in parallel",
+      "parallel": true,
+      "steps": [
+        {
+          "id": "run-setup-agent",
+          "label": "Execute setup-agent.sh",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "bash /tmp/e2e/setup-agent.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\" \"${ENROLLMENT_TOKEN}\""
+          }
+        },
+        {
+          "id": "run-setup-visitor",
+          "label": "Execute setup-visitor.sh",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "bash /tmp/e2e/setup-visitor.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\""
+          }
+        }
+      ]
+    }
+  ]
+}

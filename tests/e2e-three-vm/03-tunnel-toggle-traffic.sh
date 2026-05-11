@@ -24,23 +24,23 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
-agent_exec() { multipass exec portlama-agent -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
+agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_patch() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ TUNNEL_SUBDOMAIN="e2etoggle"
 TUNNEL_PORT=18081
 TUNNEL_FQDN="${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}"
 TUNNEL_ID=""
-MARKER="PORTLAMA_TOGGLE_OK_$(date +%s)"
+MARKER="LAMASTE_TOGGLE_OK_$(date +%s)"
 
 begin_test "03 — Tunnel Toggle Traffic (Three-VM)"
 
@@ -68,7 +68,7 @@ cleanup() {
   if [ -n "$TUNNEL_ID" ] && [ "$TUNNEL_ID" != "null" ]; then
     host_api_delete "tunnels/${TUNNEL_ID}" 2>/dev/null || true
   fi
-  agent_exec "portlama-agent update 2>/dev/null || true" 2>/dev/null || true
+  agent_exec "lamaste-agent update 2>/dev/null || true" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -105,7 +105,7 @@ agent_exec "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp
 sleep 2
 
 # Refresh agent config to pick up the new tunnel
-agent_exec "portlama-agent update"
+agent_exec "lamaste-agent update"
 
 # Wait for tunnel to establish
 log_info "Waiting for Chisel tunnel to establish..."
@@ -164,7 +164,7 @@ else
 fi
 
 # Also verify the vhost symlink is actually gone
-VHOST_EXISTS=$(host_exec "test -L /etc/nginx/sites-enabled/portlama-app-${TUNNEL_SUBDOMAIN} && echo yes || echo no")
+VHOST_EXISTS=$(host_exec "test -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${TUNNEL_SUBDOMAIN} && echo yes || echo no")
 assert_eq "$VHOST_EXISTS" "no" "Nginx vhost symlink removed after disable" || true
 
 # ---------------------------------------------------------------------------

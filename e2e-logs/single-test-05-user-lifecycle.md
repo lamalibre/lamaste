@@ -1,4 +1,4 @@
-# Portlama E2E: 05 — User Lifecycle
+# Lamaste E2E: 05 — User Lifecycle
 
 > Started at `2026-03-30 13:06:27 UTC`
 

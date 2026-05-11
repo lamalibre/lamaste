@@ -1,0 +1,406 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 1,
+    "name": "Fresh Install",
+    "suite": "e2e",
+    "description": "01 — Fresh Install",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "node",
+      "systemctl"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "node-js-installation",
+      "label": "Node.js installation",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "Set NODE_VERSION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "node --version 2>/dev/null || echo \"none\""
+          },
+          "capture": [
+            {
+              "variable": "NODE_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Node.js installed: $NODE_VERSION",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Node.js installed: $NODE_VERSION"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "NODE_VERSION",
+            "value": "v2*"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Node.js version 20+ expected, got: $NODE_VERSION",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Node.js version 20+ expected, got: $NODE_VERSION"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "NODE_VERSION",
+            "value": "v2*"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Node.js installation\"\n# ---------------------------------------------------------------------------\n\nNODE_VERSION=$(node --version 2>/dev/null || echo \"none\")\nif [[ \"$NODE_VERSION\" == v2* ]]; then\n  log_pass \"Node.js installed: $NODE_VERSION\"\nelse\n  log_fail \"Node.js version 20+ expected, got: $NODE_VERSION\"\nfi"
+    },
+    {
+      "id": "serverd-service",
+      "label": "Panel server service",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "Set PANEL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active lamalibre-lamaste-serverd 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "PANEL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "lamalibre-lamaste-serverd service is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "lamalibre-lamaste-serverd service is active"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel server service\"\n# ---------------------------------------------------------------------------\n\nPANEL_STATUS=$(systemctl is-active lamalibre-lamaste-serverd 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_STATUS\" \"active\" \"lamalibre-lamaste-serverd service is active\" || true"
+    },
+    {
+      "id": "health-endpoint",
+      "label": "Health endpoint",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "GET /api/health",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "health"
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Health endpoint returns status: ok",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Health endpoint returns status: ok"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Health endpoint returns a version",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH"
+              },
+              "path": ".version",
+              "message": "Health endpoint returns a version"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Health endpoint\"\n# ---------------------------------------------------------------------------\n\nHEALTH=$(api_get \"health\" 2>/dev/null || echo '{}')\nassert_json_field \"$HEALTH\" '.status' 'ok' \"Health endpoint returns status: ok\" || true\nassert_json_field_not_empty \"$HEALTH\" '.version' \"Health endpoint returns a version\" || true"
+    },
+    {
+      "id": "panel-client-static-files",
+      "label": "Panel client static files",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Set HTTP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "HTTP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Panel client served at / (HTTP $HTTP_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel client served at / (HTTP $HTTP_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "HTTP_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "HTTP_STATUS",
+                "value": "304"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Panel client not served at / (HTTP $HTTP_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel client not served at / (HTTP $HTTP_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "HTTP_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "HTTP_STATUS",
+                "value": "304"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Set PAGE_CONTENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls \"${BASE_URL}/\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PAGE_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Response contains HTML content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_CONTENT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<!doctype html>"
+              },
+              "message": "Response contains HTML content"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Response contains React root element",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PAGE_CONTENT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<div id=\"root\">"
+              },
+              "message": "Response contains React root element"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel client static files\"\n# ---------------------------------------------------------------------------\n\nHTTP_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \\\n  \"${BASE_URL}/\" 2>/dev/null || echo \"000\")\n\nif [ \"$HTTP_STATUS\" = \"200\" ] || [ \"$HTTP_STATUS\" = \"304\" ]; then\n  log_pass \"Panel client served at / (HTTP $HTTP_STATUS)\"\nelse\n  log_fail \"Panel client not served at / (HTTP $HTTP_STATUS)\"\nfi\n\n# Check that the response contains HTML\nPAGE_CONTENT=$(_curl_mtls \"${BASE_URL}/\" 2>/dev/null || echo \"\")\nassert_contains \"$PAGE_CONTENT\" \"<!doctype html>\" \"Response contains HTML content\" || true\n# Vite-built React apps typically include a script tag or the root div\nassert_contains \"$PAGE_CONTENT\" '<div id=\"root\">' \"Response contains React root element\" || true"
+    },
+    {
+      "id": "nginx-service",
+      "label": "nginx service",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Set NGINX_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active nginx 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "NGINX_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "nginx service is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "nginx service is active"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set NGINX_TEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "nginx configuration syntax is valid",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx configuration syntax is valid"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"nginx service\"\n# ---------------------------------------------------------------------------\n\nNGINX_STATUS=$(systemctl is-active nginx 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_STATUS\" \"active\" \"nginx service is active\" || true\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx configuration syntax is valid\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 01 — Fresh Install\n# ============================================================================\n# Verifies that create-lamaste installs correctly on a clean Ubuntu system:\n# - Node.js is present (correct version)\n# - Panel server is running on port 9292\n# - Health endpoint returns { status: \"ok\" }\n# - Panel client static files are served at /\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node systemctl\n\nbegin_test \"01 — Fresh Install\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

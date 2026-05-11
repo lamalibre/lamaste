@@ -16,6 +16,6 @@ coverage/
 dev/panel.json
 /tmp/
 .claude/
-packages/create-portlama/vendor/
+packages/provisioners/server/vendor/
 local-gate/
-packages/feria/
+packages/tools/e2e-desktop/src-tauri/target/debug

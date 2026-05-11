@@ -1,0 +1,503 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 22,
+    "name": "Agent Plugin Capability Reporting",
+    "suite": "e2e",
+    "description": "22 — Agent Plugin Capability Reporting",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent plugin report tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# ===========================================================================\n# 1. Valid plugin report accepted\n# ==========================================================================="
+    },
+    {
+      "id": "valid-plugin-report-accepted",
+      "label": "Valid plugin report accepted",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "test-plugin",
+                  "version": "0.1.0",
+                  "capabilities": [
+                    "test-plugin:connect"
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "REPORT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Plugin report accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REPORT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin report accepted"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "One capability merged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REPORT_RESPONSE"
+              },
+              "path": ".merged",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "One capability merged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Valid plugin report accepted\"\n\nREPORT_RESPONSE=$(api_post \"agents/plugins/report\" '{\n  \"plugins\": [{\n    \"name\": \"test-plugin\",\n    \"version\": \"0.1.0\",\n    \"capabilities\": [\"test-plugin:connect\"]\n  }]\n}')\nassert_json_field \"$REPORT_RESPONSE\" '.ok' 'true' \"Plugin report accepted\" || true\nassert_json_field \"$REPORT_RESPONSE\" '.merged' '1' \"One capability merged\" || true\n\n# ===========================================================================\n# 2. Empty capabilities report accepted with merged=0\n# ==========================================================================="
+    },
+    {
+      "id": "empty-capabilities-report",
+      "label": "Empty capabilities report",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "empty-plugin",
+                  "version": "0.1.0",
+                  "capabilities": []
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "EMPTY_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Empty report accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EMPTY_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Empty report accepted"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Zero capabilities merged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EMPTY_RESPONSE"
+              },
+              "path": ".merged",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Zero capabilities merged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Empty capabilities report\"\n\nEMPTY_RESPONSE=$(api_post \"agents/plugins/report\" '{\n  \"plugins\": [{\n    \"name\": \"empty-plugin\",\n    \"version\": \"0.1.0\",\n    \"capabilities\": []\n  }]\n}')\nassert_json_field \"$EMPTY_RESPONSE\" '.ok' 'true' \"Empty report accepted\" || true\nassert_json_field \"$EMPTY_RESPONSE\" '.merged' '0' \"Zero capabilities merged\" || true\n\n# ===========================================================================\n# 3. Capabilities must be scoped to plugin name prefix\n# ==========================================================================="
+    },
+    {
+      "id": "capability-prefix-scoping",
+      "label": "Capability prefix scoping",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "myplugin",
+                  "version": "1.0.0",
+                  "capabilities": [
+                    "myplugin:read",
+                    "otherplugin:write"
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "SCOPED_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Only plugin-prefixed capability accepted (otherplugin:write rejected)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SCOPED_RESPONSE"
+              },
+              "path": ".merged",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Only plugin-prefixed capability accepted (otherplugin:write rejected)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Capability prefix scoping\"\n\nSCOPED_RESPONSE=$(api_post \"agents/plugins/report\" '{\n  \"plugins\": [{\n    \"name\": \"myplugin\",\n    \"version\": \"1.0.0\",\n    \"capabilities\": [\"myplugin:read\", \"otherplugin:write\"]\n  }]\n}')\nassert_json_field \"$SCOPED_RESPONSE\" '.merged' '1' \"Only plugin-prefixed capability accepted (otherplugin:write rejected)\" || true\n\n# ===========================================================================\n# 4. Invalid capability format rejected\n# ==========================================================================="
+    },
+    {
+      "id": "invalid-capability-format-rejected",
+      "label": "Invalid capability format rejected",
+      "steps": [
+        {
+          "id": "step-10",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "badplugin",
+                  "version": "1.0.0",
+                  "capabilities": [
+                    "no-colon-here"
+                  ]
+                }
+              ]
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Capability without colon separator rejected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Capability without colon separator rejected"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Invalid capability format rejected\"\n\nINVALID_STATUS=$(api_post_status \"agents/plugins/report\" '{\n  \"plugins\": [{\n    \"name\": \"badplugin\",\n    \"version\": \"1.0.0\",\n    \"capabilities\": [\"no-colon-here\"]\n  }]\n}')\nassert_eq \"$INVALID_STATUS\" \"400\" \"Capability without colon separator rejected\" || true\n\n# ===========================================================================\n# 5. Invalid plugin name format rejected\n# ==========================================================================="
+    },
+    {
+      "id": "invalid-plugin-name-format-rejected",
+      "label": "Invalid plugin name format rejected",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "Bad_Plugin_Name",
+                  "version": "1.0.0",
+                  "capabilities": []
+                }
+              ]
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_NAME_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Uppercase plugin name rejected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_NAME_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Uppercase plugin name rejected"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Invalid plugin name format rejected\"\n\nINVALID_NAME_STATUS=$(api_post_status \"agents/plugins/report\" '{\n  \"plugins\": [{\n    \"name\": \"Bad_Plugin_Name\",\n    \"version\": \"1.0.0\",\n    \"capabilities\": []\n  }]\n}')\nassert_eq \"$INVALID_NAME_STATUS\" \"400\" \"Uppercase plugin name rejected\" || true\n\n# ===========================================================================\n# 6. 'agents' is a reserved plugin name\n# ==========================================================================="
+    },
+    {
+      "id": "reserved-plugin-name-agents",
+      "label": "Reserved plugin name 'agents'",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": {
+              "packageName": "@lamalibre/agents"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "AGENTS_INSTALL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "'agents' plugin install should not succeed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "'agents' plugin install should not succeed"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTS_INSTALL_STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "'agents' plugin install rejected (status: $AGENTS_INSTALL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "'agents' plugin install rejected (status: $AGENTS_INSTALL_STATUS)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENTS_INSTALL_STATUS",
+            "value": "200"
+          }
+        }
+      ],
+      "bash": "log_section \"Reserved plugin name 'agents'\"\n\n# Try to install a plugin named 'agents' — should fail\nAGENTS_INSTALL_STATUS=$(api_post_status \"plugins/install\" '{\"packageName\":\"@lamalibre/agents\"}')\n# This will likely fail with a different error (package not found or reserved name)\n# but the key is it doesn't succeed\nif [ \"$AGENTS_INSTALL_STATUS\" = \"200\" ]; then\n  log_fail \"'agents' plugin install should not succeed\"\nelse\n  log_pass \"'agents' plugin install rejected (status: $AGENTS_INSTALL_STATUS)\"\nfi\n\n# ===========================================================================\n# 7. Missing body rejected\n# ==========================================================================="
+    },
+    {
+      "id": "missing-body-rejected",
+      "label": "Missing body rejected",
+      "steps": [
+        {
+          "id": "step-17",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {},
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "NOBODY_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Missing plugins array rejected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOBODY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Missing plugins array rejected"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Missing body rejected\"\n\nNOBODY_STATUS=$(api_post_status \"agents/plugins/report\" '{}')\nassert_eq \"$NOBODY_STATUS\" \"400\" \"Missing plugins array rejected\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 22 — Agent Plugin Capability Reporting\n# ============================================================================\n# Verifies the server-side agent plugin capability reporting endpoint:\n# - POST /api/agents/plugins/report accepts valid reports\n# - Capability format validation (must be pluginName:action)\n# - Capabilities are scoped to the reporting plugin's name prefix\n# - Invalid report format rejected with 400\n# - 'agents' is a reserved plugin name\n# - Reported capabilities persist after server restart\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"22 — Agent Plugin Capability Reporting\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\n# ===========================================================================\n\nend_test\n"
+}

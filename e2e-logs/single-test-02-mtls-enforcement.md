@@ -1,4 +1,4 @@
-# Portlama E2E: 02 — mTLS Enforcement
+# Lamaste E2E: 02 — mTLS Enforcement
 
 > Started at `2026-03-30 13:06:17 UTC`
 

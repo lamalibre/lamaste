@@ -1,0 +1,700 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 23,
+    "name": "Agent Plugin CRUD",
+    "suite": "e2e",
+    "description": "23 — Agent Plugin CRUD (Single-VM)",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent plugin CRUD tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\""
+    },
+    {
+      "id": "detect-agent-label-and-start-panel-service",
+      "label": "Detect agent label and start panel service",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "Set AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Using agent label: ${AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Using agent label: ${AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Set HEALTH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Agent panel already running",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent panel already running"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set HEALTH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "AGENT_LABEL"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Detect agent label and start panel service\"\n# ---------------------------------------------------------------------------\n\n# Find the first agent label from the enrolled agents\nAGENTS_DIR=\"/etc/lamalibre/lamaste/pki/agents\"\nif [ ! -d \"$AGENTS_DIR\" ]; then\n  log_skip \"No agents directory found — skipping\"\n  end_test\n  exit $?\nfi\n\nAGENT_LABEL=$(ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\")\nif [ -z \"$AGENT_LABEL\" ]; then\n  log_skip \"No enrolled agent found — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\"\n\nPANEL_PORT=9393\n\n# Check if agent panel is running; start if not\nHEALTH=$(curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\")\nif echo \"$HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n  log_pass \"Agent panel already running\"\nelse\n  lamaste-agent panel --enable --port ${PANEL_PORT} 2>/dev/null || true\n  sleep 5\n  HEALTH=$(curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\")\n  if echo \"$HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n    log_pass \"Agent panel started\"\n  else\n    log_skip \"Could not start agent panel service — skipping\"\n    end_test\n    exit $?\n  fi\nfi\n\n# Helpers for agent panel API (local, no mTLS — header-based auth)\nap_get() {\n  curl -sf --max-time 30 \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=agent:${AGENT_LABEL}\" \\\n    -H \"Accept: application/json\" \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/$1\"\n}\n\nap_get_status() {\n  curl -s --max-time 30 -o /dev/null -w '%{http_code}' \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=agent:${AGENT_LABEL}\" \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/$1\"\n}\n\nap_post_status() {\n  curl -s --max-time 30 -o /dev/null -w '%{http_code}' \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=agent:${AGENT_LABEL}\" \\\n    -X POST -H \"Content-Type: application/json\" \\\n    -d \"$2\" \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/$1\"\n}\n\nap_delete_status() {\n  curl -s --max-time 30 -o /dev/null -w '%{http_code}' \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=agent:${AGENT_LABEL}\" \\\n    -X DELETE \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/$1\"\n}\n\n# ===========================================================================\n# 1. GET /plugins — empty list\n# ==========================================================================="
+    },
+    {
+      "id": "get-plugins",
+      "label": "GET /plugins",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set PLUGINS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_get \"plugins\""
+          },
+          "capture": [
+            {
+              "variable": "PLUGINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Set COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PLUGINS\" | jq '.plugins | length' 2>/dev/null || echo \"-1\""
+          },
+          "capture": [
+            {
+              "variable": "COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Plugin list is initially empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Plugin list is initially empty"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"GET /plugins\"\n\nPLUGINS=$(ap_get \"plugins\")\nCOUNT=$(echo \"$PLUGINS\" | jq '.plugins | length' 2>/dev/null || echo \"-1\")\nassert_eq \"$COUNT\" \"0\" \"Plugin list is initially empty\" || true\n\n# ===========================================================================\n# 2. Install validation\n# ==========================================================================="
+    },
+    {
+      "id": "install-validation",
+      "label": "Install validation",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "Set STATUS_NO_PKG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_post_status \"plugins/install\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_NO_PKG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Install without packageName returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_NO_PKG"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Install without packageName returns 400"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Set STATUS_BAD_SCOPE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_post_status \"plugins/install\" '{\"packageName\":\"bad-scope\"}'"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_BAD_SCOPE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Install non-@lamalibre/ scope returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_BAD_SCOPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Install non-@lamalibre/ scope returns 400"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install validation\"\n\nSTATUS_NO_PKG=$(ap_post_status \"plugins/install\" '{}')\nassert_eq \"$STATUS_NO_PKG\" \"400\" \"Install without packageName returns 400\" || true\n\nSTATUS_BAD_SCOPE=$(ap_post_status \"plugins/install\" '{\"packageName\":\"bad-scope\"}')\nassert_eq \"$STATUS_BAD_SCOPE\" \"400\" \"Install non-@lamalibre/ scope returns 400\" || true\n\n# ===========================================================================\n# 3. Plugin name validation — reserved names\n# ==========================================================================="
+    },
+    {
+      "id": "reserved-plugin-names",
+      "label": "Reserved plugin names",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "Set STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_post_status \"plugins/${name}/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Reserved name '${name}' rejected on enable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reserved name '${name}' rejected on enable"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Reserved plugin names\"\n\nfor name in plugins agents tunnels services health settings identity storage; do\n  STATUS=$(ap_post_status \"plugins/${name}/enable\" '{}')\n  assert_eq \"$STATUS\" \"400\" \"Reserved name '${name}' rejected on enable\" || true\ndone\n\n# ===========================================================================\n# 4. Plugin name validation — invalid characters\n# ==========================================================================="
+    },
+    {
+      "id": "invalid-plugin-names",
+      "label": "Invalid plugin names",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "Set STATUS_DOTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_post_status \"plugins/has.dots/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_DOTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Dots in name rejected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_DOTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Dots in name rejected"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set STATUS_UPPER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ap_post_status \"plugins/HasUpper/enable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_UPPER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Uppercase in name rejected",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_UPPER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Uppercase in name rejected"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Invalid plugin names\"\n\nSTATUS_DOTS=$(ap_post_status \"plugins/has.dots/enable\" '{}')\nassert_eq \"$STATUS_DOTS\" \"400\" \"Dots in name rejected\" || true\n\nSTATUS_UPPER=$(ap_post_status \"plugins/HasUpper/enable\" '{}')\nassert_eq \"$STATUS_UPPER\" \"400\" \"Uppercase in name rejected\" || true\n\n# ===========================================================================\n# 5. Operations on nonexistent plugin\n# ==========================================================================="
+    },
+    {
+      "id": "nonexistent-plugin-operations",
+      "label": "Nonexistent plugin operations",
+      "steps": [
+        {
+          "id": "step-38",
+          "label": "Enable nonexistent → 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(ap_post_status \"plugins/nosuch/enable\" '{}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Enable nonexistent → 400"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Disable nonexistent → 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(ap_post_status \"plugins/nosuch/disable\" '{}')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Disable nonexistent → 400"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Delete nonexistent → 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(ap_delete_status \"plugins/nosuch\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Delete nonexistent → 400"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Check-update nonexistent → 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(ap_get_status \"plugins/nosuch/check-update\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Check-update nonexistent → 400"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Bundle nonexistent → 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(ap_get_status \"plugins/nosuch/bundle\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Bundle nonexistent → 404"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Nonexistent plugin operations\"\n\nassert_eq \"$(ap_post_status \"plugins/nosuch/enable\" '{}')\" \"400\" \"Enable nonexistent → 400\" || true\nassert_eq \"$(ap_post_status \"plugins/nosuch/disable\" '{}')\" \"400\" \"Disable nonexistent → 400\" || true\nassert_eq \"$(ap_delete_status \"plugins/nosuch\")\" \"400\" \"Delete nonexistent → 400\" || true\nassert_eq \"$(ap_get_status \"plugins/nosuch/check-update\")\" \"400\" \"Check-update nonexistent → 400\" || true\nassert_eq \"$(ap_get_status \"plugins/nosuch/bundle\")\" \"404\" \"Bundle nonexistent → 404\" || true\n\n# ===========================================================================\n# 6. Auth validation\n# ==========================================================================="
+    },
+    {
+      "id": "auth-validation",
+      "label": "Auth validation",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Set NO_AUTH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 10 -o /dev/null -w '%{http_code}' \"http://127.0.0.1:${PANEL_PORT}/api/plugins\""
+          },
+          "capture": [
+            {
+              "variable": "NO_AUTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "No mTLS headers → 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NO_AUTH"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "No mTLS headers → 403"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set WRONG_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H \"X-SSL-Client-Verify: SUCCESS\" -H \"X-SSL-Client-DN: CN=agent:wrong-label\" \"http://127.0.0.1:${PANEL_PORT}/api/plugins\""
+          },
+          "capture": [
+            {
+              "variable": "WRONG_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Wrong agent label → 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WRONG_LABEL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Wrong agent label → 403"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set ADMIN_OK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H \"X-SSL-Client-Verify: SUCCESS\" -H \"X-SSL-Client-DN: CN=admin\" \"http://127.0.0.1:${PANEL_PORT}/api/plugins\""
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_OK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Admin cert → 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Admin cert → 200"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set HEALTH_OK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sf --max-time 10 \"http://127.0.0.1:${PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\""
+          },
+          "capture": [
+            {
+              "variable": "HEALTH_OK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Health endpoint needs no auth",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HEALTH_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Health endpoint needs no auth"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Auth validation\"\n\n# No auth headers → 403\nNO_AUTH=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \\\n  \"http://127.0.0.1:${PANEL_PORT}/api/plugins\")\nassert_eq \"$NO_AUTH\" \"403\" \"No mTLS headers → 403\" || true\n\n# Wrong agent label → 403\nWRONG_LABEL=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \\\n  -H \"X-SSL-Client-Verify: SUCCESS\" \\\n  -H \"X-SSL-Client-DN: CN=agent:wrong-label\" \\\n  \"http://127.0.0.1:${PANEL_PORT}/api/plugins\")\nassert_eq \"$WRONG_LABEL\" \"403\" \"Wrong agent label → 403\" || true\n\n# Admin cert → 200\nADMIN_OK=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \\\n  -H \"X-SSL-Client-Verify: SUCCESS\" \\\n  -H \"X-SSL-Client-DN: CN=admin\" \\\n  \"http://127.0.0.1:${PANEL_PORT}/api/plugins\")\nassert_eq \"$ADMIN_OK\" \"200\" \"Admin cert → 200\" || true\n\n# Health endpoint — no auth needed\nHEALTH_OK=$(curl -sf --max-time 10 \"http://127.0.0.1:${PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\")\nassert_eq \"$HEALTH_OK\" \"ok\" \"Health endpoint needs no auth\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 23 — Agent Plugin CRUD (Single-VM)\n# ============================================================================\n# Tests the agent panel plugin management API on the local machine.\n# Starts the agent panel service on port 9393 and exercises:\n#\n# 1. Health check\n# 2. GET /plugins — empty list\n# 3. Install validation (missing body, invalid scope)\n# 4. Plugin name validation (reserved names, invalid chars)\n# 5. Enable/disable/delete nonexistent plugin\n# 6. Check-update/bundle for nonexistent plugin\n# 7. Auth validation (no headers, wrong label, admin allowed)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"23 — Agent Plugin CRUD\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

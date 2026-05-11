@@ -1,0 +1,63 @@
+{
+  "name": "@lamalibre/lamaste",
+  "version": "2.0.0",
+  "description": "Core library for Lamaste — types, constants, schemas, plugin host, file helpers",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/core/lib"
+  },
+  "homepage": "https://github.com/lamalibre/lamaste#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/lamaste/issues"
+  },
+  "keywords": [
+    "lamaste",
+    "tunnel",
+    "core",
+    "library"
+  ],
+  "dependencies": {
+    "fastify": "^5.8.4",
+    "js-yaml": "^4.1.1",
+    "zod": "^3.25.11"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
+  },
+  "peerDependencies": {
+    "execa": "^9.0.0"
+  },
+  "peerDependenciesMeta": {
+    "execa": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

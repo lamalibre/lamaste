@@ -1,0 +1,1018 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 21,
+    "name": "Gatekeeper Authorization",
+    "suite": "e2e-three-vm",
+    "description": "21 — Gatekeeper Authorization (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/gatekeeper/groups",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/groups",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "GK_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Gatekeeper proxy available",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Gatekeeper proxy available"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:9294/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "GK_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Gatekeeper service healthy on port 9294",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Gatekeeper service healthy on port 9294"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Gatekeeper service not healthy",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Gatekeeper service not healthy"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -f /etc/lamalibre/lamaste/gatekeeper-secret.json && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "SECRET_EXISTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Gatekeeper API secret file exists",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_EXISTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Gatekeeper API secret file exists"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a' /etc/lamalibre/lamaste/gatekeeper-secret.json 2>/dev/null || stat -f '%Lp' /etc/lamalibre/lamaste/gatekeeper-secret.json 2>/dev/null || echo 'unknown'"
+          },
+          "capture": [
+            {
+              "variable": "SECRET_PERMS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Gatekeeper secret file has 0600 permissions",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_PERMS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "Gatekeeper secret file has 0600 permissions"
+            }
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "GK_STATUS",
+        "value": "404"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nSTATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Check gatekeeper routes\nGK_STATUS=$(host_api_get_status \"gatekeeper/groups\")\nif [ \"$GK_STATUS\" = \"404\" ]; then\n  log_skip \"Gatekeeper routes not available — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Gatekeeper proxy available\"\n\n# Check gatekeeper service is running\nGK_HEALTH=$(host_exec \"curl -sf --max-time 5 http://127.0.0.1:9294/health\" 2>/dev/null || echo \"\")\nif echo \"$GK_HEALTH\" | grep -q \"ok\"; then\n  log_pass \"Gatekeeper service healthy on port 9294\"\nelse\n  log_fail \"Gatekeeper service not healthy\"\nfi\n\n# Verify gatekeeper-secret file exists\nSECRET_EXISTS=$(host_exec \"test -f /etc/lamalibre/lamaste/gatekeeper-secret.json && echo yes || echo no\")\nassert_eq \"$SECRET_EXISTS\" \"yes\" \"Gatekeeper API secret file exists\" || true\n\n# Verify secret file permissions\nSECRET_PERMS=$(host_exec \"stat -c '%a' /etc/lamalibre/lamaste/gatekeeper-secret.json 2>/dev/null || stat -f '%Lp' /etc/lamalibre/lamaste/gatekeeper-secret.json 2>/dev/null || echo 'unknown'\")\nassert_eq \"$SECRET_PERMS\" \"600\" \"Gatekeeper secret file has 0600 permissions\" || true"
+    },
+    {
+      "id": "1-group-crud",
+      "label": "1. Group CRUD",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "POST /api/gatekeeper/groups",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups",
+            "body": {
+              "name": "three-vm-devs",
+              "description": "Three-VM dev group"
+            }
+          },
+          "capture": [
+            {
+              "variable": "CREATE_G1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Create group three-vm-devs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$CREATE_G1\" | jq -r '.ok')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Create group three-vm-devs"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "POST /api/gatekeeper/groups",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups",
+            "body": {
+              "name": "three-vm-ops",
+              "description": "Three-VM ops group"
+            }
+          },
+          "capture": [
+            {
+              "variable": "CREATE_G2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Create group three-vm-ops",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$CREATE_G2\" | jq -r '.ok')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Create group three-vm-ops"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "POST /api/gatekeeper/groups/three-vm-devs/members",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups/three-vm-devs/members",
+            "body": {
+              "usernames": [
+                "alice",
+                "bob"
+              ]
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "POST /api/gatekeeper/groups/three-vm-ops/members",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/groups/three-vm-ops/members",
+            "body": {
+              "usernames": [
+                "charlie",
+                "dave"
+              ]
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "GET /api/gatekeeper/groups/three-vm-devs",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/groups/three-vm-devs"
+          },
+          "capture": [
+            {
+              "variable": "MEMBERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Group three-vm-devs has 2 members",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MEMBERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Group three-vm-devs has 2 members"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"1. Group CRUD\"\n# ===========================================================================\n\n# Create groups\nCREATE_G1=$(host_api_post \"gatekeeper/groups\" '{\"name\":\"three-vm-devs\",\"description\":\"Three-VM dev group\"}')\nassert_eq \"$(echo \"$CREATE_G1\" | jq -r '.ok')\" \"true\" \"Create group three-vm-devs\" || true\n\nCREATE_G2=$(host_api_post \"gatekeeper/groups\" '{\"name\":\"three-vm-ops\",\"description\":\"Three-VM ops group\"}')\nassert_eq \"$(echo \"$CREATE_G2\" | jq -r '.ok')\" \"true\" \"Create group three-vm-ops\" || true\n\n# Add members\nhost_api_post \"gatekeeper/groups/three-vm-devs/members\" '{\"usernames\":[\"alice\",\"bob\"]}' > /dev/null 2>&1\nhost_api_post \"gatekeeper/groups/three-vm-ops/members\" '{\"usernames\":[\"charlie\",\"dave\"]}' > /dev/null 2>&1\n\nMEMBERS=$(host_api_get \"gatekeeper/groups/three-vm-devs\" | jq '.group.members | length' 2>/dev/null || echo \"0\")\nassert_eq \"$MEMBERS\" \"2\" \"Group three-vm-devs has 2 members\" || true"
+    },
+    {
+      "id": "2-grant-crud-and-access-checks",
+      "label": "2. Grant CRUD and Access Checks",
+      "steps": [
+        {
+          "id": "step-19",
+          "label": "POST /api/gatekeeper/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/grants",
+            "body": {
+              "principalType": "user",
+              "principalId": "alice",
+              "resourceType": "tunnel",
+              "resourceId": "tunnel-001"
+            }
+          },
+          "capture": [
+            {
+              "variable": "G1",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "Extract G1_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "G1_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "G1"
+              },
+              "expression": ".grant.grantId"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Create user grant (alice → tunnel-001)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "G1_ID"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Create user grant (alice → tunnel-001)"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "POST /api/gatekeeper/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/grants",
+            "body": {
+              "principalType": "group",
+              "principalId": "three-vm-ops",
+              "resourceType": "tunnel",
+              "resourceId": "tunnel-002"
+            }
+          },
+          "capture": [
+            {
+              "variable": "G2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Extract G2_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "G2_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "G2"
+              },
+              "expression": ".grant.grantId"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Create group grant (three-vm-ops → tunnel-002)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "G2_ID"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Create group grant (three-vm-ops → tunnel-002)"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "GET /api/gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=tunnel-001",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=tunnel-001"
+          },
+          "capture": [
+            {
+              "variable": "ALICE_ACCESS",
+              "from": {
+                "kind": "jq",
+                "expression": ".allowed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Alice has access via direct grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ALICE_ACCESS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Alice has access via direct grant"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "GET /api/gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002"
+          },
+          "capture": [
+            {
+              "variable": "CHARLIE_ACCESS",
+              "from": {
+                "kind": "jq",
+                "expression": ".allowed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Charlie has access via group grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHARLIE_ACCESS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Charlie has access via group grant"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "GET /api/gatekeeper/access/check?username=bob&resourceType=tunnel&resourceId=tunnel-002",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access/check?username=bob&resourceType=tunnel&resourceId=tunnel-002"
+          },
+          "capture": [
+            {
+              "variable": "BOB_DENIED",
+              "from": {
+                "kind": "jq",
+                "expression": ".allowed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Bob denied (not in three-vm-ops)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BOB_DENIED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Bob denied (not in three-vm-ops)"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"2. Grant CRUD and Access Checks\"\n# ===========================================================================\n\n# Create tunnel grants\nG1=$(host_api_post \"gatekeeper/grants\" '{\"principalType\":\"user\",\"principalId\":\"alice\",\"resourceType\":\"tunnel\",\"resourceId\":\"tunnel-001\"}')\nG1_ID=$(echo \"$G1\" | jq -r '.grant.grantId')\nassert_not_eq \"$G1_ID\" \"\" \"Create user grant (alice → tunnel-001)\" || true\n\nG2=$(host_api_post \"gatekeeper/grants\" '{\"principalType\":\"group\",\"principalId\":\"three-vm-ops\",\"resourceType\":\"tunnel\",\"resourceId\":\"tunnel-002\"}')\nG2_ID=$(echo \"$G2\" | jq -r '.grant.grantId')\nassert_not_eq \"$G2_ID\" \"\" \"Create group grant (three-vm-ops → tunnel-002)\" || true\n\n# Access checks\nALICE_ACCESS=$(host_api_get \"gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=tunnel-001\" | jq -r '.allowed')\nassert_eq \"$ALICE_ACCESS\" \"true\" \"Alice has access via direct grant\" || true\n\nCHARLIE_ACCESS=$(host_api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002\" | jq -r '.allowed')\nassert_eq \"$CHARLIE_ACCESS\" \"true\" \"Charlie has access via group grant\" || true\n\nBOB_DENIED=$(host_api_get \"gatekeeper/access/check?username=bob&resourceType=tunnel&resourceId=tunnel-002\" | jq -r '.allowed')\nassert_eq \"$BOB_DENIED\" \"false\" \"Bob denied (not in three-vm-ops)\" || true"
+    },
+    {
+      "id": "3-settings-and-cache",
+      "label": "3. Settings and Cache",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "PATCH /api/gatekeeper/settings",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "gatekeeper/settings",
+            "body": {
+              "accessLoggingEnabled": true,
+              "adminEmail": "admin@three-vm.test"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "GET /api/gatekeeper/settings",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/settings"
+          },
+          "capture": [
+            {
+              "variable": "SETTINGS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Extract LOGGING",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LOGGING",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SETTINGS"
+              },
+              "expression": ".settings.accessLoggingEnabled"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Access logging enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LOGGING"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Access logging enabled"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "POST /api/gatekeeper/cache/bust",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/cache/bust",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "BUST",
+              "from": {
+                "kind": "jq",
+                "expression": ".ok"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Cache bust",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BUST"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Cache bust"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"3. Settings and Cache\"\n# ===========================================================================\n\n# Enable access logging\nhost_api_patch \"gatekeeper/settings\" '{\"accessLoggingEnabled\":true,\"adminEmail\":\"admin@three-vm.test\"}' > /dev/null 2>&1\n\nSETTINGS=$(host_api_get \"gatekeeper/settings\")\nLOGGING=$(echo \"$SETTINGS\" | jq -r '.settings.accessLoggingEnabled')\nassert_eq \"$LOGGING\" \"true\" \"Access logging enabled\" || true\n\n# Bust cache\nBUST=$(host_api_post \"gatekeeper/cache/bust\" '{}' | jq -r '.ok')\nassert_eq \"$BUST\" \"true\" \"Cache bust\" || true"
+    },
+    {
+      "id": "4-group-cascade-delete",
+      "label": "4. Group Cascade Delete",
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "DELETE /api/gatekeeper/groups/three-vm-ops",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/groups/three-vm-ops"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Extract DEL_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DEL_GRANTS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DELETE_RESULT"
+              },
+              "expression": ".deletedGrants"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Cascade deleted ${DEL_GRANTS} grant(s) on group deletion",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Cascade deleted ${DEL_GRANTS} grant(s) on group deletion"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DEL_GRANTS",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Expected cascade deletion, got: ${DEL_GRANTS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected cascade deletion, got: ${DEL_GRANTS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DEL_GRANTS",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "GET /api/gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002"
+          },
+          "capture": [
+            {
+              "variable": "CHARLIE_AFTER",
+              "from": {
+                "kind": "jq",
+                "expression": ".allowed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Charlie denied after group deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHARLIE_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Charlie denied after group deletion"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"4. Group Cascade Delete\"\n# ===========================================================================\n\nDELETE_RESULT=$(host_api_delete \"gatekeeper/groups/three-vm-ops\")\nDEL_GRANTS=$(echo \"$DELETE_RESULT\" | jq -r '.deletedGrants')\nif [ \"$DEL_GRANTS\" -ge 1 ]; then\n  log_pass \"Cascade deleted ${DEL_GRANTS} grant(s) on group deletion\"\nelse\n  log_fail \"Expected cascade deletion, got: ${DEL_GRANTS}\"\nfi\n\n# charlie should lose access\nCHARLIE_AFTER=$(host_api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=tunnel-002\" | jq -r '.allowed')\nassert_eq \"$CHARLIE_AFTER\" \"false\" \"Charlie denied after group deletion\" || true"
+    },
+    {
+      "id": "5-gatekeeper-api-secret-enforcement",
+      "label": "5. Gatekeeper API Secret Enforcement",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:9294/api/groups",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Direct gatekeeper API access without secret rejected",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Direct gatekeeper API access without secret rejected"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:9294/api/groups",
+            "statusOnly": true,
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "DIRECT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Direct gatekeeper API returns 401 without secret",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Direct gatekeeper API returns 401 without secret"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DIRECT_STATUS",
+            "value": "401"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Expected 401 for direct API access, got: ${DIRECT_STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected 401 for direct API access, got: ${DIRECT_STATUS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DIRECT_STATUS",
+            "value": "401"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"5. Gatekeeper API Secret Enforcement\"\n# ===========================================================================\n\n# Direct access to gatekeeper WITHOUT secret should be rejected\nUNAUTH=$(host_exec \"curl -sf --max-time 5 http://127.0.0.1:9294/api/groups 2>/dev/null; echo \\$?\" || echo \"\")\nif echo \"$UNAUTH\" | grep -q \"22\\|401\\|Unauthorized\"; then\n  log_pass \"Direct gatekeeper API access without secret rejected\"\nelse\n  # Try checking the HTTP status code\n  DIRECT_STATUS=$(host_exec \"curl -s --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:9294/api/groups\")\n  if [ \"$DIRECT_STATUS\" = \"401\" ]; then\n    log_pass \"Direct gatekeeper API returns 401 without secret\"\n  else\n    log_fail \"Expected 401 for direct API access, got: ${DIRECT_STATUS}\"\n  fi\nfi"
+    },
+    {
+      "id": "6-cleanup",
+      "label": "6. Cleanup",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "DELETE /api/gatekeeper/grants/${G1_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/grants/${G1_ID}"
+          },
+          "continueOnError": true,
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "G1_ID"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "DELETE /api/gatekeeper/groups/three-vm-devs",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/groups/three-vm-devs"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-50",
+          "label": "PATCH /api/gatekeeper/settings",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "gatekeeper/settings",
+            "body": {
+              "accessLoggingEnabled": false,
+              "adminEmail": ""
+            }
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-51",
+          "label": "DELETE /api/gatekeeper/access-log",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "gatekeeper/access-log"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-52",
+          "label": "Cleanup complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Cleanup complete"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"6. Cleanup\"\n# ===========================================================================\n\n# Revoke remaining grants\nif [ -n \"$G1_ID\" ]; then\n  host_api_delete \"gatekeeper/grants/${G1_ID}\" > /dev/null 2>&1 || true\nfi\nhost_api_delete \"gatekeeper/groups/three-vm-devs\" > /dev/null 2>&1 || true\nhost_api_patch \"gatekeeper/settings\" '{\"accessLoggingEnabled\":false,\"adminEmail\":\"\"}' > /dev/null 2>&1 || true\nhost_api_delete \"gatekeeper/access-log\" > /dev/null 2>&1 || true\nlog_info \"Cleanup complete\""
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_post_status",
+    "host_api_delete",
+    "host_api_delete_status",
+    "host_api_get_status",
+    "host_api_patch"
+  ],
+  "headerRaw": "# ============================================================================\n# 21 — Gatekeeper Authorization (Three-VM)\n# ============================================================================\n# Tests the full Gatekeeper authorization flow across VMs:\n#\n# 1. Group and grant CRUD via serverd proxy\n# 2. Tunnel access modes (public, authenticated, restricted)\n# 3. Access check diagnostics\n# 4. Gatekeeper service health and secret auth\n# 5. Group cascade deletion\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_post() {\n  # timed_exec wraps multipass to bound pipe-leak hangs (memory feedback_multipass_exec_patterns.md rule 3).\n  # Observed on POST /api/gatekeeper/groups/NAME/members: the server responds in <1s but multipass keeps spinning.\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_post_status() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_delete() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_delete_status() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_get_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' 'https://127.0.0.1:9292/api/$1'\"\n}\n\nhost_api_patch() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' 'https://127.0.0.1:9292/api/$1'\"\n}\n\nbegin_test \"21 — Gatekeeper Authorization (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

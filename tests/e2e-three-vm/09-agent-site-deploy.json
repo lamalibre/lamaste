@@ -1,0 +1,1176 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 9,
+    "name": "Agent Site Deploy",
+    "suite": "e2e-three-vm",
+    "description": "09 — Agent Site Deploy (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "SITE_NAME": {
+      "value": "e2esite"
+    },
+    "AGENT_LABEL": {
+      "value": "site-agent"
+    },
+    "NOPERM_LABEL": {
+      "value": "site-agent-noperm"
+    },
+    "MARKER": {
+      "value": "E2E_AGENT_SITE_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Remove /etc/hosts entry",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${SITE_NAME}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE sites/${SITE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${SITE_ID}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE sites/${NOPERM_SITE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${NOPERM_SITE_ID}"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "DELETE certs/agent/${NOPERM_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${NOPERM_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "Delete /tmp/e2e-agent-site-*.pem",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-agent-site-*.pem"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping agent site deploy tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "create-managed-site-using-admin-cert",
+      "label": "Create managed site using admin cert",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\"name\":\""
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Site creation via admin cert returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site creation via admin cert returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Extract SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.id"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Site has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.id",
+              "message": "Site has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Extract SITE_FQDN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_FQDN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.fqdn"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Site has an FQDN",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.fqdn",
+              "message": "Site has an FQDN"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Created site: ${SITE_FQDN} (ID: ${SITE_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created site: ${SITE_FQDN} (ID: ${SITE_ID})"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create managed site using admin cert\"\n# ---------------------------------------------------------------------------\n\nCREATE_RESPONSE=$(host_api_post \"sites\" '{\"name\":\"'\"${SITE_NAME}\"'\",\"type\":\"managed\",\"spaMode\":false,\"autheliaProtected\":false}')\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Site creation via admin cert returned ok: true\" || true\n\nSITE_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.site.id' \"Site has an ID\" || true\n\nSITE_FQDN=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.fqdn' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.site.fqdn' \"Site has an FQDN\" || true\n\nlog_info \"Created site: ${SITE_FQDN} (ID: ${SITE_ID})\""
+    },
+    {
+      "id": "generate-agent-cert-with-sites-capabilities-and-allowedsites",
+      "label": "Generate agent cert with sites capabilities and allowedSites",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Agent cert creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Agent cert has a p12 password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".p12Password",
+              "message": "Agent cert has a p12 password"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Agent cert label matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Agent cert label matches"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Created agent cert: ${AGENT_LABEL} (allowedSites: [${SITE_NAME}])",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created agent cert: ${AGENT_LABEL} (allowedSites: [${SITE_NAME}])"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Extracted PEM cert and key from .p12",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted PEM cert and key from .p12"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Generate agent cert with sites capabilities and allowedSites\"\n# ---------------------------------------------------------------------------\n\n# POST /api/certs/agent returns { ok, label, p12Password, serial, expiresAt }\n# P12 file is at /etc/lamalibre/lamaste/pki/agents/<label>/client.p12\nCERT_RESPONSE=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"sites:read\",\"sites:write\"],\"allowedSites\":[\"'\"${SITE_NAME}\"'\"]}')\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent cert creation returned ok: true\" || true\n\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Agent cert has a p12 password\" || true\nassert_json_field \"$CERT_RESPONSE\" '.label' \"$AGENT_LABEL\" \"Agent cert label matches\" || true\n\nlog_info \"Created agent cert: ${AGENT_LABEL} (allowedSites: [${SITE_NAME}])\"\n\n# Extract PEM cert and key from .p12 for use with curl\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-agent-site-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-agent-site-key.pem\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'\"\n\nlog_pass \"Extracted PEM cert and key from .p12\""
+    },
+    {
+      "id": "upload-test-html-file-using-agent-cert",
+      "label": "Upload test HTML file using agent cert",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo '<html><body><h1>${MARKER}</h1></body></html>' > /tmp/e2e-agent-site-upload.html"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cp /tmp/e2e-agent-site-upload.html /tmp/index.html"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set UPLOAD_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_agent_api_upload \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/index.html\""
+          },
+          "capture": [
+            {
+              "variable": "UPLOAD_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "File upload via agent cert returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPLOAD_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "File upload via agent cert returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Upload test HTML file using agent cert\"\n# ---------------------------------------------------------------------------\n\n# Create a test HTML file on the host (named index.html to overwrite the default)\nhost_exec \"echo '<html><body><h1>${MARKER}</h1></body></html>' > /tmp/e2e-agent-site-upload.html\"\n\n# Upload as index.html by renaming before upload\nhost_exec \"cp /tmp/e2e-agent-site-upload.html /tmp/index.html\"\nUPLOAD_RESPONSE=$(host_agent_api_upload \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/index.html\")\nassert_json_field \"$UPLOAD_RESPONSE\" '.ok' 'true' \"File upload via agent cert returned ok: true\" || true"
+    },
+    {
+      "id": "verify-site-listing-using-agent-cert-sites-read-allowedsites",
+      "label": "Verify site listing using agent cert (sites:read + allowedSites)",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "GET /api/sites",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set FOUND_SITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Agent can list sites and find assigned site",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_SITE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "SITE_NAME"
+              },
+              "message": "Agent can list sites and find assigned site"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Set SITE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq '.sites | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "SITE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Agent sees only its assigned site (count: 1)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SITE_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Agent sees only its assigned site (count: 1)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify site listing using agent cert (sites:read + allowedSites)\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(host_agent_api_get \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites\")\nFOUND_SITE=$(echo \"$LIST_RESPONSE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_SITE\" \"$SITE_NAME\" \"Agent can list sites and find assigned site\" || true\n\n# Agent should only see sites in its allowedSites list\nSITE_COUNT=$(echo \"$LIST_RESPONSE\" | jq '.sites | length' 2>/dev/null || echo \"0\")\nassert_eq \"$SITE_COUNT\" \"1\" \"Agent sees only its assigned site (count: 1)\" || true"
+    },
+    {
+      "id": "verify-site-accessible-from-visitor-vm",
+      "label": "Verify site accessible from visitor VM",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${SITE_FQDN}' /etc/hosts || echo '${HOST_IP} ${SITE_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "VISITOR_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Site returns HTTP 200 from visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VISITOR_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Site returns HTTP 200 from visitor VM"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "VISITOR_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Site content matches uploaded HTML from visitor VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VISITOR_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Site content matches uploaded HTML from visitor VM"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify site accessible from visitor VM\"\n# ---------------------------------------------------------------------------\n\n# Add /etc/hosts entry on visitor for the site subdomain\nvisitor_exec \"grep -q '${SITE_FQDN}' /etc/hosts || echo '${HOST_IP} ${SITE_FQDN}' >> /etc/hosts\"\n\n# Wait for nginx to settle after site creation\nsleep 2\n\nVISITOR_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\nassert_eq \"$VISITOR_STATUS\" \"200\" \"Site returns HTTP 200 from visitor VM\" || true\n\nVISITOR_CONTENT=$(visitor_exec \"curl -sk --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"\")\nassert_contains \"$VISITOR_CONTENT\" \"$MARKER\" \"Site content matches uploaded HTML from visitor VM\" || true"
+    },
+    {
+      "id": "file-extension-validation-disallowed-extensions-rejected",
+      "label": "File extension validation — disallowed extensions rejected",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo '<?php echo 1; ?>' > /tmp/e2e-agent-site-blocked.php"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set PHP_UPLOAD_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_agent_api_upload_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-blocked.php\""
+          },
+          "capture": [
+            {
+              "variable": "PHP_UPLOAD_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Upload of .php file rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PHP_UPLOAD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Upload of .php file rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo 'MZ' > /tmp/e2e-agent-site-blocked.exe"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set EXE_UPLOAD_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_agent_api_upload_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-blocked.exe\""
+          },
+          "capture": [
+            {
+              "variable": "EXE_UPLOAD_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Upload of .exe file rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXE_UPLOAD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Upload of .exe file rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo 'body { color: red; }' > /tmp/e2e-agent-site-allowed.css"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set CSS_UPLOAD_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_agent_api_upload \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-allowed.css\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_UPLOAD_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Upload of .css file succeeds via agent cert",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CSS_UPLOAD_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Upload of .css file succeeds via agent cert"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"File extension validation — disallowed extensions rejected\"\n# ---------------------------------------------------------------------------\n\n# Create a .php file on the host\nhost_exec \"echo '<?php echo 1; ?>' > /tmp/e2e-agent-site-blocked.php\"\n\n# Attempt to upload .php via agent cert — should fail with 400\nPHP_UPLOAD_STATUS=$(host_agent_api_upload_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-blocked.php\")\nassert_eq \"$PHP_UPLOAD_STATUS\" \"400\" \"Upload of .php file rejected with 400\" || true\n\n# Create a .exe file on the host\nhost_exec \"echo 'MZ' > /tmp/e2e-agent-site-blocked.exe\"\n\n# Attempt to upload .exe via agent cert — should fail with 400\nEXE_UPLOAD_STATUS=$(host_agent_api_upload_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-blocked.exe\")\nassert_eq \"$EXE_UPLOAD_STATUS\" \"400\" \"Upload of .exe file rejected with 400\" || true\n\n# Allowed extension (.css) — should succeed via agent cert\nhost_exec \"echo 'body { color: red; }' > /tmp/e2e-agent-site-allowed.css\"\nCSS_UPLOAD_RESPONSE=$(host_agent_api_upload \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"sites/${SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-allowed.css\")\nassert_json_field \"$CSS_UPLOAD_RESPONSE\" '.ok' 'true' \"Upload of .css file succeeds via agent cert\" || true\n\n# Clean up test files\nhost_exec \"rm -f /tmp/e2e-agent-site-blocked.php /tmp/e2e-agent-site-blocked.exe /tmp/e2e-agent-site-allowed.css\" 2>/dev/null || true"
+    },
+    {
+      "id": "delete-site-using-admin-cert-site-crud-is-admin-only",
+      "label": "Delete site using admin cert (site CRUD is admin-only)",
+      "steps": [
+        {
+          "id": "step-47",
+          "label": "DELETE /api/sites/${SITE_ID_TO_DELETE}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/${SITE_ID_TO_DELETE}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Site deletion via admin cert returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site deletion via admin cert returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "GET /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Set FOUND_DELETED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER_DELETE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID_TO_DELETE}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_DELETED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Deleted site no longer in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_DELETED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Deleted site no longer in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete site using admin cert (site CRUD is admin-only)\"\n# ---------------------------------------------------------------------------\n\nSITE_ID_TO_DELETE=\"$SITE_ID\"\nSITE_ID=\"\"  # Clear so cleanup doesn't double-delete\n\nDELETE_RESPONSE=$(host_api_delete \"sites/${SITE_ID_TO_DELETE}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Site deletion via admin cert returned ok: true\" || true\n\n# Verify site is gone from listing (admin view)\nLIST_AFTER_DELETE=$(host_api_get \"sites\")\nFOUND_DELETED=$(echo \"$LIST_AFTER_DELETE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID_TO_DELETE}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_DELETED\" \"\" \"Deleted site no longer in listing\" || true"
+    },
+    {
+      "id": "negative-test-agent-without-site-in-allowedsites-gets-403-on-file-upload",
+      "label": "Negative test: agent WITHOUT site in allowedSites gets 403 on file upload",
+      "steps": [
+        {
+          "id": "step-53",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\"name\":\""
+          },
+          "capture": [
+            {
+              "variable": "NOPERM_SITE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "Extract NOPERM_SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NOPERM_SITE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "NOPERM_SITE_RESPONSE"
+              },
+              "expression": ".site.id"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "NOPERM_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "No-perm agent cert creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "NOPERM_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "No-perm agent cert creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Extract NOPERM_P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NOPERM_P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "NOPERM_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${NOPERM_P12_PATH}' -clcerts -nokeys -out '${NOPERM_CERT_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${NOPERM_P12_PATH}' -clcerts -nokeys -out '${NOPERM_CERT_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${NOPERM_P12_PATH}' -nocerts -nodes -out '${NOPERM_KEY_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${NOPERM_P12_PATH}' -nocerts -nodes -out '${NOPERM_KEY_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo '<html><body>noperm test</body></html>' > /tmp/e2e-agent-site-noperm.html"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set NOPERM_UPLOAD_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_agent_api_upload_status \"$NOPERM_CERT_PATH\" \"$NOPERM_KEY_PATH\" \"sites/${NOPERM_SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-noperm.html\""
+          },
+          "capture": [
+            {
+              "variable": "NOPERM_UPLOAD_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "Agent without site in allowedSites rejected with 403 on file upload",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPERM_UPLOAD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent without site in allowedSites rejected with 403 on file upload"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "GET /api/sites",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "NOPERM_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Set NOPERM_LIST_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$NOPERM_LIST\" | jq '.sites | length' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "NOPERM_LIST_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "Agent sees only assigned sites (none match real sites)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPERM_LIST_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Agent sees only assigned sites (none match real sites)"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "DELETE /api/sites/${NOPERM_SITE_ID_TO_DELETE}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/${NOPERM_SITE_ID_TO_DELETE}"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Negative test: agent WITHOUT site in allowedSites gets 403 on file upload\"\n# ---------------------------------------------------------------------------\n\n# Create a new site for the negative test (admin-only)\nNOPERM_SITE_NAME=\"e2enoperm\"\nNOPERM_SITE_RESPONSE=$(host_api_post \"sites\" '{\"name\":\"'\"${NOPERM_SITE_NAME}\"'\",\"type\":\"managed\",\"spaMode\":false,\"autheliaProtected\":false}')\nNOPERM_SITE_ID=$(echo \"$NOPERM_SITE_RESPONSE\" | jq -r '.site.id' 2>/dev/null || echo \"\")\n\n# Create an agent cert with sites:write but WITHOUT this site in allowedSites\nNOPERM_RESPONSE=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${NOPERM_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"sites:read\",\"sites:write\"],\"allowedSites\":[\"some-other-site\"]}')\nassert_json_field \"$NOPERM_RESPONSE\" '.ok' 'true' \"No-perm agent cert creation returned ok: true\" || true\n\nNOPERM_P12_PASSWORD=$(echo \"$NOPERM_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nNOPERM_P12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${NOPERM_LABEL}/client.p12\"\n\n# Extract PEM cert and key\nNOPERM_CERT_PATH=\"/tmp/e2e-agent-site-noperm-cert.pem\"\nNOPERM_KEY_PATH=\"/tmp/e2e-agent-site-noperm-key.pem\"\nhost_exec \"openssl pkcs12 -in '${NOPERM_P12_PATH}' -clcerts -nokeys -out '${NOPERM_CERT_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${NOPERM_P12_PATH}' -clcerts -nokeys -out '${NOPERM_CERT_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${NOPERM_P12_PATH}' -nocerts -nodes -out '${NOPERM_KEY_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${NOPERM_P12_PATH}' -nocerts -nodes -out '${NOPERM_KEY_PATH}' -passin 'pass:${NOPERM_P12_PASSWORD}'\"\n\n# Create a test file for the upload attempt\nhost_exec \"echo '<html><body>noperm test</body></html>' > /tmp/e2e-agent-site-noperm.html\"\n\n# Attempt to upload a file to a site NOT in the agent's allowedSites — should fail with 403\nNOPERM_UPLOAD_STATUS=$(host_agent_api_upload_status \"$NOPERM_CERT_PATH\" \"$NOPERM_KEY_PATH\" \"sites/${NOPERM_SITE_ID}/files?path=.\" \"/tmp/e2e-agent-site-noperm.html\")\nassert_eq \"$NOPERM_UPLOAD_STATUS\" \"403\" \"Agent without site in allowedSites rejected with 403 on file upload\" || true\n\n# Verify agent with sites:read sees only its assigned sites (not the noperm site)\nNOPERM_LIST=$(host_agent_api_get \"$NOPERM_CERT_PATH\" \"$NOPERM_KEY_PATH\" \"sites\")\nNOPERM_LIST_COUNT=$(echo \"$NOPERM_LIST\" | jq '.sites | length' 2>/dev/null || echo \"\")\n# Agent's allowedSites is [\"some-other-site\"] which doesn't match any real site\nassert_eq \"$NOPERM_LIST_COUNT\" \"0\" \"Agent sees only assigned sites (none match real sites)\" || true\n\n# Clean up negative test site (cleanup trap will also handle this)\nNOPERM_SITE_ID_TO_DELETE=\"$NOPERM_SITE_ID\"\nNOPERM_SITE_ID=\"\"\nhost_api_delete \"sites/${NOPERM_SITE_ID_TO_DELETE}\" 2>/dev/null || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete",
+    "host_agent_api_get"
+  ],
+  "headerRaw": "# ============================================================================\n# 09 — Agent Site Deploy (Three-VM)\n# ============================================================================\n# Verifies the per-site scoped access model for agent certificates:\n#\n# 1. On host: admin creates a managed site via POST /api/sites\n# 2. On host: generate agent cert with sites capabilities + allowedSites\n# 3. From host (using agent cert): upload test HTML file\n# 4. From host (using agent cert): list files\n# 5. From visitor VM: verify site is accessible and returns uploaded content\n# 6. From host (admin cert): delete site\n# 7. Verify cleanup (site gone from listing)\n# 8. Negative test: agent WITHOUT the site in allowedSites gets 403 on upload\n# 9. Verify agent with sites:read + allowedSites sees only assigned sites\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent cert API helpers — use extracted PEM cert/key from the agent's .p12\nhost_agent_api_get() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  host_exec \"curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}\"\n}\n\nhost_agent_api_upload() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  local file_path=\"$4\"\n  host_exec \"curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -F 'file=@${file_path}' -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}\"\n}\n\nhost_agent_api_upload_status() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  local file_path=\"$4\"\n  host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -F 'file=@${file_path}' -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSITE_NAME=\"e2esite\"\nSITE_ID=\"\"\nSITE_FQDN=\"\"\nAGENT_LABEL=\"site-agent\"\nAGENT_CERT_PATH=\"\"\nAGENT_KEY_PATH=\"\"\nNOPERM_LABEL=\"site-agent-noperm\"\nNOPERM_CERT_PATH=\"\"\nNOPERM_KEY_PATH=\"\"\nNOPERM_SITE_ID=\"\"\nMARKER=\"E2E_AGENT_SITE_$(date +%s)\"\n\nbegin_test \"09 — Agent Site Deploy (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"sed -i '/${SITE_NAME}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${SITE_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$NOPERM_SITE_ID\" ] && [ \"$NOPERM_SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${NOPERM_SITE_ID}\" 2>/dev/null || true\n  fi\n  # Revoke agent certs via DELETE /api/certs/agent/:label\n  host_api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  host_api_delete \"certs/agent/${NOPERM_LABEL}\" 2>/dev/null || true\n  # Clean up extracted PEM files\n  host_exec \"rm -f /tmp/e2e-agent-site-*.pem /tmp/e2e-agent-site-*.html /tmp/index.html 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

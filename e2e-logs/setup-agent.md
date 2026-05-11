@@ -5,16 +5,16 @@
 
 ---
 
-# Portlama E2E — Agent VM Setup
+# Lamaste E2E — Agent VM Setup
 
 
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 
 🔵 `13:05:40` **[1/5] Configuring /etc/hosts...**  
-✅ `13:05:40` /etc/hosts configured with test.portlama.local entries (persists across reboots)  
+✅ `13:05:40` /etc/hosts configured with test.lamaste.local entries (persists across reboots)  
 🔵 `13:05:40` **[2/5] Installing Node.js 20...**  
 <details>
 <summary>✅ <code>13:05:47</code> Install Node.js 20 via NodeSource</summary>
@@ -150,12 +150,12 @@ No VM guests are running outdated hypervisor (qemu) binaries on this host.
 </details>
 
 ✅ `13:05:54` Node.js installed: v20.20.0  
-🔵 `13:05:54` **[3/5] Installing portlama-agent from tarball...**  
+🔵 `13:05:54` **[3/5] Installing lamaste-agent from tarball...**  
 <details>
-<summary>✅ <code>13:06:06</code> Install portlama-agent globally</summary>
+<summary>✅ <code>13:06:06</code> Install lamaste-agent globally</summary>
 
 ```
-$ npm install -g /tmp/portlama-agent.tgz
+$ npm install -g /tmp/lamaste-agent.tgz
 npm warn deprecated glob@11.1.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
 added 122 packages in 12s
@@ -170,10 +170,10 @@ npm notice
 ```
 </details>
 
-✅ `13:06:06` portlama-agent installed:   
-🔵 `13:06:06` **[4/5] Running portlama-agent setup with enrollment token...**  
-✅ `13:06:08` portlama-agent setup completed (label: e2e-agent)  
-❌ `13:06:08` **systemd service portlama-chisel-e2e-agent is inactive
+✅ `13:06:06` lamaste-agent installed:   
+🔵 `13:06:06` **[4/5] Running lamaste-agent setup with enrollment token...**  
+✅ `13:06:08` lamaste-agent setup completed (label: e2e-agent)  
+❌ `13:06:08` **systemd service lamaste-chisel-e2e-agent is inactive
 inactive**  
 🔵 `13:06:08` **[5/5] Installing Python 3...**  
 ✅ `13:06:08` Python 3 already installed: Python 3.12.3  
@@ -186,9 +186,9 @@ inactive**
 | Key | Value |
 |-----|-------|
 | **Host IP** | `10.13.37.1` |
-| **Test Domain** | `test.portlama.local` |
+| **Test Domain** | `test.lamaste.local` |
 | **Node.js** | `v20.20.0` |
-| **portlama-agent** | `installed` |
+| **lamaste-agent** | `installed` |
 | **systemd service** | `inactive
 unknown` |
 | **Python** | `Python 3.12.3` |

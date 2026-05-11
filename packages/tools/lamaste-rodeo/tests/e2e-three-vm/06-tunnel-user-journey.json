@@ -1,0 +1,1370 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 6,
+    "name": "Tunnel User Journey",
+    "suite": "e2e-three-vm",
+    "description": "06 — Tunnel User Journey (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    },
+    "TEST_USER_PASSWORD": {
+      "description": "TEST_USER_PASSWORD"
+    }
+  },
+  "constants": {
+    "TUNNEL_SUBDOMAIN": {
+      "value": "e2ejourney"
+    },
+    "TUNNEL_PORT": {
+      "value": "18090"
+    },
+    "TUNNEL_FQDN": {
+      "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
+      "expression": true
+    },
+    "MARKER": {
+      "value": "LAMASTE_JOURNEY_OK_$timestamp()",
+      "expression": true
+    },
+    "COOKIE_FILE": {
+      "value": "/tmp/e2e-journey-cookies.txt"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Kill process",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "pkill -f 'python3 -m http.server ${TUNNEL_PORT}'|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Remove /etc/hosts entry",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${TUNNEL_FQDN}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "Delete /tmp/e2e-journey-index.html||",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-journey-index.html||"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "Delete ${COOKIE_FILE}",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "${COOKIE_FILE}"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "Remove /etc/hosts entry",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${TUNNEL_FQDN}"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "DELETE tunnels/${TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-6",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "lamaste-agent update|| true",
+        "ignoreExit": true
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping tunnel user journey tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "step-1-create-tunnel-and-establish-connection",
+      "label": "Step 1: Create tunnel and establish connection",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Tunnel creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Added DNS entries to agent /etc/hosts",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Added DNS entries to agent /etc/hosts"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Added ${TUNNEL_FQDN} to visitor /etc/hosts",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Added ${TUNNEL_FQDN} to visitor /etc/hosts"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${MARKER}' > /tmp/e2e-journey-index.html"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html",
+            "statusOnly": true,
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "AGENT_HTTP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "HTTP server running on agent at port ${TUNNEL_PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_HTTP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "HTTP server running on agent at port ${TUNNEL_PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Waiting for Chisel tunnel to establish...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Waiting for Chisel tunnel to establish..."
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html",
+            "statusOnly": true,
+            "timeout": 3
+          },
+          "capture": [
+            {
+              "variable": "CHECK",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CHISEL_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Chisel tunnel failed to establish within 15 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel tunnel failed to establish within 15 seconds"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "CHISEL_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "CHISEL_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Agent chisel log: $AGENT_LOG",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent chisel log: $AGENT_LOG"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "CHISEL_READY",
+            "value": "true"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel and establish connection\"\n# ---------------------------------------------------------------------------\n\n# Create tunnel via API — accessMode \"authenticated\" models the common user\n# journey (any logged-in user can reach). Restricted mode (per-user grants)\n# is a separate opt-in flow covered by the gatekeeper tests.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})\"\n\n# Add /etc/hosts entries on agent so chisel client can resolve the domains\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added DNS entries to agent /etc/hosts\"\n\n# Add /etc/hosts entry on visitor for the tunnel subdomain\nvisitor_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added ${TUNNEL_FQDN} to visitor /etc/hosts\"\n\n# Start HTTP server on agent serving a unique marker\nagent_exec \"echo '${MARKER}' > /tmp/e2e-journey-index.html\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\nAGENT_HTTP_STATUS=$(agent_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$AGENT_HTTP_STATUS\" \"200\" \"HTTP server running on agent at port ${TUNNEL_PORT}\" || true\n\n# Refresh agent config to pick up the new tunnel\nagent_exec \"lamaste-agent update\"\n\n# Wait for tunnel to establish\nlog_info \"Waiting for Chisel tunnel to establish...\"\nCHISEL_READY=false\nfor i in $(seq 1 15); do\n  CHECK=$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\n  if [ \"$CHECK\" = \"200\" ]; then\n    CHISEL_READY=true\n    break\n  fi\n  sleep 1\ndone\n\nif [ \"$CHISEL_READY\" = \"true\" ]; then\n  log_pass \"Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)\"\nelse\n  log_fail \"Chisel tunnel failed to establish within 15 seconds\"\n  AGENT_LOG=$(agent_exec \"tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'\")\n  log_info \"Agent chisel log: $AGENT_LOG\"\nfi"
+    },
+    {
+      "id": "step-2-prepare-totp-for-test-user",
+      "label": "Step 2: Prepare TOTP for test user",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": ""
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OATHTOOL_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "oathtool is available on visitor VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "oathtool is available on visitor VM"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "POST /api/users/${TEST_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "TOTP reset returned otpauth URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "path": ".totpUri",
+              "message": "TOTP reset returned otpauth URI"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Extract OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OTPAUTH_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Extract TOTP_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "OTPAUTH_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_SECRET"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Extracted TOTP secret from otpauth URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted TOTP secret from otpauth URI"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "TOTP_SECRET"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_VERIFY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_VERIFY}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_VERIFY}')"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_VERIFY"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "oathtool generates valid TOTP codes for this secret",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "oathtool generates valid TOTP codes for this secret"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "OATHTOOL_CHECK",
+        "value": "yes"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 2: Prepare TOTP for test user\"\n# ---------------------------------------------------------------------------\n\n# Ensure oathtool is available on the visitor VM\nOATHTOOL_CHECK=$(visitor_exec \"command -v oathtool >/dev/null 2>&1 && echo yes || echo no\")\nif [ \"$OATHTOOL_CHECK\" != \"yes\" ]; then\n  log_skip \"oathtool not available on visitor VM. Skipping TOTP-dependent tests.\"\n  end_test\n  exit $?\nfi\nlog_pass \"oathtool is available on visitor VM\"\n\n# Reset TOTP for test user via panel API to get a fresh secret\nTOTP_RESPONSE=$(host_api_post \"users/${TEST_USER}/reset-totp\" \"{}\")\nassert_json_field_not_empty \"$TOTP_RESPONSE\" '.totpUri' \"TOTP reset returned otpauth URI\" || true\n\n# Extract the TOTP secret from the otpauth URI (the secret= parameter)\nOTPAUTH_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nTOTP_SECRET=$(echo \"$OTPAUTH_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\n\nif [ -z \"$TOTP_SECRET\" ]; then\n  log_fail \"Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI\"\n  end_test\n  exit $?\nfi\nlog_pass \"Extracted TOTP secret from otpauth URI\"\n\n# Allow Authelia to pick up the new TOTP configuration and ensure we submit\n# the code in a fresh 30-second window (anti-replay protection would reject\n# a code reused from a prior test within the same window).\nwait_for_next_totp_window\n\n# Generate a TOTP code on visitor VM to verify oathtool works with this secret\nTOTP_VERIFY=$(visitor_exec \"oathtool --totp --base32 ${TOTP_SECRET}\" 2>/dev/null || echo \"\")\nif [ -z \"$TOTP_VERIFY\" ] || [ ${#TOTP_VERIFY} -ne 6 ]; then\n  log_fail \"oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_VERIFY}')\"\n  end_test\n  exit $?\nfi\nlog_pass \"oathtool generates valid TOTP codes for this secret\""
+    },
+    {
+      "id": "step-3-unauthenticated-access-redirects-to-authelia-from-visitor-vm",
+      "label": "Step 3: Unauthenticated access redirects to Authelia (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Unauthenticated request should be 302 or 401, got HTTP $UNAUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unauthenticated request should be 302 or 401, got HTTP $UNAUTH_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_REDIRECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Redirect URL contains auth.${TEST_DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Redirect URL contains auth.${TEST_DOMAIN}"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Request returned 401 (Authelia enforcement confirmed)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Request returned 401 (Authelia enforcement confirmed)"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Redirect does not point to Authelia portal (redirect_url: $UNAUTH_REDIRECT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Redirect does not point to Authelia portal (redirect_url: $UNAUTH_REDIRECT)"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Tunnel content is NOT visible without authentication",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "UNAUTH_BODY"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Tunnel content is NOT visible without authentication"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 3: Unauthenticated access redirects to Authelia (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Without any cookies, the request should be redirected to the Authelia portal.\nUNAUTH_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${TUNNEL_FQDN}/ 2>/dev/null\" || echo \"000\")\n\nif [ \"$UNAUTH_STATUS\" = \"302\" ] || [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)\"\nelse\n  log_fail \"Unauthenticated request should be 302 or 401, got HTTP $UNAUTH_STATUS\"\nfi\n\n# Verify the redirect points to the Authelia portal\nUNAUTH_REDIRECT=$(visitor_exec \"curl -sk -o /dev/null -w '%{redirect_url}' --max-time 15 https://${TUNNEL_FQDN}/ 2>/dev/null\" || echo \"\")\nif echo \"$UNAUTH_REDIRECT\" | grep -qF \"auth.${TEST_DOMAIN}\"; then\n  log_pass \"Redirect URL contains auth.${TEST_DOMAIN}\"\nelif [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Request returned 401 (Authelia enforcement confirmed)\"\nelse\n  log_fail \"Redirect does not point to Authelia portal (redirect_url: $UNAUTH_REDIRECT)\"\nfi\n\n# Verify the marker is NOT visible without authentication\nUNAUTH_BODY=$(visitor_exec \"curl -sk -L --max-time 15 https://${TUNNEL_FQDN}/ 2>/dev/null\" || echo \"\")\nassert_not_contains \"$UNAUTH_BODY\" \"$MARKER\" \"Tunnel content is NOT visible without authentication\" || true"
+    },
+    {
+      "id": "step-4-first-factor-authentication-from-visitor-vm-username-password",
+      "label": "Step 4: First factor authentication from visitor VM (username/password)",
+      "steps": [
+        {
+          "id": "step-51",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "${COOKIE_FILE}"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "FIRSTFACTOR_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Extract FIRSTFACTOR_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FIRSTFACTOR_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "FIRSTFACTOR_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "First factor authentication succeeded (username/password accepted)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "First factor authentication succeeded (username/password accepted)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "FIRSTFACTOR_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "First factor authentication failed (status: $FIRSTFACTOR_STATUS, response: $FIRSTFACTOR_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "First factor authentication failed (status: $FIRSTFACTOR_STATUS, response: $FIRSTFACTOR_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FIRSTFACTOR_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 4: First factor authentication from visitor VM (username/password)\"\n# ---------------------------------------------------------------------------\n\nFIRSTFACTOR_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -c ${COOKIE_FILE} -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"password\\\":\\\"${TEST_USER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false,\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\n\nFIRSTFACTOR_STATUS=$(echo \"$FIRSTFACTOR_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$FIRSTFACTOR_STATUS\" = \"OK\" ]; then\n  log_pass \"First factor authentication succeeded (username/password accepted)\"\nelse\n  log_fail \"First factor authentication failed (status: $FIRSTFACTOR_STATUS, response: $FIRSTFACTOR_RESPONSE)\"\nfi"
+    },
+    {
+      "id": "step-5-second-factor-authentication-from-visitor-vm-totp",
+      "label": "Step 5: Second factor authentication from visitor VM (TOTP)",
+      "steps": [
+        {
+          "id": "step-55",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "TOTP_SECRET"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Generated TOTP code: ${TOTP_CODE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Generated TOTP code: ${TOTP_CODE}"
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "${COOKIE_FILE}",
+              "load": "${COOKIE_FILE}"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "SECONDFACTOR_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "Extract SECONDFACTOR_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SECONDFACTOR_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SECONDFACTOR_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Second factor authentication succeeded (TOTP accepted)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Second factor authentication succeeded (TOTP accepted)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "SECONDFACTOR_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Second factor authentication failed (status: $SECONDFACTOR_STATUS, response: $SECONDFACTOR_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Second factor authentication failed (status: $SECONDFACTOR_STATUS, response: $SECONDFACTOR_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "SECONDFACTOR_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 5: Second factor authentication from visitor VM (TOTP)\"\n# ---------------------------------------------------------------------------\n\n# Generate a fresh TOTP code on visitor VM (in case time has advanced since step 2)\nTOTP_CODE=$(visitor_exec \"oathtool --totp --base32 ${TOTP_SECRET}\")\nlog_info \"Generated TOTP code: ${TOTP_CODE}\"\n\nSECONDFACTOR_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -b ${COOKIE_FILE} -c ${COOKIE_FILE} -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOTP_CODE}\\\",\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\n\nSECONDFACTOR_STATUS=$(echo \"$SECONDFACTOR_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$SECONDFACTOR_STATUS\" = \"OK\" ]; then\n  log_pass \"Second factor authentication succeeded (TOTP accepted)\"\nelse\n  log_fail \"Second factor authentication failed (status: $SECONDFACTOR_STATUS, response: $SECONDFACTOR_RESPONSE)\"\nfi"
+    },
+    {
+      "id": "step-6-authenticated-access-from-visitor-vm-shows-tunnel-content",
+      "label": "Step 6: Authenticated access from visitor VM shows tunnel content",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "${COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Authenticated request returns tunnel content (full 2FA path verified)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Authenticated request returns tunnel content (full 2FA path verified)"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "${COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_HTTP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Authenticated request returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_HTTP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Authenticated request returns HTTP 200"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 6: Authenticated access from visitor VM shows tunnel content\"\n# ---------------------------------------------------------------------------\n\n# With a fully authenticated session (first + second factor), access the tunnel from visitor\nAUTH_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b ${COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$AUTH_CONTENT\" \"$MARKER\" \"Authenticated request returns tunnel content (full 2FA path verified)\" || true\n\nAUTH_HTTP_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b ${COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$AUTH_HTTP_STATUS\" \"200\" \"Authenticated request returns HTTP 200\" || true"
+    },
+    {
+      "id": "step-7-session-persistence-no-re-auth-needed-from-visitor-vm",
+      "label": "Step 7: Session persistence (no re-auth needed, from visitor VM)",
+      "steps": [
+        {
+          "id": "step-65",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "${COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "PERSIST_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Session persists — second request returns tunnel content without re-auth",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PERSIST_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Session persists — second request returns tunnel content without re-auth"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "${COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "PERSIST_HTTP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "Session persists — HTTP 200 on second request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PERSIST_HTTP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Session persists — HTTP 200 on second request"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 7: Session persistence (no re-auth needed, from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Make another request with the same cookies — should still succeed\nPERSIST_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b ${COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$PERSIST_CONTENT\" \"$MARKER\" \"Session persists — second request returns tunnel content without re-auth\" || true\n\nPERSIST_HTTP_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b ${COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$PERSIST_HTTP_STATUS\" \"200\" \"Session persists — HTTP 200 on second request\" || true"
+    },
+    {
+      "id": "step-8-invalid-session-redirects-to-authelia-again-from-visitor-vm",
+      "label": "Step 8: Invalid session redirects to Authelia again (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-70",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "echo '# Netscape HTTP Cookie File' > ${FAKE_COOKIE_FILE} && echo 'auth.${TEST_DOMAIN}\\tFALSE\\t/\\tTRUE\\t0\\tauthelia_session\\tinvalid_expired_session_xyz' >> ${FAKE_COOKIE_FILE}"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "${FAKE_COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Invalid/expired session rejected (HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invalid/expired session rejected (HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Invalid session should be rejected (302 or 401), got HTTP $INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invalid session should be rejected (302 or 401), got HTTP $INVALID_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-journey-index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "${FAKE_COOKIE_FILE}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INVALID_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Invalid session does not expose tunnel content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Invalid session does not expose tunnel content"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 8: Invalid session redirects to Authelia again (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Create a cookie jar with a bogus/expired session cookie on visitor VM\nFAKE_COOKIE_FILE=\"/tmp/e2e-journey-fake-cookies.txt\"\nvisitor_exec \"echo '# Netscape HTTP Cookie File' > ${FAKE_COOKIE_FILE} && echo 'auth.${TEST_DOMAIN}\\tFALSE\\t/\\tTRUE\\t0\\tauthelia_session\\tinvalid_expired_session_xyz' >> ${FAKE_COOKIE_FILE}\"\n\nINVALID_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b ${FAKE_COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\n\nif [ \"$INVALID_STATUS\" = \"302\" ] || [ \"$INVALID_STATUS\" = \"401\" ]; then\n  log_pass \"Invalid/expired session rejected (HTTP $INVALID_STATUS)\"\nelse\n  log_fail \"Invalid session should be rejected (302 or 401), got HTTP $INVALID_STATUS\"\nfi\n\n# Verify the marker is NOT visible with an invalid session\nINVALID_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b ${FAKE_COOKIE_FILE} https://${TUNNEL_FQDN}/e2e-journey-index.html 2>/dev/null\" || echo \"\")\nassert_not_contains \"$INVALID_CONTENT\" \"$MARKER\" \"Invalid session does not expose tunnel content\" || true\n\n# Clean up fake cookie file\nvisitor_exec \"rm -f ${FAKE_COOKIE_FILE} 2>/dev/null || true\" 2>/dev/null || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 06 — Tunnel User Journey (Three-VM)\n# ============================================================================\n# Tests the complete end-user experience when accessing a tunneled application\n# through Authelia with two-factor authentication (TOTP) from an external\n# visitor VM.\n#\n# This is the most important user journey test. It simulates what a real user\n# experiences from an external machine:\n#\n#   Visitor VM -> nginx (host) -> Authelia auth_request -> chisel tunnel -> agent -> content\n#\n# Flow:\n#   1. Create tunnel + HTTP server + chisel connection\n#   2. Prepare TOTP for the test user via panel API\n#   3. Unauthenticated access from visitor -> redirect to Authelia\n#   4. First factor authentication from visitor (username/password)\n#   5. Second factor authentication from visitor (TOTP)\n#   6. Authenticated access from visitor -> see tunnel content\n#   7. Session persistence -> no re-auth needed\n#   8. Invalid session from visitor -> redirect again\n#   9. Cleanup\n#\n# Required env vars: HOST_IP, AGENT_IP, VISITOR_IP, TEST_DOMAIN, TEST_USER, TEST_USER_PASSWORD\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2ejourney\"\nTUNNEL_PORT=18090\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMASTE_JOURNEY_OK_$(date +%s)\"\nCOOKIE_FILE=\"/tmp/e2e-journey-cookies.txt\"\nTOTP_SECRET=\"\"\n\nbegin_test \"06 — Tunnel User Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entries on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-journey-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove cookie files and /etc/hosts entries on visitor\n  visitor_exec \"rm -f ${COOKIE_FILE} /tmp/e2e-journey-fake-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

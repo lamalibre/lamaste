@@ -1,4 +1,4 @@
-# Portlama E2E: 06 — Service Control
+# Lamaste E2E: 06 — Service Control
 
 > Started at `2026-03-30 13:06:33 UTC`
 
@@ -12,7 +12,7 @@
 ✅ `13:06:34` Service 'nginx' is in the service list  
 ✅ `13:06:34` Service 'chisel' is in the service list  
 ✅ `13:06:34` Service 'authelia' is in the service list  
-✅ `13:06:34` Service 'portlama-panel' is in the service list  
+✅ `13:06:34` Service 'lamaste-panel' is in the service list  
 ✅ `13:06:34` nginx status is 'active'  
 
 ## Restart nginx
@@ -24,14 +24,14 @@
 
 ✅ `13:06:42` nginx reload returned ok: true  
 
-## Cannot stop portlama-panel
+## Cannot stop lamaste-panel
 
-✅ `13:06:42` Cannot stop portlama-panel (HTTP 400)  
+✅ `13:06:42` Cannot stop lamaste-panel (HTTP 400)  
 ✅ `13:06:42` Error message explains why panel cannot be stopped  
 
-## Restart portlama-panel is allowed
+## Restart lamaste-panel is allowed
 
-✅ `13:06:42` portlama-panel restart request accepted  
+✅ `13:06:42` lamaste-panel restart request accepted  
 ✅ `13:06:45` Panel is responsive after restart  
 
 ## Invalid service name

@@ -1,4 +1,4 @@
-# Portlama E2E: 09 — Agent Site Deploy (Three-VM)
+# Lamaste E2E: 09 — Agent Site Deploy (Three-VM)
 
 > Started at `2026-03-30 13:11:28 UTC`
 
@@ -11,7 +11,7 @@
 ✅ `13:11:29` Site creation via admin cert returned ok: true  
 ✅ `13:11:29` Site has an ID  
 ✅ `13:11:29` Site has an FQDN  
-ℹ️ `13:11:29` Created site: e2esite.test.portlama.local (ID: 5551ec71-3269-420f-8ea5-e51dcbf78d50)  
+ℹ️ `13:11:29` Created site: e2esite.test.lamaste.local (ID: 5551ec71-3269-420f-8ea5-e51dcbf78d50)  
 
 ## Generate agent cert with sites capabilities and allowedSites
 

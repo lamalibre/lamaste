@@ -15,6 +15,7 @@ export default [
       '**/panel-dist/',
       '**/coverage/',
       '**/.vite/',
+      '**/vendor/',
       '.claude/worktrees/',
       '**/target/',
     ],
@@ -33,12 +34,14 @@ export default [
   // 3. Node.js config for server-side packages
   {
     files: [
-      'packages/create-portlama/**/*.js',
-      'packages/panel-server/**/*.js',
-      'packages/portlama-agent/**/*.js',
-      'packages/install-portlama-desktop/**/*.js',
-      'packages/install-portlama-admin/**/*.js',
-      'packages/install-portlama-agent/**/*.js',
+      'packages/provisioners/server/**/*.js',
+      'packages/server/daemon/**/*.js',
+      'packages/server/cli/**/*.js',
+      'packages/agent/cli/**/*.js',
+      'packages/agent/daemon/**/*.js',
+      'packages/provisioners/desktop/**/*.js',
+      'packages/provisioners/admin/**/*.js',
+      'packages/provisioners/agent/**/*.js',
     ],
     languageOptions: {
       globals: {
@@ -52,9 +55,9 @@ export default [
     },
   },
 
-  // 4. React/Browser config for panel-client
+  // 4. React/Browser config for lamaste-server-ui
   {
-    files: ['packages/panel-client/**/*.{js,jsx}'],
+    files: ['packages/server/ui/**/*.{js,jsx}'],
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
@@ -83,9 +86,9 @@ export default [
     },
   },
 
-  // 5. React config for shared component libraries (admin-panel, agent-panel)
+  // 5. React config for lamaste-agent-ui
   {
-    files: ['packages/portlama-admin-panel/**/*.{js,jsx}', 'packages/portlama-agent-panel/**/*.{js,jsx}'],
+    files: ['packages/agent/ui/**/*.{js,jsx}'],
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
@@ -114,9 +117,9 @@ export default [
     },
   },
 
-  // 6. React/Browser config for portlama-desktop
+  // 6. React/Browser config for lamaste-desktop
   {
-    files: ['packages/portlama-desktop/**/*.{js,jsx}'],
+    files: ['packages/clients/desktop/**/*.{js,jsx}'],
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
@@ -145,13 +148,13 @@ export default [
     },
   },
 
-  // 7. TypeScript config for portlama-tickets
+  // 7. TypeScript config for lamaste-tickets
   ...tseslint.configs.recommended.map((config) => ({
     ...config,
-    files: ['packages/portlama-tickets/src/**/*.ts'],
+    files: ['packages/sdks/tickets/src/**/*.ts'],
   })),
   {
-    files: ['packages/portlama-tickets/src/**/*.ts'],
+    files: ['packages/sdks/tickets/src/**/*.ts'],
     languageOptions: {
       globals: {
         ...globals.node,

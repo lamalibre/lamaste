@@ -1,0 +1,664 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 20,
+    "name": "Agent-Side User Plugin Access",
+    "suite": "e2e-three-vm",
+    "description": "20 — Agent-Side User Plugin Access (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-vms-and-onboarding",
+      "label": "Pre-flight: check VMs and onboarding",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LABEL",
+              "from": {
+                "kind": "jq",
+                "expression": ".agents[0].label // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Using agent label: ${AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Using agent label: ${AGENT_LABEL}"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "AGENT_LABEL"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check VMs and onboarding\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" 2>/dev/null | jq -r '.status' || echo \"unknown\")\nif [ \"$ONBOARDING\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding complete\"\n\n# Find agent label\nAGENT_LABEL=$(host_api_get \"certs/agent\" 2>/dev/null | jq -r '.agents[0].label // empty' || echo \"\")\nif [ -z \"$AGENT_LABEL\" ]; then\n  log_skip \"No enrolled agent found — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\""
+    },
+    {
+      "id": "1-create-agent-side-grant",
+      "label": "1. Create agent-side grant",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "POST /api/user-access/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "user-access/grants",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Extract GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "GRANT_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESULT"
+              },
+              "expression": ".grant.grantId // empty"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Agent-side grant created: ${GRANT_ID}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent-side grant created: ${GRANT_ID}"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "GRANT_ID"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract IS_USED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "IS_USED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESULT"
+              },
+              "expression": ".grant.used"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "GRANT_ID"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Grant is auto-consumed (used=true)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Grant is auto-consumed (used=true)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "IS_USED",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Grant should be auto-consumed for agent target",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Grant should be auto-consumed for agent target"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "IS_USED",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Extract TARGET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TARGET",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESULT"
+              },
+              "expression": ".grant.target"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Grant target matches: ${TARGET}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Grant target matches: ${TARGET}"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TARGET",
+            "value": "agent:${AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Grant target mismatch: expected agent:${AGENT_LABEL}, got ${TARGET}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Grant target mismatch: expected agent:${AGENT_LABEL}, got ${TARGET}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TARGET",
+            "value": "agent:${AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Failed to create agent-side grant",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to create agent-side grant"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Create agent-side grant\"\n# ---------------------------------------------------------------------------\n\nRESULT=$(host_api_post \"user-access/grants\" \"{\\\"username\\\":\\\"testuser\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"agent:${AGENT_LABEL}\\\"}\" 2>/dev/null || echo \"\")\nGRANT_ID=$(echo \"$RESULT\" | jq -r '.grant.grantId // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$GRANT_ID\" ]; then\n  log_pass \"Agent-side grant created: ${GRANT_ID}\"\n\n  # Verify auto-consumed\n  IS_USED=$(echo \"$RESULT\" | jq -r '.grant.used' 2>/dev/null || echo \"\")\n  if [ \"$IS_USED\" = \"true\" ]; then\n    log_pass \"Grant is auto-consumed (used=true)\"\n  else\n    log_fail \"Grant should be auto-consumed for agent target\"\n  fi\n\n  # Verify target field\n  TARGET=$(echo \"$RESULT\" | jq -r '.grant.target' 2>/dev/null || echo \"\")\n  if [ \"$TARGET\" = \"agent:${AGENT_LABEL}\" ]; then\n    log_pass \"Grant target matches: ${TARGET}\"\n  else\n    log_fail \"Grant target mismatch: expected agent:${AGENT_LABEL}, got ${TARGET}\"\n  fi\nelse\n  log_fail \"Failed to create agent-side grant\"\nfi"
+    },
+    {
+      "id": "2-verify-authelia-access-control-updated",
+      "label": "2. Verify Authelia access control updated",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "which authelia 2>/dev/null && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "HAS_AUTHELIA",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat /etc/authelia/configuration.yml 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "HAS_AUTHELIA",
+            "value": "yes"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Authelia config includes granted user",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia config includes granted user"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Authelia config may not include user (Authelia sync may not have run)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Authelia config may not include user (Authelia sync may not have run)"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Authelia config includes admins group rule",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia config includes admins group rule"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Authelia admins group rule not found",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Authelia admins group rule not found"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Authelia not installed — skipping config verification",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Authelia not installed — skipping config verification"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"2. Verify Authelia access control updated\"\n# ---------------------------------------------------------------------------\n\n# Check that Authelia config has access control rules (if Authelia is installed)\nHAS_AUTHELIA=$(host_exec \"which authelia 2>/dev/null && echo yes || echo no\")\nif [ \"$HAS_AUTHELIA\" = \"yes\" ]; then\n  AUTHELIA_CONFIG=$(host_exec \"sudo cat /etc/authelia/configuration.yml 2>/dev/null\" || echo \"\")\n  if echo \"$AUTHELIA_CONFIG\" | grep -q \"testuser\" 2>/dev/null; then\n    log_pass \"Authelia config includes granted user\"\n  else\n    log_info \"Authelia config may not include user (Authelia sync may not have run)\"\n  fi\n\n  if echo \"$AUTHELIA_CONFIG\" | grep -q \"group:admins\" 2>/dev/null; then\n    log_pass \"Authelia config includes admins group rule\"\n  else\n    log_info \"Authelia admins group rule not found\"\n  fi\nelse\n  log_skip \"Authelia not installed — skipping config verification\"\nfi"
+    },
+    {
+      "id": "3-plugin-tunnel-validation",
+      "label": "3. Plugin tunnel validation",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "test-plug",
+              "port": 10060,
+              "type": "plugin"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Plugin tunnel without pluginName/agentLabel rejected (400)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Plugin tunnel without pluginName/agentLabel rejected (400)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Expected 400 for plugin tunnel without required fields, got ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected 400 for plugin tunnel without required fields, got ${STATUS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Plugin tunnel with reserved route 'api' rejected (400)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Plugin tunnel with reserved route 'api' rejected (400)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Expected 400 for reserved route prefix, got ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected 400 for reserved route prefix, got ${STATUS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Plugin tunnel with invalid pluginName rejected (400)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Plugin tunnel with invalid pluginName rejected (400)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Expected 400 for invalid pluginName, got ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected 400 for invalid pluginName, got ${STATUS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STATUS",
+            "value": "400"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. Plugin tunnel validation\"\n# ---------------------------------------------------------------------------\n\n# Missing required fields for plugin tunnel\nSTATUS=$(host_api_post_status \"tunnels\" '{\"subdomain\":\"test-plug\",\"port\":10060,\"type\":\"plugin\"}')\nif [ \"$STATUS\" = \"400\" ]; then\n  log_pass \"Plugin tunnel without pluginName/agentLabel rejected (400)\"\nelse\n  log_fail \"Expected 400 for plugin tunnel without required fields, got ${STATUS}\"\nfi\n\n# Reserved route prefix\nSTATUS=$(host_api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"test-api\\\",\\\"port\\\":10061,\\\"type\\\":\\\"plugin\\\",\\\"pluginName\\\":\\\"@lamalibre/api-server\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nif [ \"$STATUS\" = \"400\" ]; then\n  log_pass \"Plugin tunnel with reserved route 'api' rejected (400)\"\nelse\n  log_fail \"Expected 400 for reserved route prefix, got ${STATUS}\"\nfi\n\n# Invalid pluginName characters\nSTATUS=$(host_api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"test-bad\\\",\\\"port\\\":10062,\\\"type\\\":\\\"plugin\\\",\\\"pluginName\\\":\\\"@lamalibre/bad;name\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nif [ \"$STATUS\" = \"400\" ]; then\n  log_pass \"Plugin tunnel with invalid pluginName rejected (400)\"\nelse\n  log_fail \"Expected 400 for invalid pluginName, got ${STATUS}\"\nfi"
+    },
+    {
+      "id": "4-revoke-agent-side-grant",
+      "label": "4. Revoke agent-side grant",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "DELETE /api/user-access/grants/${GRANT_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "user-access/grants/${GRANT_ID}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "GRANT_ID"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Agent-side grant revoked successfully",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent-side grant revoked successfully"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Failed to revoke agent-side grant: ${STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to revoke agent-side grant: ${STATUS}"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "GET /api/user-access/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "user-access/grants"
+          },
+          "capture": [
+            {
+              "variable": "GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Set FOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$GRANTS\" | jq \"[.grants[] | select(.grantId == \\\"${GRANT_ID}\\\")] | length\" 2>/dev/null || echo \"1\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Revoked grant no longer in list",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked grant no longer in list"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "FOUND",
+            "value": "0"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Revoked grant still present in list",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Revoked grant still present in list"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FOUND",
+            "value": "0"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"4. Revoke agent-side grant\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$GRANT_ID\" ]; then\n  STATUS=$(host_api_delete_status \"user-access/grants/${GRANT_ID}\")\n  if [ \"$STATUS\" = \"200\" ]; then\n    log_pass \"Agent-side grant revoked successfully\"\n  else\n    log_fail \"Failed to revoke agent-side grant: ${STATUS}\"\n  fi\n\n  # Verify grant removed\n  GRANTS=$(host_api_get \"user-access/grants\" 2>/dev/null || echo \"{}\")\n  FOUND=$(echo \"$GRANTS\" | jq \"[.grants[] | select(.grantId == \\\"${GRANT_ID}\\\")] | length\" 2>/dev/null || echo \"1\")\n  if [ \"$FOUND\" = \"0\" ]; then\n    log_pass \"Revoked grant no longer in list\"\n  else\n    log_fail \"Revoked grant still present in list\"\n  fi\nfi"
+    },
+    {
+      "id": "5-cleanup",
+      "label": "5. Cleanup",
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "Cleanup complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Cleanup complete"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. Cleanup\"\n# ---------------------------------------------------------------------------\n\nlog_pass \"Cleanup complete\""
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_post_status",
+    "host_api_delete",
+    "host_api_delete_status"
+  ],
+  "headerRaw": "# ============================================================================\n# 20 — Agent-Side User Plugin Access (Three-VM)\n# ============================================================================\n# Tests the full agent-side user plugin access flow across VMs:\n#\n# 1. Grant model: create agent-side grant, verify auto-consumed\n# 2. Plugin tunnel: create type=plugin tunnel, verify nginx vhost\n# 3. Access control: verify Authelia rules include granted user\n# 4. Revocation: revoke grant, verify access control updated\n# 5. Validation: reserved route prefixes, admin-only enforcement\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"20 — Agent-Side User Plugin Access (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\nexit $?\n"
+}

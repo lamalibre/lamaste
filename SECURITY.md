@@ -10,11 +10,11 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-If you discover a security vulnerability in Portlama, please report it
+If you discover a security vulnerability in Lamaste, please report it
 responsibly through one of these channels:
 
 1. **GitHub Security Advisory** (preferred):
-   [Open a private advisory](https://github.com/lamalibre/portlama/security/advisories/new)
+   [Open a private advisory](https://github.com/lamalibre/lamaste/security/advisories/new)
 
 2. **Email**: security@codelama.dev
 
@@ -22,7 +22,7 @@ responsibly through one of these channels:
 
 - Description of the vulnerability
 - Steps to reproduce
-- Affected component (installer, panel-server, panel-client, agent, desktop, cloud, tickets, nginx config, PKI)
+- Affected component (installer, serverd, panel-client, agent, desktop, cloud, tickets, nginx config, PKI)
 - Potential impact
 
 ### What to Expect

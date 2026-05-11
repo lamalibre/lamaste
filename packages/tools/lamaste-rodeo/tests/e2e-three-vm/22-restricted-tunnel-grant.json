@@ -1,0 +1,1344 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 22,
+    "name": "Restricted Tunnel + Per-User Grant",
+    "suite": "e2e-three-vm",
+    "description": "22 — Restricted Tunnel + Per-User Grant (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    },
+    "TEST_USER_PASSWORD": {
+      "description": "TEST_USER_PASSWORD"
+    }
+  },
+  "constants": {
+    "TUNNEL_SUBDOMAIN": {
+      "value": "e2erestricted"
+    },
+    "TUNNEL_PORT": {
+      "value": "18090"
+    },
+    "TUNNEL_FQDN": {
+      "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
+      "expression": true
+    },
+    "MARKER": {
+      "value": "LAMASTE_RESTRICTED_OK_$timestamp()",
+      "expression": true
+    },
+    "OUTSIDER_USER": {
+      "value": "e2eoutsider"
+    },
+    "OUTSIDER_PASSWORD": {
+      "value": "Outsider-E2E-Password-123"
+    },
+    "CLEANUP_CURL_ARGS": {
+      "value": "-skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt"
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": ""
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OATHTOOL_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "OATHTOOL_CHECK",
+        "value": "yes"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\nONBOARDING=$(host_api_get \"onboarding/status\" 2>/dev/null || echo '{\"status\":\"unknown\"}')\nSTATUS=$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not complete — skipping restricted tunnel tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nOATHTOOL_CHECK=$(visitor_exec \"command -v oathtool >/dev/null 2>&1 && echo yes || echo no\")\nif [ \"$OATHTOOL_CHECK\" != \"yes\" ]; then\n  log_skip \"oathtool not available on visitor VM — skipping TOTP-dependent tests\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "step-1-create-tunnel-using-the-default-accessmode",
+      "label": "Step 1: Create tunnel using the default accessMode",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "EXISTING_TUNNELS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Set EXISTING_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$EXISTING_TUNNELS\" | jq -r --arg sd \"${TUNNEL_SUBDOMAIN}\" '.tunnels[]? | select(.subdomain==$sd) | .id' 2>/dev/null | head -1"
+          },
+          "capture": [
+            {
+              "variable": "EXISTING_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Removing stale tunnel ${EXISTING_ID} (subdomain ${TUNNEL_SUBDOMAIN}) from a prior run",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Removing stale tunnel ${EXISTING_ID} (subdomain ${TUNNEL_SUBDOMAIN}) from a prior run"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Tunnel creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Default accessMode is 'restricted' (security posture)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "restricted"
+              },
+              "message": "Default accessMode is 'restricted' (security posture)"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel using the default accessMode\"\n# ---------------------------------------------------------------------------\n# Delete any leftover tunnel with our subdomain so the create below doesn't\n# 409. `host_api_get` is curl -f, so we swallow its non-zero when the list\n# endpoint isn't populated yet.\nEXISTING_TUNNELS=$(host_api_get \"tunnels\" 2>/dev/null || echo '{\"tunnels\":[]}')\nEXISTING_ID=$(echo \"$EXISTING_TUNNELS\" | jq -r --arg sd \"${TUNNEL_SUBDOMAIN}\" '.tunnels[]? | select(.subdomain==$sd) | .id' 2>/dev/null | head -1)\nif [ -n \"${EXISTING_ID}\" ] && [ \"${EXISTING_ID}\" != \"null\" ]; then\n  log_info \"Removing stale tunnel ${EXISTING_ID} (subdomain ${TUNNEL_SUBDOMAIN}) from a prior run\"\n  # Use the timeout-wrapped helper — plain host_api_delete has no outer cap\n  # and can hang on the known rodeo multipass-exec pipe-leak.\n  cleanup_host_delete \"tunnels/${EXISTING_ID}\"\nfi\n\n# Intentionally omit accessMode — the route handler's Zod schema defaults to\n# \"restricted\", which is what this test is verifying the behavior of.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT}}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.accessMode' 'restricted' \\\n  \"Default accessMode is 'restricted' (security posture)\" || true\n\nlog_info \"Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})\""
+    },
+    {
+      "id": "step-2-wire-up-host-entries-and-start-a-marker-http-server",
+      "label": "Step 2: Wire up host entries and start a marker HTTP server",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "mkdir -p /tmp/e2e-restricted && echo '${MARKER}' > /tmp/e2e-restricted/index.html"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[p]ython3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp/e2e-restricted &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Marker HTTP server running on agent at port ${TUNNEL_PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Marker HTTP server running on agent at port ${TUNNEL_PORT}"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 2: Wire up host entries and start a marker HTTP server\"\n# ---------------------------------------------------------------------------\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nvisitor_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\n\nagent_exec \"mkdir -p /tmp/e2e-restricted && echo '${MARKER}' > /tmp/e2e-restricted/index.html\"\n# Bracket-escape the first char so `pkill -f` doesn't self-match the bash\n# cmdline running it (which contains the literal pattern string). Without\n# the escape, pkill SIGTERMs its own shell → multipass exec returns 255 →\n# set -e aborts before the EXIT trap can fire.\nagent_exec \"pkill -f '[p]ython3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\"\n# `nohup … & exit` matches test 02's proven detach pattern: the explicit\n# `exit` closes the bash -c session so multipass exec's stdout pipe drops\n# cleanly, while the backgrounded python keeps running. Use `-d PATH`\n# rather than `cd X && …` so there's no compound before the background\n# operator — the && form pipe-leaks in practice even with `& exit`.\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp/e2e-restricted &>/dev/null & exit\"\nsleep 2\n# `| head -1` can SIGPIPE the inner curl; `|| true` keeps pipefail from\n# aborting step 2 before the EXIT trap can clean up.\nagent_exec \"curl -sf --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/index.html\" | head -1 || true\nlog_pass \"Marker HTTP server running on agent at port ${TUNNEL_PORT}\"\n\n# Trigger the agent to pick up the new tunnel via chisel. Wrap in perl-alarm\n# because `lamaste-agent update` can CPU-spin for >10m under rodeo's multipass\n# exec context — the test-case doesn't actually fail if the update times out,\n# so we proceed and let the routing assertions report the real outcome.\ntimed_exec 60 multipass exec lamaste-agent -- sudo bash -c \\\n  \"lamaste-agent update 2>&1 || lamaste-agent update --label e2e-agent 2>&1 || true\" \\\n  >/dev/null 2>&1\nsleep 5"
+    },
+    {
+      "id": "step-3-create-a-second-authelia-user-without-a-grant",
+      "label": "Step 3: Create a second Authelia user without a grant",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_OUTSIDER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Created second Authelia user (${OUTSIDER_USER}) for no-grant case",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Created second Authelia user (${OUTSIDER_USER}) for no-grant case"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Outsider user creation returned: $(echo \"$CREATE_OUTSIDER\" | head -c 160)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Outsider user creation returned: $(echo \"$CREATE_OUTSIDER\" | head -c 160)"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 3: Create a second Authelia user without a grant\"\n# ---------------------------------------------------------------------------\n# Pre-clean so the test is idempotent across runs. curl -f swallows 404 on\n# first run; cleanup_host_delete is already perl-timeout-wrapped.\ncleanup_host_delete \"users/${OUTSIDER_USER}\"\n\nCREATE_OUTSIDER=$(host_api_post \"users\" \"{\\\"username\\\":\\\"${OUTSIDER_USER}\\\",\\\"password\\\":\\\"${OUTSIDER_PASSWORD}\\\",\\\"email\\\":\\\"${OUTSIDER_USER}@${TEST_DOMAIN}\\\",\\\"groups\\\":[\\\"users\\\"],\\\"displayname\\\":\\\"E2E Outsider\\\"}\" 2>&1 || echo '{\"ok\":false}')\nif echo \"$CREATE_OUTSIDER\" | jq -e '.ok == true' >/dev/null 2>&1; then\n  log_pass \"Created second Authelia user (${OUTSIDER_USER}) for no-grant case\"\nelse\n  log_info \"Outsider user creation returned: $(echo \"$CREATE_OUTSIDER\" | head -c 160)\"\nfi\n\n# Give Authelia a moment to refresh its users.yml view.\nsleep 1"
+    },
+    {
+      "id": "step-4-authenticate-as-testuser-will-have-the-grant",
+      "label": "Step 4: Authenticate as testuser (will have the grant)",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "POST /api/users/${TEST_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "TOTP reset returned otpauth URI for testuser",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "path": ".totpUri",
+              "message": "TOTP reset returned otpauth URI for testuser"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Extract OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OTPAUTH_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Extract TESTUSER_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TESTUSER_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "OTPAUTH_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Failed to extract testuser TOTP secret",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to extract testuser TOTP secret"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TESTUSER_SECRET"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/restricted-testuser-cookies.txt"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "restricted-testuser-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_TESTUSER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "testuser first factor OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_TESTUSER"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "testuser first factor OK"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "TESTUSER_SECRET"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TESTUSER_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "restricted-testuser-cookies",
+              "load": "restricted-testuser-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOTP_TESTUSER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "testuser TOTP OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_TESTUSER"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "testuser TOTP OK"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 4: Authenticate as testuser (will have the grant)\"\n# ---------------------------------------------------------------------------\nTOTP_RESPONSE=$(host_api_post \"users/${TEST_USER}/reset-totp\" \"{}\")\nassert_json_field_not_empty \"$TOTP_RESPONSE\" '.totpUri' \"TOTP reset returned otpauth URI for testuser\" || true\nOTPAUTH_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nTESTUSER_SECRET=$(echo \"$OTPAUTH_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nif [ -z \"$TESTUSER_SECRET\" ]; then\n  log_fail \"Failed to extract testuser TOTP secret\"\n  end_test\n  exit $?\nfi\n\nwait_for_next_totp_window\n\nvisitor_exec \"rm -f /tmp/restricted-testuser-cookies.txt\"\nAUTH_TESTUSER=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/restricted-testuser-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"password\\\":\\\"${TEST_USER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false,\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\nassert_json_field \"$AUTH_TESTUSER\" '.status' 'OK' \"testuser first factor OK\" || true\n\nTESTUSER_CODE=$(visitor_exec \"oathtool --totp --base32 ${TESTUSER_SECRET}\" 2>/dev/null || echo \"\")\nTOTP_TESTUSER=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/restricted-testuser-cookies.txt -c /tmp/restricted-testuser-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TESTUSER_CODE}\\\",\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\nassert_json_field \"$TOTP_TESTUSER\" '.status' 'OK' \"testuser TOTP OK\" || true"
+    },
+    {
+      "id": "step-5-testuser-without-a-grant-is-denied-403",
+      "label": "Step 5: testuser WITHOUT a grant is denied (403)",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-testuser-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "NO_GRANT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Restricted tunnel denies authenticated user without grant (403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NO_GRANT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Restricted tunnel denies authenticated user without grant (403)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 5: testuser WITHOUT a grant is denied (403)\"\n# ---------------------------------------------------------------------------\nNO_GRANT_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/\" 2>/dev/null || echo \"000\")\nassert_eq \"$NO_GRANT_STATUS\" \"403\" \"Restricted tunnel denies authenticated user without grant (403)\" || true"
+    },
+    {
+      "id": "step-6-admin-creates-a-grant-for-testuser",
+      "label": "Step 6: Admin creates a grant for testuser",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "POST /api/gatekeeper/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "gatekeeper/grants",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "GRANT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Extract GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "GRANT_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "GRANT_RESPONSE"
+              },
+              "expression": ".grant.grantId"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Grant created (${GRANT_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Grant created (${GRANT_ID})"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "GRANT_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "GRANT_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Grant creation failed: $(echo \"$GRANT_RESPONSE\" | head -c 200)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Grant creation failed: $(echo \"$GRANT_RESPONSE\" | head -c 200)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "GRANT_ID"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "GRANT_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 6: Admin creates a grant for testuser\"\n# ---------------------------------------------------------------------------\nGRANT_RESPONSE=$(host_api_post \"gatekeeper/grants\" \"{\\\"principalType\\\":\\\"user\\\",\\\"principalId\\\":\\\"${TEST_USER}\\\",\\\"resourceType\\\":\\\"tunnel\\\",\\\"resourceId\\\":\\\"${TUNNEL_ID}\\\"}\")\nGRANT_ID=$(echo \"$GRANT_RESPONSE\" | jq -r '.grant.grantId' 2>/dev/null || echo \"\")\nif [ -n \"$GRANT_ID\" ] && [ \"$GRANT_ID\" != \"null\" ]; then\n  log_pass \"Grant created (${GRANT_ID})\"\nelse\n  log_fail \"Grant creation failed: $(echo \"$GRANT_RESPONSE\" | head -c 200)\"\n  end_test\n  exit $?\nfi\n\n# Gatekeeper busts its own session cache on grant changes, but wait briefly\n# for the fs.watch event to propagate before re-testing.\nsleep 1"
+    },
+    {
+      "id": "step-7-testuser-with-a-grant-is-allowed-200-marker",
+      "label": "Step 7: testuser WITH a grant is allowed (200 + marker)",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-testuser-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "WITH_GRANT_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Grantee receives tunnel marker content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "WITH_GRANT_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Grantee receives tunnel marker content"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-testuser-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "WITH_GRANT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Grantee reaches tunnel (HTTP 200)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WITH_GRANT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Grantee reaches tunnel (HTTP 200)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 7: testuser WITH a grant is allowed (200 + marker)\"\n# ---------------------------------------------------------------------------\nWITH_GRANT_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$WITH_GRANT_CONTENT\" \"$MARKER\" \"Grantee receives tunnel marker content\" || true\n\nWITH_GRANT_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"000\")\nassert_eq \"$WITH_GRANT_STATUS\" \"200\" \"Grantee reaches tunnel (HTTP 200)\" || true"
+    },
+    {
+      "id": "step-8-outsider-authenticates-but-has-no-grant-403",
+      "label": "Step 8: Outsider authenticates but has no grant → 403",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "POST /api/users/${OUTSIDER_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${OUTSIDER_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "OUTSIDER_TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Extract OUTSIDER_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OUTSIDER_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OUTSIDER_TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Extract OUTSIDER_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OUTSIDER_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "OUTSIDER_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Could not reset TOTP for outsider user (reset-totp response: $(echo \"$OUTSIDER_TOTP_RESPONSE\" | head -c 160)) — skipping outsider assertions",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Could not reset TOTP for outsider user (reset-totp response: $(echo \"$OUTSIDER_TOTP_RESPONSE\" | head -c 160)) — skipping outsider assertions"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "OUTSIDER_SECRET"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/restricted-outsider-cookies.txt"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "restricted-outsider-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "outsider first factor OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_OUT"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "outsider first factor OK"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "OUTSIDER_SECRET"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OUTSIDER_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "restricted-outsider-cookies",
+              "load": "restricted-outsider-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOTP_OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "outsider TOTP OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_OUT"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "outsider TOTP OK"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-outsider-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "OUTSIDER_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Outsider authenticated but ungranted receives 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OUTSIDER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Outsider authenticated but ungranted receives 403"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-outsider-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "OUTSIDER_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OUTSIDER_SECRET"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Outsider unexpectedly received tunnel marker content — restricted mode breached",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Outsider unexpectedly received tunnel marker content — restricted mode breached"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Outsider does not see tunnel content (restricted mode holds)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Outsider does not see tunnel content (restricted mode holds)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 8: Outsider authenticates but has no grant → 403\"\n# ---------------------------------------------------------------------------\nOUTSIDER_TOTP_RESPONSE=$(host_api_post \"users/${OUTSIDER_USER}/reset-totp\" \"{}\" 2>&1 || echo '{}')\nOUTSIDER_URI=$(echo \"$OUTSIDER_TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nOUTSIDER_SECRET=$(echo \"$OUTSIDER_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nif [ -z \"$OUTSIDER_SECRET\" ]; then\n  log_skip \"Could not reset TOTP for outsider user (reset-totp response: $(echo \"$OUTSIDER_TOTP_RESPONSE\" | head -c 160)) — skipping outsider assertions\"\nelse\n  wait_for_next_totp_window\n\n  visitor_exec \"rm -f /tmp/restricted-outsider-cookies.txt\"\n  AUTH_OUT=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/restricted-outsider-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${OUTSIDER_USER}\\\",\\\"password\\\":\\\"${OUTSIDER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false,\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\n  assert_json_field \"$AUTH_OUT\" '.status' 'OK' \"outsider first factor OK\" || true\n\n  OUTSIDER_CODE=$(visitor_exec \"oathtool --totp --base32 ${OUTSIDER_SECRET}\" 2>/dev/null || echo \"\")\n  TOTP_OUT=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/restricted-outsider-cookies.txt -c /tmp/restricted-outsider-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${OUTSIDER_CODE}\\\",\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\n  assert_json_field \"$TOTP_OUT\" '.status' 'OK' \"outsider TOTP OK\" || true\n\n  OUTSIDER_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-outsider-cookies.txt https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"000\")\n  assert_eq \"$OUTSIDER_STATUS\" \"403\" \"Outsider authenticated but ungranted receives 403\" || true\n\n  OUTSIDER_BODY=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/restricted-outsider-cookies.txt https://${TUNNEL_FQDN}/index.html 2>/dev/null\" || echo \"\")\n  if echo \"$OUTSIDER_BODY\" | grep -q \"$MARKER\"; then\n    log_fail \"Outsider unexpectedly received tunnel marker content — restricted mode breached\"\n  else\n    log_pass \"Outsider does not see tunnel content (restricted mode holds)\"\n  fi\nfi"
+    },
+    {
+      "id": "step-9-revoke-testuser-s-grant-previously-allowed-user-403",
+      "label": "Step 9: Revoke testuser's grant → previously-allowed user 403",
+      "steps": [
+        {
+          "id": "step-70",
+          "label": "Sleep 12s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 12
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-testuser-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Revoked grant blocks the previously-allowed user (403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REVOKED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Revoked grant blocks the previously-allowed user (403)"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "restricted-testuser-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Previously-allowed user still receives tunnel content after revoke",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Previously-allowed user still receives tunnel content after revoke"
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Previously-allowed user no longer receives tunnel content",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Previously-allowed user no longer receives tunnel content"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 9: Revoke testuser's grant → previously-allowed user 403\"\n# ---------------------------------------------------------------------------\n# Use cleanup_host_delete (timeout-wrapped) — the plain host_api_delete\n# occasionally pipe-leaks multipass exec for the full execa 10-min timeout.\ncleanup_host_delete \"gatekeeper/grants/${GRANT_ID}\"\nGRANT_ID=\"\"  # prevent the cleanup trap from trying to re-delete\n\n# Gatekeeper's in-memory session cache is busted on grant changes, but nginx\n# has its own `proxy_cache` zone keyed on $cookie_authelia_session$http_host\n# (NOT URI) — snippet sets `proxy_cache_valid 200 10s`. Just wait past that\n# 10s TTL so the test observes the eventual-consistency behaviour the system\n# promises. (The /gatekeeper/cache/bust endpoint only clears gatekeeper's\n# own in-memory cache; nginx's layer still replays the cached allow.)\nsleep 12\n\nREVOKED_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"000\")\nassert_eq \"$REVOKED_STATUS\" \"403\" \"Revoked grant blocks the previously-allowed user (403)\" || true\n\nREVOKED_BODY=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/index.html\" 2>/dev/null || echo \"\")\nif echo \"$REVOKED_BODY\" | grep -q \"$MARKER\"; then\n  log_fail \"Previously-allowed user still receives tunnel content after revoke\"\nelse\n  log_pass \"Previously-allowed user no longer receives tunnel content\"\nfi"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 22 — Restricted Tunnel + Per-User Grant (Three-VM)\n# ============================================================================\n# Exercises the security default: a tunnel created without an explicit\n# accessMode is `restricted`, which requires an admin-issued grant for any\n# user to reach it. We cover the three decisive states:\n#\n#   1. User has a grant           → 200 with tunnel content\n#   2. User authenticates but has no grant → 403 (Gatekeeper access-request)\n#   3. Admin revokes the grant     → previously-allowed user now 403\n#\n# Verifies both that the default posture holds (a fresh tunnel is not\n# accessible to any authenticated user) and that the grant lifecycle\n# actually drives the nginx/Gatekeeper decision — the surface we regressed\n# before with the `fs.watch` atomic-replace bug.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\nhost_exec()    { multipass exec lamaste-host    -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\nagent_exec()   { multipass exec lamaste-agent   -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\nTUNNEL_SUBDOMAIN=\"e2erestricted\"\nTUNNEL_PORT=18090\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nGRANT_ID=\"\"\nMARKER=\"LAMASTE_RESTRICTED_OK_$(date +%s)\"\nOUTSIDER_USER=\"e2eoutsider\"\nOUTSIDER_PASSWORD=\"Outsider-E2E-Password-123\"\n\n# ---------------------------------------------------------------------------\n# Cleanup on exit — runs even when assertions fail\n#\n# Every multipass exec is wrapped in `timeout` at the host level because a\n# SIGKILL'd `multipass exec` child can reparent to launchd (PPID 1) and hold\n# stdout open, blocking the outer bash pipe indefinitely. A 35s outer cap\n# lets each step fail fast without hanging the whole suite.\n# ---------------------------------------------------------------------------\nCLEANUP_CURL_ARGS=\"-skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n# `timed_exec` is defined in helpers.sh.\ncleanup_host_delete() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \\\n    \"curl ${CLEANUP_CURL_ARGS} -X DELETE https://127.0.0.1:9292/api/$1\" \\\n    >/dev/null 2>&1\n}\ncleanup_exec() {\n  # $1 = vm name, $2 = command\n  timed_exec 15 multipass exec \"$1\" -- sudo bash -c \"$2\" >/dev/null 2>&1\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Revoke grant if still present\n  if [ -n \"${GRANT_ID}\" ]; then\n    cleanup_host_delete \"gatekeeper/grants/${GRANT_ID}\"\n  fi\n\n  # Delete tunnel\n  if [ -n \"${TUNNEL_ID}\" ]; then\n    cleanup_host_delete \"tunnels/${TUNNEL_ID}\"\n  fi\n\n  # Remove outsider user so repeat runs are idempotent\n  cleanup_host_delete \"users/${OUTSIDER_USER}\"\n\n  # Stop the agent-side HTTP server and remove hosts entries we added\n  # Bracket-escape so pkill doesn't self-match its own cmdline.\n  cleanup_exec lamaste-agent   \"pkill -f '[p]ython3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\"\n  cleanup_exec lamaste-agent   \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n  cleanup_exec lamaste-visitor \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n}\ntrap cleanup EXIT\n\nbegin_test \"22 — Restricted Tunnel + Per-User Grant (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\n# ---------------------------------------------------------------------------\nend_test\n"
+}

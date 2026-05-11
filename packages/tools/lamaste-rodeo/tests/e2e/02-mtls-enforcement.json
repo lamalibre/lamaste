@@ -1,0 +1,386 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 2,
+    "name": "mTLS Enforcement",
+    "suite": "e2e",
+    "description": "02 — mTLS Enforcement",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "request-without-client-certificate",
+      "label": "Request without client certificate",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "Set NO_CERT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure \"${BASE_URL}/api/onboarding/status\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NO_CERT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Request without cert rejected (HTTP $NO_CERT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Request without cert rejected (HTTP $NO_CERT_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "000"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "403"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "mTLS check skipped in development mode (HTTP $NO_CERT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "mTLS check skipped in development mode (HTTP $NO_CERT_STATUS)"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Request without cert was NOT rejected (HTTP $NO_CERT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Request without cert was NOT rejected (HTTP $NO_CERT_STATUS)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Request without client certificate\"\n# ---------------------------------------------------------------------------\n\n# Without a client cert, the server should reject the request.\n# /api/health is exempt from mTLS enforcement, so we use /api/onboarding/status\n# which requires a valid client certificate.\nNO_CERT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  \"${BASE_URL}/api/onboarding/status\" 2>/dev/null || echo \"000\")\n\n# Status 000 = connection rejected at TLS level (ssl_verify_client on)\n# Status 400 = nginx sent error page before HTTP (some configs)\n# Status 403 = HTTP-level rejection\n# Any of these means mTLS is working\nif [ \"$NO_CERT_STATUS\" = \"000\" ] || [ \"$NO_CERT_STATUS\" = \"400\" ] || [ \"$NO_CERT_STATUS\" = \"403\" ] || [ \"$NO_CERT_STATUS\" = \"496\" ]; then\n  log_pass \"Request without cert rejected (HTTP $NO_CERT_STATUS)\"\nelse\n  # In development mode (NODE_ENV=development), mTLS may be skipped\n  if [ \"${NODE_ENV:-}\" = \"development\" ]; then\n    log_skip \"mTLS check skipped in development mode (HTTP $NO_CERT_STATUS)\"\n  else\n    log_fail \"Request without cert was NOT rejected (HTTP $NO_CERT_STATUS)\"\n  fi\nfi"
+    },
+    {
+      "id": "request-with-valid-client-certificate",
+      "label": "Request with valid client certificate",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "Set VALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" \"${BASE_URL}/api/health\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "VALID_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Request with valid cert returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VALID_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Request with valid cert returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/health",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "health"
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Health endpoint returns ok with valid cert",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Health endpoint returns ok with valid cert"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Request with valid client certificate\"\n# ---------------------------------------------------------------------------\n\nVALID_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  \"${BASE_URL}/api/health\" 2>/dev/null || echo \"000\")\n\nassert_eq \"$VALID_STATUS\" \"200\" \"Request with valid cert returns HTTP 200\" || true\n\nHEALTH=$(api_get \"health\")\nassert_json_field \"$HEALTH\" '.status' 'ok' \"Health endpoint returns ok with valid cert\" || true"
+    },
+    {
+      "id": "request-with-invalid-certificate",
+      "label": "Request with invalid certificate",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Set TEMP_DIR",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d"
+          },
+          "capture": [
+            {
+              "variable": "TEMP_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Set FAKE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$TEMP_DIR/fake.crt\" --key \"$TEMP_DIR/fake.key\" \"${BASE_URL}/api/onboarding/status\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "FAKE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Request with untrusted cert rejected (HTTP $FAKE_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Request with untrusted cert rejected (HTTP $FAKE_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "FAKE_STATUS",
+                "value": "000"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "FAKE_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "FAKE_STATUS",
+                "value": "403"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "FAKE_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "mTLS check skipped in development mode (HTTP $FAKE_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "mTLS check skipped in development mode (HTTP $FAKE_STATUS)"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Request with untrusted cert was NOT rejected (HTTP $FAKE_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Request with untrusted cert was NOT rejected (HTTP $FAKE_STATUS)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Request with invalid certificate\"\n# ---------------------------------------------------------------------------\n\n# Generate a self-signed cert that is NOT in the trusted CA chain\nTEMP_DIR=$(mktemp -d)\ntrap 'rm -rf \"$TEMP_DIR\"' EXIT\n\nopenssl req -x509 -newkey rsa:2048 -nodes \\\n  -keyout \"$TEMP_DIR/fake.key\" \\\n  -out \"$TEMP_DIR/fake.crt\" \\\n  -days 1 \\\n  -subj \"/CN=fake-client\" \\\n  2>/dev/null\n\nFAKE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$TEMP_DIR/fake.crt\" \\\n  --key \"$TEMP_DIR/fake.key\" \\\n  \"${BASE_URL}/api/onboarding/status\" 2>/dev/null || echo \"000\")\n\n# With an untrusted cert, nginx should reject (000 = TLS failure, or 400/403)\nif [ \"$FAKE_STATUS\" = \"000\" ] || [ \"$FAKE_STATUS\" = \"400\" ] || [ \"$FAKE_STATUS\" = \"403\" ] || [ \"$FAKE_STATUS\" = \"496\" ]; then\n  log_pass \"Request with untrusted cert rejected (HTTP $FAKE_STATUS)\"\nelse\n  if [ \"${NODE_ENV:-}\" = \"development\" ]; then\n    log_skip \"mTLS check skipped in development mode (HTTP $FAKE_STATUS)\"\n  else\n    log_fail \"Request with untrusted cert was NOT rejected (HTTP $FAKE_STATUS)\"\n  fi\nfi"
+    },
+    {
+      "id": "certificate-validity-check",
+      "label": "Certificate validity check",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Set EXPIRY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl x509 -enddate -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"error\""
+          },
+          "capture": [
+            {
+              "variable": "EXPIRY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Client certificate has valid expiry: $EXPIRY",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Client certificate has valid expiry: $EXPIRY"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Could not read client certificate expiry",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Could not read client certificate expiry"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Set VERIFY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl verify -CAfile \"$CA_PATH\" \"$CERT_PATH\" 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "VERIFY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Client certificate is signed by the CA",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Client certificate is signed by the CA"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Client certificate verification failed: $VERIFY",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Client certificate verification failed: $VERIFY"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "CA certificate not found at $CA_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "CA certificate not found at $CA_PATH"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Client certificate not found at $CERT_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Client certificate not found at $CERT_PATH"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Certificate validity check\"\n# ---------------------------------------------------------------------------\n\nif [ -f \"$CERT_PATH\" ]; then\n  # Verify the client cert is not expired\n  EXPIRY=$(openssl x509 -enddate -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"error\")\n  if echo \"$EXPIRY\" | grep -q \"notAfter\"; then\n    log_pass \"Client certificate has valid expiry: $EXPIRY\"\n  else\n    log_fail \"Could not read client certificate expiry\"\n  fi\n\n  # Verify the cert is signed by our CA\n  if [ -f \"$CA_PATH\" ]; then\n    VERIFY=$(openssl verify -CAfile \"$CA_PATH\" \"$CERT_PATH\" 2>&1 || true)\n    if echo \"$VERIFY\" | grep -q \": OK\"; then\n      log_pass \"Client certificate is signed by the CA\"\n    else\n      log_fail \"Client certificate verification failed: $VERIFY\"\n    fi\n  else\n    log_skip \"CA certificate not found at $CA_PATH\"\n  fi\nelse\n  log_skip \"Client certificate not found at $CERT_PATH\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 02 — mTLS Enforcement\n# ============================================================================\n# Verifies that the panel enforces mTLS client certificates:\n# - Requests without a client cert are rejected\n# - Requests with a valid client cert succeed\n# - Requests with an invalid/expired cert are rejected\n# - IP:9292 fallback is handled (tested more thoroughly in 09)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"02 — mTLS Enforcement\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -1,0 +1,795 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 13,
+    "name": "Panel Built-in TOTP 2FA",
+    "suite": "e2e-three-vm",
+    "description": "13 — Panel Built-in TOTP 2FA (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "node"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {
+    "_2FA_CLEANUP_ARMED": {
+      "value": "false"
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Extract DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".domain"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Onboarding complete, domain: $DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding complete, domain: $DOMAIN"
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          },
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" || echo '{\"status\":\"unknown\"}')\nSTATUS=$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not complete — skipping 2FA tests\"\n  end_test\n  exit $?\nfi\n\nDOMAIN=$(echo \"$ONBOARDING\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ \"$DOMAIN\" = \"null\" ] || [ -z \"$DOMAIN\" ]; then\n  log_skip \"Domain not configured — skipping 2FA tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding complete, domain: $DOMAIN\""
+    },
+    {
+      "id": "default-state-2fa-disabled",
+      "label": "Default state: 2FA disabled",
+      "steps": [
+        {
+          "id": "step-4",
+          "label": "GET /api/settings/2fa",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "settings/2fa"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "2FA is disabled by default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_RESPONSE"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "2FA is disabled by default"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Default state: 2FA disabled\"\n# ---------------------------------------------------------------------------\n\nSTATUS_RESPONSE=$(host_api_get \"settings/2fa\" || echo '{}')\nassert_json_field \"$STATUS_RESPONSE\" '.enabled' 'false' \"2FA is disabled by default\" || true"
+    },
+    {
+      "id": "enable-2fa-on-host",
+      "label": "Enable 2FA on host",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "POST /api/settings/2fa/setup",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "settings/2fa/setup",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "SETUP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Extract MANUAL_KEY",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "MANUAL_KEY",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SETUP_RESPONSE"
+              },
+              "expression": ".manualKey"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Setup returns manual key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "MANUAL_KEY"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Setup returns manual key"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Set TOTP_CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "generate_totp_code \"$MANUAL_KEY\""
+          },
+          "capture": [
+            {
+              "variable": "TOTP_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "POST /api/settings/2fa/confirm",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "settings/2fa/confirm",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CONFIRM_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "2FA enabled after confirm",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CONFIRM_RESPONSE"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "2FA enabled after confirm"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enable 2FA on host\"\n# ---------------------------------------------------------------------------\n\nSETUP_RESPONSE=$(host_api_post \"settings/2fa/setup\" '{}')\nMANUAL_KEY=$(echo \"$SETUP_RESPONSE\" | jq -r '.manualKey' 2>/dev/null || echo \"\")\nassert_not_eq \"$MANUAL_KEY\" \"\" \"Setup returns manual key\" || true\n\nTOTP_CODE=$(generate_totp_code \"$MANUAL_KEY\")\n\nCONFIRM_RESPONSE=$(host_api_post \"settings/2fa/confirm\" \"{\\\"code\\\":\\\"${TOTP_CODE}\\\"}\")\nassert_json_field \"$CONFIRM_RESPONSE\" '.enabled' 'true' \"2FA enabled after confirm\" || true\n_2FA_CLEANUP_ARMED=true\n\n# Wait for nginx reload\nsleep 2"
+    },
+    {
+      "id": "agent-api-calls-still-work-without-2fa-session",
+      "label": "Agent API calls still work without 2FA session",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set AGENT_HEALTH_DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk --max-time 30 --cert \"${AGENT_CERT}\" --key \"${AGENT_KEY}\" -H 'Accept: application/json' \"https://panel.${DOMAIN}/api/health\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_HEALTH_DOMAIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Agent API call succeeds via domain without 2FA session",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent API call succeeds via domain without 2FA session"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Set AGENT_HEALTH_IP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk --max-time 30 --cert \"${AGENT_CERT}\" --key \"${AGENT_KEY}\" -H 'Accept: application/json' \"https://${HOST_IP}:9292/api/health\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_HEALTH_IP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Agent API call succeeds via IP (IP vhost may still be present for this cert)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent API call succeeds via IP (IP vhost may still be present for this cert)"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Agent cannot reach panel — agent cert may not be enrolled yet",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent cannot reach panel — agent cert may not be enrolled yet"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Agent API calls still work without 2FA session\"\n# ---------------------------------------------------------------------------\n\n# Agent uses its own cert (CN=agent:...) which bypasses 2FA\n# IP vhost is disabled when 2FA is on, so agent must use domain\n# Multi-agent: extract PEM from per-agent P12 for curl usage\nAGENT_P12=\"/home/ubuntu/.lamalibre/lamaste/agents/e2e-agent/client.p12\"\nAGENT_CERT=\"/tmp/agent-e2e.crt\"\nAGENT_KEY=\"/tmp/agent-e2e.key\"\nmultipass exec lamaste-agent -- sudo bash -c \"\n  P12_PASS=\\$(jq -r '.p12Password' /home/ubuntu/.lamalibre/lamaste/agents/e2e-agent/config.json)\n  openssl pkcs12 -in ${AGENT_P12} -clcerts -nokeys -passin pass:\\${P12_PASS} -out ${AGENT_CERT} 2>/dev/null\n  openssl pkcs12 -in ${AGENT_P12} -nocerts -nodes -passin pass:\\${P12_PASS} -out ${AGENT_KEY} 2>/dev/null\n  chmod 600 ${AGENT_KEY}\n\" 2>/dev/null || true\n\nAGENT_HEALTH_DOMAIN=$(multipass exec lamaste-agent -- curl -sk --max-time 30 \\\n  --cert \"${AGENT_CERT}\" \\\n  --key \"${AGENT_KEY}\" \\\n  -H 'Accept: application/json' \\\n  \"https://panel.${DOMAIN}/api/health\" 2>/dev/null || echo '{}')\n\nif echo \"$AGENT_HEALTH_DOMAIN\" | jq -e '.status' &>/dev/null; then\n  log_pass \"Agent API call succeeds via domain without 2FA session\"\nelse\n  # Agent may still reach via IP if vhost removal is still propagating\n  AGENT_HEALTH_IP=$(multipass exec lamaste-agent -- curl -sk --max-time 30 \\\n    --cert \"${AGENT_CERT}\" \\\n    --key \"${AGENT_KEY}\" \\\n    -H 'Accept: application/json' \\\n    \"https://${HOST_IP}:9292/api/health\" 2>/dev/null || echo '{}')\n\n  if echo \"$AGENT_HEALTH_IP\" | jq -e '.status' &>/dev/null; then\n    log_pass \"Agent API call succeeds via IP (IP vhost may still be present for this cert)\"\n  else\n    log_info \"Agent cannot reach panel — agent cert may not be enrolled yet\"\n  fi\nfi\n\n# Clean up temp PEM files\nmultipass exec lamaste-agent -- rm -f \"${AGENT_CERT}\" \"${AGENT_KEY}\" 2>/dev/null || true"
+    },
+    {
+      "id": "admin-request-without-cookie-returns-401",
+      "label": "Admin request without cookie returns 401",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set ADMIN_NO_SESSION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt \"https://panel.${DOMAIN}/api/system/stats\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_NO_SESSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Admin request without session cookie returns 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_NO_SESSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Admin request without session cookie returns 401"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin request without cookie returns 401\"\n# ---------------------------------------------------------------------------\n\nADMIN_NO_SESSION=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \\\n  --max-time 30 \\\n  --cert /etc/lamalibre/lamaste/pki/client.crt \\\n  --key /etc/lamalibre/lamaste/pki/client.key \\\n  --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\n  \"https://panel.${DOMAIN}/api/system/stats\" 2>/dev/null || echo \"000\")\n\nassert_eq \"$ADMIN_NO_SESSION\" \"401\" \"Admin request without session cookie returns 401\" || true"
+    },
+    {
+      "id": "admin-verifies-and-gets-session-cookie",
+      "label": "Admin verifies and gets session cookie",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "Set VERIFY_CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "generate_totp_code \"$MANUAL_KEY\""
+          },
+          "capture": [
+            {
+              "variable": "VERIFY_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Set VERIFY_RESULT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- sudo bash -c \" HEADERS=\\$(mktemp) BODY=\\$(curl -sk -D \\\"\\$HEADERS\\\" --max-time 30 \\ --cert /etc/lamalibre/lamaste/pki/client.crt \\ --key /etc/lamalibre/lamaste/pki/client.key \\ --cacert /etc/lamalibre/lamaste/pki/ca.crt \\ -X POST \\ -H 'Content-Type: application/json' \\ -d '{\\\"code\\\":\\\"${VERIFY_CODE}\\\"}' \\ 'https://panel.${DOMAIN}/api/settings/2fa/verify' 2>/dev/null) COOKIE=\\$(grep -i 'set-cookie' \\\"\\$HEADERS\\\" | grep 'lamaste_2fa_session' | head -1 | sed 's/.*lamaste_2fa_session=//;s/;.*//') rm -f \\\"\\$HEADERS\\\" echo \\\"{\\\\\\\"body\\\\\\\": \\$BODY, \\\\\\\"cookie\\\\\\\": \\\\\\\"\\$COOKIE\\\\\\\"}\\\" \" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "VERIFY_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Extract VERIFY_VERIFIED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "VERIFY_VERIFIED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "VERIFY_RESULT"
+              },
+              "expression": ".body.verified"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Extract HOST_COOKIE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HOST_COOKIE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "VERIFY_RESULT"
+              },
+              "expression": ".cookie"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Admin verified with TOTP code",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Admin verified with TOTP code"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "VERIFY_VERIFIED",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Admin verify failed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Admin verify failed"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "VERIFY_VERIFIED",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Session cookie received",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Session cookie received"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "HOST_COOKIE"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "HOST_COOKIE",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Set AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -b \"lamaste_2fa_session=${HOST_COOKIE}\" \"https://panel.${DOMAIN}/api/system/stats\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "HOST_COOKIE"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "HOST_COOKIE",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Authenticated request with cookie returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Authenticated request with cookie returns 200"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "HOST_COOKIE"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "HOST_COOKIE",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "No cookie received — cannot test authenticated request",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No cookie received — cannot test authenticated request"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "HOST_COOKIE"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "HOST_COOKIE",
+                "value": "null"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin verifies and gets session cookie\"\n# ---------------------------------------------------------------------------\n\n# Wait for next TOTP window to avoid replay protection from the confirm code\nwait_for_next_totp_window\n\nVERIFY_CODE=$(generate_totp_code \"$MANUAL_KEY\")\n\n# Verify on host — capture cookie\nVERIFY_RESULT=$(multipass exec lamaste-host -- sudo bash -c \"\n  HEADERS=\\$(mktemp)\n  BODY=\\$(curl -sk -D \\\"\\$HEADERS\\\" --max-time 30 \\\\\n    --cert /etc/lamalibre/lamaste/pki/client.crt \\\\\n    --key /etc/lamalibre/lamaste/pki/client.key \\\\\n    --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\\\n    -X POST \\\\\n    -H 'Content-Type: application/json' \\\\\n    -d '{\\\"code\\\":\\\"${VERIFY_CODE}\\\"}' \\\\\n    'https://panel.${DOMAIN}/api/settings/2fa/verify' 2>/dev/null)\n  COOKIE=\\$(grep -i 'set-cookie' \\\"\\$HEADERS\\\" | grep 'lamaste_2fa_session' | head -1 | sed 's/.*lamaste_2fa_session=//;s/;.*//')\n  rm -f \\\"\\$HEADERS\\\"\n  echo \\\"{\\\\\\\"body\\\\\\\": \\$BODY, \\\\\\\"cookie\\\\\\\": \\\\\\\"\\$COOKIE\\\\\\\"}\\\"\n\" 2>/dev/null || echo '{}')\n\nVERIFY_VERIFIED=$(echo \"$VERIFY_RESULT\" | jq -r '.body.verified' 2>/dev/null || echo \"false\")\nHOST_COOKIE=$(echo \"$VERIFY_RESULT\" | jq -r '.cookie' 2>/dev/null || echo \"\")\n\nif [ \"$VERIFY_VERIFIED\" = \"true\" ]; then\n  log_pass \"Admin verified with TOTP code\"\nelse\n  log_fail \"Admin verify failed\"\nfi\n\nif [ -n \"$HOST_COOKIE\" ] && [ \"$HOST_COOKIE\" != \"null\" ]; then\n  log_pass \"Session cookie received\"\n\n  # Use cookie for an authenticated request\n  AUTH_STATUS=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \\\n    --max-time 30 \\\n    --cert /etc/lamalibre/lamaste/pki/client.crt \\\n    --key /etc/lamalibre/lamaste/pki/client.key \\\n    --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\n    -b \"lamaste_2fa_session=${HOST_COOKIE}\" \\\n    \"https://panel.${DOMAIN}/api/system/stats\" 2>/dev/null || echo \"000\")\n\n  assert_eq \"$AUTH_STATUS\" \"200\" \"Authenticated request with cookie returns 200\" || true\nelse\n  log_skip \"No cookie received — cannot test authenticated request\"\nfi"
+    },
+    {
+      "id": "disable-2fa-and-verify-ip-restored",
+      "label": "Disable 2FA and verify IP restored",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Set DISABLE_CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "generate_totp_code \"$MANUAL_KEY\""
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Set DISABLE_RESULT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -b \"lamaste_2fa_session=${HOST_COOKIE}\" -d \"{\\\"code\\\":\\\"${DISABLE_CODE}\\\"}\" \"https://panel.${DOMAIN}/api/settings/2fa/disable\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "2FA disabled successfully",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESULT"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "2FA disabled successfully"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set IP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt \"https://127.0.0.1:9292/api/health\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "IP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "IP:9292 access restored after disabling 2FA",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "IP:9292 access restored after disabling 2FA"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "IP_STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "IP:9292 should be restored, got HTTP $IP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "IP:9292 should be restored, got HTTP $IP_STATUS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "IP_STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "GET /api/settings/2fa",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "settings/2fa"
+          },
+          "capture": [
+            {
+              "variable": "FINAL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "2FA is disabled at end of test",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FINAL_STATUS"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "2FA is disabled at end of test"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable 2FA and verify IP restored\"\n# ---------------------------------------------------------------------------\n\n# Wait for next TOTP window to avoid replay from verify code\nwait_for_next_totp_window\n\nDISABLE_CODE=$(generate_totp_code \"$MANUAL_KEY\")\n\n# Disable via domain with session cookie\nDISABLE_RESULT=$(multipass exec lamaste-host -- curl -sk --max-time 30 \\\n  --cert /etc/lamalibre/lamaste/pki/client.crt \\\n  --key /etc/lamalibre/lamaste/pki/client.key \\\n  --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  -b \"lamaste_2fa_session=${HOST_COOKIE}\" \\\n  -d \"{\\\"code\\\":\\\"${DISABLE_CODE}\\\"}\" \\\n  \"https://panel.${DOMAIN}/api/settings/2fa/disable\" 2>/dev/null || echo '{}')\n\nassert_json_field \"$DISABLE_RESULT\" '.enabled' 'false' \"2FA disabled successfully\" || true\n\n# Wait for nginx reload\nsleep 2\n\n# Verify IP access restored\nIP_STATUS=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \\\n  --max-time 10 \\\n  --cert /etc/lamalibre/lamaste/pki/client.crt \\\n  --key /etc/lamalibre/lamaste/pki/client.key \\\n  --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\n  \"https://127.0.0.1:9292/api/health\" 2>/dev/null || echo \"000\")\n\nif [ \"$IP_STATUS\" = \"200\" ]; then\n  log_pass \"IP:9292 access restored after disabling 2FA\"\nelse\n  log_fail \"IP:9292 should be restored, got HTTP $IP_STATUS\"\nfi\n\n# Final status check\nFINAL_STATUS=$(host_api_get \"settings/2fa\" || echo '{}')\nassert_json_field \"$FINAL_STATUS\" '.enabled' 'false' \"2FA is disabled at end of test\" || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post"
+  ],
+  "headerRaw": "# ============================================================================\n# 13 — Panel Built-in TOTP 2FA (Three-VM)\n# ============================================================================\n# Tests the built-in TOTP two-factor authentication across VMs:\n# - Default state: 2FA disabled\n# - Enable 2FA on host\n# - Agent API calls still work without 2FA session\n# - Admin request without cookie returns 401\n# - Admin verifies with code, uses cookie\n# - Disable 2FA, verify IP access restored\n#\n# IMPORTANT: This test always runs lamaste-reset-admin at the end to ensure\n# clean state for subsequent tests.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq node\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_api_get() {\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh GET \"$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh POST \"$path\" \"$b64body\"\n}\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\n# ---------------------------------------------------------------------------\n# Helper: generate TOTP code from a base32 secret\n# ---------------------------------------------------------------------------\ngenerate_totp_code() {\n  local secret=\"$1\"\n  node -e \"\nconst crypto = require('crypto');\nconst alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';\nfunction base32Decode(encoded) {\n  const stripped = encoded.replace(/=+\\$/, '').toUpperCase();\n  let bits = 0, value = 0;\n  const output = [];\n  for (let i = 0; i < stripped.length; i++) {\n    const idx = alphabet.indexOf(stripped[i]);\n    if (idx === -1) continue;\n    value = (value << 5) | idx;\n    bits += 5;\n    if (bits >= 8) { output.push((value >>> (bits - 8)) & 0xff); bits -= 8; }\n  }\n  return Buffer.from(output);\n}\nconst key = base32Decode('${secret}');\nconst timeStep = Math.floor(Date.now() / 30000);\nconst timeBuffer = Buffer.alloc(8);\ntimeBuffer.writeUInt32BE(Math.floor(timeStep / 0x100000000), 0);\ntimeBuffer.writeUInt32BE(timeStep >>> 0, 4);\nconst hmac = crypto.createHmac('sha1', key).update(timeBuffer).digest();\nconst offset = hmac[hmac.length - 1] & 0x0f;\nconst code = ((hmac[offset] & 0x7f) << 24) | ((hmac[offset + 1] & 0xff) << 16) | ((hmac[offset + 2] & 0xff) << 8) | (hmac[offset + 3] & 0xff);\nconsole.log(String(code % 1000000).padStart(6, '0'));\n\" 2>/dev/null\n}\n\n# ---------------------------------------------------------------------------\n# Helper: wait until we're in a fresh TOTP time window (avoids replay)\n# ---------------------------------------------------------------------------\nwait_for_next_totp_window() {\n  local now\n  now=$(date +%s)\n  local sleep_time=$(( 31 - (now % 30) ))\n  log_info \"Waiting ${sleep_time}s for next TOTP window...\"\n  sleep \"$sleep_time\"\n}\n\n# ---------------------------------------------------------------------------\n# Cleanup: restore state at end (only armed after 2FA is enabled)\n# ---------------------------------------------------------------------------\n_2FA_CLEANUP_ARMED=false\ncleanup_2fa() {\n  if [ \"$_2FA_CLEANUP_ARMED\" = \"false\" ]; then\n    return\n  fi\n  # Background the multipass exec and kill it after 30s if it hangs.\n  # Multipass exec can spin at 100% CPU on SSH connection failures.\n  multipass exec lamaste-host -- sudo bash -c '\n    if command -v lamaste-reset-admin >/dev/null 2>&1; then\n      lamaste-reset-admin\n    else\n      node /opt/lamalibre/lamaste/serverd/src/cli/reset-admin.js 2>/dev/null\n    fi\n  ' >/dev/null 2>&1 &\n  local pid=$!\n  ( sleep 30; kill \"$pid\" 2>/dev/null ) &\n  local watchdog=$!\n  wait \"$pid\" 2>/dev/null || true\n  kill \"$watchdog\" 2>/dev/null || true\n  wait \"$watchdog\" 2>/dev/null || true\n  sleep 1\n}\ntrap cleanup_2fa EXIT\n\nbegin_test \"13 — Panel Built-in TOTP 2FA (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\nexit $?\n"
+}

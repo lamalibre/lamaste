@@ -1,0 +1,313 @@
+{
+  "project": {
+    "name": "lamaste",
+    "displayName": "Lamaste",
+    "rootMarker": "packages/server/daemon",
+    "staticIpServiceName": "lamaste-static-ip"
+  },
+  "hooks": "./rodeo.hooks.js",
+  "paths": {
+    "logs": "e2e-logs",
+    "tempDir": "/tmp/lamalibre-lamaste-e2e"
+  },
+  "profiles": {
+    "production": {
+      "description": "Matches $4 DigitalOcean droplet — final publishable runs only",
+      "cpus": 1,
+      "memory": "512M",
+      "disk": "10G"
+    },
+    "development": {
+      "description": "Fast iteration — logic correctness, comfortable resources",
+      "default": true,
+      "cpus": 2,
+      "memory": "2G",
+      "disk": "10G"
+    },
+    "performance": {
+      "description": "Heavy lifting — parallel tests, fast builds",
+      "cpus": 4,
+      "memory": "4G",
+      "disk": "20G"
+    }
+  },
+  "tiers": {
+    "node-ready": {
+      "level": 1,
+      "description": "Node.js 22.x installed, apt cache warm",
+      "coordinated": false
+    },
+    "installed": {
+      "level": 2,
+      "description": "Lamaste installed (create-lamaste completed)",
+      "coordinated": false
+    },
+    "provisioned": {
+      "level": 3,
+      "description": "Onboarding complete, agent enrolled, visitor configured",
+      "coordinated": true,
+      "markProvisioned": true
+    }
+  },
+  "suites": {
+    "three-vm": {
+      "label": "Three-VM Tests",
+      "default": true,
+      "runner": "host",
+      "path": "tests/e2e-three-vm",
+      "helpersPath": "../e2e/helpers.sh",
+      "networkInterface": "enp0s1",
+      "subnet": "10.13.37.0/24",
+      "vms": {
+        "host": {
+          "name": "lamaste-host",
+          "ip": "10.13.37.1",
+          "label": "Host"
+        },
+        "agent": {
+          "name": "lamaste-agent",
+          "ip": "10.13.37.2",
+          "label": "Agent"
+        },
+        "visitor": {
+          "name": "lamaste-visitor",
+          "ip": "10.13.37.3",
+          "label": "Visitor"
+        }
+      },
+      "tierAppliesTo": {
+        "node-ready": [
+          "host",
+          "agent",
+          "visitor"
+        ],
+        "installed": [
+          "host"
+        ],
+        "provisioned": [
+          "host",
+          "agent",
+          "visitor"
+        ]
+      },
+      "monitorServices": [
+        "lamalibre-lamaste-serverd",
+        "nginx",
+        "authelia",
+        "chisel-server"
+      ],
+      "testEnv": {
+        "ADMIN_PASSWORD": "not-used-mTLS-only",
+        "AGENT_P12_PASSWORD": "not-used-enrollment-flow",
+        "TEST_USER": "testuser",
+        "TEST_USER_PASSWORD": "TestPassword-E2E-123"
+      },
+      "testDeps": {
+        "1": [],
+        "2": [
+          1
+        ],
+        "3": [
+          1
+        ],
+        "4": [
+          1
+        ],
+        "5": [
+          1
+        ],
+        "6": [
+          1
+        ],
+        "7": [
+          1
+        ],
+        "8": [
+          1
+        ],
+        "9": [
+          1
+        ],
+        "11": [
+          1
+        ],
+        "12": [
+          1
+        ],
+        "23": [
+          1
+        ],
+        "24": [
+          1
+        ],
+        "25": [
+          1
+        ],
+        "26": [
+          1
+        ],
+        "27": [
+          1
+        ],
+        "28": [
+          1
+        ],
+        "29": [
+          1
+        ]
+      }
+    },
+    "single-vm": {
+      "label": "Single-VM Tests",
+      "runner": "vm",
+      "path": "tests/e2e",
+      "networkInterface": "enp0s1",
+      "subnet": "10.13.37.0/24",
+      "vms": {
+        "host": {
+          "name": "lamaste-host",
+          "ip": "10.13.37.1",
+          "label": "Host"
+        }
+      },
+      "tierAppliesTo": {
+        "node-ready": [
+          "host"
+        ],
+        "installed": [
+          "host"
+        ],
+        "provisioned": [
+          "host"
+        ]
+      },
+      "monitorServices": [
+        "lamalibre-lamaste-serverd",
+        "nginx",
+        "authelia",
+        "chisel-server"
+      ],
+      "testDeps": {
+        "1": [],
+        "2": [
+          1
+        ],
+        "3": [
+          1
+        ],
+        "4": [
+          3
+        ],
+        "5": [
+          3
+        ],
+        "6": [
+          1
+        ],
+        "7": [
+          3
+        ],
+        "8": [
+          3
+        ],
+        "9": [
+          3
+        ],
+        "10": [
+          1
+        ],
+        "11": [
+          3
+        ],
+        "12": [
+          3
+        ],
+        "13": [
+          3
+        ],
+        "15": [
+          3
+        ],
+        "16": [
+          3
+        ]
+      }
+    }
+  },
+  "hotReload": {
+    "suite": "three-vm",
+    "targetRole": "host"
+  },
+  "diagnose": {
+    "errorFileMap": {
+      "plugin": [
+        "packages/server/daemon/src/routes/management/plugins.js",
+        "packages/core/lib/src/server/plugins.js"
+      ],
+      "tunnel": [
+        "packages/server/daemon/src/routes/management/tunnels.js",
+        "packages/core/lib/src/server/tunnels.js"
+      ],
+      "onboarding": [
+        "packages/server/daemon/src/routes/onboarding.js"
+      ],
+      "enrollment": [
+        "packages/server/daemon/src/routes/management/enrollment.js"
+      ],
+      "authelia": [
+        "packages/provisioners/server/src/tasks/authelia.js"
+      ],
+      "gatekeeper": [
+        "packages/sdks/gatekeeper/src/index.js",
+        "packages/sdks/gatekeeper/src/routes/"
+      ],
+      "site": [
+        "packages/server/daemon/src/routes/management/sites.js",
+        "packages/core/lib/src/server/sites.js"
+      ],
+      "cert": [
+        "packages/server/daemon/src/routes/management/certs.js",
+        "packages/core/lib/src/server/mtls.js"
+      ],
+      "user": [
+        "packages/server/daemon/src/routes/management/users.js"
+      ],
+      "invitation": [
+        "packages/server/daemon/src/routes/management/invitations.js"
+      ],
+      "nginx": [
+        "packages/provisioners/server/src/tasks/nginx.js"
+      ],
+      "chisel": [
+        "packages/agent/cli/src/commands/setup.js"
+      ],
+      "panel": [
+        "packages/server/daemon/src/index.js"
+      ],
+      "2fa": [
+        "packages/server/daemon/src/routes/management/settings.js",
+        "packages/server/daemon/src/plugins/twofa-session.js"
+      ],
+      "identity": [
+        "packages/sdks/identity/src/"
+      ],
+      "agent": [
+        "packages/agent/daemon/src/",
+        "packages/agent/cli/src/"
+      ],
+      "access": [
+        "packages/server/daemon/src/routes/management/user-access.js"
+      ]
+    }
+  },
+  "defaults": {
+    "domain": "test.lamaste.local"
+  },
+  "packages": {
+    "lamaste-serverd": "packages/server/daemon",
+    "lamaste-server-ui": "packages/server/ui",
+    "lamaste-gatekeeper": "packages/sdks/gatekeeper",
+    "create-lamaste": "packages/provisioners/server",
+    "lamaste-agent": "packages/agent/cli"
+  }
+}

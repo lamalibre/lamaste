@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/panel-client/public/docs/**'
+      - 'packages/core/docs/**'
       - 'website/**'
   workflow_dispatch:
 

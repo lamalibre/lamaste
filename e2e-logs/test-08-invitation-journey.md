@@ -1,4 +1,4 @@
-# Portlama E2E: 08 — Invitation Journey (Three-VM)
+# Lamaste E2E: 08 — Invitation Journey (Three-VM)
 
 > Started at `2026-03-30 13:11:15 UTC`
 

@@ -1,4 +1,4 @@
-# Portlama E2E: 17 — Identity System (Three-VM)
+# Lamaste E2E: 17 — Identity System (Three-VM)
 
 > Started at `2026-03-30 13:12:59 UTC`
 

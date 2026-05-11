@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Portlama E2E Three-VM Test — Host VM Setup
+# Lamaste E2E Three-VM Test — Host VM Setup
 # ============================================================================
-# Provisions the host VM with dnsmasq, certbot shim, runs the Portlama
+# Provisions the host VM with dnsmasq, certbot shim, runs the Lamaste
 # installer, completes onboarding via API, and saves credentials for the
 # orchestrator to pass to the agent VM.
 #
@@ -11,10 +11,10 @@
 #
 # Arguments:
 #   HOST_IP      — The IP address of this VM (e.g., 192.168.64.5)
-#   TEST_DOMAIN  — Test domain name (e.g., test.portlama.local)
+#   TEST_DOMAIN  — Test domain name (e.g., test.lamaste.local)
 #
 # Output:
-#   /tmp/portlama-test-credentials.json — credentials for the agent VM
+#   /tmp/lamalibre-lamaste-test-credentials.json — credentials for the agent VM
 # ============================================================================
 
 set -euo pipefail
@@ -25,7 +25,7 @@ set -euo pipefail
 if [ $# -lt 2 ]; then
   echo "Usage: $0 <HOST_IP> <TEST_DOMAIN>"
   echo "  HOST_IP      IP address of this VM"
-  echo "  TEST_DOMAIN  Test domain (e.g., test.portlama.local)"
+  echo "  TEST_DOMAIN  Test domain (e.g., test.lamaste.local)"
   exit 1
 fi
 
@@ -36,8 +36,12 @@ TEST_DOMAIN="$2"
 # Paths
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CERT_ARGS="--cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt"
-BASE_URL="https://127.0.0.1:9292"
+CERT_ARGS="--cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt"
+# Use the domain vhost (panel.<domain>) rather than the IP vhost (:9292). The
+# IP vhost is auto-disabled whenever panel 2FA is on, which can linger across
+# runs if a prior test 13 didn't get to its cleanup step. The domain vhost
+# requires mTLS only, which we already have.
+BASE_URL="https://panel.${TEST_DOMAIN}"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -52,9 +56,9 @@ init_log "setup-host"
 # curl_mtls — curl with mTLS client certs and TLS verification disabled
 curl_mtls() {
   curl -sk \
-    --cert /etc/portlama/pki/client.crt \
-    --key /etc/portlama/pki/client.key \
-    --cacert /etc/portlama/pki/ca.crt \
+    --cert /etc/lamalibre/lamaste/pki/client.crt \
+    --key /etc/lamalibre/lamaste/pki/client.key \
+    --cacert /etc/lamalibre/lamaste/pki/ca.crt \
     "$@"
 }
 
@@ -73,10 +77,40 @@ if [ -z "${TEST_DOMAIN}" ]; then
   log_fatal "TEST_DOMAIN must not be empty."
 fi
 
-log_header "Portlama E2E — Host VM Setup"
+log_header "Lamaste E2E — Host VM Setup"
 log_kv "Host IP" "${HOST_IP}"
 log_kv "Test Domain" "${TEST_DOMAIN}"
 log_kv "Scripts" "${SCRIPT_DIR}"
+
+# ---------------------------------------------------------------------------
+# Step 0: Reset panel 2FA if a prior run enabled it.
+#
+# Panel 2FA disables the IP:9292 vhost (domain-only access enforced). Test
+# 13 enables 2FA as part of its coverage, and if a run is interrupted or
+# terminated before cleanup, 2FA stays on across runs — then every test that
+# hits 127.0.0.1:9292 (which is most of them) fails the handshake. We
+# proactively reset here since this is a test environment, not production.
+# ---------------------------------------------------------------------------
+PANEL_JSON=/etc/lamalibre/lamaste/panel.json
+if [ -f "${PANEL_JSON}" ] && [ "$(jq -r '.panel2fa.enabled // false' "${PANEL_JSON}")" = "true" ]; then
+  log_step "[0/10] Panel 2FA is enabled from a prior run — resetting..."
+  SECRET=$(jq -r '.panel2fa.secret // ""' "${PANEL_JSON}")
+  jq --arg secret "${SECRET}" '.panel2fa = {enabled: false, secret: $secret, setupComplete: false}' "${PANEL_JSON}" > "${PANEL_JSON}.tmp"
+  chown lamaste:lamaste "${PANEL_JSON}.tmp"
+  chmod 0600 "${PANEL_JSON}.tmp"
+  mv "${PANEL_JSON}.tmp" "${PANEL_JSON}"
+  ln -sf /etc/nginx/sites-available/lamalibre-lamaste-serverd-ip /etc/nginx/sites-enabled/lamalibre-lamaste-serverd-ip
+  nginx -t && systemctl reload nginx
+  systemctl restart lamalibre-lamaste-serverd
+  # Give panel a moment to come back before curl_mtls probes start below.
+  for i in $(seq 1 10); do
+    if curl -sk --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt --max-time 2 https://127.0.0.1:9292/api/health 2>/dev/null | grep -q '"ok"'; then
+      break
+    fi
+    sleep 1
+  done
+  log_ok "Panel 2FA disabled, IP vhost re-enabled"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1: Configure system DNS — stop systemd-resolved first (frees port 53)
@@ -114,7 +148,7 @@ run_cmd "Install dnsmasq, jq, oathtool, and sqlite3" apt-get install -y -qq dnsm
 
 # Configure wildcard resolution: *.TEST_DOMAIN -> HOST_IP
 mkdir -p /etc/dnsmasq.d
-echo "address=/${TEST_DOMAIN}/${HOST_IP}" > /etc/dnsmasq.d/portlama-test.conf
+echo "address=/${TEST_DOMAIN}/${HOST_IP}" > /etc/dnsmasq.d/lamaste-test.conf
 
 run_cmd "Restart dnsmasq" systemctl restart dnsmasq
 run_cmd "Enable dnsmasq" systemctl enable dnsmasq
@@ -143,7 +177,7 @@ if [ ! -f "${SHIM_SRC}" ]; then
   log_fatal "Certbot shim not found at ${SHIM_SRC}"
 fi
 
-# Install at /usr/bin/certbot to match the sudoers rules that panel-server expects
+# Install at /usr/bin/certbot to match the sudoers rules that serverd expects
 cp "${SHIM_SRC}" /usr/bin/certbot
 chmod +x /usr/bin/certbot
 
@@ -198,80 +232,87 @@ done
 
 if [ "${PANEL_READY}" -ne 1 ]; then
   log_fail "Panel server did not become ready within 30 seconds"
-  journalctl -u portlama-panel --no-pager -n 20 || true
+  journalctl -u lamalibre-lamaste-serverd --no-pager -n 20 || true
   log_fatal "Panel server not ready"
 fi
 
 log_ok "Panel server is ready"
 
 # ---------------------------------------------------------------------------
-# Step 7: Run onboarding via API
+# Step 7: Run onboarding via API (idempotent — skip entirely if already COMPLETED)
 # ---------------------------------------------------------------------------
-log_step "[6/10] Running onboarding — setting domain..."
+INITIAL_STATUS=$(curl_mtls "${BASE_URL}/api/onboarding/status" 2>/dev/null | jq -r '.onboarding.status // .status // empty' 2>/dev/null)
 
-DOMAIN_RESULT=$(curl_mtls -X POST -H "Content-Type: application/json" \
-  -d "{\"domain\":\"${TEST_DOMAIN}\",\"email\":\"admin@${TEST_DOMAIN}\"}" \
-  "${BASE_URL}/api/onboarding/domain" 2>/dev/null)
+if [ "${INITIAL_STATUS}" = "COMPLETED" ]; then
+  log_step "[6/10] Onboarding already COMPLETED — skipping domain/DNS/provision"
+  log_ok "Onboarding state preserved from prior provisioning"
+else
+  log_step "[6/10] Running onboarding — setting domain..."
 
-if echo "${DOMAIN_RESULT}" | jq -e '.error' &>/dev/null; then
-  ERROR_MSG=$(echo "${DOMAIN_RESULT}" | jq -r '.error')
-  log_fatal "Failed to set domain: ${ERROR_MSG}"
-fi
+  DOMAIN_RESULT=$(curl_mtls -X POST -H "Content-Type: application/json" \
+    -d "{\"domain\":\"${TEST_DOMAIN}\",\"email\":\"admin@${TEST_DOMAIN}\"}" \
+    "${BASE_URL}/api/onboarding/domain" 2>/dev/null)
 
-log_ok "Domain set to ${TEST_DOMAIN}"
-
-log_info "Verifying DNS..."
-
-DNS_RESULT=$(curl_mtls -X POST \
-  "${BASE_URL}/api/onboarding/verify-dns" 2>/dev/null)
-
-DNS_OK=$(echo "${DNS_RESULT}" | jq -r '.ok' 2>/dev/null)
-if [ "${DNS_OK}" != "true" ]; then
-  log_fail "DNS verification result: ${DNS_RESULT}"
-  log_fatal "DNS verification failed. Check dnsmasq configuration."
-fi
-
-log_ok "DNS verified"
-
-log_info "Starting provisioning..."
-
-PROVISION_RESULT=$(curl_mtls -X POST \
-  "${BASE_URL}/api/onboarding/provision" 2>/dev/null)
-
-if ! echo "${PROVISION_RESULT}" | grep -q '"ok"'; then
-  log_fail "Provision start result: ${PROVISION_RESULT}"
-  log_fatal "Failed to start provisioning"
-fi
-
-log_info "Provisioning started, polling for completion..."
-
-# Poll until onboarding status is COMPLETED (up to 120 seconds)
-PROVISION_DONE=0
-for i in $(seq 1 120); do
-  STATUS_RESULT=$(curl_mtls "${BASE_URL}/api/onboarding/status" 2>/dev/null)
-  ONBOARDING_STATUS=$(echo "${STATUS_RESULT}" | jq -r '.onboarding.status // .status // empty' 2>/dev/null)
-
-  if [ "${ONBOARDING_STATUS}" = "COMPLETED" ]; then
-    PROVISION_DONE=1
-    break
+  if echo "${DOMAIN_RESULT}" | jq -e '.error' &>/dev/null; then
+    ERROR_MSG=$(echo "${DOMAIN_RESULT}" | jq -r '.error')
+    log_fatal "Failed to set domain: ${ERROR_MSG}"
   fi
 
-  # Check for error
-  PROVISION_ERROR=$(echo "${STATUS_RESULT}" | jq -r '.error // empty' 2>/dev/null)
-  if [ -n "${PROVISION_ERROR}" ] && [ "${PROVISION_ERROR}" != "null" ]; then
-    log_fail "Provisioning error: ${PROVISION_ERROR}"
-    log_fatal "Provisioning failed"
+  log_ok "Domain set to ${TEST_DOMAIN}"
+
+  log_info "Verifying DNS..."
+
+  DNS_RESULT=$(curl_mtls -X POST \
+    "${BASE_URL}/api/onboarding/verify-dns" 2>/dev/null)
+
+  DNS_OK=$(echo "${DNS_RESULT}" | jq -r '.ok' 2>/dev/null)
+  if [ "${DNS_OK}" != "true" ]; then
+    log_fail "DNS verification result: ${DNS_RESULT}"
+    log_fatal "DNS verification failed. Check dnsmasq configuration."
   fi
 
-  sleep 1
-done
+  log_ok "DNS verified"
 
-if [ "${PROVISION_DONE}" -ne 1 ]; then
-  log_fail "Last status response: ${STATUS_RESULT}"
-  log_fatal "Provisioning did not complete within 120 seconds"
+  log_info "Starting provisioning..."
+
+  PROVISION_RESULT=$(curl_mtls -X POST \
+    "${BASE_URL}/api/onboarding/provision" 2>/dev/null)
+
+  if ! echo "${PROVISION_RESULT}" | grep -q '"ok"'; then
+    log_fail "Provision start result: ${PROVISION_RESULT}"
+    log_fatal "Failed to start provisioning"
+  fi
+
+  log_info "Provisioning started, polling for completion..."
+
+  # Poll until onboarding status is COMPLETED (up to 120 seconds)
+  PROVISION_DONE=0
+  for i in $(seq 1 120); do
+    STATUS_RESULT=$(curl_mtls "${BASE_URL}/api/onboarding/status" 2>/dev/null)
+    ONBOARDING_STATUS=$(echo "${STATUS_RESULT}" | jq -r '.onboarding.status // .status // empty' 2>/dev/null)
+
+    if [ "${ONBOARDING_STATUS}" = "COMPLETED" ]; then
+      PROVISION_DONE=1
+      break
+    fi
+
+    # Check for error
+    PROVISION_ERROR=$(echo "${STATUS_RESULT}" | jq -r '.error // empty' 2>/dev/null)
+    if [ -n "${PROVISION_ERROR}" ] && [ "${PROVISION_ERROR}" != "null" ]; then
+      log_fail "Provisioning error: ${PROVISION_ERROR}"
+      log_fatal "Provisioning failed"
+    fi
+
+    sleep 1
+  done
+
+  if [ "${PROVISION_DONE}" -ne 1 ]; then
+    log_fail "Last status response: ${STATUS_RESULT}"
+    log_fatal "Provisioning did not complete within 120 seconds"
+  fi
+
+  log_ok "Provisioning completed"
 fi
-
-log_ok "Provisioning completed"
 
 # ---------------------------------------------------------------------------
 # Step 8: Create test user via API
@@ -298,8 +339,21 @@ fi
 
 # ---------------------------------------------------------------------------
 # Step 9: Generate agent enrollment token
+#
+# If a prior run already enrolled "test-agent", the server rejects new token
+# creation because the label is taken. For idempotent re-provisioning we
+# revoke the existing cert first so we can hand the agent a fresh token —
+# important since the chisel server key may have rotated and the agent needs
+# to re-pin the new fingerprint.
 # ---------------------------------------------------------------------------
 log_step "[8/10] Generating agent enrollment token..."
+
+EXISTING_AGENT=$(curl_mtls "${BASE_URL}/api/certs/agent" 2>/dev/null | jq -r '[.agents[]? | select(.label=="test-agent" and .revoked==false)] | length' 2>/dev/null)
+if [ "${EXISTING_AGENT:-0}" != "0" ]; then
+  log_info "Revoking stale test-agent cert so re-enrollment can proceed..."
+  REVOKE_RESULT=$(curl_mtls -X DELETE "${BASE_URL}/api/certs/agent/test-agent" 2>/dev/null)
+  log_info "Revoke response: ${REVOKE_RESULT}"
+fi
 
 ENROLL_RESULT=$(curl_mtls -X POST -H "Content-Type: application/json" \
   -d '{"label":"test-agent","capabilities":["tunnels:read","tunnels:write","services:read","services:write","system:read","identity:read","identity:query"]}' \
@@ -323,7 +377,7 @@ log_ok "Enrollment token generated (label: test-agent)"
 # ---------------------------------------------------------------------------
 log_step "[9/10] Saving credentials..."
 
-cat > /tmp/portlama-test-credentials.json <<CREDS
+cat > /tmp/lamalibre-lamaste-test-credentials.json <<CREDS
 {
   "hostIp": "${HOST_IP}",
   "testDomain": "${TEST_DOMAIN}",
@@ -334,9 +388,9 @@ cat > /tmp/portlama-test-credentials.json <<CREDS
 }
 CREDS
 
-chmod 600 /tmp/portlama-test-credentials.json
+chmod 600 /tmp/lamalibre-lamaste-test-credentials.json
 
-log_ok "Credentials saved to /tmp/portlama-test-credentials.json"
+log_ok "Credentials saved to /tmp/lamalibre-lamaste-test-credentials.json"
 
 # ---------------------------------------------------------------------------
 # Step 11: Summary
@@ -353,6 +407,6 @@ log_kv "Tunnel URL" "https://tunnel.${TEST_DOMAIN}"
 log_kv "Test User" "testuser / TestPassword-E2E-123"
 log_kv "Agent Label" "test-agent"
 log_kv "Enrollment Token" "(generated, one-time use)"
-log_kv "Credentials file" "/tmp/portlama-test-credentials.json"
+log_kv "Credentials file" "/tmp/lamalibre-lamaste-test-credentials.json"
 log_kv "Log file" "$(log_file_path)"
 log_info "Next: transfer credentials to the agent VM, then run setup-agent.sh on the agent VM."

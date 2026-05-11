@@ -1,0 +1,513 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 8,
+    "name": "mTLS Rotation",
+    "suite": "e2e",
+    "description": "08 — mTLS Rotation",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping mTLS rotation tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "current-cert-fingerprint-before-rotation",
+      "label": "Current cert fingerprint (before rotation)",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Set OLD_FINGERPRINT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "OLD_FINGERPRINT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Current cert fingerprint: $OLD_FINGERPRINT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Current cert fingerprint: $OLD_FINGERPRINT"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Client cert not found at $CERT_PATH — continuing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Client cert not found at $CERT_PATH — continuing"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Current cert fingerprint (before rotation)\"\n# ---------------------------------------------------------------------------\n\nOLD_FINGERPRINT=\"\"\nif [ -f \"$CERT_PATH\" ]; then\n  OLD_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\")\n  log_info \"Current cert fingerprint: $OLD_FINGERPRINT\"\nelse\n  log_info \"Client cert not found at $CERT_PATH — continuing\"\nfi"
+    },
+    {
+      "id": "rotate-mtls-certificate",
+      "label": "Rotate mTLS certificate",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "POST /api/certs/mtls/rotate",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/mtls/rotate"
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "expression": ".p12Password // .password // empty"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract EXPIRES_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "EXPIRES_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "expression": ".expiresAt // .expiry // empty"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Rotation response contains p12 password",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Rotation response contains p12 password"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "P12_PASSWORD"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Rotation response missing p12 password",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Rotation response missing p12 password"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "P12_PASSWORD"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Rotation response contains expiry: $EXPIRES_AT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Rotation response contains expiry: $EXPIRES_AT"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "EXPIRES_AT"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Rotation response missing expiry date",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Rotation response missing expiry date"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "EXPIRES_AT"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Extract WARNING",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "WARNING",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "expression": ".warning // empty"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Rotation warning: $WARNING",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Rotation warning: $WARNING"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "WARNING"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Rotate mTLS certificate\"\n# ---------------------------------------------------------------------------\n\nROTATE_RESPONSE=$(api_post \"certs/mtls/rotate\")\n\n# The response may contain different field names depending on implementation.\n# Check for common patterns.\nP12_PASSWORD=$(echo \"$ROTATE_RESPONSE\" | jq -r '.p12Password // .password // empty' 2>/dev/null || echo \"\")\nEXPIRES_AT=$(echo \"$ROTATE_RESPONSE\" | jq -r '.expiresAt // .expiry // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$P12_PASSWORD\" ]; then\n  log_pass \"Rotation response contains p12 password\"\nelse\n  log_fail \"Rotation response missing p12 password\"\nfi\n\nif [ -n \"$EXPIRES_AT\" ]; then\n  log_pass \"Rotation response contains expiry: $EXPIRES_AT\"\nelse\n  log_fail \"Rotation response missing expiry date\"\nfi\n\n# Check for warnings in the rotation response\nWARNING=$(echo \"$ROTATE_RESPONSE\" | jq -r '.warning // empty' 2>/dev/null || echo \"\")\nif [ -n \"$WARNING\" ]; then\n  log_info \"Rotation warning: $WARNING\"\nfi"
+    },
+    {
+      "id": "download-rotated-certificate",
+      "label": "Download rotated certificate",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Set TEMP_DIR",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d"
+          },
+          "capture": [
+            {
+              "variable": "TEMP_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Set HTTP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o \"$P12_FILE\" -w '%{http_code}' \"${BASE_URL}/api/certs/mtls/download\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "HTTP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Downloaded client.p12 (HTTP 200)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Downloaded client.p12 (HTTP 200)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "HTTP_STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Set P12_VERIFY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in \"$P12_FILE\" -noout -passin \"pass:${P12_PASSWORD}\" 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "P12_VERIFY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "P12_PASSWORD"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Downloaded file is not a valid PKCS12: $P12_VERIFY",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Downloaded file is not a valid PKCS12: $P12_VERIFY"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Downloaded file is a valid PKCS12",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Downloaded file is a valid PKCS12"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set NEW_CERT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "NEW_CERT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set NEW_FINGERPRINT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$NEW_CERT\" | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "NEW_FINGERPRINT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "NEW_CERT"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "New cert fingerprint: $NEW_FINGERPRINT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "New cert fingerprint: $NEW_FINGERPRINT"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "NEW_CERT"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "New cert has different fingerprint than old cert",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_FINGERPRINT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OLD_FINGERPRINT"
+              },
+              "message": "New cert has different fingerprint than old cert"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "OLD_FINGERPRINT"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "OLD_FINGERPRINT",
+                "value": "unknown"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Could not extract cert from P12 for fingerprint comparison",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Could not extract cert from P12 for fingerprint comparison"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "No p12 password available — cannot verify PKCS12 contents",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "No p12 password available — cannot verify PKCS12 contents"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Failed to download client.p12 (HTTP $HTTP_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to download client.p12 (HTTP $HTTP_STATUS)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Download rotated certificate\"\n# ---------------------------------------------------------------------------\n\nTEMP_DIR=$(mktemp -d)\ntrap 'rm -rf \"$TEMP_DIR\"' EXIT\n\nP12_FILE=\"$TEMP_DIR/client.p12\"\n\nHTTP_STATUS=$(_curl_mtls -o \"$P12_FILE\" -w '%{http_code}' \"${BASE_URL}/api/certs/mtls/download\" 2>/dev/null || echo \"000\")\n\nif [ \"$HTTP_STATUS\" = \"200\" ]; then\n  log_pass \"Downloaded client.p12 (HTTP 200)\"\n\n  # Verify it is a valid PKCS12 file\n  if [ -n \"$P12_PASSWORD\" ]; then\n    P12_VERIFY=$(openssl pkcs12 -in \"$P12_FILE\" -noout -passin \"pass:${P12_PASSWORD}\" 2>&1 || true)\n    if echo \"$P12_VERIFY\" | grep -qiE \"error|invalid\"; then\n      log_fail \"Downloaded file is not a valid PKCS12: $P12_VERIFY\"\n    else\n      log_pass \"Downloaded file is a valid PKCS12\"\n    fi\n\n    # Extract the cert from the P12 and check its fingerprint\n    NEW_CERT=$(openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null || echo \"\")\n    if [ -n \"$NEW_CERT\" ]; then\n      NEW_FINGERPRINT=$(echo \"$NEW_CERT\" | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unknown\")\n      log_info \"New cert fingerprint: $NEW_FINGERPRINT\"\n\n      if [ -n \"$OLD_FINGERPRINT\" ] && [ \"$OLD_FINGERPRINT\" != \"unknown\" ]; then\n        assert_not_eq \"$NEW_FINGERPRINT\" \"$OLD_FINGERPRINT\" \"New cert has different fingerprint than old cert\" || true\n      fi\n    else\n      log_info \"Could not extract cert from P12 for fingerprint comparison\"\n    fi\n  else\n    log_info \"No p12 password available — cannot verify PKCS12 contents\"\n  fi\nelse\n  log_fail \"Failed to download client.p12 (HTTP $HTTP_STATUS)\"\nfi"
+    },
+    {
+      "id": "verify-api-access-with-current-credentials",
+      "label": "Verify API access with current credentials",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "GET /api/health",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "health"
+          },
+          "capture": [
+            {
+              "variable": "HEALTH_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "API still accessible after rotation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH_AFTER"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "API still accessible after rotation"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify API access with current credentials\"\n# ---------------------------------------------------------------------------\n\n# After rotation, the certs on disk should be updated. Verify access still works.\nHEALTH_AFTER=$(api_get \"health\")\nassert_json_field \"$HEALTH_AFTER\" '.status' 'ok' \"API still accessible after rotation\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 08 — mTLS Rotation\n# ============================================================================\n# Verifies mTLS client certificate rotation:\n# - Rotate via POST /api/certs/mtls/rotate\n# - Verify response contains p12Password and expiresAt\n# - Download new cert via GET /api/certs/mtls/download\n# - Verify downloaded file is valid PKCS12\n# - Verify new cert works for API access\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"08 — mTLS Rotation\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

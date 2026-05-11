@@ -1,0 +1,1215 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 8,
+    "name": "Invitation Journey",
+    "suite": "e2e-three-vm",
+    "description": "08 — Invitation Journey (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    }
+  },
+  "constants": {
+    "INVITED_USERNAME": {
+      "value": "inviteduser"
+    },
+    "INVITED_EMAIL": {
+      "value": "invited@test.local"
+    },
+    "INVITED_PASSWORD": {
+      "value": "InvitedPass123!!"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Delete /tmp/authelia-invite-cookies.txt||",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/authelia-invite-cookies.txt||"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${INVITED_USERNAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${INVITED_USERNAME}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE invitations/${INVITATION_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "invitations/${INVITATION_ID}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping invitation journey tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "pre-flight-ensure-oathtool-is-available-on-visitor-vm",
+      "label": "Pre-flight: ensure oathtool is available on visitor VM",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": ""
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OATHTOOL_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "OATHTOOL_CHECK",
+        "value": "no"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: ensure oathtool is available on visitor VM\"\n# ---------------------------------------------------------------------------\n\nOATHTOOL_CHECK=$(visitor_exec \"command -v oathtool && echo yes || echo no\" 2>/dev/null || echo \"no\")\nif [ \"$OATHTOOL_CHECK\" = \"no\" ]; then\n  log_skip \"oathtool not available on visitor VM. Skipping TOTP-dependent tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "admin-creates-invitation",
+      "label": "Admin creates invitation",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "POST /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "invitations",
+            "body": "{\"username\":\""
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Invitation creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Invitation creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Extract INVITE_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITE_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".token"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Invitation has a token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".token",
+              "message": "Invitation has a token"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Extract INVITATION_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITATION_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".invitation.id"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Invitation has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".invitation.id",
+              "message": "Invitation has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Extract INVITE_URL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITE_URL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".inviteUrl"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Invitation has an invite URL",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".inviteUrl",
+              "message": "Invitation has an invite URL"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Created invitation for ${INVITED_USERNAME} (token: ${INVITE_TOKEN:0:16}...)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created invitation for ${INVITED_USERNAME} (token: ${INVITE_TOKEN:0:16}...)"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "GET /api/invitations",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "invitations"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Set FOUND_INVITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg u \"$INVITED_USERNAME\" '.invitations[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_INVITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Invitation appears in admin invitation list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_INVITE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "INVITED_USERNAME"
+              },
+              "message": "Invitation appears in admin invitation list"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin creates invitation\"\n# ---------------------------------------------------------------------------\n\nCREATE_RESPONSE=$(host_api_post \"invitations\" '{\"username\":\"'\"${INVITED_USERNAME}\"'\",\"email\":\"'\"${INVITED_EMAIL}\"'\"}')\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Invitation creation returned ok: true\" || true\n\nINVITE_TOKEN=$(echo \"$CREATE_RESPONSE\" | jq -r '.token' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.token' \"Invitation has a token\" || true\n\nINVITATION_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.invitation.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.invitation.id' \"Invitation has an ID\" || true\n\nINVITE_URL=$(echo \"$CREATE_RESPONSE\" | jq -r '.inviteUrl' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.inviteUrl' \"Invitation has an invite URL\" || true\nlog_info \"Created invitation for ${INVITED_USERNAME} (token: ${INVITE_TOKEN:0:16}...)\"\n\n# Verify the invitation appears in the admin list\nLIST_RESPONSE=$(host_api_get \"invitations\")\nFOUND_INVITE=$(echo \"$LIST_RESPONSE\" | jq -r --arg u \"$INVITED_USERNAME\" '.invitations[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_INVITE\" \"$INVITED_USERNAME\" \"Invitation appears in admin invitation list\" || true"
+    },
+    {
+      "id": "visit-invitation-page-from-visitor-vm-public-no-mtls",
+      "label": "Visit invitation page from visitor VM (public, no mTLS)",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "INVITE_DETAILS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Extract INVITE_USERNAME",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITE_USERNAME",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INVITE_DETAILS"
+              },
+              "expression": ".username"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Extract INVITE_EMAIL_RESP",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITE_EMAIL_RESP",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INVITE_DETAILS"
+              },
+              "expression": ".email"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Extract INVITE_EXPIRES",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVITE_EXPIRES",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INVITE_DETAILS"
+              },
+              "expression": ".expiresAt"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Invite page returns correct username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_USERNAME"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "INVITED_USERNAME"
+              },
+              "message": "Invite page returns correct username"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Invite page returns correct email",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVITE_EMAIL_RESP"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "INVITED_EMAIL"
+              },
+              "message": "Invite page returns correct email"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Invite page returns expiresAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "INVITE_DETAILS"
+              },
+              "path": ".expiresAt",
+              "message": "Invite page returns expiresAt"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit invitation page from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\n# The invite routes are public endpoints proxied through the auth vhost.\n# No mTLS required — accessed from the external visitor VM.\nINVITE_DETAILS=$(visitor_exec \"curl -sk --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null\" || echo '{}')\n\nINVITE_USERNAME=$(echo \"$INVITE_DETAILS\" | jq -r '.username' 2>/dev/null || echo \"\")\nINVITE_EMAIL_RESP=$(echo \"$INVITE_DETAILS\" | jq -r '.email' 2>/dev/null || echo \"\")\nINVITE_EXPIRES=$(echo \"$INVITE_DETAILS\" | jq -r '.expiresAt' 2>/dev/null || echo \"\")\n\nassert_eq \"$INVITE_USERNAME\" \"$INVITED_USERNAME\" \"Invite page returns correct username\" || true\nassert_eq \"$INVITE_EMAIL_RESP\" \"$INVITED_EMAIL\" \"Invite page returns correct email\" || true\nassert_json_field_not_empty \"$INVITE_DETAILS\" '.expiresAt' \"Invite page returns expiresAt\" || true"
+    },
+    {
+      "id": "accept-invitation-from-visitor-vm-public-no-mtls",
+      "label": "Accept invitation from visitor VM (public, no mTLS)",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "ACCEPT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Invitation acceptance returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACCEPT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Invitation acceptance returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Acceptance response returns correct username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACCEPT_RESPONSE"
+              },
+              "path": ".username",
+              "expected": {
+                "kind": "var",
+                "name": "INVITED_USERNAME"
+              },
+              "message": "Acceptance response returns correct username"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "User ${INVITED_USERNAME} created via invitation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "User ${INVITED_USERNAME} created via invitation"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Accept invitation from visitor VM (public, no mTLS)\"\n# ---------------------------------------------------------------------------\n\nACCEPT_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"password\\\":\\\"${INVITED_PASSWORD}\\\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null\" || echo '{}')\n\nassert_json_field \"$ACCEPT_RESPONSE\" '.ok' 'true' \"Invitation acceptance returned ok: true\" || true\nassert_json_field \"$ACCEPT_RESPONSE\" '.username' \"$INVITED_USERNAME\" \"Acceptance response returns correct username\" || true\nlog_info \"User ${INVITED_USERNAME} created via invitation\""
+    },
+    {
+      "id": "verify-user-appears-in-admin-s-user-list",
+      "label": "Verify user appears in admin's user list",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set FOUND_USER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_RESPONSE\" | jq -r --arg u \"$INVITED_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Invited user appears in admin user list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_USER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "INVITED_USERNAME"
+              },
+              "message": "Invited user appears in admin user list"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify user appears in admin's user list\"\n# ---------------------------------------------------------------------------\n\nUSERS_RESPONSE=$(host_api_get \"users\")\nFOUND_USER=$(echo \"$USERS_RESPONSE\" | jq -r --arg u \"$INVITED_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_USER\" \"$INVITED_USERNAME\" \"Invited user appears in admin user list\" || true"
+    },
+    {
+      "id": "reset-totp-for-invited-user-before-authentication",
+      "label": "Reset TOTP for invited user before authentication",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "POST /api/users/${INVITED_USERNAME}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${INVITED_USERNAME}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Extract TOTP_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "TOTP reset succeeded for invited user",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "TOTP reset succeeded for invited user"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Failed to reset TOTP for ${INVITED_USERNAME} (response: $TOTP_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to reset TOTP for ${INVITED_USERNAME} (response: $TOTP_RESPONSE)"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Extract TOTP_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Failed to extract TOTP secret from URI: $TOTP_URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to extract TOTP secret from URI: $TOTP_URI"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_SECRET"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reset TOTP for invited user before authentication\"\n# ---------------------------------------------------------------------------\n\n# IMPORTANT: TOTP must be reset BEFORE firstfactor auth, not after.\n# If reset after firstfactor, Authelia rejects the secondfactor because\n# the TOTP configuration changed mid-session.\nTOTP_RESPONSE=$(host_api_post \"users/${INVITED_USERNAME}/reset-totp\" '{}')\nTOTP_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\n\nif echo \"$TOTP_URI\" | grep -q \"^otpauth://\"; then\n  log_pass \"TOTP reset succeeded for invited user\"\nelse\n  log_fail \"Failed to reset TOTP for ${INVITED_USERNAME} (response: $TOTP_RESPONSE)\"\nfi\n\n# Extract the TOTP secret from the URI\nTOTP_SECRET=$(echo \"$TOTP_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nif [ -z \"$TOTP_SECRET\" ]; then\n  log_fail \"Failed to extract TOTP secret from URI: $TOTP_URI\"\nfi\n\n# Allow Authelia to pick up the new TOTP configuration\nsleep 2"
+    },
+    {
+      "id": "new-user-authenticates-from-visitor-vm-firstfactor",
+      "label": "New user authenticates from visitor VM (firstfactor)",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-invite-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "FIRST_FACTOR_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Extract FIRST_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FIRST_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "FIRST_FACTOR_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Invited user firstfactor authentication succeeded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invited user firstfactor authentication succeeded"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "FIRST_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Invited user firstfactor authentication failed (status: $FIRST_STATUS, response: $FIRST_FACTOR_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invited user firstfactor authentication failed (status: $FIRST_STATUS, response: $FIRST_FACTOR_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FIRST_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"New user authenticates from visitor VM (firstfactor)\"\n# ---------------------------------------------------------------------------\n\nFIRST_FACTOR_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/authelia-invite-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${INVITED_USERNAME}\\\",\\\"password\\\":\\\"${INVITED_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\n\nFIRST_STATUS=$(echo \"$FIRST_FACTOR_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$FIRST_STATUS\" = \"OK\" ]; then\n  log_pass \"Invited user firstfactor authentication succeeded\"\nelse\n  log_fail \"Invited user firstfactor authentication failed (status: $FIRST_STATUS, response: $FIRST_FACTOR_RESPONSE)\"\nfi"
+    },
+    {
+      "id": "new-user-authenticates-from-visitor-vm-secondfactor-totp",
+      "label": "New user authenticates from visitor VM (secondfactor TOTP)",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "'${TOTP_SECRET}'"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Generated TOTP code for invited user on visitor VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Generated TOTP code for invited user on visitor VM"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "TOTP_CODE"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Failed to generate TOTP code for invited user",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to generate TOTP code for invited user"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_CODE"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-invite-cookies",
+              "load": "authelia-invite-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOTP_AUTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Extract TOTP_AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_AUTH_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_AUTH_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Invited user secondfactor TOTP authentication succeeded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invited user secondfactor TOTP authentication succeeded"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Invited user secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invited user secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://auth.${TEST_DOMAIN}/api/verify",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-invite-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "VERIFY_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Invited user session is valid (verify returned 200)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invited user session is valid (verify returned 200)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "VERIFY_STATUS",
+            "value": "200"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Authelia verify returned HTTP $VERIFY_STATUS (may not have a verify endpoint)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Authelia verify returned HTTP $VERIFY_STATUS (may not have a verify endpoint)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "VERIFY_STATUS",
+            "value": "200"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"New user authenticates from visitor VM (secondfactor TOTP)\"\n# ---------------------------------------------------------------------------\n\n# Generate a TOTP code on visitor VM using oathtool\nTOTP_CODE=$(visitor_exec \"oathtool --totp --base32 '${TOTP_SECRET}'\" 2>/dev/null || echo \"\")\nif [ -n \"$TOTP_CODE\" ]; then\n  log_pass \"Generated TOTP code for invited user on visitor VM\"\nelse\n  log_fail \"Failed to generate TOTP code for invited user\"\nfi\n\n# POST secondfactor TOTP from visitor VM\nTOTP_AUTH_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-invite-cookies.txt -c /tmp/authelia-invite-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOTP_CODE}\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\n\nTOTP_AUTH_STATUS=$(echo \"$TOTP_AUTH_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$TOTP_AUTH_STATUS\" = \"OK\" ]; then\n  log_pass \"Invited user secondfactor TOTP authentication succeeded\"\nelse\n  log_fail \"Invited user secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)\"\nfi\n\n# Verify the session cookie is valid by checking Authelia's verify endpoint\nVERIFY_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-invite-cookies.txt https://auth.${TEST_DOMAIN}/api/verify 2>/dev/null\" || echo \"000\")\nif [ \"$VERIFY_STATUS\" = \"200\" ]; then\n  log_pass \"Invited user session is valid (verify returned 200)\"\nelse\n  log_info \"Authelia verify returned HTTP $VERIFY_STATUS (may not have a verify endpoint)\"\nfi"
+    },
+    {
+      "id": "used-invitation-token-is-rejected-from-visitor-vm",
+      "label": "Used invitation token is rejected (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "REUSE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Used invitation token returns 410 Gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REUSE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Used invitation token returns 410 Gone"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "REUSE_ACCEPT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Used invitation token acceptance returns 410 Gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REUSE_ACCEPT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "Used invitation token acceptance returns 410 Gone"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Used invitation token is rejected (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\nREUSE_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -H 'Accept: application/json' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN} 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_STATUS\" \"410\" \"Used invitation token returns 410 Gone\" || true\n\nREUSE_ACCEPT_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -X POST -H 'Content-Type: application/json' -d '{\\\"password\\\":\\\"AnotherPass456!!\\\"}' https://auth.${TEST_DOMAIN}/api/invite/${INVITE_TOKEN}/accept 2>/dev/null\" || echo \"000\")\nassert_eq \"$REUSE_ACCEPT_STATUS\" \"410\" \"Used invitation token acceptance returns 410 Gone\" || true"
+    },
+    {
+      "id": "cleanup-delete-invited-user",
+      "label": "Cleanup: delete invited user",
+      "steps": [
+        {
+          "id": "step-53",
+          "label": "DELETE /api/users/${INVITED_USERNAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${INVITED_USERNAME}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "Invited user deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Invited user deletion returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Set FOUND_FINAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_FINAL\" | jq -r --arg u \"$INVITED_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Invited user no longer in list after deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_FINAL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Invited user no longer in list after deletion"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: delete invited user\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESPONSE=$(host_api_delete \"users/${INVITED_USERNAME}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Invited user deletion returned ok: true\" || true\n\n# Verify user is gone from the list\nUSERS_FINAL=$(host_api_get \"users\")\nFOUND_FINAL=$(echo \"$USERS_FINAL\" | jq -r --arg u \"$INVITED_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_FINAL\" \"\" \"Invited user no longer in list after deletion\" || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 08 — Invitation Journey (Three-VM)\n# ============================================================================\n# Tests the full invitation flow for a new user invited by an admin, with\n# public-facing steps executed from an external visitor VM:\n#\n# 1. Admin creates an invitation via POST /api/invitations\n# 2. Visitor GETs /api/invite/:token (public, no mTLS)\n# 3. Visitor POSTs /api/invite/:token/accept (public, no mTLS)\n# 4. Verify invited user appears in admin's user list\n# 5. New user authenticates from visitor VM (firstfactor + secondfactor TOTP)\n# 6. Visitor re-uses invitation token — should get 410 Gone\n# 7. Cleanup: delete invited user\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nINVITED_USERNAME=\"inviteduser\"\nINVITED_EMAIL=\"invited@test.local\"\nINVITED_PASSWORD=\"InvitedPass123!!\"\nINVITE_TOKEN=\"\"\nINVITATION_ID=\"\"\n\nbegin_test \"08 — Invitation Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-invite-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  # Delete the invited user if they were created\n  host_api_delete \"users/${INVITED_USERNAME}\" 2>/dev/null || true\n  # Delete the invitation if it was created\n  if [ -n \"$INVITATION_ID\" ] && [ \"$INVITATION_ID\" != \"null\" ]; then\n    host_api_delete \"invitations/${INVITATION_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

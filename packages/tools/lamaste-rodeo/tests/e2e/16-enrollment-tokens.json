@@ -1,0 +1,1178 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 16,
+    "name": "Hardware-Bound Certificate Enrollment",
+    "suite": "e2e",
+    "description": "16 — Hardware-Bound Certificate Enrollment",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Set TEMP_DIR",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d"
+          },
+          "capture": [
+            {
+              "variable": "TEMP_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping enrollment tests — onboarding not complete\"\n  end_test\n  exit $?\nfi\n\nTEMP_DIR=$(mktemp -d)\ntrap 'rm -rf \"$TEMP_DIR\"' EXIT"
+    },
+    {
+      "id": "admin-auth-mode-defaults-to-p12",
+      "label": "Admin auth mode defaults to p12",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "GET /api/certs/admin/auth-mode",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/admin/auth-mode"
+          },
+          "capture": [
+            {
+              "variable": "AUTH_MODE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Admin auth mode is p12 by default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_MODE_RESPONSE"
+              },
+              "path": ".adminAuthMode",
+              "expected": {
+                "kind": "literal",
+                "value": "p12"
+              },
+              "message": "Admin auth mode is p12 by default"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin auth mode defaults to p12\"\n# ---------------------------------------------------------------------------\n\nAUTH_MODE_RESPONSE=$(api_get \"certs/admin/auth-mode\")\nassert_json_field \"$AUTH_MODE_RESPONSE\" '.adminAuthMode' 'p12' \"Admin auth mode is p12 by default\" || true"
+    },
+    {
+      "id": "create-enrollment-token",
+      "label": "Create enrollment token",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "POST /api/certs/agent/enroll",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent/enroll",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Token creation returns ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Token creation returns ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".token"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Token is not empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Token is not empty"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Extract EXPIRES_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "EXPIRES_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".expiresAt"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Token has expiresAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXPIRES_AT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Token has expiresAt"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Token response contains correct label",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "TOKEN_LABEL"
+              },
+              "message": "Token response contains correct label"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create enrollment token\"\n# ---------------------------------------------------------------------------\n\nTOKEN_LABEL=\"e2e-enroll-$(date +%s)\"\n\nTOKEN_RESPONSE=$(api_post \"certs/agent/enroll\" \"{\\\"label\\\":\\\"${TOKEN_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\",\\\"tunnels:write\\\"]}\")\nassert_json_field \"$TOKEN_RESPONSE\" '.ok' 'true' \"Token creation returns ok: true\" || true\n\nTOKEN=$(echo \"$TOKEN_RESPONSE\" | jq -r '.token' 2>/dev/null || echo \"\")\nassert_not_eq \"$TOKEN\" \"\" \"Token is not empty\" || true\n\nEXPIRES_AT=$(echo \"$TOKEN_RESPONSE\" | jq -r '.expiresAt' 2>/dev/null || echo \"\")\nassert_not_eq \"$EXPIRES_AT\" \"\" \"Token has expiresAt\" || true\n\nassert_json_field \"$TOKEN_RESPONSE\" '.label' \"$TOKEN_LABEL\" \"Token response contains correct label\" || true"
+    },
+    {
+      "id": "duplicate-token-for-same-label-silently-replaced",
+      "label": "Duplicate token for same label silently replaced",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "Set DUP_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -w '\\n%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X POST -H \"Content-Type: application/json\" -d \"{\\\"label\\\":\\\"${TOKEN_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\" \"${BASE_URL}/api/certs/agent/enroll\" 2>/dev/null || echo '{} 000'"
+          },
+          "capture": [
+            {
+              "variable": "DUP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Set DUP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$DUP_RESPONSE\" | tail -1"
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Set DUP_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$DUP_RESPONSE\" | sed '$d'"
+          },
+          "capture": [
+            {
+              "variable": "DUP_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Duplicate token for active label returns 200 (replaced)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Duplicate token for active label returns 200 (replaced)"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Extract NEW_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DUP_BODY"
+              },
+              "expression": ".token"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Duplicate token for same label silently replaced\"\n# ---------------------------------------------------------------------------\n# Creating a token for a label that already has an active (unused, unexpired)\n# token silently replaces it (retried installations don't fail).\n\nDUP_RESPONSE=$(curl -s -w '\\n%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"label\\\":\\\"${TOKEN_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\" \\\n  \"${BASE_URL}/api/certs/agent/enroll\" 2>/dev/null || echo '{}\n000')\nDUP_STATUS=$(echo \"$DUP_RESPONSE\" | tail -1)\nDUP_BODY=$(echo \"$DUP_RESPONSE\" | sed '$d')\n\nassert_eq \"$DUP_STATUS\" \"200\" \"Duplicate token for active label returns 200 (replaced)\" || true\n\n# The replacement gives a new token — use it for subsequent enrollment\nNEW_TOKEN=$(echo \"$DUP_BODY\" | jq -r '.token' 2>/dev/null || echo \"\")\nif [ -n \"$NEW_TOKEN\" ] && [ \"$NEW_TOKEN\" != \"null\" ]; then\n  TOKEN=\"$NEW_TOKEN\"\nfi"
+    },
+    {
+      "id": "public-enrollment-endpoint-reachable-without-mtls",
+      "label": "Public enrollment endpoint reachable without mTLS",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "Set NO_CERT_ENROLL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure -X POST -H \"Content-Type: application/json\" -d '{\"token\":\"invalid\",\"csr\":\"invalid\"}' \"${BASE_URL}/api/enroll\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NO_CERT_ENROLL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Enrollment endpoint reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Enrollment endpoint reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_ENROLL_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_ENROLL_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Enrollment endpoint not reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS — expected 400 or 401)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Enrollment endpoint not reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS — expected 400 or 401)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "NO_CERT_ENROLL_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "NO_CERT_ENROLL_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Public enrollment endpoint reachable without mTLS\"\n# ---------------------------------------------------------------------------\n\n# Send a request WITHOUT a client certificate to the enrollment endpoint.\n# With ssl_verify_client optional, the TLS handshake succeeds even without a cert.\n# The endpoint should return 400 (validation error) or 401, not 000/496 (TLS rejection).\nNO_CERT_ENROLL_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"token\":\"invalid\",\"csr\":\"invalid\"}' \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo \"000\")\n\n# 400 = Zod validation failed (CSR not PEM), 401 = invalid token — both prove the endpoint is reachable\nif [ \"$NO_CERT_ENROLL_STATUS\" = \"400\" ] || [ \"$NO_CERT_ENROLL_STATUS\" = \"401\" ]; then\n  log_pass \"Enrollment endpoint reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS)\"\nelse\n  log_fail \"Enrollment endpoint not reachable without mTLS (HTTP $NO_CERT_ENROLL_STATUS — expected 400 or 401)\"\nfi"
+    },
+    {
+      "id": "enrollment-with-invalid-token-rejected",
+      "label": "Enrollment with invalid token rejected",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set CSR_PEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat \"$TEMP_DIR/agent.csr\""
+          },
+          "capture": [
+            {
+              "variable": "CSR_PEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Set INVALID_TOKEN_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" --insecure -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}'"
+          },
+          "capture": [
+            {
+              "variable": "INVALID_TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Invalid token rejected with correct message",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_TOKEN_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Invalid enrollment token"
+              },
+              "message": "Invalid token rejected with correct message"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enrollment with invalid token rejected\"\n# ---------------------------------------------------------------------------\n\n# Generate a valid CSR for the enrollment test\nopenssl genrsa -out \"$TEMP_DIR/agent.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/agent.key\" -out \"$TEMP_DIR/agent.csr\" \\\n  -subj \"/CN=agent:pending/O=Lamaste\" 2>/dev/null\nCSR_PEM=$(cat \"$TEMP_DIR/agent.csr\")\n\nINVALID_TOKEN_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}')\n\nassert_contains \"$INVALID_TOKEN_RESPONSE\" \"Invalid enrollment token\" \"Invalid token rejected with correct message\" || true"
+    },
+    {
+      "id": "enroll-agent-with-valid-token-csr",
+      "label": "Enroll agent with valid token + CSR",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "Set ENROLL_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" --insecure -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}'"
+          },
+          "capture": [
+            {
+              "variable": "ENROLL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Enrollment returns ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Enrollment returns ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Enrolled label matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "TOKEN_LABEL"
+              },
+              "message": "Enrolled label matches"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Extract CERT_PEM",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CERT_PEM",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".cert"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Enrollment returns signed certificate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CERT_PEM"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Enrollment returns signed certificate"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Extract CA_CERT_PEM",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CA_CERT_PEM",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".caCert"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Enrollment returns CA certificate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CA_CERT_PEM"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Enrollment returns CA certificate"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Extract SERIAL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SERIAL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".serial"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Enrollment returns serial number",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERIAL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Enrollment returns serial number"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set CERT_SUBJECT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "openssl x509 -in \"$TEMP_DIR/enrolled.crt\" -subject -noout 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_SUBJECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Signed cert has correct CN",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CERT_SUBJECT"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "agent:${TOKEN_LABEL}"
+              },
+              "message": "Signed cert has correct CN"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enroll agent with valid token + CSR\"\n# ---------------------------------------------------------------------------\n\nENROLL_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${TOKEN}\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}')\n\nassert_json_field \"$ENROLL_RESPONSE\" '.ok' 'true' \"Enrollment returns ok: true\" || true\nassert_json_field \"$ENROLL_RESPONSE\" '.label' \"$TOKEN_LABEL\" \"Enrolled label matches\" || true\n\nCERT_PEM=$(echo \"$ENROLL_RESPONSE\" | jq -r '.cert' 2>/dev/null || echo \"\")\nassert_not_eq \"$CERT_PEM\" \"\" \"Enrollment returns signed certificate\" || true\n\nCA_CERT_PEM=$(echo \"$ENROLL_RESPONSE\" | jq -r '.caCert' 2>/dev/null || echo \"\")\nassert_not_eq \"$CA_CERT_PEM\" \"\" \"Enrollment returns CA certificate\" || true\n\nSERIAL=$(echo \"$ENROLL_RESPONSE\" | jq -r '.serial' 2>/dev/null || echo \"\")\nassert_not_eq \"$SERIAL\" \"\" \"Enrollment returns serial number\" || true\n\n# Verify the signed cert has the correct CN\necho \"$CERT_PEM\" > \"$TEMP_DIR/enrolled.crt\"\nCERT_SUBJECT=$(openssl x509 -in \"$TEMP_DIR/enrolled.crt\" -subject -noout 2>/dev/null || echo \"unknown\")\nassert_contains \"$CERT_SUBJECT\" \"agent:${TOKEN_LABEL}\" \"Signed cert has correct CN\" || true"
+    },
+    {
+      "id": "token-replay-rejected-single-use",
+      "label": "Token replay rejected (single-use)",
+      "steps": [
+        {
+          "id": "step-38",
+          "label": "Set REPLAY_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure -X POST -H \"Content-Type: application/json\" -d \"{\\\"token\\\":\\\"${TOKEN}\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \"${BASE_URL}/api/enroll\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "REPLAY_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Token replay returns 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPLAY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Token replay returns 401"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Token replay rejected (single-use)\"\n# ---------------------------------------------------------------------------\n\nREPLAY_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"${TOKEN}\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo \"000\")\n\nassert_eq \"$REPLAY_STATUS\" \"401\" \"Token replay returns 401\" || true"
+    },
+    {
+      "id": "enrolled-agent-visible-in-agent-list-with-hardware-bound-method",
+      "label": "Enrolled agent visible in agent list with hardware-bound method",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENTS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Set ENROLLED_METHOD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENTS_RESPONSE\" | jq -r \".agents[] | select(.label==\\\"${TOKEN_LABEL}\\\") | .enrollmentMethod\" 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "ENROLLED_METHOD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Agent shows enrollmentMethod: hardware-bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENROLLED_METHOD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "hardware-bound"
+              },
+              "message": "Agent shows enrollmentMethod: hardware-bound"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enrolled agent visible in agent list with hardware-bound method\"\n# ---------------------------------------------------------------------------\n\nAGENTS_RESPONSE=$(api_get \"certs/agent\")\nENROLLED_METHOD=$(echo \"$AGENTS_RESPONSE\" | jq -r \".agents[] | select(.label==\\\"${TOKEN_LABEL}\\\") | .enrollmentMethod\" 2>/dev/null || echo \"unknown\")\nassert_eq \"$ENROLLED_METHOD\" \"hardware-bound\" \"Agent shows enrollmentMethod: hardware-bound\" || true"
+    },
+    {
+      "id": "p12-download-hidden-for-hardware-bound-agent",
+      "label": "P12 download hidden for hardware-bound agent",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Set HW_DOWNLOAD_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" \"${BASE_URL}/api/certs/agent/${TOKEN_LABEL}/download\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "HW_DOWNLOAD_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "P12 download returns 404 for hardware-bound agent (no P12 on disk)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HW_DOWNLOAD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "P12 download returns 404 for hardware-bound agent (no P12 on disk)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"P12 download hidden for hardware-bound agent\"\n# ---------------------------------------------------------------------------\n\nHW_DOWNLOAD_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  \"${BASE_URL}/api/certs/agent/${TOKEN_LABEL}/download\" 2>/dev/null || echo \"000\")\n\nassert_eq \"$HW_DOWNLOAD_STATUS\" \"404\" \"P12 download returns 404 for hardware-bound agent (no P12 on disk)\" || true"
+    },
+    {
+      "id": "clean-up-revoke-test-agent",
+      "label": "Clean up: revoke test agent",
+      "steps": [
+        {
+          "id": "step-45",
+          "label": "DELETE /api/certs/agent/${TOKEN_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/${TOKEN_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "REVOKE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Revoked enrollment test agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REVOKE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Revoked enrollment test agent"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Clean up: revoke test agent\"\n# ---------------------------------------------------------------------------\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${TOKEN_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Revoked enrollment test agent\" || true"
+    },
+    {
+      "id": "admin-upgrade-to-hardware-bound",
+      "label": "Admin upgrade to hardware-bound",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "Set ADMIN_CSR_PEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat \"$TEMP_DIR/admin.csr\""
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_CSR_PEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "POST /api/certs/admin/upgrade-to-hardware-bound",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/admin/upgrade-to-hardware-bound",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "UPGRADE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Admin upgrade returns ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Admin upgrade returns ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Extract UPGRADE_CERT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "UPGRADE_CERT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "expression": ".cert"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Admin upgrade returns signed certificate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "UPGRADE_CERT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Admin upgrade returns signed certificate"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin upgrade to hardware-bound\"\n# ---------------------------------------------------------------------------\n\n# Generate admin CSR\nopenssl genrsa -out \"$TEMP_DIR/admin.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/admin.key\" -out \"$TEMP_DIR/admin.csr\" \\\n  -subj \"/CN=admin/O=Lamaste\" 2>/dev/null\nADMIN_CSR_PEM=$(cat \"$TEMP_DIR/admin.csr\")\n\nUPGRADE_RESPONSE=$(api_post \"certs/admin/upgrade-to-hardware-bound\" \"{\\\"csr\\\":$(echo \"$ADMIN_CSR_PEM\" | jq -Rs .)}\")\nassert_json_field \"$UPGRADE_RESPONSE\" '.ok' 'true' \"Admin upgrade returns ok: true\" || true\n\nUPGRADE_CERT=$(echo \"$UPGRADE_RESPONSE\" | jq -r '.cert' 2>/dev/null || echo \"\")\nassert_not_eq \"$UPGRADE_CERT\" \"\" \"Admin upgrade returns signed certificate\" || true\n\n# After admin upgrade, the old admin cert is revoked — subsequent mTLS API\n# calls will fail at the nginx level. We verify the lockdown by checking that\n# the old cert can no longer access P12 endpoints (connection failure = lockout).\n# We skip the auth-mode check since it requires a valid admin cert."
+    },
+    {
+      "id": "p12-lockdown-after-admin-upgrade",
+      "label": "P12 lockdown after admin upgrade",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Set ROTATE_LOCKDOWN_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X POST \"${BASE_URL}/api/certs/mtls/rotate\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_LOCKDOWN_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "ROTATE_LOCKDOWN_STATUS",
+                "value": "410"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "ROTATE_LOCKDOWN_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "ROTATE_LOCKDOWN_STATUS",
+                "value": "410"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "ROTATE_LOCKDOWN_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "log_section \"P12 lockdown after admin upgrade\"\n\nROTATE_LOCKDOWN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X POST \\\n  \"${BASE_URL}/api/certs/mtls/rotate\" 2>/dev/null || echo \"000\")\n\n# 410 = panel enforced lockdown, 000*/496 = old cert rejected at nginx (also proves lockdown)\nif [ \"$ROTATE_LOCKDOWN_STATUS\" = \"410\" ] || [[ \"$ROTATE_LOCKDOWN_STATUS\" =~ ^0+$ ]] || [ \"$ROTATE_LOCKDOWN_STATUS\" = \"496\" ]; then\n  log_pass \"P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)\"\nelse\n  log_fail \"Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS\"\nfi"
+    },
+    {
+      "id": "revert-admin-to-p12-mode-for-other-tests",
+      "label": "Revert admin to P12 mode (for other tests)",
+      "steps": [
+        {
+          "id": "step-68",
+          "label": "Set TMP_CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp"
+          },
+          "capture": [
+            {
+              "variable": "TMP_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Reverted admin to P12 mode with fresh cert",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Reverted admin to P12 mode with fresh cert"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "GET /api/certs/admin/auth-mode",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/admin/auth-mode"
+          },
+          "capture": [
+            {
+              "variable": "AUTH_MODE_REVERTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Admin auth mode reverted to p12",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_MODE_REVERTED"
+              },
+              "path": ".adminAuthMode",
+              "expected": {
+                "kind": "literal",
+                "value": "p12"
+              },
+              "message": "Admin auth mode reverted to p12"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revert admin to P12 mode (for other tests)\"\n# ---------------------------------------------------------------------------\n\n# Directly patch the config to revert — in real scenario this would be lamaste-reset-admin\n# We use the panel direct URL to bypass mTLS for this reset\n# Actually we need to update the config file. Since this is a single-VM test,\n# we can update panel.json directly.\nPKI_DIR=\"/etc/lamalibre/lamaste/pki\"\nPANEL_CONFIG=\"${LAMALIBRE_LAMASTE_CONFIG:-/etc/lamalibre/lamaste/panel.json}\"\n\n# Regenerate a valid admin cert (the upgrade revoked the old one)\nsudo openssl genrsa -out \"${PKI_DIR}/client.key\" 4096 2>/dev/null\nsudo openssl req -new -key \"${PKI_DIR}/client.key\" -out \"${PKI_DIR}/client.csr\" \\\n  -subj \"/CN=Lamaste Client/O=Lamaste\" 2>/dev/null\nsudo openssl x509 -req -in \"${PKI_DIR}/client.csr\" \\\n  -CA \"${PKI_DIR}/ca.crt\" -CAkey \"${PKI_DIR}/ca.key\" -CAcreateserial \\\n  -out \"${PKI_DIR}/client.crt\" -days 730 -sha256 2>/dev/null\nsudo rm -f \"${PKI_DIR}/client.csr\" \"${PKI_DIR}/ca.srl\"\nsudo chmod 600 \"${PKI_DIR}/client.key\"\nsudo chmod 644 \"${PKI_DIR}/client.crt\"\nsudo chown lamaste:lamaste \"${PKI_DIR}/client.key\" \"${PKI_DIR}/client.crt\"\n\n# Clear revocation list (admin upgrade entries would block the new cert)\necho '{\"revoked\":[]}' | sudo tee \"${PKI_DIR}/revoked.json\" > /dev/null\nsudo chown lamaste:lamaste \"${PKI_DIR}/revoked.json\"\n\n# Revert adminAuthMode to p12\nTMP_CONFIG=$(mktemp)\nsudo jq '.adminAuthMode = \"p12\"' \"$PANEL_CONFIG\" > \"$TMP_CONFIG\"\nsudo mv \"$TMP_CONFIG\" \"$PANEL_CONFIG\"\nsudo chmod 640 \"$PANEL_CONFIG\"\nsudo chown lamaste:lamaste \"$PANEL_CONFIG\"\n\n# Reload nginx to pick up ssl_verify_client optional after any config changes\nsudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null || true\n\n# Restart panel to pick up the new cert and config\nsudo systemctl restart lamalibre-lamaste-serverd 2>/dev/null || true\nsleep 3\n\nlog_pass \"Reverted admin to P12 mode with fresh cert\"\n\n# Verify the revert\nAUTH_MODE_REVERTED=$(api_get \"certs/admin/auth-mode\")\nassert_json_field \"$AUTH_MODE_REVERTED\" '.adminAuthMode' 'p12' \"Admin auth mode reverted to p12\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 16 — Hardware-Bound Certificate Enrollment\n# ============================================================================\n# Verifies the enrollment token system and CSR-based agent enrollment:\n# - Token creation via POST /api/certs/agent/enroll\n# - Public enrollment endpoint (POST /api/enroll) reachable without mTLS\n# - Token validation: invalid, used, and expired tokens rejected\n# - Enrolled agent appears in registry with enrollmentMethod: hardware-bound\n# - Admin auth mode API\n# - Admin upgrade to hardware-bound and P12 lockdown\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"16 — Hardware-Bound Certificate Enrollment\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\n# ---------------------------------------------------------------------------\nend_test\n"
+}

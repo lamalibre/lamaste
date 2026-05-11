@@ -1,0 +1,870 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 16,
+    "name": "Agent JSON Setup Output",
+    "suite": "e2e-three-vm",
+    "description": "16 — Agent JSON Setup Output (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "which lamaste-agent 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_BIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "lamaste-agent found on agent VM: $AGENT_BIN",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamaste-agent found on agent VM: $AGENT_BIN"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "AGENT_BIN"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" || echo '{\"status\":\"unknown\"}')\nSTATUS=$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not complete — skipping agent JSON setup tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Check lamaste-agent is available on agent VM\nAGENT_BIN=$(agent_exec \"which lamaste-agent 2>/dev/null\" || echo \"\")\nif [ -z \"$AGENT_BIN\" ]; then\n  log_skip \"lamaste-agent not found on agent VM\"\n  end_test\n  exit $?\nfi\nlog_pass \"lamaste-agent found on agent VM: $AGENT_BIN\""
+    },
+    {
+      "id": "json-requires-token",
+      "label": "--json requires token",
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='' lamaste-agent setup --json --panel-url https://${HOST_IP}:9292 2>/dev/null; true"
+          },
+          "capture": [
+            {
+              "variable": "NO_TOKEN_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "--json without token emits error event",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "--json without token emits error event"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "--json without token should emit error event",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "--json without token should emit error event"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"--json requires token\"\n# ---------------------------------------------------------------------------\n\nNO_TOKEN_OUTPUT=$(agent_exec \"LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='' lamaste-agent setup --json --panel-url https://${HOST_IP}:9292 2>/dev/null; true\")\n\nif echo \"$NO_TOKEN_OUTPUT\" | jq -e 'select(.event==\"error\")' &>/dev/null; then\n  log_pass \"--json without token emits error event\"\nelse\n  log_fail \"--json without token should emit error event\"\nfi"
+    },
+    {
+      "id": "generate-enrollment-token-on-host",
+      "label": "Generate enrollment token on host",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "DELETE /api/certs/agent/$AGENT_LABEL",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/$AGENT_LABEL"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-10",
+          "label": "POST /api/certs/agent/enroll",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent/enroll",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Extract TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".token // empty"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Failed to generate enrollment token: $TOKEN_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to generate enrollment token: $TOKEN_RESPONSE"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOKEN"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Enrollment token generated for $AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Enrollment token generated for $AGENT_LABEL"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Generate enrollment token on host\"\n# ---------------------------------------------------------------------------\n\nAGENT_LABEL=\"json-test-3vm\"\n\n# Clean up any existing agent cert with this label\nhost_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null || true\n\nTOKEN_RESPONSE=$(host_api_post \"certs/agent/enroll\" \"{\\\"label\\\":\\\"$AGENT_LABEL\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\n\nTOKEN=$(echo \"$TOKEN_RESPONSE\" | jq -r '.token // empty')\nif [ -z \"$TOKEN\" ]; then\n  log_fail \"Failed to generate enrollment token: $TOKEN_RESPONSE\"\n  end_test\n  exit 1\nfi\nlog_pass \"Enrollment token generated for $AGENT_LABEL\""
+    },
+    {
+      "id": "lamaste-agent-setup-json-on-agent-vm",
+      "label": "lamaste-agent setup --json on agent VM",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='$TOKEN' lamaste-agent setup --json --label '$AGENT_LABEL' --panel-url 'https://${HOST_IP}:9292' > /tmp/agent-json-setup.txt 2>/dev/null; true"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/agent-json-setup.txt 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "JSON_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "No NDJSON output from lamaste-agent setup --json",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No NDJSON output from lamaste-agent setup --json"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "JSON_OUTPUT"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"lamaste-agent setup --json on agent VM\"\n# ---------------------------------------------------------------------------\n\n# Write output to temp file to avoid multipass piping issues\nagent_exec \"LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='$TOKEN' lamaste-agent setup --json --label '$AGENT_LABEL' --panel-url 'https://${HOST_IP}:9292' > /tmp/agent-json-setup.txt 2>/dev/null; true\"\n\nJSON_OUTPUT=$(agent_exec \"cat /tmp/agent-json-setup.txt 2>/dev/null\" || true)\n\nif [ -z \"$JSON_OUTPUT\" ]; then\n  log_fail \"No NDJSON output from lamaste-agent setup --json\"\n  end_test\n  exit 1\nfi"
+    },
+    {
+      "id": "ndjson-line-validation",
+      "label": "NDJSON line validation",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "Set LINE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(LINE_COUNT + 1)"
+          },
+          "capture": [
+            {
+              "variable": "LINE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set VALID_LINES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(VALID_LINES + 1)"
+          },
+          "capture": [
+            {
+              "variable": "VALID_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Line $LINE_COUNT is not valid JSON: $line",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Line $LINE_COUNT is not valid JSON: $line"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Set EVENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$line\" | jq -r '.event // empty'"
+          },
+          "capture": [
+            {
+              "variable": "EVENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "All $LINE_COUNT lines are valid JSON",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "All $LINE_COUNT lines are valid JSON"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Step events emitted: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Step events emitted: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=5"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Expected at least 5 step events, got: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected at least 5 step events, got: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=5"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"NDJSON line validation\"\n# ---------------------------------------------------------------------------\n\nLINE_COUNT=0\nVALID_LINES=0\nSTEP_EVENTS=0\nCOMPLETE_EVENTS=0\nERROR_EVENTS=0\n\nwhile IFS= read -r line; do\n  if [ -z \"$line\" ]; then\n    continue\n  fi\n  LINE_COUNT=$((LINE_COUNT + 1))\n\n  if echo \"$line\" | jq empty 2>/dev/null; then\n    VALID_LINES=$((VALID_LINES + 1))\n  else\n    log_fail \"Line $LINE_COUNT is not valid JSON: $line\"\n    continue\n  fi\n\n  EVENT=$(echo \"$line\" | jq -r '.event // empty')\n  case \"$EVENT\" in\n    step)     STEP_EVENTS=$((STEP_EVENTS + 1)) ;;\n    complete) COMPLETE_EVENTS=$((COMPLETE_EVENTS + 1)) ;;\n    error)    ERROR_EVENTS=$((ERROR_EVENTS + 1)) ;;\n  esac\ndone <<< \"$JSON_OUTPUT\"\n\nif [ \"$LINE_COUNT\" -gt 0 ] && [ \"$VALID_LINES\" -eq \"$LINE_COUNT\" ]; then\n  log_pass \"All $LINE_COUNT lines are valid JSON\"\nelse\n  log_fail \"JSON validation: $VALID_LINES/$LINE_COUNT lines valid\"\nfi\n\nif [ \"$STEP_EVENTS\" -ge 5 ]; then\n  log_pass \"Step events emitted: $STEP_EVENTS\"\nelse\n  log_fail \"Expected at least 5 step events, got: $STEP_EVENTS\"\nfi"
+    },
+    {
+      "id": "complete-event-validation",
+      "label": "Complete event validation",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Exactly one complete event emitted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Exactly one complete event emitted"
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Set COMPLETE_LINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1"
+          },
+          "capture": [
+            {
+              "variable": "COMPLETE_LINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Extract LABEL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LABEL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".agent.label // empty"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Extract PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_URL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".agent.panelUrl // empty"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Extract AUTH_METHOD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTH_METHOD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".agent.authMethod // empty"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Agent label matches: $LABEL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent label matches: $LABEL"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "LABEL",
+            "value": "$AGENT_LABEL"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Agent label mismatch: expected $AGENT_LABEL, got $LABEL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent label mismatch: expected $AGENT_LABEL, got $LABEL"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "LABEL",
+            "value": "$AGENT_LABEL"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Panel URL present and uses HTTPS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel URL present and uses HTTPS"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PANEL_URL"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Panel URL missing or not HTTPS: $PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel URL missing or not HTTPS: $PANEL_URL"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "PANEL_URL"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Auth method present: $AUTH_METHOD",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Auth method present: $AUTH_METHOD"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "AUTH_METHOD"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Auth method missing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Auth method missing"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "AUTH_METHOD"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Extract ERROR_MSG",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ERROR_MSG",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "JSON_OUTPUT"
+              },
+              "expression": "select(.event==\"error\") | .message // \"unknown\""
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Agent setup emitted error: $ERROR_MSG",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent setup emitted error: $ERROR_MSG"
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Expected exactly one complete event, got: $COMPLETE_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected exactly one complete event, got: $COMPLETE_EVENTS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  LABEL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.label // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.panelUrl // empty')\n  AUTH_METHOD=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.authMethod // empty')\n\n  if [ \"$LABEL\" = \"$AGENT_LABEL\" ]; then\n    log_pass \"Agent label matches: $LABEL\"\n  else\n    log_fail \"Agent label mismatch: expected $AGENT_LABEL, got $LABEL\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$AUTH_METHOD\" ]; then\n    log_pass \"Auth method present: $AUTH_METHOD\"\n  else\n    log_fail \"Auth method missing\"\n  fi\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  ERROR_MSG=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"error\") | .message // \"unknown\"' 2>/dev/null | head -1)\n  log_fail \"Agent setup emitted error: $ERROR_MSG\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
+    },
+    {
+      "id": "no-sensitive-data-in-ndjson-output",
+      "label": "No sensitive data in NDJSON output",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Enrollment token found in NDJSON output",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Enrollment token found in NDJSON output"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Enrollment token not leaked in NDJSON output",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Enrollment token not leaked in NDJSON output"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"No sensitive data in NDJSON output\"\n# ---------------------------------------------------------------------------\n\nif echo \"$JSON_OUTPUT\" | grep -qi \"$TOKEN\"; then\n  log_fail \"Enrollment token found in NDJSON output\"\nelse\n  log_pass \"Enrollment token not leaked in NDJSON output\"\nfi"
+    },
+    {
+      "id": "step-status-validation",
+      "label": "Step status validation",
+      "steps": [
+        {
+          "id": "step-57",
+          "label": "Set HAS_STEP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JSON_OUTPUT\" | jq -r \"select(.event==\\\"step\\\" and .step==\\\"$STEP_KEY\\\") | .step\" 2>/dev/null | head -1"
+          },
+          "capture": [
+            {
+              "variable": "HAS_STEP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "$STEP_KEY step present",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "$STEP_KEY step present"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "HAS_STEP"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "$STEP_KEY step missing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "$STEP_KEY step missing"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "HAS_STEP"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Extract INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVALID_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "JSON_OUTPUT"
+              },
+              "expression": "select(.event==\"step\") | .status // \"null\""
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "All step events have valid status values",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "All step events have valid status values"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "INVALID_STATUS"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Invalid step status found: $INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invalid step status found: $INVALID_STATUS"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "INVALID_STATUS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step status validation\"\n# ---------------------------------------------------------------------------\n\nfor STEP_KEY in create_directories generate_keypair enroll_panel save_config; do\n  HAS_STEP=$(echo \"$JSON_OUTPUT\" | jq -r \"select(.event==\\\"step\\\" and .step==\\\"$STEP_KEY\\\") | .step\" 2>/dev/null | head -1)\n  if [ -n \"$HAS_STEP\" ]; then\n    log_pass \"$STEP_KEY step present\"\n  else\n    log_fail \"$STEP_KEY step missing\"\n  fi\ndone\n\nINVALID_STATUS=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"step\") | .status // \"null\"' 2>/dev/null | grep -v -E '^(running|complete|skipped|failed)$' | head -1 || true)\nif [ -z \"$INVALID_STATUS\" ]; then\n  log_pass \"All step events have valid status values\"\nelse\n  log_fail \"Invalid step status found: $INVALID_STATUS\"\nfi"
+    },
+    {
+      "id": "cleanup-uninstall-test-agent",
+      "label": "Cleanup: uninstall test agent",
+      "steps": [
+        {
+          "id": "step-64",
+          "label": "Agent uninstalled on agent VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent uninstalled on agent VM"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Agent uninstall failed on agent VM (exit $?)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent uninstall failed on agent VM (exit $?)"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "DELETE /api/certs/agent/$AGENT_LABEL",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/$AGENT_LABEL"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "continueOnError": true
+        },
+        {
+          "id": "step-67",
+          "label": "Extract DELETE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DELETE_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DELETE_RESULT"
+              },
+              "expression": ".ok // .error // \"unknown\""
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Agent cert revoked on host",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent cert revoked on host"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DELETE_STATUS",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Agent cert revocation: $DELETE_STATUS (may already be revoked)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent cert revocation: $DELETE_STATUS (may already be revoked)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DELETE_STATUS",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Agent cert revocation returned: $DELETE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent cert revocation returned: $DELETE_STATUS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DELETE_STATUS",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/agent-json-setup.txt"
+          },
+          "continueOnError": true
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: uninstall test agent\"\n# ---------------------------------------------------------------------------\n\nif agent_exec \"lamaste-agent uninstall --label '$AGENT_LABEL' 2>/dev/null; true\"; then\n  log_pass \"Agent uninstalled on agent VM\"\nelse\n  log_fail \"Agent uninstall failed on agent VM (exit $?)\"\nfi\n\nDELETE_RESULT=$(host_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null) || true\nDELETE_STATUS=$(echo \"$DELETE_RESULT\" | jq -r '.ok // .error // \"unknown\"' 2>/dev/null || echo \"unknown\")\nif [ \"$DELETE_STATUS\" = \"true\" ]; then\n  log_pass \"Agent cert revoked on host\"\nelif echo \"$DELETE_RESULT\" | jq -e '.error' &>/dev/null; then\n  log_info \"Agent cert revocation: $DELETE_STATUS (may already be revoked)\"\nelse\n  log_info \"Agent cert revocation returned: $DELETE_STATUS\"\nfi\n\nagent_exec \"rm -f /tmp/agent-json-setup.txt\" || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 16 — Agent JSON Setup Output (Three-VM)\n# ============================================================================\n# Verifies that lamaste-agent setup --json produces valid NDJSON output on\n# the agent VM when run with a token from the host panel.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \\\"\\$(echo '$b64body' | base64 -d)\\\" https://127.0.0.1:9292/api/$path\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"16 — Agent JSON Setup Output (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

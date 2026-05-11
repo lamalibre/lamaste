@@ -1,0 +1,1614 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 5,
+    "name": "Admin Journey",
+    "suite": "e2e-three-vm",
+    "description": "05 — Admin Journey (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    }
+  },
+  "constants": {
+    "TEST_TUNNEL_SUBDOMAIN": {
+      "value": "e2eadmin"
+    },
+    "TEST_TUNNEL_PORT": {
+      "value": "18090"
+    },
+    "TEST_USERNAME": {
+      "value": "e2etestuser"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${TEST_TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${TEST_TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE users/${TEST_USERNAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "users/${TEST_USERNAME}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping admin journey tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "1-panel-accessible-via-ip-9292-mtls",
+      "label": "1. Panel accessible via IP:9292 (mTLS)",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "IP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "IP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Panel via IP:9292 returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "IP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Panel via IP:9292 returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Panel via IP:9292 contains React mount point",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "IP_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<div id=\"root\">"
+              },
+              "message": "Panel via IP:9292 contains React mount point"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Panel via IP:9292 contains title tag",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "IP_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>"
+              },
+              "message": "Panel via IP:9292 contains title tag"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"1. Panel accessible via IP:9292 (mTLS)\"\n# ===========================================================================\n\n# Fetch the panel HTML via the IP-based mTLS endpoint\nIP_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://127.0.0.1:9292/ 2>/dev/null\" || echo \"\")\nIP_STATUS=$(host_exec \"curl -skf -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://127.0.0.1:9292/ 2>/dev/null\" || echo \"000\")\n\nassert_eq \"$IP_STATUS\" \"200\" \"Panel via IP:9292 returns HTTP 200\" || true\nassert_contains \"$IP_RESPONSE\" '<div id=\"root\">' \"Panel via IP:9292 contains React mount point\" || true\nassert_contains \"$IP_RESPONSE\" '<title>' \"Panel via IP:9292 contains title tag\" || true"
+    },
+    {
+      "id": "2-panel-accessible-via-panel-domain-mtls",
+      "label": "2. Panel accessible via panel.DOMAIN (mTLS)",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://panel.${TEST_DOMAIN}/",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://panel.${TEST_DOMAIN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Panel via panel.${TEST_DOMAIN} returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Panel via panel.${TEST_DOMAIN} returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Panel via panel.${TEST_DOMAIN} contains React mount point",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<div id=\"root\">"
+              },
+              "message": "Panel via panel.${TEST_DOMAIN} contains React mount point"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Panel via panel.${TEST_DOMAIN} contains title tag",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "<title>"
+              },
+              "message": "Panel via panel.${TEST_DOMAIN} contains title tag"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"2. Panel accessible via panel.DOMAIN (mTLS)\"\n# ===========================================================================\n\nDOMAIN_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://panel.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"\")\nDOMAIN_STATUS=$(host_exec \"curl -skf -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://panel.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\n\nassert_eq \"$DOMAIN_STATUS\" \"200\" \"Panel via panel.${TEST_DOMAIN} returns HTTP 200\" || true\nassert_contains \"$DOMAIN_RESPONSE\" '<div id=\"root\">' \"Panel via panel.${TEST_DOMAIN} contains React mount point\" || true\nassert_contains \"$DOMAIN_RESPONSE\" '<title>' \"Panel via panel.${TEST_DOMAIN} contains title tag\" || true"
+    },
+    {
+      "id": "3-panel-without-mtls-cert-rejected",
+      "label": "3. Panel without mTLS cert rejected",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://panel.${TEST_DOMAIN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "NO_CERT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Panel without mTLS cert rejected (HTTP $NO_CERT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel without mTLS cert rejected (HTTP $NO_CERT_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "000"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Panel without mTLS cert should be rejected (000/400/496), got HTTP $NO_CERT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel without mTLS cert should be rejected (000/400/496), got HTTP $NO_CERT_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "000"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "NO_CERT_STATUS",
+                "value": "496"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"3. Panel without mTLS cert rejected\"\n# ===========================================================================\n\n# curl without client certs — nginx should reject at the TLS level\nNO_CERT_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://panel.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\n\n# Without a client cert, nginx returns 400 (Bad Request), 496 (No Cert), or\n# the connection is closed outright (000). Any of these indicates rejection.\nif [ \"$NO_CERT_STATUS\" = \"000\" ] || [ \"$NO_CERT_STATUS\" = \"400\" ] || [ \"$NO_CERT_STATUS\" = \"496\" ]; then\n  log_pass \"Panel without mTLS cert rejected (HTTP $NO_CERT_STATUS)\"\nelse\n  log_fail \"Panel without mTLS cert should be rejected (000/400/496), got HTTP $NO_CERT_STATUS\"\nfi"
+    },
+    {
+      "id": "4-dashboard-api-returns-data",
+      "label": "4. Dashboard API returns data",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "GET /api/health",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "health"
+          },
+          "capture": [
+            {
+              "variable": "HEALTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "GET /api/health returns status: ok",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "GET /api/health returns status: ok"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "GET /api/system/stats",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "system/stats"
+          },
+          "capture": [
+            {
+              "variable": "STATS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "GET /api/system/stats has cpu field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "STATS_RESPONSE"
+              },
+              "path": ".cpu",
+              "message": "GET /api/system/stats has cpu field"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "GET /api/system/stats has memory field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "STATS_RESPONSE"
+              },
+              "path": ".memory",
+              "message": "GET /api/system/stats has memory field"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "GET /api/system/stats has disk field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "STATS_RESPONSE"
+              },
+              "path": ".disk",
+              "message": "GET /api/system/stats has disk field"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"4. Dashboard API returns data\"\n# ===========================================================================\n\n# GET /api/health\nHEALTH_RESPONSE=$(host_api_get \"health\")\nassert_json_field \"$HEALTH_RESPONSE\" '.status' 'ok' \"GET /api/health returns status: ok\" || true\n\n# GET /api/system/stats\nSTATS_RESPONSE=$(host_api_get \"system/stats\")\nassert_json_field_not_empty \"$STATS_RESPONSE\" '.cpu' \"GET /api/system/stats has cpu field\" || true\nassert_json_field_not_empty \"$STATS_RESPONSE\" '.memory' \"GET /api/system/stats has memory field\" || true\nassert_json_field_not_empty \"$STATS_RESPONSE\" '.disk' \"GET /api/system/stats has disk field\" || true"
+    },
+    {
+      "id": "5-tunnel-management-via-panel",
+      "label": "5. Tunnel management via panel",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "GET /api/tunnels returns tunnels array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "LIST_BEFORE"
+              },
+              "path": ".tunnels",
+              "message": "GET /api/tunnels returns tunnels array"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set TUNNEL_COUNT_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_BEFORE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_COUNT_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Tunnels before create: $TUNNEL_COUNT_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Tunnels before create: $TUNNEL_COUNT_BEFORE"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "POST /api/tunnels create returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /api/tunnels create returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Extract TEST_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TEST_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Created tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Created tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Created tunnel ID: $TEST_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created tunnel ID: $TEST_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER_CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Set TUNNEL_COUNT_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER_CREATE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_COUNT_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Set FOUND_TUNNEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER_CREATE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_TUNNEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "New tunnel appears in tunnel list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_TUNNEL"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_TUNNEL_ID"
+              },
+              "message": "New tunnel appears in tunnel list"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "PATCH /api/tunnels/${TEST_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TEST_TUNNEL_ID}",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "PATCH /api/tunnels/:id disable returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PATCH /api/tunnels/:id disable returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_DISABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Set DISABLED_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_DISABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "DISABLED_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Tunnel shows as disabled after PATCH",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLED_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Tunnel shows as disabled after PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "PATCH /api/tunnels/${TEST_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TEST_TUNNEL_ID}",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "PATCH /api/tunnels/:id re-enable returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PATCH /api/tunnels/:id re-enable returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Set ENABLED_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_ENABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "ENABLED_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Tunnel shows as enabled after re-enable PATCH",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLED_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel shows as enabled after re-enable PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "DELETE /api/tunnels/${TEST_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/${TEST_TUNNEL_ID}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_TUNNEL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "DELETE /api/tunnels/:id returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_TUNNEL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "DELETE /api/tunnels/:id returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Set GONE_TUNNEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER_DELETE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "GONE_TUNNEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Tunnel no longer appears after DELETE",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GONE_TUNNEL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Tunnel no longer appears after DELETE"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"5. Tunnel management via panel\"\n# ===========================================================================\n\n# GET /api/tunnels — list existing tunnels\nLIST_BEFORE=$(host_api_get \"tunnels\")\nassert_json_field_not_empty \"$LIST_BEFORE\" '.tunnels' \"GET /api/tunnels returns tunnels array\" || true\n\nTUNNEL_COUNT_BEFORE=$(echo \"$LIST_BEFORE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nlog_info \"Tunnels before create: $TUNNEL_COUNT_BEFORE\"\n\n# POST /api/tunnels — create test tunnel\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TEST_TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TEST_TUNNEL_PORT}}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"POST /api/tunnels create returned ok: true\" || true\n\nTEST_TUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Created tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TEST_TUNNEL_ID\"\n\n# GET /api/tunnels — verify new tunnel appears\nLIST_AFTER_CREATE=$(host_api_get \"tunnels\")\nTUNNEL_COUNT_AFTER=$(echo \"$LIST_AFTER_CREATE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nFOUND_TUNNEL=$(echo \"$LIST_AFTER_CREATE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_TUNNEL\" \"$TEST_TUNNEL_ID\" \"New tunnel appears in tunnel list\" || true\n\n# PATCH /api/tunnels/:id — disable\nDISABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id disable returned ok: true\" || true\n\n# Verify disabled state\nLIST_DISABLED=$(host_api_get \"tunnels\")\nDISABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$DISABLED_STATE\" \"false\" \"Tunnel shows as disabled after PATCH\" || true\n\n# PATCH /api/tunnels/:id — re-enable\nENABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id re-enable returned ok: true\" || true\n\n# Verify re-enabled state\nLIST_ENABLED=$(host_api_get \"tunnels\")\nENABLED_STATE=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE\" \"true\" \"Tunnel shows as enabled after re-enable PATCH\" || true\n\n# DELETE /api/tunnels/:id\nDELETE_TUNNEL_RESPONSE=$(host_api_delete \"tunnels/${TEST_TUNNEL_ID}\")\nassert_json_field \"$DELETE_TUNNEL_RESPONSE\" '.ok' 'true' \"DELETE /api/tunnels/:id returned ok: true\" || true\n\n# Verify tunnel is gone\nLIST_AFTER_DELETE=$(host_api_get \"tunnels\")\nGONE_TUNNEL=$(echo \"$LIST_AFTER_DELETE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$GONE_TUNNEL\" \"\" \"Tunnel no longer appears after DELETE\" || true\n\n# Clear the ID so cleanup does not try to delete again\nTEST_TUNNEL_ID=\"\""
+    },
+    {
+      "id": "6-user-management-via-panel",
+      "label": "6. User management via panel",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "GET /api/users returns users array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "USERS_LIST"
+              },
+              "path": ".users",
+              "message": "GET /api/users returns users array"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set USERS_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_LIST\" | jq '.users | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "USERS_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Users list contains at least one user (count: $USERS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Users list contains at least one user (count: $USERS_COUNT)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "USERS_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Users list should contain at least one user (count: $USERS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Users list should contain at least one user (count: $USERS_COUNT)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "USERS_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_USER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "POST /api/users create returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_USER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /api/users create returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_AFTER_CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Set FOUND_USER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_AFTER_CREATE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "New user appears in users list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_USER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_USERNAME"
+              },
+              "message": "New user appears in users list"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "PUT /api/users/${TEST_USERNAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PUT",
+            "path": "users/${TEST_USERNAME}",
+            "body": {
+              "displayname": "Updated E2E User"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_USER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "PUT /api/users/:username update returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_USER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PUT /api/users/:username update returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "POST /api/users/${TEST_USERNAME}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USERNAME}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "RESET_TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "POST /api/users/:username/reset-totp returns otpauth URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "RESET_TOTP_RESPONSE"
+              },
+              "path": ".totpUri",
+              "message": "POST /api/users/:username/reset-totp returns otpauth URI"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Extract OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OTPAUTH_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESET_TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "TOTP otpauth URI has correct scheme",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "TOTP otpauth URI has correct scheme"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "TOTP otpauth URI should start with otpauth:// (got: $OTPAUTH_URI)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "TOTP otpauth URI should start with otpauth:// (got: $OTPAUTH_URI)"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "DELETE /api/users/${TEST_USERNAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/${TEST_USERNAME}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_USER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "DELETE /api/users/:username returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_USER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "DELETE /api/users/:username returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Set GONE_USER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_AFTER_DELETE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "GONE_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "User no longer appears after DELETE",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GONE_USER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "User no longer appears after DELETE"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"6. User management via panel\"\n# ===========================================================================\n\n# GET /api/users — verify users array with at least admin\nUSERS_LIST=$(host_api_get \"users\")\nassert_json_field_not_empty \"$USERS_LIST\" '.users' \"GET /api/users returns users array\" || true\n\nUSERS_COUNT=$(echo \"$USERS_LIST\" | jq '.users | length' 2>/dev/null || echo \"0\")\nif [ \"$USERS_COUNT\" -ge 1 ]; then\n  log_pass \"Users list contains at least one user (count: $USERS_COUNT)\"\nelse\n  log_fail \"Users list should contain at least one user (count: $USERS_COUNT)\"\nfi\n\n# POST /api/users — create test user\nCREATE_USER_RESPONSE=$(host_api_post \"users\" \"{\\\"username\\\":\\\"${TEST_USERNAME}\\\",\\\"displayname\\\":\\\"E2E Test User\\\",\\\"email\\\":\\\"${TEST_USERNAME}@example.com\\\",\\\"password\\\":\\\"E2eTestPass123!!\\\"}\")\nassert_json_field \"$CREATE_USER_RESPONSE\" '.ok' 'true' \"POST /api/users create returned ok: true\" || true\n\n# GET /api/users — verify new user appears\nUSERS_AFTER_CREATE=$(host_api_get \"users\")\nFOUND_USER=$(echo \"$USERS_AFTER_CREATE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_USER\" \"$TEST_USERNAME\" \"New user appears in users list\" || true\n\n# PUT /api/users/:username — update user\nUPDATE_USER_RESPONSE=$(host_api_put \"users/${TEST_USERNAME}\" '{\"displayname\":\"Updated E2E User\"}')\nassert_json_field \"$UPDATE_USER_RESPONSE\" '.ok' 'true' \"PUT /api/users/:username update returned ok: true\" || true\n\n# POST /api/users/:username/reset-totp — reset TOTP\nRESET_TOTP_RESPONSE=$(host_api_post \"users/${TEST_USERNAME}/reset-totp\" '{}')\nassert_json_field_not_empty \"$RESET_TOTP_RESPONSE\" '.totpUri' \"POST /api/users/:username/reset-totp returns otpauth URI\" || true\n\nOTPAUTH_URI=$(echo \"$RESET_TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nif echo \"$OTPAUTH_URI\" | grep -qF \"otpauth://\"; then\n  log_pass \"TOTP otpauth URI has correct scheme\"\nelse\n  log_fail \"TOTP otpauth URI should start with otpauth:// (got: $OTPAUTH_URI)\"\nfi\n\n# DELETE /api/users/:username\nDELETE_USER_RESPONSE=$(host_api_delete \"users/${TEST_USERNAME}\")\nassert_json_field \"$DELETE_USER_RESPONSE\" '.ok' 'true' \"DELETE /api/users/:username returned ok: true\" || true\n\n# Verify user is gone\nUSERS_AFTER_DELETE=$(host_api_get \"users\")\nGONE_USER=$(echo \"$USERS_AFTER_DELETE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$GONE_USER\" \"\" \"User no longer appears after DELETE\" || true\n\n# Clear username so cleanup does not try to delete again\nTEST_USERNAME=\"\""
+    },
+    {
+      "id": "7-service-management-via-panel",
+      "label": "7. Service management via panel",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "GET /api/services returns services array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "SERVICES_RESPONSE"
+              },
+              "path": ".services",
+              "message": "GET /api/services returns services array"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Set FOUND_SVC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SERVICES_RESPONSE\" | jq -r --arg s \"$SVC\" '.services[] | select(.name == $s) | .name' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_SVC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "Service '$SVC' is listed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Service '$SVC' is listed"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "FOUND_SVC",
+            "value": "$SVC"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Service '$SVC' not found in services list",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Service '$SVC' not found in services list"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "FOUND_SVC",
+            "value": "$SVC"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"7. Service management via panel\"\n# ===========================================================================\n\n# GET /api/services — list service statuses\nSERVICES_RESPONSE=$(host_api_get \"services\")\nassert_json_field_not_empty \"$SERVICES_RESPONSE\" '.services' \"GET /api/services returns services array\" || true\n\n# Verify expected services are listed\nEXPECTED_SERVICES=(\"nginx\" \"chisel\" \"authelia\" \"lamalibre-lamaste-serverd\")\nfor SVC in \"${EXPECTED_SERVICES[@]}\"; do\n  FOUND_SVC=$(echo \"$SERVICES_RESPONSE\" | jq -r --arg s \"$SVC\" '.services[] | select(.name == $s) | .name' 2>/dev/null || echo \"\")\n  if [ \"$FOUND_SVC\" = \"$SVC\" ]; then\n    log_pass \"Service '$SVC' is listed\"\n  else\n    log_fail \"Service '$SVC' not found in services list\"\n  fi\ndone"
+    },
+    {
+      "id": "8-certificate-management",
+      "label": "8. Certificate management",
+      "steps": [
+        {
+          "id": "step-80",
+          "label": "GET /api/certs",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs"
+          },
+          "capture": [
+            {
+              "variable": "CERTS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "GET /api/certs returns certificate info",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CERTS_RESPONSE"
+              },
+              "path": ".",
+              "message": "GET /api/certs returns certificate info"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Certs response keys: $(echo \"$CERTS_RESPONSE\" | jq -r 'keys | join(\", \")' 2>/dev/null || echo 'unable to parse')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Certs response keys: $(echo \"$CERTS_RESPONSE\" | jq -r 'keys | join(\", \")' 2>/dev/null || echo 'unable to parse')"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"8. Certificate management\"\n# ===========================================================================\n\n# GET /api/certs — list certificates\nCERTS_RESPONSE=$(host_api_get \"certs\")\nassert_json_field_not_empty \"$CERTS_RESPONSE\" '.' \"GET /api/certs returns certificate info\" || true\nlog_info \"Certs response keys: $(echo \"$CERTS_RESPONSE\" | jq -r 'keys | join(\", \")' 2>/dev/null || echo 'unable to parse')\""
+    },
+    {
+      "id": "9-cleanup",
+      "label": "9. Cleanup",
+      "steps": [
+        {
+          "id": "step-83",
+          "label": "All test sections completed. EXIT trap will handle resource cleanup.",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "All test sections completed. EXIT trap will handle resource cleanup."
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"9. Cleanup\"\n# ===========================================================================\n\n# Cleanup is handled by the EXIT trap. Log that we reached this point cleanly.\nlog_info \"All test sections completed. EXIT trap will handle resource cleanup.\""
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_put",
+    "host_api_patch",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 05 — Admin Journey (Three-VM)\n# ============================================================================\n# Tests the admin's experience using the panel — verifying that the panel UI\n# is accessible, APIs return correct data, and CRUD operations on tunnels,\n# users, services, and certificates work as expected.\n#\n# Runs from the developer's Mac and uses `multipass exec` to interact with VMs.\n#\n# Required environment variables:\n#   HOST_IP      — IP address of the host VM\n#   TEST_DOMAIN  — Domain configured for testing\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_put() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PUT -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTEST_TUNNEL_SUBDOMAIN=\"e2eadmin\"\nTEST_TUNNEL_PORT=18090\nTEST_TUNNEL_ID=\"\"\nTEST_USERNAME=\"e2etestuser\"\n\nbegin_test \"05 — Admin Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Delete test tunnel if created\n  if [ -n \"$TEST_TUNNEL_ID\" ] && [ \"$TEST_TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TEST_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n\n  # Delete test user if created\n  host_api_delete \"users/${TEST_USERNAME}\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

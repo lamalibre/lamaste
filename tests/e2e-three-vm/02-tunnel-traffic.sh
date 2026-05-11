@@ -25,19 +25,19 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
-agent_exec() { multipass exec portlama-agent -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
+agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ TUNNEL_SUBDOMAIN="e2etraffic"
 TUNNEL_PORT=18080
 TUNNEL_FQDN="${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}"
 TUNNEL_ID=""
-MARKER="PORTLAMA_TUNNEL_OK_$(date +%s)"
+MARKER="LAMALIBRE_LAMASTE_TUNNEL_OK_$(date +%s)"
 
 begin_test "02 — Tunnel Traffic (Three-VM)"
 
@@ -72,7 +72,7 @@ cleanup() {
   if [ -n "$TUNNEL_ID" ] && [ "$TUNNEL_ID" != "null" ]; then
     host_api_delete "tunnels/${TUNNEL_ID}" 2>/dev/null || true
   fi
-  agent_exec "portlama-agent update 2>/dev/null || true" 2>/dev/null || true
+  agent_exec "lamaste-agent update 2>/dev/null || true" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -129,9 +129,9 @@ assert_eq "$AGENT_HTTP_STATUS" "200" "HTTP server running on agent at port ${TUN
 log_section "Refresh agent config to pick up new tunnel"
 # ---------------------------------------------------------------------------
 
-# The portlama-agent manages the Chisel client as a systemd service.
+# The lamaste-agent manages the Chisel client as a systemd service.
 # Running 'update' fetches the latest tunnel config and restarts the service.
-agent_exec "portlama-agent update"
+agent_exec "lamaste-agent update"
 
 # Wait for the tunnel to establish
 log_info "Waiting for Chisel tunnel to establish..."
@@ -149,7 +149,7 @@ if [ "$CHISEL_READY" = "true" ]; then
   log_pass "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)"
 else
   log_fail "Chisel tunnel failed to establish within 15 seconds"
-  AGENT_LOG=$(agent_exec "tail -20 ~/.portlama/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'")
+  AGENT_LOG=$(agent_exec "tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'")
   log_info "Chisel agent log: $AGENT_LOG"
 fi
 

@@ -1,4 +1,4 @@
-# Portlama E2E: 15 — Plugin Lifecycle
+# Lamaste E2E: 15 — Plugin Lifecycle
 
 > Started at `2026-03-30 13:07:05 UTC`
 

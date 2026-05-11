@@ -1,0 +1,592 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 1,
+    "name": "Onboarding Complete Verification",
+    "suite": "e2e-three-vm",
+    "description": "01 — Onboarding Complete Verification (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "dig"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "onboarding-status",
+      "label": "Onboarding status",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract ONBOARDING_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ONBOARDING_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "STATUS_JSON"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding status is COMPLETED",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ONBOARDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "COMPLETED"
+              },
+              "message": "Onboarding status is COMPLETED"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Extract DOMAIN_FROM_API",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DOMAIN_FROM_API",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "STATUS_JSON"
+              },
+              "expression": ".domain"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Domain is set in onboarding status: $DOMAIN_FROM_API",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Domain is set in onboarding status: $DOMAIN_FROM_API"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "DOMAIN_FROM_API"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "DOMAIN_FROM_API",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Domain is not set in onboarding status",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Domain is not set in onboarding status"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "DOMAIN_FROM_API"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "DOMAIN_FROM_API",
+                "value": "null"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Onboarding status\"\n# ---------------------------------------------------------------------------\n\nSTATUS_JSON=$(host_api_get \"onboarding/status\" || echo '{}')\nONBOARDING_STATUS=$(echo \"$STATUS_JSON\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nassert_eq \"$ONBOARDING_STATUS\" \"COMPLETED\" \"Onboarding status is COMPLETED\" || true\n\nDOMAIN_FROM_API=$(echo \"$STATUS_JSON\" | jq -r '.domain' 2>/dev/null || echo \"\")\nif [ -n \"$DOMAIN_FROM_API\" ] && [ \"$DOMAIN_FROM_API\" != \"null\" ]; then\n  log_pass \"Domain is set in onboarding status: $DOMAIN_FROM_API\"\nelse\n  log_fail \"Domain is not set in onboarding status\"\nfi"
+    },
+    {
+      "id": "core-services-running",
+      "label": "Core services running",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active $svc 2>/dev/null || echo inactive"
+          },
+          "capture": [
+            {
+              "variable": "SVC_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Service $svc is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SVC_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Service $svc is active"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Core services running\"\n# ---------------------------------------------------------------------------\n\nSERVICES=(nginx chisel authelia lamalibre-lamaste-serverd)\n\nfor svc in \"${SERVICES[@]}\"; do\n  SVC_STATUS=$(host_exec \"systemctl is-active $svc 2>/dev/null || echo inactive\")\n  assert_eq \"$SVC_STATUS\" \"active\" \"Service $svc is active\" || true\ndone"
+    },
+    {
+      "id": "self-signed-certificates-exist",
+      "label": "Self-signed certificates exist",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -f $cert_path && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "EXISTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Certificate exists: $cert_path",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXISTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Certificate exists: $cert_path"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Self-signed certificates exist\"\n# ---------------------------------------------------------------------------\n\nCERT_PATHS=(\n  \"/etc/lamalibre/lamaste/pki/ca.crt\"\n  \"/etc/lamalibre/lamaste/pki/ca.key\"\n  \"/etc/lamalibre/lamaste/pki/client.crt\"\n  \"/etc/lamalibre/lamaste/pki/client.key\"\n  \"/etc/lamalibre/lamaste/pki/self-signed.pem\"\n  \"/etc/lamalibre/lamaste/pki/self-signed-key.pem\"\n)\n\nfor cert_path in \"${CERT_PATHS[@]}\"; do\n  EXISTS=$(host_exec \"test -f $cert_path && echo yes || echo no\")\n  assert_eq \"$EXISTS\" \"yes\" \"Certificate exists: $cert_path\" || true\ndone"
+    },
+    {
+      "id": "panel-accessible-via-domain-mtls",
+      "label": "Panel accessible via domain (mTLS)",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://panel.${TEST_DOMAIN}",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "PANEL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Panel accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "PANEL_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "PANEL_STATUS",
+                "value": "302"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Panel not accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel not accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "PANEL_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "PANEL_STATUS",
+                "value": "302"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel accessible via domain (mTLS)\"\n# ---------------------------------------------------------------------------\n\n# curl from the host VM to the panel domain — nginx should serve it\nPANEL_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://panel.${TEST_DOMAIN}\" || echo \"000\")\nif [ \"$PANEL_STATUS\" = \"200\" ] || [ \"$PANEL_STATUS\" = \"302\" ]; then\n  log_pass \"Panel accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)\"\nelse\n  log_fail \"Panel not accessible via https://panel.${TEST_DOMAIN} (HTTP $PANEL_STATUS)\"\nfi"
+    },
+    {
+      "id": "dns-resolution",
+      "label": "DNS resolution",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "DNS lookup ${TEST_DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "dns",
+            "domain": "${TEST_DOMAIN}"
+          },
+          "capture": [
+            {
+              "variable": "RESOLVED_IP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "DNS resolves ${TEST_DOMAIN} to ${HOST_IP}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "DNS resolves ${TEST_DOMAIN} to ${HOST_IP}"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RESOLVED_IP",
+            "value": "$HOST_IP"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "dig +short ${TEST_DOMAIN} @127.0.0.1 2>/dev/null | head -1"
+          },
+          "capture": [
+            {
+              "variable": "RESOLVED_IP_HOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "RESOLVED_IP",
+            "value": "$HOST_IP"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "DNS resolves ${TEST_DOMAIN} to ${HOST_IP} (from host VM)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "DNS resolves ${TEST_DOMAIN} to ${HOST_IP} (from host VM)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RESOLVED_IP_HOST",
+            "value": "$HOST_IP"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "DNS does not resolve ${TEST_DOMAIN} to ${HOST_IP} (got: '${RESOLVED_IP}' externally, '${RESOLVED_IP_HOST}' from host)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "DNS does not resolve ${TEST_DOMAIN} to ${HOST_IP} (got: '${RESOLVED_IP}' externally, '${RESOLVED_IP_HOST}' from host)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "RESOLVED_IP_HOST",
+            "value": "$HOST_IP"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"DNS resolution\"\n# ---------------------------------------------------------------------------\n\n# Use dig to resolve the domain — should return HOST_IP via dnsmasq on the host\nRESOLVED_IP=$(dig +short \"${TEST_DOMAIN}\" \"@${HOST_IP}\" 2>/dev/null | head -1 || echo \"\")\nif [ \"$RESOLVED_IP\" = \"$HOST_IP\" ]; then\n  log_pass \"DNS resolves ${TEST_DOMAIN} to ${HOST_IP}\"\nelse\n  # Also check from the host VM itself\n  RESOLVED_IP_HOST=$(host_exec \"dig +short ${TEST_DOMAIN} @127.0.0.1 2>/dev/null | head -1\" || echo \"\")\n  if [ \"$RESOLVED_IP_HOST\" = \"$HOST_IP\" ]; then\n    log_pass \"DNS resolves ${TEST_DOMAIN} to ${HOST_IP} (from host VM)\"\n  else\n    log_fail \"DNS does not resolve ${TEST_DOMAIN} to ${HOST_IP} (got: '${RESOLVED_IP}' externally, '${RESOLVED_IP_HOST}' from host)\"\n  fi\nfi"
+    },
+    {
+      "id": "agent-vm-connectivity",
+      "label": "Agent VM connectivity",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${HOST_IP}:9292",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "AGENT_PING",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Agent VM can reach host VM at ${HOST_IP}:9292 (HTTP $AGENT_PING)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent VM can reach host VM at ${HOST_IP}:9292 (HTTP $AGENT_PING)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_PING",
+            "value": "000"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Agent VM cannot reach host VM at ${HOST_IP}:9292",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent VM cannot reach host VM at ${HOST_IP}:9292"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENT_PING",
+            "value": "000"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Agent VM connectivity\"\n# ---------------------------------------------------------------------------\n\n# Verify agent VM can reach the host VM\nAGENT_PING=$(agent_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${HOST_IP}:9292 2>/dev/null\" || echo \"000\")\n# Without mTLS cert, the agent should get a TLS error or 4xx — but the TCP connection should succeed\nif [ \"$AGENT_PING\" != \"000\" ]; then\n  log_pass \"Agent VM can reach host VM at ${HOST_IP}:9292 (HTTP $AGENT_PING)\"\nelse\n  log_fail \"Agent VM cannot reach host VM at ${HOST_IP}:9292\"\nfi"
+    },
+    {
+      "id": "visitor-vm-connectivity",
+      "label": "Visitor VM connectivity",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${HOST_IP}:9292",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "VISITOR_PING",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Visitor VM can reach host VM at ${HOST_IP}:9292 (HTTP $VISITOR_PING)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Visitor VM can reach host VM at ${HOST_IP}:9292 (HTTP $VISITOR_PING)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "VISITOR_PING",
+            "value": "000"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Visitor VM cannot reach host VM at ${HOST_IP}:9292",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Visitor VM cannot reach host VM at ${HOST_IP}:9292"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "VISITOR_PING",
+            "value": "000"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://auth.${TEST_DOMAIN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "VISITOR_AUTH",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Visitor VM can reach Authelia at auth.${TEST_DOMAIN} (HTTP $VISITOR_AUTH)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Visitor VM can reach Authelia at auth.${TEST_DOMAIN} (HTTP $VISITOR_AUTH)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "VISITOR_AUTH",
+            "value": "000"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "VISITOR_AUTH",
+            "value": "000"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visitor VM connectivity\"\n# ---------------------------------------------------------------------------\n\n# Verify visitor VM can reach the host VM (no mTLS certs — should get rejected but reachable)\nVISITOR_PING=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${HOST_IP}:9292 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_PING\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach host VM at ${HOST_IP}:9292 (HTTP $VISITOR_PING)\"\nelse\n  log_fail \"Visitor VM cannot reach host VM at ${HOST_IP}:9292\"\nfi\n\n# Verify visitor can reach Authelia portal (no mTLS required for auth vhost)\nVISITOR_AUTH=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://auth.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_AUTH\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach Authelia at auth.${TEST_DOMAIN} (HTTP $VISITOR_AUTH)\"\nelse\n  log_fail \"Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}\"\nfi"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get"
+  ],
+  "headerRaw": "# ============================================================================\n# 01 — Onboarding Complete Verification (Three-VM)\n# ============================================================================\n# Verifies that setup-host.sh completed successfully:\n# - Onboarding status is COMPLETED\n# - All core services are running (nginx, chisel, authelia, lamalibre-lamaste-serverd)\n# - Self-signed certificates exist at expected paths\n# - Panel is accessible via domain with mTLS\n# - DNS resolves TEST_DOMAIN to HOST_IP\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq dig\n\n# ---------------------------------------------------------------------------\n# VM exec helpers — run commands on host/agent VMs via multipass\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\n# mTLS API helpers — execute curl on the host VM using its local certs\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"01 — Onboarding Complete Verification (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

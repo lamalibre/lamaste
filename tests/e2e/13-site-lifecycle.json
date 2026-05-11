@@ -1,0 +1,1329 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 13,
+    "name": "Site Lifecycle",
+    "suite": "e2e",
+    "description": "13 — Site Lifecycle",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE sites/${SITE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${SITE_ID}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping site tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\""
+    },
+    {
+      "id": "create-managed-static-site",
+      "label": "Create managed static site",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Site creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Extract SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.id"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Site has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.id",
+              "message": "Site has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Site name matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.name",
+              "expected": {
+                "kind": "var",
+                "name": "SITE_NAME"
+              },
+              "message": "Site name matches"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Site type is managed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.type",
+              "expected": {
+                "kind": "literal",
+                "value": "managed"
+              },
+              "message": "Site type is managed"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Extract SITE_FQDN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_FQDN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.fqdn"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Created site: ${SITE_FQDN} (ID: ${SITE_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created site: ${SITE_FQDN} (ID: ${SITE_ID})"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create managed static site\"\n# ---------------------------------------------------------------------------\n\nSITE_NAME=\"e2esite\"\nCREATE_RESPONSE=$(api_post \"sites\" \"{\\\"name\\\":\\\"${SITE_NAME}\\\",\\\"type\\\":\\\"managed\\\",\\\"spaMode\\\":false,\\\"autheliaProtected\\\":false}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Site creation returned ok: true\" || true\n\nSITE_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.site.id' \"Site has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.site.name' \"$SITE_NAME\" \"Site name matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.site.type' \"managed\" \"Site type is managed\" || true\n\nSITE_FQDN=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.fqdn' 2>/dev/null || echo \"\")\nlog_info \"Created site: ${SITE_FQDN} (ID: ${SITE_ID})\"\n\n# Cleanup function\ncleanup() {\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    api_delete \"sites/${SITE_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT"
+    },
+    {
+      "id": "verify-site-in-listing",
+      "label": "Verify site in listing",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "GET /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "SITES_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Set FOUND_SITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SITES_LIST\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Site appears in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_SITE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "SITE_NAME"
+              },
+              "message": "Site appears in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify site in listing\"\n# ---------------------------------------------------------------------------\n\nSITES_LIST=$(api_get \"sites\")\nFOUND_SITE=$(echo \"$SITES_LIST\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_SITE\" \"$SITE_NAME\" \"Site appears in listing\" || true"
+    },
+    {
+      "id": "list-files-default-content",
+      "label": "List files — default content",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "GET /api/sites/${SITE_ID}/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/${SITE_ID}/files?path=."
+          },
+          "capture": [
+            {
+              "variable": "FILES_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Set FILE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$FILES_RESPONSE\" | jq '.files | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "FILE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Site has default files (count: ${FILE_COUNT})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Site has default files (count: ${FILE_COUNT})"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Site has no default files",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Site has no default files"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Extract DEFAULT_FILE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DEFAULT_FILE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "FILES_RESPONSE"
+              },
+              "expression": ".files[] | select(.name == \"index.html\") | .name"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Default index.html exists",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DEFAULT_FILE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "index.html"
+              },
+              "message": "Default index.html exists"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"List files — default content\"\n# ---------------------------------------------------------------------------\n\nFILES_RESPONSE=$(api_get \"sites/${SITE_ID}/files?path=.\")\nFILE_COUNT=$(echo \"$FILES_RESPONSE\" | jq '.files | length' 2>/dev/null || echo \"0\")\nif [ \"$FILE_COUNT\" -gt 0 ]; then\n  log_pass \"Site has default files (count: ${FILE_COUNT})\"\nelse\n  log_fail \"Site has no default files\"\nfi\n\nDEFAULT_FILE=$(echo \"$FILES_RESPONSE\" | jq -r '.files[] | select(.name == \"index.html\") | .name' 2>/dev/null || echo \"\")\nassert_eq \"$DEFAULT_FILE\" \"index.html\" \"Default index.html exists\" || true"
+    },
+    {
+      "id": "upload-test-file",
+      "label": "Upload test file",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Set TEST_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/e2e-site-test-XXXXXX.html"
+          },
+          "capture": [
+            {
+              "variable": "TEST_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set UPLOAD_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file \"sites/${SITE_ID}/files?path=.\" \"$TEST_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "UPLOAD_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Set UPLOADED_BASENAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "basename \"$TEST_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "UPLOADED_BASENAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "File upload returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPLOAD_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "File upload returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Upload test file\"\n# ---------------------------------------------------------------------------\n\nTEST_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.html)\necho \"<html><body><h1>E2E Test</h1></body></html>\" > \"$TEST_FILE\"\nUPLOAD_RESPONSE=$(api_upload_file \"sites/${SITE_ID}/files?path=.\" \"$TEST_FILE\")\nUPLOADED_BASENAME=$(basename \"$TEST_FILE\")\nrm -f \"$TEST_FILE\"\nassert_json_field \"$UPLOAD_RESPONSE\" '.ok' 'true' \"File upload returned ok: true\" || true"
+    },
+    {
+      "id": "verify-uploaded-file-in-listing",
+      "label": "Verify uploaded file in listing",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "GET /api/sites/${SITE_ID}/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/${SITE_ID}/files?path=."
+          },
+          "capture": [
+            {
+              "variable": "FILES_AFTER_UPLOAD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Set FOUND_UPLOAD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$FILES_AFTER_UPLOAD\" | jq -r \".files[] | select(.name == \\\"${UPLOADED_BASENAME}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_UPLOAD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Uploaded file appears in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_UPLOAD"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "UPLOADED_BASENAME"
+              },
+              "message": "Uploaded file appears in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify uploaded file in listing\"\n# ---------------------------------------------------------------------------\n\nFILES_AFTER_UPLOAD=$(api_get \"sites/${SITE_ID}/files?path=.\")\nFOUND_UPLOAD=$(echo \"$FILES_AFTER_UPLOAD\" | jq -r \".files[] | select(.name == \\\"${UPLOADED_BASENAME}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_UPLOAD\" \"$UPLOADED_BASENAME\" \"Uploaded file appears in listing\" || true"
+    },
+    {
+      "id": "delete-uploaded-file",
+      "label": "Delete uploaded file",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Set DELETE_FILE_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -X DELETE -H \"Content-Type: application/json\" -d \"{\\\"path\\\":\\\"${UPLOADED_BASENAME}\\\"}\" \"${BASE_URL}/api/sites/${SITE_ID}/files\""
+          },
+          "capture": [
+            {
+              "variable": "DELETE_FILE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "File deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_FILE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "File deletion returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete uploaded file\"\n# ---------------------------------------------------------------------------\n\nDELETE_FILE_RESPONSE=$(_curl_mtls \\\n  -X DELETE \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"path\\\":\\\"${UPLOADED_BASENAME}\\\"}\" \\\n  \"${BASE_URL}/api/sites/${SITE_ID}/files\")\nassert_json_field \"$DELETE_FILE_RESPONSE\" '.ok' 'true' \"File deletion returned ok: true\" || true"
+    },
+    {
+      "id": "verify-file-removed",
+      "label": "Verify file removed",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "GET /api/sites/${SITE_ID}/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/${SITE_ID}/files?path=."
+          },
+          "capture": [
+            {
+              "variable": "FILES_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Set FOUND_DELETED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$FILES_AFTER_DELETE\" | jq -r \".files[] | select(.name == \\\"${UPLOADED_BASENAME}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_DELETED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Deleted file no longer in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_DELETED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Deleted file no longer in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify file removed\"\n# ---------------------------------------------------------------------------\n\nFILES_AFTER_DELETE=$(api_get \"sites/${SITE_ID}/files?path=.\")\nFOUND_DELETED=$(echo \"$FILES_AFTER_DELETE\" | jq -r \".files[] | select(.name == \\\"${UPLOADED_BASENAME}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_DELETED\" \"\" \"Deleted file no longer in listing\" || true"
+    },
+    {
+      "id": "update-site-settings",
+      "label": "Update site settings",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "PATCH /api/sites/${SITE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "sites/${SITE_ID}",
+            "body": {
+              "spaMode": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "PATCH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Settings update returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Settings update returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "SPA mode is now enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_RESPONSE"
+              },
+              "path": ".site.spaMode",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "SPA mode is now enabled"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "SITE_DETAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "SPA mode persisted in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SITE_DETAIL"
+              },
+              "path": ".spaMode",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "SPA mode persisted in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Update site settings\"\n# ---------------------------------------------------------------------------\n\nPATCH_RESPONSE=$(api_patch \"sites/${SITE_ID}\" '{\"spaMode\":true}')\nassert_json_field \"$PATCH_RESPONSE\" '.ok' 'true' \"Settings update returned ok: true\" || true\nassert_json_field \"$PATCH_RESPONSE\" '.site.spaMode' 'true' \"SPA mode is now enabled\" || true\n\n# Verify settings persisted\nSITE_DETAIL=$(api_get \"sites\" | jq \".sites[] | select(.id == \\\"${SITE_ID}\\\")\")\nassert_json_field \"$SITE_DETAIL\" '.spaMode' 'true' \"SPA mode persisted in listing\" || true"
+    },
+    {
+      "id": "file-extension-validation",
+      "label": "File extension validation",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Set PHP_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/e2e-site-test-XXXXXX.php"
+          },
+          "capture": [
+            {
+              "variable": "PHP_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Set PHP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$PHP_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "PHP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Upload of .php file rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PHP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Upload of .php file rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set EXE_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/e2e-site-test-XXXXXX.exe"
+          },
+          "capture": [
+            {
+              "variable": "EXE_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Set EXE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$EXE_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "EXE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Upload of .exe file rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Upload of .exe file rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set NOEXT_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/e2e-site-test-XXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "NOEXT_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "Set NOEXT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$NOEXT_CLEAN\""
+          },
+          "capture": [
+            {
+              "variable": "NOEXT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Upload of file with no extension rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOEXT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Upload of file with no extension rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set CSS_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/e2e-site-test-XXXXXX.css"
+          },
+          "capture": [
+            {
+              "variable": "CSS_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "Set CSS_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "api_upload_file \"sites/${SITE_ID}/files?path=.\" \"$CSS_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Set CSS_BASENAME",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "basename \"$CSS_FILE\""
+          },
+          "capture": [
+            {
+              "variable": "CSS_BASENAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Upload of .css file succeeds",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CSS_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Upload of .css file succeeds"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"File extension validation\"\n# ---------------------------------------------------------------------------\n\n# Disallowed extension (.php) — should be rejected with 400\nPHP_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.php)\necho \"<?php echo 'pwned'; ?>\" > \"$PHP_FILE\"\nPHP_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$PHP_FILE\")\nrm -f \"$PHP_FILE\"\nassert_eq \"$PHP_STATUS\" \"400\" \"Upload of .php file rejected with 400\" || true\n\n# Disallowed extension (.exe) — should be rejected with 400\nEXE_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.exe)\necho \"MZ\" > \"$EXE_FILE\"\nEXE_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$EXE_FILE\")\nrm -f \"$EXE_FILE\"\nassert_eq \"$EXE_STATUS\" \"400\" \"Upload of .exe file rejected with 400\" || true\n\n# No extension — should be rejected with 400\nNOEXT_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX)\necho \"no extension\" > \"$NOEXT_FILE\"\n# Rename to strip any suffix mktemp might add\nNOEXT_CLEAN=\"/tmp/e2e-noext-testfile\"\ncp \"$NOEXT_FILE\" \"$NOEXT_CLEAN\"\nrm -f \"$NOEXT_FILE\"\nNOEXT_STATUS=$(api_upload_file_status \"sites/${SITE_ID}/files?path=.\" \"$NOEXT_CLEAN\")\nrm -f \"$NOEXT_CLEAN\"\nassert_eq \"$NOEXT_STATUS\" \"400\" \"Upload of file with no extension rejected with 400\" || true\n\n# Allowed extension (.css) — should succeed\nCSS_FILE=$(mktemp /tmp/e2e-site-test-XXXXXX.css)\necho \"body { color: red; }\" > \"$CSS_FILE\"\nCSS_RESPONSE=$(api_upload_file \"sites/${SITE_ID}/files?path=.\" \"$CSS_FILE\")\nCSS_BASENAME=$(basename \"$CSS_FILE\")\nrm -f \"$CSS_FILE\"\nassert_json_field \"$CSS_RESPONSE\" '.ok' 'true' \"Upload of .css file succeeds\" || true\n\n# Clean up the uploaded css file\n_curl_mtls \\\n  -X DELETE \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"path\\\":\\\"${CSS_BASENAME}\\\"}\" \\\n  \"${BASE_URL}/api/sites/${SITE_ID}/files\" > /dev/null 2>&1 || true"
+    },
+    {
+      "id": "input-validation",
+      "label": "Input validation",
+      "steps": [
+        {
+          "id": "step-64",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "Duplicate site name rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Duplicate site name rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": {
+              "name": "panel",
+              "type": "managed"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Reserved name 'panel' rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reserved name 'panel' rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": {
+              "name": "auth",
+              "type": "managed"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_STATUS2",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Reserved name 'auth' rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_STATUS2"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reserved name 'auth' rejected with 400"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "GET /api/sites/not-a-uuid/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/not-a-uuid/files?path=.",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_ID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "Invalid UUID rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_ID_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Invalid UUID rejected with 400"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Input validation\"\n# ---------------------------------------------------------------------------\n\n# Duplicate name\nDUP_STATUS=$(api_post_status \"sites\" \"{\\\"name\\\":\\\"${SITE_NAME}\\\",\\\"type\\\":\\\"managed\\\"}\")\nassert_eq \"$DUP_STATUS\" \"400\" \"Duplicate site name rejected with 400\" || true\n\n# Reserved name\nRESERVED_STATUS=$(api_post_status \"sites\" '{\"name\":\"panel\",\"type\":\"managed\"}')\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved name 'panel' rejected with 400\" || true\n\nRESERVED_STATUS2=$(api_post_status \"sites\" '{\"name\":\"auth\",\"type\":\"managed\"}')\nassert_eq \"$RESERVED_STATUS2\" \"400\" \"Reserved name 'auth' rejected with 400\" || true\n\n# Invalid UUID for site operations\nINVALID_ID_STATUS=$(api_get_status \"sites/not-a-uuid/files?path=.\")\nassert_eq \"$INVALID_ID_STATUS\" \"400\" \"Invalid UUID rejected with 400\" || true"
+    },
+    {
+      "id": "delete-site",
+      "label": "Delete site",
+      "steps": [
+        {
+          "id": "step-72",
+          "label": "DELETE /api/sites/${SITE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/${SITE_ID}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "Site deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site deletion returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete site\"\n# ---------------------------------------------------------------------------\n\n# Remove trap so cleanup doesn't double-delete\ntrap - EXIT\nDELETE_RESPONSE=$(api_delete \"sites/${SITE_ID}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Site deletion returned ok: true\" || true"
+    },
+    {
+      "id": "verify-site-removed",
+      "label": "Verify site removed",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "GET /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "SITES_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Set FOUND_DELETED_SITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SITES_AFTER_DELETE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_DELETED_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Deleted site no longer in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_DELETED_SITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Deleted site no longer in listing"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "GET /api/sites/${SITE_ID}/files?path=.",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites/${SITE_ID}/files?path=.",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "GONE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Deleted site returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GONE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Deleted site returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify site removed\"\n# ---------------------------------------------------------------------------\n\nSITES_AFTER_DELETE=$(api_get \"sites\")\nFOUND_DELETED_SITE=$(echo \"$SITES_AFTER_DELETE\" | jq -r \".sites[] | select(.id == \\\"${SITE_ID}\\\") | .name\" 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_DELETED_SITE\" \"\" \"Deleted site no longer in listing\" || true\n\n# Non-existent site returns 404\nGONE_STATUS=$(api_get_status \"sites/${SITE_ID}/files?path=.\")\nassert_eq \"$GONE_STATUS\" \"404\" \"Deleted site returns 404\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 13 — Site Lifecycle\n# ============================================================================\n# Verifies static site CRUD operations:\n# - Create a managed static site via POST /api/sites\n# - Verify site appears in GET /api/sites listing\n# - List files — default index.html exists\n# - Upload test file via multipart POST\n# - Verify uploaded file in listing\n# - Delete file via DELETE /api/sites/:id/files\n# - Verify file removed\n# - Update settings via PATCH (toggle spaMode)\n# - Verify settings persisted\n# - Delete site via DELETE /api/sites/:id\n# - Verify site removed from listing\n# - Validation: duplicate name, reserved name, invalid UUID\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"13 — Site Lifecycle\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

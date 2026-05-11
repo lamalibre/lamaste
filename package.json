@@ -1,17 +1,17 @@
 {
-  "name": "portlama",
+  "name": "lamaste",
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*/*"
   ],
   "scripts": {
     "build": "npm run --workspaces --if-present build",
-    "dev:server": "npm run dev -w packages/panel-server",
-    "dev:client": "npm run dev -w packages/panel-client",
+    "dev:server": "npm run dev -w packages/server/daemon",
+    "dev:client": "npm run dev -w packages/server/ui",
     "docs:dev": "npm --prefix website run dev",
     "docs:build": "npm --prefix website run build",
-    "build:agent-panel-web": "npm run build:web -w packages/portlama-agent-panel && cp -r packages/portlama-agent-panel/dist-web/. packages/portlama-agent/panel-dist/",
+    "build:agent-panel-web": "npm run build:web -w packages/agent/ui && cp -r packages/agent/ui/dist-web/. packages/agent/daemon/panel-dist/",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

@@ -1,0 +1,31 @@
+{
+  "name": "@lamalibre/lamaste-server",
+  "version": "2.0.0",
+  "description": "Server operations CLI for Lamaste",
+  "type": "module",
+  "license": "SEE LICENSE IN ../../LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "lamaste-server": "bin/lamaste-server.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "echo 'No lint configured'"
+  },
+  "dependencies": {
+    "@lamalibre/lamaste": "^2.0.0",
+    "chalk": "^5.3.0",
+    "execa": "^9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/server/cli"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

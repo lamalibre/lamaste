@@ -1,4 +1,4 @@
-# Portlama E2E: 13 — Panel Built-in TOTP 2FA (Three-VM)
+# Lamaste E2E: 13 — Panel Built-in TOTP 2FA (Three-VM)
 
 > Started at `2026-03-30 13:11:51 UTC`
 

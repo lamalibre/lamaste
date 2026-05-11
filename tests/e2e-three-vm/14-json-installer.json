@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 14,
+    "name": "JSON Installer Output",
+    "suite": "e2e-three-vm",
+    "description": "14 — JSON Installer Output (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "create-lamaste-json-on-host-vm-redeploy-mode",
+      "label": "create-lamaste --json on host VM (redeploy mode)",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "create-lamaste --json > /tmp/json-install-output.txt 2>/dev/null; true"
+          }
+        },
+        {
+          "id": "step-1",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/json-install-output.txt 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "JSON_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "No NDJSON output from create-lamaste --json on host VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No NDJSON output from create-lamaste --json on host VM"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "JSON_OUTPUT"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"create-lamaste --json on host VM (redeploy mode)\"\n# ---------------------------------------------------------------------------\n\n# Write the JSON output to a temp file on the VM, then read it back.\n# This avoids stdout capture issues through multipass exec piping.\nhost_exec \"create-lamaste --json > /tmp/json-install-output.txt 2>/dev/null; true\"\n\nJSON_OUTPUT=$(host_exec \"cat /tmp/json-install-output.txt 2>/dev/null\" || true)\n\nif [ -z \"$JSON_OUTPUT\" ]; then\n  log_fail \"No NDJSON output from create-lamaste --json on host VM\"\n  end_test\n  exit 1\nfi"
+    },
+    {
+      "id": "ndjson-line-validation",
+      "label": "NDJSON line validation",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Set LINE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(LINE_COUNT + 1)"
+          },
+          "capture": [
+            {
+              "variable": "LINE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Set VALID_LINES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(VALID_LINES + 1)"
+          },
+          "capture": [
+            {
+              "variable": "VALID_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Line $LINE_COUNT is not valid JSON: $line",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Line $LINE_COUNT is not valid JSON: $line"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Set EVENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$line\" | jq -r '.event // empty'"
+          },
+          "capture": [
+            {
+              "variable": "EVENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "All $LINE_COUNT NDJSON lines are valid JSON",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "All $LINE_COUNT NDJSON lines are valid JSON"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Step events emitted: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Step events emitted: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=2"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Expected at least 2 step events, got: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected at least 2 step events, got: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=2"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"NDJSON line validation\"\n# ---------------------------------------------------------------------------\n\nLINE_COUNT=0\nVALID_LINES=0\nSTEP_EVENTS=0\nCOMPLETE_EVENTS=0\n\nwhile IFS= read -r line; do\n  [ -z \"$line\" ] && continue\n  LINE_COUNT=$((LINE_COUNT + 1))\n\n  if echo \"$line\" | jq empty 2>/dev/null; then\n    VALID_LINES=$((VALID_LINES + 1))\n  else\n    log_fail \"Line $LINE_COUNT is not valid JSON: $line\"\n    continue\n  fi\n\n  EVENT=$(echo \"$line\" | jq -r '.event // empty')\n  case \"$EVENT\" in\n    step)     STEP_EVENTS=$((STEP_EVENTS + 1)) ;;\n    complete) COMPLETE_EVENTS=$((COMPLETE_EVENTS + 1)) ;;\n  esac\ndone <<< \"$JSON_OUTPUT\"\n\nif [ \"$LINE_COUNT\" -gt 0 ] && [ \"$VALID_LINES\" -eq \"$LINE_COUNT\" ]; then\n  log_pass \"All $LINE_COUNT NDJSON lines are valid JSON\"\nelse\n  log_fail \"JSON validation: $VALID_LINES/$LINE_COUNT lines valid\"\nfi\n\nif [ \"$STEP_EVENTS\" -ge 2 ]; then\n  log_pass \"Step events emitted: $STEP_EVENTS\"\nelse\n  log_fail \"Expected at least 2 step events, got: $STEP_EVENTS\"\nfi"
+    },
+    {
+      "id": "complete-event",
+      "label": "Complete event",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Exactly one complete event emitted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Exactly one complete event emitted"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set COMPLETE_LINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1"
+          },
+          "capture": [
+            {
+              "variable": "COMPLETE_LINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Extract IP",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "IP",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.ip // empty"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Extract PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_URL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.panelUrl // empty"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Server IP present: $IP",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Server IP present: $IP"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "IP"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Server IP missing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Server IP missing"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "IP"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Panel URL present and uses HTTPS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel URL present and uses HTTPS"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PANEL_URL"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Panel URL missing or invalid: $PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel URL missing or invalid: $PANEL_URL"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "PANEL_URL"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Expected 1 complete event, got: $COMPLETE_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected 1 complete event, got: $COMPLETE_EVENTS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  IP=$(echo \"$COMPLETE_LINE\" | jq -r '.server.ip // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.server.panelUrl // empty')\n\n  if [ -n \"$IP\" ]; then\n    log_pass \"Server IP present: $IP\"\n  else\n    log_fail \"Server IP missing\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS\"\n  else\n    log_fail \"Panel URL missing or invalid: $PANEL_URL\"\n  fi\nelse\n  log_fail \"Expected 1 complete event, got: $COMPLETE_EVENTS\"\nfi"
+    },
+    {
+      "id": "panel-health-after-redeploy",
+      "label": "Panel health after redeploy",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/health",
+            "tlsVerify": false,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Panel healthy after --json redeploy",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel healthy after --json redeploy"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Panel health check timed out after --json redeploy (non-critical)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Panel health check timed out after --json redeploy (non-critical)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel health after redeploy\"\n# ---------------------------------------------------------------------------\n\n# Wait for panel to restart after redeploy (service restart + Node.js startup)\nHEALTH=\"{}\"\nfor i in 1 2 3 4 5; do\n  sleep 3\n  HEALTH=$(host_exec \"curl -sk --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://127.0.0.1:9292/api/health 2>/dev/null\" || echo '{}')\n  if echo \"$HEALTH\" | jq -e '.status == \"ok\"' &>/dev/null; then\n    break\n  fi\ndone\n\nif echo \"$HEALTH\" | jq -e '.status == \"ok\"' &>/dev/null; then\n  log_pass \"Panel healthy after --json redeploy\"\nelse\n  # The panel may take longer to restart on resource-constrained VMs.\n  # The core test (NDJSON output validity) already passed above.\n  log_skip \"Panel health check timed out after --json redeploy (non-critical)\"\nfi\n\n# Cleanup\nhost_exec \"rm -f /tmp/json-install-output.txt\" 2>/dev/null || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 14 — JSON Installer Output (Three-VM)\n# ============================================================================\n# Verifies that create-lamaste --json produces valid NDJSON output on the\n# host VM. Since Lamaste is already installed, this runs in redeploy mode.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nbegin_test \"14 — JSON Installer Output (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

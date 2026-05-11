@@ -12,7 +12,7 @@ labels: bug
 
 - Ubuntu version:
 - Node.js version (`node --version`):
-- Portlama version (`npx @lamalibre/create-portlama --version`):
+- Lamaste version (`npx @lamalibre/create-lamaste --version`):
 - DigitalOcean droplet size:
 
 ## Steps to reproduce
@@ -31,8 +31,8 @@ paste error here
 
 ```bash
 # Check service logs:
-journalctl -u chisel -n 50
+journalctl -u lamalibre-lamaste-chisel-* -n 50
 journalctl -u authelia -n 50
-journalctl -u portlama-panel -n 50
+journalctl -u lamalibre-lamaste-serverd -n 50
 tail -20 /var/log/nginx/error.log
 ```

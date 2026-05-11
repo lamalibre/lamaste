@@ -1,0 +1,963 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 24,
+    "name": "Storage Servers and Bindings",
+    "suite": "e2e-three-vm",
+    "description": "24 — Storage Servers and Bindings (Three-VM) — exercises /api/storage CRUD without real provider",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete",
+    "host_api_patch"
+  ],
+  "constants": {
+    "STORAGE_LABEL": {
+      "value": "rodeo-test-storage"
+    },
+    "STORAGE_PROVIDER": {
+      "value": "digitalocean-spaces"
+    },
+    "STORAGE_REGION": {
+      "value": "nyc3"
+    },
+    "STORAGE_BUCKET": {
+      "value": "rodeo-test-bucket"
+    },
+    "STORAGE_ENDPOINT": {
+      "value": "https://nyc3.digitaloceanspaces.com"
+    },
+    "STORAGE_ACCESS_KEY": {
+      "value": "FAKEACCESSKEY1234567890"
+    },
+    "STORAGE_SECRET_KEY": {
+      "value": "FAKESECRETKEY1234567890ABCDEFGHIJKLMNOP"
+    },
+    "MISSING_PLUGIN": {
+      "value": "nonexistent-plugin-24"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-binding",
+      "label": "DELETE storage/bindings/${MISSING_PLUGIN}",
+      "target": "host",
+      "continueOnError": true,
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "BOUND_PLUGIN"
+      },
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "storage/bindings/${BOUND_PLUGIN}"
+      }
+    },
+    {
+      "id": "cleanup-server",
+      "label": "DELETE storage/servers/${STORAGE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "STORAGE_ID"
+      },
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "storage/servers/${STORAGE_ID}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "init-cleanup-vars",
+      "label": "Initialize cleanup trap variables",
+      "steps": [
+        {
+          "id": "step-init-bound-plugin",
+          "label": "Initialize BOUND_PLUGIN to empty",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "BOUND_PLUGIN",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        },
+        {
+          "id": "step-init-storage-id",
+          "label": "Initialize STORAGE_ID to empty",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STORAGE_ID",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "preflight-onboarding",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-pre-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-pre-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ONBOARDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "COMPLETED"
+              },
+              "message": "Onboarding is complete on host VM"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "generate-storage-id",
+      "label": "Generate UUID for storage server",
+      "steps": [
+        {
+          "id": "step-uuid",
+          "label": "Generate UUID on host VM",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /proc/sys/kernel/random/uuid"
+          },
+          "capture": [
+            {
+              "variable": "STORAGE_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-uuid-log",
+          "label": "Generated storage server id: ${STORAGE_ID}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Generated storage server id: ${STORAGE_ID}"
+          }
+        },
+        {
+          "id": "step-uuid-nonempty",
+          "label": "Storage server UUID is non-empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "truthy",
+              "value": {
+                "kind": "var",
+                "name": "STORAGE_ID"
+              },
+              "message": "Generated storage server UUID is non-empty"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "list-empty",
+      "label": "Initial storage servers list",
+      "steps": [
+        {
+          "id": "step-list-initial",
+          "label": "GET /api/storage/servers (initial)",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "storage/servers"
+          },
+          "capture": [
+            {
+              "variable": "INITIAL_SERVERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-list-initial-array",
+          "label": "servers field is an array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "set",
+            "variable": "INITIAL_SERVERS_TYPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INITIAL_SERVERS"
+              },
+              "expression": ".servers | type"
+            }
+          }
+        },
+        {
+          "id": "step-list-initial-type",
+          "label": "GET /api/storage/servers returns .servers as array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INITIAL_SERVERS_TYPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "array"
+              },
+              "message": "Initial GET /api/storage/servers returns .servers as an array"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "register-server",
+      "label": "Register storage server (fake credentials)",
+      "steps": [
+        {
+          "id": "step-register",
+          "label": "POST /api/storage/servers",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/servers",
+            "body": {
+              "id": "${STORAGE_ID}",
+              "label": "${STORAGE_LABEL}",
+              "provider": "${STORAGE_PROVIDER}",
+              "region": "${STORAGE_REGION}",
+              "bucket": "${STORAGE_BUCKET}",
+              "endpoint": "${STORAGE_ENDPOINT}",
+              "accessKey": "${STORAGE_ACCESS_KEY}",
+              "secretKey": "${STORAGE_SECRET_KEY}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "REGISTER_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-register-id",
+          "label": "Registered storage server id echoes back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "path": ".id",
+              "expected": {
+                "kind": "var",
+                "name": "STORAGE_ID"
+              },
+              "message": "POST /api/storage/servers response .id matches request id"
+            }
+          }
+        },
+        {
+          "id": "step-register-label",
+          "label": "Registered label is returned",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "STORAGE_LABEL"
+              },
+              "message": "POST /api/storage/servers response .label matches request"
+            }
+          }
+        },
+        {
+          "id": "step-register-bucket",
+          "label": "Registered bucket is returned",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "path": ".bucket",
+              "expected": {
+                "kind": "var",
+                "name": "STORAGE_BUCKET"
+              },
+              "message": "POST /api/storage/servers response .bucket matches request"
+            }
+          }
+        },
+        {
+          "id": "step-register-registeredAt",
+          "label": "registeredAt timestamp present",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "path": ".registeredAt",
+              "message": "POST /api/storage/servers response has .registeredAt"
+            }
+          }
+        },
+        {
+          "id": "step-register-no-access-key",
+          "label": "Response MUST NOT echo accessKey in plaintext",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "STORAGE_ACCESS_KEY"
+              },
+              "message": "POST /api/storage/servers response redacts accessKey"
+            }
+          }
+        },
+        {
+          "id": "step-register-no-secret-key",
+          "label": "Response MUST NOT echo secretKey in plaintext",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REGISTER_BODY"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "STORAGE_SECRET_KEY"
+              },
+              "message": "POST /api/storage/servers response redacts secretKey"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "list-after-register",
+      "label": "List after register includes new server",
+      "steps": [
+        {
+          "id": "step-list-after",
+          "label": "GET /api/storage/servers (after register)",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "storage/servers"
+          },
+          "capture": [
+            {
+              "variable": "SERVERS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-list-after-find",
+          "label": "Extract registered server id from list",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FOUND_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVERS_AFTER"
+              },
+              "expression": ".servers[] | select(.id == \"${STORAGE_ID}\") | .id"
+            }
+          }
+        },
+        {
+          "id": "step-list-after-assert",
+          "label": "Newly registered server appears in list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_ID"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "STORAGE_ID"
+              },
+              "message": "Newly registered server appears in GET /api/storage/servers"
+            }
+          }
+        },
+        {
+          "id": "step-list-after-no-access-key",
+          "label": "List response MUST NOT leak accessKey",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SERVERS_AFTER"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "STORAGE_ACCESS_KEY"
+              },
+              "message": "GET /api/storage/servers does not leak accessKey"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "register-duplicate-rejected",
+      "label": "Duplicate register returns 409",
+      "steps": [
+        {
+          "id": "step-dup",
+          "label": "POST /api/storage/servers with same id",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/servers",
+            "body": {
+              "id": "${STORAGE_ID}",
+              "label": "${STORAGE_LABEL}",
+              "provider": "${STORAGE_PROVIDER}",
+              "region": "${STORAGE_REGION}",
+              "bucket": "${STORAGE_BUCKET}",
+              "endpoint": "${STORAGE_ENDPOINT}",
+              "accessKey": "${STORAGE_ACCESS_KEY}",
+              "secretKey": "${STORAGE_SECRET_KEY}"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-dup-assert",
+          "label": "Duplicate registration returns 409",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Re-registering same UUID returns 409 Conflict"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "invalid-register-body",
+      "label": "Invalid body returns 4xx",
+      "steps": [
+        {
+          "id": "step-invalid",
+          "label": "POST /api/storage/servers with non-uuid id",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/servers",
+            "body": {
+              "id": "not-a-uuid",
+              "label": "x",
+              "provider": "p",
+              "region": "r",
+              "bucket": "b",
+              "endpoint": "https://x.example.com",
+              "accessKey": "a",
+              "secretKey": "s"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-invalid-assert",
+          "label": "Invalid UUID id rejected with 4xx",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "status",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_STATUS"
+              },
+              "expected": [
+                400,
+                422,
+                500
+              ],
+              "message": "POST /api/storage/servers with non-uuid id rejected with 4xx/5xx"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "bindings-list-initial",
+      "label": "List bindings (initial)",
+      "steps": [
+        {
+          "id": "step-bindings-list",
+          "label": "GET /api/storage/bindings",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "storage/bindings"
+          },
+          "capture": [
+            {
+              "variable": "BINDINGS_INITIAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-bindings-list-type",
+          "label": "Extract bindings type",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "BINDINGS_TYPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "BINDINGS_INITIAL"
+              },
+              "expression": ".bindings | type"
+            }
+          }
+        },
+        {
+          "id": "step-bindings-list-assert",
+          "label": "GET /api/storage/bindings returns array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BINDINGS_TYPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "array"
+              },
+              "message": "GET /api/storage/bindings returns .bindings as array"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "binding-missing-plugin",
+      "label": "Binding for missing plugin returns 404",
+      "steps": [
+        {
+          "id": "step-bind-missing",
+          "label": "POST /api/storage/bindings for nonexistent plugin",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/bindings",
+            "body": {
+              "pluginName": "${MISSING_PLUGIN}",
+              "storageServerId": "${STORAGE_ID}"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BIND_MISSING_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-bind-missing-assert",
+          "label": "Binding nonexistent plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BIND_MISSING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "POST /api/storage/bindings for plugin not in registry returns 404"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "binding-invalid-name",
+      "label": "Binding with invalid plugin name returns 4xx",
+      "steps": [
+        {
+          "id": "step-bind-badname",
+          "label": "POST /api/storage/bindings with uppercase plugin name",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/bindings",
+            "body": {
+              "pluginName": "Bad_Name",
+              "storageServerId": "${STORAGE_ID}"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BIND_BADNAME_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-bind-badname-assert",
+          "label": "Invalid plugin name rejected with 4xx",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "status",
+              "actual": {
+                "kind": "var",
+                "name": "BIND_BADNAME_STATUS"
+              },
+              "expected": [
+                400,
+                404,
+                422,
+                500
+              ],
+              "message": "POST /api/storage/bindings with invalid pluginName rejected with 4xx/5xx"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "get-binding-404",
+      "label": "GET binding for unbound plugin returns 404",
+      "steps": [
+        {
+          "id": "step-get-binding-missing",
+          "label": "GET /api/storage/bindings/${MISSING_PLUGIN}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "storage/bindings/${MISSING_PLUGIN}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "GET_BINDING_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-get-binding-missing-assert",
+          "label": "Unbound plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GET_BINDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET /api/storage/bindings/:pluginName for unbound plugin returns 404"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-server",
+      "label": "Delete storage server",
+      "steps": [
+        {
+          "id": "step-delete-server",
+          "label": "DELETE /api/storage/servers/${STORAGE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "storage/servers/${STORAGE_ID}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-delete-server-assert",
+          "label": "DELETE /api/storage/servers returns ok:true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "DELETE /api/storage/servers/:id returns ok:true"
+            }
+          }
+        },
+        {
+          "id": "step-delete-server-clear",
+          "label": "Clear STORAGE_ID so cleanup trap skips re-delete",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STORAGE_ID",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-server-404",
+      "label": "Delete already-removed server returns 404",
+      "steps": [
+        {
+          "id": "step-delete-server-again",
+          "label": "DELETE /api/storage/servers with fresh UUID (not registered)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /proc/sys/kernel/random/uuid"
+          },
+          "capture": [
+            {
+              "variable": "GHOST_UUID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-delete-server-ghost",
+          "label": "DELETE /api/storage/servers/${GHOST_UUID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "storage/servers/${GHOST_UUID}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DELETE_GHOST_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-delete-server-ghost-assert",
+          "label": "Deleting unknown server returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELETE_GHOST_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "DELETE /api/storage/servers/:id for unknown id returns 404"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

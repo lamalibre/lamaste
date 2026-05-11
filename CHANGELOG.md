@@ -5,7 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-04-04
+
+## [3.0.0] - 2026-04-29
+
+### Changed
+
+- **Renamed product from Portlama to Lamaste.** v3.0.0 ships the rename across all product-scoped surfaces. The brand-split refactor that landed during the 2.0.0 work-in-progress made this tractable: helpers `productBundleId()` / `productUnit()` / `userProductRoot()` / `etcProductRoot()` (TS `branding.ts`, Rust `branding.rs`) now resolve `PROJECT = 'lamaste'`, cascading through every dynamically-derived identifier. The dated sections below describe work landed during the v3 cycle while the product was still called Portlama; identifiers there reflect the names as they were at the time. The mechanical translation to v3 names: `@lamalibre/portlama-*` → `@lamalibre/lamaste-*`, `com.lamalibre.portlama.*` → `com.lamalibre.lamaste.*`, `lamalibre-portlama-*` → `lamalibre-lamaste-*`, `/etc/lamalibre/portlama/` → `/etc/lamalibre/lamaste/`, `portlama:portlama` (unix user) → `lamaste:lamaste`, `product:portlama` → `product:lamaste`, `LAMALIBRE_PORTLAMA_*` → `LAMALIBRE_LAMASTE_*`, `portlama_2fa_session` → `lamaste_2fa_session`.
+  - **NPM packages:** all 20 `@lamalibre/portlama-*` packages renamed to `@lamalibre/lamaste-*`. `@lamalibre/create-portlama{,-agent,-admin,-desktop,-e2e}` → `@lamalibre/create-lamaste-*`. `@lamalibre/portlama-local-plugin-hostd` → `@lamalibre/local-plugin-hostd` (drops product prefix per brand-split rule — the local plugin host is ecosystem-level). All packages aligned to **3.0.0**.
+  - **CLI binaries:** `portlama-{agent,server,agentd,serverd,gatekeeper,cloud,reset-admin}` → `lamaste-*`; `portlama-local-plugin-hostd` → `lamalibre-local-plugin-hostd` (ecosystem). Sudoers wrappers `/usr/local/sbin/portlama-{sign-csr,pki-rename}` → `/usr/local/sbin/lamaste-*`.
+  - **Unix user/group:** `portlama:portlama` → `lamaste:lamaste`. Sudoers rules, `useradd` arg, systemd `User=`/`Group=`, `chown` calls. `/etc/sudoers.d/portlama` → `/etc/sudoers.d/lamaste`; `/etc/fail2ban/jail.d/portlama.conf` → `/etc/fail2ban/jail.d/lamaste.conf`.
+  - **launchd / systemd:** `com.lamalibre.portlama.*` → `com.lamalibre.lamaste.*`; `lamalibre-portlama-*` → `lamalibre-lamaste-*`. Ecosystem labels (`com.lamalibre.local-plugin-host`, `lamalibre-local-plugin-host`) unchanged.
+  - **Filesystem paths:** `~/.lamalibre/portlama/` → `~/.lamalibre/lamaste/`; `/etc/lamalibre/portlama/` → `/etc/lamalibre/lamaste/`; `/opt/lamalibre/portlama/` → `/opt/lamalibre/lamaste/`; `/var/www/portlama/` → `/var/www/lamaste/`. Ecosystem paths (`~/.lamalibre/local/`, `/etc/lamalibre/`) unchanged.
+  - **Environment variables:** `LAMALIBRE_PORTLAMA_*` (CONFIG, DATA_DIR, PKI_DIR, ENROLLMENT_TOKEN, P12_PASS, …) → `LAMALIBRE_LAMASTE_*`. Ecosystem vars (`LAMALIBRE_CLOUD_TOKEN`, `LAMALIBRE_FERIA_BIN`, `LAMALIBRE_SPACES_*`, `LAMALIBRE_ORG`, `LAMALIBRE_PROJECT`) unchanged.
+  - **Tauri:** `productName "Portlama"` → `"Lamaste"`; window title likewise; identifier `com.lamalibre.portlama.desktop` → `com.lamalibre.lamaste.desktop`; cargo crate name `portlama-desktop` → `lamaste-desktop`; bumped to 3.0.0.
+  - **2FA cookie:** `portlama_2fa_session` → `lamaste_2fa_session` (no installed base — 2.0.0 unshipped).
+  - **DigitalOcean tag:** `product:portlama` → `product:lamaste`. `lamalibre:managed` (ecosystem) unchanged.
+  - **DigitalOcean SSH key labels + systemd-run unit names:** `lamalibre-portlama-update-<hex>` → `lamalibre-lamaste-update-<hex>`.
+  - **Deep-link query param:** `lamalibre://callback?product=portlama` → `?product=lamaste`. The `lamalibre://` scheme itself is ecosystem-wide; product-tagged callbacks are still single-product today (lamaste is the only product wired into the desktop dispatcher).
+  - **nginx file objects:** `lamalibre-portlama-{panel-domain,panel-ip,auth,tunnel,app-<sub>,site-<id>,agent-panel-<sub>,mtls.conf,authz-cache.conf,authz-loc.conf}` → `lamalibre-lamaste-*`.
+  - **Code identifiers:** `PORTLAMA_DIR` → `LAMASTE_DIR`; snake_case / camelCase / underscore-bounded `portlama` tokens (`install_portlama`, `portlamaExists`, `portlama_session`, `portlama_authz`, etc.) → `lamaste` equivalents.
+  - **Vendor layout under `create-lamaste`:** `vendor/panel-server` → `vendor/serverd`; `vendor/portlama-server` → `vendor/server`; `vendor/portlama-server-ui` → `vendor/server-ui`. Install destinations on the VPS migrate from `/opt/lamalibre/portlama/{panel-server,portlama-server,portlama-server-ui}/` to `/opt/lamalibre/lamaste/{serverd,server,server-ui}/`.
+  - **Repo path on GitHub** (`github.com/lamalibre/portlama`) is unchanged here. Renaming the GitHub repo is a separate coordinated action — clones, the desktop's Feria-sibling-discovery walker, and the `lamalibre/plugin-development` sibling repo will be updated together when that lands.
+  - **Out of scope (intentionally unchanged):** `RESERVED_API_PREFIXES` (route names like `tunnels`, `agents`, `gatekeeper`); registry filenames (`agents.json`, `servers.json`, `storage-servers.json`); HTTP headers; Tauri event names; capability names — these are namespaced by the package they live in, not by reverse-DNS.
+
+
+### 2026-04-28
+
+### Changed
+
+- Brand-split rename across all operational identifiers — ecosystem-level surfaces use `lamalibre.*`, product-level (Portlama-specific) surfaces use `lamalibre.portlama.*`. 2.0.0 has not shipped, so this is a breaking rename with zero installed-base impact. NPM package names (`@lamalibre/portlama-*`), reserved API prefixes, capability names, registry filenames (`agents.json`, `servers.json`, `storage-servers.json`), Tauri event names, and HTTP header conventions stay product-scoped and are unaffected.
+  - **launchd labels:** `com.portlama.{cloud,storage,local-plugin-host}` → `com.lamalibre.*` (ecosystem); `com.portlama.{server,admin,agent,desktop,agentd,serverd,chisel-<label>,panel-<label>}` → `com.lamalibre.portlama.*` (product).
+  - **systemd units:** `portlama-{agentd,serverd,gatekeeper,chisel-<label>,panel-<label>}` → `lamalibre-portlama-*`; `portlama-local-plugin-host` → `lamalibre-local-plugin-host` (ecosystem); legacy `portlama-panel` unit name retired in favour of `lamalibre-portlama-serverd` (matches the package name).
+  - **nginx file objects:** `portlama-panel-domain`, `portlama-panel-ip`, `portlama-auth`, `portlama-tunnel`, `portlama-app-<subdomain>`, `portlama-site-<id>`, `portlama-agent-panel-<subdomain>`, `portlama-mtls.conf`, `portlama-authz-cache.conf`, `portlama-authz-loc.conf` → `lamalibre-portlama-*`.
+  - **Filesystem paths:** `/etc/portlama/...` → `/etc/lamalibre/portlama/...`; `~/.lamalibre/.portlama/...` → `~/.lamalibre/portlama/...` (de-hide); `~/.lamalibre/.portlama/local/` → `~/.lamalibre/local/` (hoist to ecosystem); `/opt/portlama/` → `/opt/lamalibre/portlama/`; `/etc/portlama/portlama-update-*.sh` → `/etc/lamalibre/portlama/update-*.sh`.
+  - **Environment variables:** `PORTLAMA_{CLOUD_TOKEN,SPACES_ACCESS_KEY,SPACES_SECRET_KEY,NODE_BIN,NPM_BIN,FERIA_BIN}` → `LAMALIBRE_*` (ecosystem); `PORTLAMA_{CONFIG,DATA_DIR,PKI_DIR,STATE_DIR,CHISEL_AUTHFILE,CHISEL_KEYFILE,AGENTD_PATH,ENROLLMENT_TOKEN,P12_PASS}` → `LAMALIBRE_PORTLAMA_*` (product).
+  - **Deep links:** `portlama://callback?token=…&domain=…` → `lamalibre://callback?product=portlama#token=…&domain=…&nonce=…` — scheme is ecosystem-wide; product is selected by query string and OAuth-style fragment carries the volatile parts.
+  - **Cloud tags:** `portlama:managed` (single tag) → `lamalibre:managed` plus `product:portlama` (both required) — disambiguates resources owned by other Lamalibre products on the same DigitalOcean account.
+  - **Sudoers temp prefixes:** `/tmp/portlama-authelia-*`, `/tmp/portlama-curl-*`, `/tmp/chisel-*`, `/tmp/portlama-portlama-server-ui-build` → `/tmp/lamalibre-portlama-*` — keeps sudoers `mv` rules narrowly scoped to the new prefix.
+  - **Browser globals:** `window.__portlamaPlugins` → `window.__lamalibrePlugins`; `localStorage["portlama-cloud-disclaimer-dismissed"]` → `localStorage["lamalibre.cloud.disclaimer-dismissed"]`.
+  - **DigitalOcean SSH key labels:** `portlama-update-<hex>` → `lamalibre-portlama-update-<hex>`.
+
+### 2026-04-04
 
 ### Added
 
@@ -54,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add path traversal protection to SSH recovery cleanup — canonicalize paths before validation and use canonical path for operations (`portlama-cloud`, `portlama-desktop`)
 - Fix TOCTOU in recovery cleanup — pass canonicalized directory path to Node.js CLI instead of original user input (`portlama-desktop`)
 
-## [Unreleased] - 2026-04-02
+### 2026-04-02
 
 ### Added
 
@@ -104,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Affected packages:** `@lamalibre/portlama-panel-server` 0.1.30, `@lamalibre/portlama-agent` 1.0.24, `@lamalibre/portlama-admin-panel` 0.1.5, `@lamalibre/portlama-panel-client` 0.1.11, `@lamalibre/portlama-desktop` 0.1.15, `@lamalibre/create-portlama` 1.0.53, `@lamalibre/feria` 0.1.1, `@lamalibre/install-portlama-desktop` 0.0.7, `@lamalibre/portlama-agent-panel` 0.1.3, `@lamalibre/portlama-cloud` 0.1.4, `@lamalibre/portlama-identity` 0.1.1, `@lamalibre/portlama-tickets` 0.1.1
 
-## [Unreleased] - 2026-04-01
+### 2026-04-01
 
 ### Added
 
@@ -182,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] - 2026-03-30
+### 2026-03-30
 
 ### Added
 
@@ -235,7 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Affected packages:** panel-server 0.1.12, panel-client 0.1.9, portlama-agent 1.0.14, portlama-tickets 0.1.0, portlama-cloud 0.1.2, create-portlama 1.0.39
 
-## [Unreleased] - 2026-03-29
+### 2026-03-29
 
 ### Added
 
@@ -338,7 +378,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/portlama-desktop`: 0.1.6 → 0.1.12
 - `@lamalibre/create-portlama`: 1.0.35 → 1.0.38
 
-## [Unreleased] - 2026-03-28
+### 2026-03-28
 
 ### Added
 
@@ -432,7 +472,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/portlama-cloud` 0.1.0 → 0.1.1
 - `@lamalibre/create-portlama` 1.0.34 → 1.0.35
 
-## [Unreleased] - 2026-03-26
+### 2026-03-26
 
 ### Added
 
@@ -475,7 +515,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/portlama-agent` 1.0.8 → 1.0.10
 - `@lamalibre/portlama-tickets` 0.1.0 (new package)
 
-## [Unreleased] - 2026-03-25
+### 2026-03-25
 
 ### Added
 
@@ -516,7 +556,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/install-portlama-e2e-mcp` 0.1.3 → 0.1.4
 - `@lamalibre/portlama-agent` 1.0.7 → 1.0.8
 
-## [Unreleased] - 2026-03-24
+### 2026-03-24
 
 ### Added
 
@@ -552,7 +592,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add pages array bounds (max 50 pages) and uniqueness constraint on page paths within a plugin
 - Add `Object.hasOwn()` guard on sidebar icon resolution to prevent prototype chain lookups
 
-## 2026-03-23
+### 2026-03-23
 
 ### Added
 
@@ -612,7 +652,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@lamalibre/install-portlama-admin` — → 1.0.0 (new)
 - `@lamalibre/install-portlama-e2e-mcp` — → 0.1.0 (new)
 
-## [Unreleased] - 2026-03-22
+### 2026-03-22
 
 ### Added
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VM_NAME="portlama-test"
+VM_NAME="lamaste-test"
 VM_MEMORY="512M"
 VM_DISK="5G"
 VM_IMAGE="24.04"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOUNT_TARGET="/mnt/portlama"
+MOUNT_TARGET="/mnt/lamaste"
 
 red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -23,7 +23,7 @@ Commands:
   reset     Destroy and recreate the VM (clean slate)
   destroy   Remove the VM entirely
   status    Show VM state
-  install   Run the Portlama installer inside the VM
+  install   Run the Lamaste installer inside the VM
   test      Run the E2E test suite inside the VM
   cert      Copy client.p12 from VM to ~/Downloads/
   logs      Show panel service logs from inside the VM
@@ -89,8 +89,8 @@ cmd_create() {
   echo ""
   echo "To run the installer:"
   echo "  ./scripts/test-vm.sh shell"
-  echo "  cd ${MOUNT_TARGET}/packages/create-portlama"
-  echo "  sudo node bin/create-portlama.js --dev --skip-harden"
+  echo "  cd ${MOUNT_TARGET}/packages/provisioners/server"
+  echo "  sudo node bin/create-lamaste.js --dev --skip-harden"
   echo ""
   echo "Flags:"
   echo "  --dev           Accept private IPs (required for Multipass VMs)"
@@ -151,12 +151,12 @@ cmd_cert() {
     exit 1
   fi
 
-  local dest="$HOME/Downloads/portlama-client.p12"
+  local dest="$HOME/Downloads/lamaste-client.p12"
   green "Copying client.p12 to ${dest}..."
-  multipass exec "$VM_NAME" -- sudo cat /etc/portlama/pki/client.p12 > "$dest"
+  multipass exec "$VM_NAME" -- sudo cat /etc/lamalibre/lamaste/pki/client.p12 > "$dest"
 
   local password
-  password=$(multipass exec "$VM_NAME" -- sudo cat /etc/portlama/pki/.p12-password 2>/dev/null || echo "(not found)")
+  password=$(multipass exec "$VM_NAME" -- sudo cat /etc/lamalibre/lamaste/pki/.p12-password 2>/dev/null || echo "(not found)")
 
   green "Certificate saved to: ${dest}"
   cyan "P12 password: ${password}"
@@ -173,9 +173,9 @@ cmd_install() {
     exit 1
   fi
 
-  green "Running Portlama installer inside VM..."
+  green "Running Lamaste installer inside VM..."
   multipass exec "$VM_NAME" -- sudo bash -c \
-    "cd ${MOUNT_TARGET}/packages/create-portlama && node bin/create-portlama.js --dev --skip-harden"
+    "cd ${MOUNT_TARGET}/packages/provisioners/server && node bin/create-lamaste.js --dev --skip-harden"
 }
 
 cmd_test() {
@@ -197,7 +197,7 @@ cmd_logs() {
     red "VM '${VM_NAME}' is not running."
     exit 1
   fi
-  multipass exec "$VM_NAME" -- sudo journalctl -u portlama-panel -f --no-pager
+  multipass exec "$VM_NAME" -- sudo journalctl -u lamalibre-lamaste-serverd -f --no-pager
 }
 
 case "${1:-}" in

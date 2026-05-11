@@ -1,0 +1,673 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 25,
+    "name": "User Access OTP Flow",
+    "suite": "e2e-three-vm",
+    "description": "25 — User Access OTP Flow (Three-VM)",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    },
+    "TEST_USER_PASSWORD": {
+      "description": "TEST_USER_PASSWORD"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight: onboarding + domain",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding + domain\"\n# ---------------------------------------------------------------------------\nONBOARDING=$(host_api_get \"onboarding/status\" 2>/dev/null || echo '{\"status\":\"unknown\"}')\nSTATUS=$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not complete — skipping user-access OTP flow\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# We need a test domain to build the /authorize URL.\nif [ -z \"${TEST_DOMAIN:-}\" ]; then\n  log_skip \"TEST_DOMAIN not set — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using domain: ${TEST_DOMAIN}\"\nlog_info \"Test user: ${TEST_USER}\""
+    },
+    {
+      "id": "create-grant",
+      "label": "Admin creates a local grant for testuser",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "POST /api/user-access/grants",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "user-access/grants",
+            "body": {
+              "username": "${TEST_USER}",
+              "pluginName": "@lamalibre/herd-server",
+              "target": "local"
+            }
+          },
+          "capture": [
+            {
+              "variable": "GRANT_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Grant created with .ok === true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "GRANT_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Grant created with .ok === true"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Extract GRANT_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "GRANT_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "GRANT_RESP"
+              },
+              "expression": ".grant.grantId"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Grant has an id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "GRANT_RESP"
+              },
+              "path": ".grant.grantId",
+              "message": "Grant has an id"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Local grant is NOT auto-consumed (used=false)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "GRANT_RESP"
+              },
+              "path": ".grant.used",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Local grant is NOT auto-consumed (used=false)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin creates a local grant for testuser\"\n# ---------------------------------------------------------------------------\nGRANT_RESP=$(host_api_post \"user-access/grants\" \"{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"pluginName\\\":\\\"@lamalibre/herd-server\\\",\\\"target\\\":\\\"local\\\"}\" 2>&1 || echo '{\"ok\":false}')\nassert_json_field \"$GRANT_RESP\" '.ok' 'true' \"Grant created with .ok === true\" || true\n\nGRANT_ID=$(echo \"$GRANT_RESP\" | jq -r '.grant.grantId' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$GRANT_RESP\" '.grant.grantId' \"Grant has an id\" || true\n\n# Local grants must NOT be auto-consumed — user runs through authorize/exchange\n# before consuming via /enroll.\nassert_json_field \"$GRANT_RESP\" '.grant.used' 'false' \"Local grant is NOT auto-consumed (used=false)\" || true\n\nif [ -z \"$GRANT_ID\" ] || [ \"$GRANT_ID\" = \"null\" ]; then\n  log_fail \"Grant creation did not return a usable grantId — aborting\"\n  end_test\n  exit $?\nfi\nlog_info \"Created grant: ${GRANT_ID}\""
+    },
+    {
+      "id": "authelia-auth",
+      "label": "Authelia first-factor + TOTP as testuser",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "POST /api/users/${TEST_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESET",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "TOTP reset returned otpauth URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESET"
+              },
+              "path": ".totpUri",
+              "message": "TOTP reset returned otpauth URI"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Authelia first-factor returns OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FIRSTFACTOR_RESP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "Authelia first-factor returns OK"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Authelia second-factor (TOTP) returns OK",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "OK"
+              },
+              "message": "Authelia second-factor (TOTP) returns OK"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Authelia first-factor + TOTP as testuser\"\n# ---------------------------------------------------------------------------\nTOTP_RESET=$(host_api_post \"users/${TEST_USER}/reset-totp\" \"{}\" 2>&1 || echo '{}')\nassert_json_field_not_empty \"$TOTP_RESET\" '.totpUri' \"TOTP reset returned otpauth URI\" || true\nOTPAUTH_URI=$(echo \"$TOTP_RESET\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nTOTP_SECRET=$(echo \"$OTPAUTH_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nif [ -z \"$TOTP_SECRET\" ]; then\n  log_fail \"Failed to extract TOTP secret — aborting\"\n  end_test\n  exit $?\nfi\n\nwait_for_next_totp_window\n\nvisitor_exec \"rm -f /tmp/user-access-cookies.txt\"\nFIRSTFACTOR_RESP=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/user-access-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"password\\\":\\\"${TEST_USER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\nassert_json_field \"$FIRSTFACTOR_RESP\" '.status' 'OK' \"Authelia first-factor returns OK\" || true\n\nTOTP_CODE=$(visitor_exec \"oathtool --totp --base32 ${TOTP_SECRET}\" 2>/dev/null || echo \"\")\nTOTP_RESP=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/user-access-cookies.txt -c /tmp/user-access-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOTP_CODE}\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\nassert_json_field \"$TOTP_RESP\" '.status' 'OK' \"Authelia second-factor (TOTP) returns OK\" || true"
+    },
+    {
+      "id": "authorize",
+      "label": "GET /api/user-access/authorize → OTP in redirect fragment",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "/authorize returns HTTP 302",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "302"
+              },
+              "message": "/authorize returns HTTP 302"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Location redirects to lamalibre://callback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_LOCATION"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "lamalibre://callback"
+              },
+              "message": "Location redirects to lamalibre://callback"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Redirect fragment carries token=",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_LOCATION"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "token="
+              },
+              "message": "Redirect fragment carries token="
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Redirect fragment carries the nonce we submitted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_LOCATION"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "NONCE"
+              },
+              "message": "Redirect fragment carries the nonce we submitted"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "OTP_TOKEN matches [a-f0-9]{64}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "truthy",
+              "value": {
+                "kind": "var",
+                "name": "OTP_TOKEN_VALID"
+              },
+              "message": "OTP_TOKEN matches [a-f0-9]{64}"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"GET /api/user-access/authorize → OTP in redirect fragment\"\n# ---------------------------------------------------------------------------\n# -o /dev/null + -D - captures headers, -w '%{http_code}' gives the status on\n# the non-followed 302. We need the raw Location header — DON'T follow\n# redirects, because the fragment is client-side only.\nAUTH_HEADERS=$(visitor_exec \"curl -sk --max-time 15 -o /dev/null -D - -b /tmp/user-access-cookies.txt 'https://auth.${TEST_DOMAIN}/api/user-access/authorize?challenge=${CHALLENGE}&nonce=${NONCE}'\" 2>/dev/null || echo \"\")\nAUTH_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /dev/null -w '%{http_code}' -b /tmp/user-access-cookies.txt 'https://auth.${TEST_DOMAIN}/api/user-access/authorize?challenge=${CHALLENGE}&nonce=${NONCE}'\" 2>/dev/null || echo \"000\")\nassert_eq \"$AUTH_STATUS\" \"302\" \"/authorize returns HTTP 302\" || true\n\n# Extract Location header (case-insensitive — nginx can emit either 'Location'\n# or 'location'). Trim trailing CR.\nAUTH_LOCATION=$(echo \"$AUTH_HEADERS\" | awk 'BEGIN{IGNORECASE=1} /^location:/ {print; exit}' | sed 's/^[Ll]ocation: //' | tr -d '\\r')\nassert_contains \"$AUTH_LOCATION\" \"lamalibre://callback\" \"Location redirects to lamalibre://callback\" || true\nassert_contains \"$AUTH_LOCATION\" \"token=\" \"Redirect fragment carries token=\" || true\nassert_contains \"$AUTH_LOCATION\" \"${NONCE}\" \"Redirect fragment carries the nonce we submitted\" || true\n\n# Parse the token out of the fragment. Format: lamalibre://callback#token=HEX&domain=...&nonce=...\nOTP_TOKEN=$(echo \"$AUTH_LOCATION\" | sed -n 's/.*[#&]token=\\([a-f0-9]\\{64\\}\\).*/\\1/p')\nif [[ \"$OTP_TOKEN\" =~ ^[a-f0-9]{64}$ ]]; then\n  OTP_TOKEN_VALID=\"yes\"\nelse\n  OTP_TOKEN_VALID=\"\"\nfi\nif [ -n \"${OTP_TOKEN_VALID:-}\" ]; then\n  log_pass \"OTP_TOKEN matches [a-f0-9]{64}\"\nelse\n  log_fail \"OTP_TOKEN did not match [a-f0-9]{64} (location: $(echo \"$AUTH_LOCATION\" | head -c 200))\"\nfi"
+    },
+    {
+      "id": "exchange",
+      "label": "POST /api/user-access/exchange → Bearer session token",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "/exchange returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXCHANGE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "/exchange returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Exchange response has .ok === true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXCHANGE_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Exchange response has .ok === true"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Exchange response carries a sessionToken",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "EXCHANGE_RESP"
+              },
+              "path": ".sessionToken",
+              "message": "Exchange response carries a sessionToken"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Exchange response echoes our username",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXCHANGE_RESP"
+              },
+              "path": ".username",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_USER"
+              },
+              "message": "Exchange response echoes our username"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Second exchange (same OTP) returns 401 — single-use",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPLAY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Second exchange (same OTP) returns 401 — single-use"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"POST /api/user-access/exchange → Bearer session token\"\n# ---------------------------------------------------------------------------\nEXCHANGE_BODY=$(printf '{\"token\":\"%s\",\"verifier\":\"%s\"}' \"${OTP_TOKEN}\" \"${VERIFIER}\")\nEXCHANGE_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /tmp/user-access-exchange.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '${EXCHANGE_BODY}' https://panel.${TEST_DOMAIN}/api/user-access/exchange\" 2>/dev/null || echo \"000\")\nEXCHANGE_RESP=$(visitor_exec \"cat /tmp/user-access-exchange.json 2>/dev/null\" || echo '{}')\nassert_eq \"$EXCHANGE_STATUS\" \"200\" \"/exchange returns HTTP 200\" || true\nassert_json_field \"$EXCHANGE_RESP\" '.ok' 'true' \"Exchange response has .ok === true\" || true\nassert_json_field_not_empty \"$EXCHANGE_RESP\" '.sessionToken' \"Exchange response carries a sessionToken\" || true\n\nEXCHANGE_USERNAME=$(echo \"$EXCHANGE_RESP\" | jq -r '.username' 2>/dev/null || echo \"\")\nif [ \"$EXCHANGE_USERNAME\" = \"${TEST_USER}\" ]; then\n  log_pass \"Exchange response echoes our username\"\nelse\n  log_fail \"Exchange response echoes our username (expected '${TEST_USER}', got '$EXCHANGE_USERNAME')\"\nfi\n\nSESSION_TOKEN=$(echo \"$EXCHANGE_RESP\" | jq -r '.sessionToken' 2>/dev/null || echo \"\")\n\n# Single-use check: replaying the same token must fail. /exchange uses the\n# same generic \"Invalid or expired token\" error for every failure, so we\n# only assert the status code.\nREPLAY_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '${EXCHANGE_BODY}' https://panel.${TEST_DOMAIN}/api/user-access/exchange\" 2>/dev/null || echo \"000\")\nassert_eq \"$REPLAY_STATUS\" \"401\" \"Second exchange (same OTP) returns 401 — single-use\" || true"
+    },
+    {
+      "id": "list-plugins",
+      "label": "GET /api/user-access/plugins with Bearer session",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "/plugins returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PLUGINS_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "/plugins returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Granted plugin appears in the response",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PLUGINS_RESP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "@lamalibre/herd-server"
+              },
+              "message": "Granted plugin appears in the response"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "/plugins without Bearer is 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PLUGINS_NOAUTH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "/plugins without Bearer is 401"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"GET /api/user-access/plugins with Bearer session\"\n# ---------------------------------------------------------------------------\nPLUGINS_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /tmp/user-access-plugins.json -w '%{http_code}' -H 'Authorization: Bearer ${SESSION_TOKEN}' https://panel.${TEST_DOMAIN}/api/user-access/plugins\" 2>/dev/null || echo \"000\")\nPLUGINS_RESP=$(visitor_exec \"cat /tmp/user-access-plugins.json 2>/dev/null\" || echo '{}')\nassert_eq \"$PLUGINS_STATUS\" \"200\" \"/plugins returns HTTP 200\" || true\nassert_contains \"$PLUGINS_RESP\" \"@lamalibre/herd-server\" \"Granted plugin appears in the response\" || true\n\n# Negative: no Authorization header → 401\nPLUGINS_NOAUTH_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /dev/null -w '%{http_code}' https://panel.${TEST_DOMAIN}/api/user-access/plugins\" 2>/dev/null || echo \"000\")\nassert_eq \"$PLUGINS_NOAUTH_STATUS\" \"401\" \"/plugins without Bearer is 401\" || true"
+    },
+    {
+      "id": "enroll",
+      "label": "POST /api/user-access/enroll with Bearer — consume grant",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "/enroll returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENROLL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "/enroll returns HTTP 200"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "/enroll returns an enrollmentToken",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESP"
+              },
+              "path": ".enrollmentToken",
+              "message": "/enroll returns an enrollmentToken"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "/enroll returns a label derived from username+plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESP"
+              },
+              "path": ".label",
+              "message": "/enroll returns a label derived from username+plugin"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "/enroll echoes the plugin name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESP"
+              },
+              "path": ".pluginName",
+              "expected": {
+                "kind": "literal",
+                "value": "@lamalibre/herd-server"
+              },
+              "message": "/enroll echoes the plugin name"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Replay /enroll (same grantId) returns non-200 — grant consumed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENROLL_REPLAY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Replay /enroll (same grantId) returns non-200 — grant consumed"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"POST /api/user-access/enroll with Bearer — consume grant\"\n# ---------------------------------------------------------------------------\nENROLL_BODY=$(printf '{\"grantId\":\"%s\"}' \"${GRANT_ID}\")\nENROLL_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /tmp/user-access-enroll.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer ${SESSION_TOKEN}' -d '${ENROLL_BODY}' https://panel.${TEST_DOMAIN}/api/user-access/enroll\" 2>/dev/null || echo \"000\")\nENROLL_RESP=$(visitor_exec \"cat /tmp/user-access-enroll.json 2>/dev/null\" || echo '{}')\nassert_eq \"$ENROLL_STATUS\" \"200\" \"/enroll returns HTTP 200\" || true\nassert_json_field_not_empty \"$ENROLL_RESP\" '.enrollmentToken' \"/enroll returns an enrollmentToken\" || true\nassert_json_field_not_empty \"$ENROLL_RESP\" '.label' \"/enroll returns a label derived from username+plugin\" || true\nassert_json_field \"$ENROLL_RESP\" '.pluginName' '@lamalibre/herd-server' \"/enroll echoes the plugin name\" || true\n\nENROLL_LABEL=$(echo \"$ENROLL_RESP\" | jq -r '.label' 2>/dev/null || echo \"\")\nif [ -n \"$ENROLL_LABEL\" ] && [ \"$ENROLL_LABEL\" != \"null\" ]; then\n  log_info \"Enrollment minted label: ${ENROLL_LABEL}\"\nfi\n\n# Replaying /enroll with the same grantId must fail — grant is single-use.\nENROLL_REPLAY_STATUS=$(visitor_exec \"curl -sk --max-time 15 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer ${SESSION_TOKEN}' -d '${ENROLL_BODY}' https://panel.${TEST_DOMAIN}/api/user-access/enroll\" 2>/dev/null || echo \"000\")\nassert_not_eq \"$ENROLL_REPLAY_STATUS\" \"200\" \"Replay /enroll (same grantId) returns non-200 — grant consumed\" || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 25 — User Access OTP Flow (Three-VM)\n# ============================================================================\n# Exercises the Authelia → desktop login user-access flow:\n#   1. Admin creates a LOCAL grant for testuser (pluginName: @lamalibre/herd-server).\n#   2. testuser first-factor + TOTP via Authelia — captures authelia_session cookie.\n#   3. GET /api/user-access/authorize on auth.<domain> with PKCE challenge + nonce.\n#      Expects 302 with Location: lamalibre://callback#token=...&domain=...&nonce=...\n#   4. POST /api/user-access/exchange on the panel domain with {token, verifier}.\n#      Expects {ok:true, sessionToken, username}. Bearer auth token.\n#   5. GET /api/user-access/plugins with Bearer — expects the granted plugin.\n#   6. POST /api/user-access/enroll with Bearer + grantId — expects enrollmentToken.\n#   7. Negative: exchange with wrong verifier → 401.\n#\n# Every multipass exec that risks pipe-leaks is wrapped by timed_exec / curl\n# max-time caps, and the cleanup trap revokes the grant + agent cert if created.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq openssl\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\nhost_exec()    { multipass exec lamaste-host    -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\nCLEANUP_CURL_ARGS=\"-skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\ncleanup_host_delete() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \\\n    \"curl ${CLEANUP_CURL_ARGS} -X DELETE https://127.0.0.1:9292/api/$1\" \\\n    >/dev/null 2>&1\n}\n\n# ---------------------------------------------------------------------------\n# PKCE helpers\n# ---------------------------------------------------------------------------\n# S256 verifier: 50 base64url chars (within Zod's 32–64 bound).\nVERIFIER=\"dGVzdHZlcmlmaWVyRTJFdXNlckFjY2Vzc090cEZsb3cxMjM0NQ\"\n# S256 challenge: base64url(sha256(VERIFIER)), 43 chars, no padding.\nCHALLENGE=$(printf '%s' \"${VERIFIER}\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')\n# 16-byte random nonce, hex-encoded (32 chars). Generate fresh per run.\nNONCE=$(openssl rand -hex 16)\n\nGRANT_ID=\"\"\nENROLL_LABEL=\"\"\nOTP_TOKEN=\"\"\nSESSION_TOKEN=\"\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  if [ -n \"${GRANT_ID}\" ]; then\n    cleanup_host_delete \"user-access/grants/${GRANT_ID}\"\n  fi\n  if [ -n \"${ENROLL_LABEL}\" ]; then\n    # Best-effort revoke the agent cert that enrollment minted. A fresh\n    # enrollment token is single-use and consumed by /enroll — the agent cert\n    # it produced lives on until revoked. Use the admin /certs/agent/:label\n    # DELETE endpoint.\n    cleanup_host_delete \"certs/agent/${ENROLL_LABEL}\"\n  fi\n}\ntrap cleanup EXIT\n\nbegin_test \"25 — User Access OTP Flow (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

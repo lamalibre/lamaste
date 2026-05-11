@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST_VM="portlama-host"
-AGENT_VM="portlama-agent"
+HOST_VM="lamaste-host"
+AGENT_VM="lamaste-agent"
 VM_MEMORY="512M"
 VM_DISK="5G"
 VM_IMAGE="24.04"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOUNT_TARGET="/mnt/portlama"
-TEST_DOMAIN="test.portlama.local"
-CREDENTIALS_FILE="/tmp/portlama-test-credentials.json"
+MOUNT_TARGET="/mnt/lamaste"
+TEST_DOMAIN="test.lamaste.local"
+CREDENTIALS_FILE="/tmp/lamalibre-lamaste-test-credentials.json"
 
 red()    { printf '\033[0;31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[0;32m%s\033[0m\n' "$*"; }
@@ -189,12 +189,12 @@ cmd_setup() {
   # --- Step 3: Transfer agent P12 from host to agent ---
   green "Transferring agent P12 certificate to '${AGENT_VM}'..."
   multipass transfer \
-    "${HOST_VM}:/etc/portlama/pki/agents/test-agent/client.p12" \
-    /tmp/portlama-agent.p12
+    "${HOST_VM}:/etc/lamalibre/lamaste/pki/agents/test-agent/client.p12" \
+    /tmp/lamalibre-lamaste-agent.p12
   multipass transfer \
-    /tmp/portlama-agent.p12 \
+    /tmp/lamalibre-lamaste-agent.p12 \
     "${AGENT_VM}:/tmp/agent.p12"
-  rm -f /tmp/portlama-agent.p12
+  rm -f /tmp/lamalibre-lamaste-agent.p12
 
   # --- Step 4: Run setup-agent.sh on agent VM ---
   green "Running setup-agent.sh on '${AGENT_VM}'..."

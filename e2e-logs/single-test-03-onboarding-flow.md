@@ -1,4 +1,4 @@
-# Portlama E2E: 03 — Onboarding Flow
+# Lamaste E2E: 03 — Onboarding Flow
 
 > Started at `2026-03-30 13:06:17 UTC`
 

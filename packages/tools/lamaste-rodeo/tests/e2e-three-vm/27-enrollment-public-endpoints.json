@@ -1,0 +1,921 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 27,
+    "name": "Enrollment Public Endpoints",
+    "suite": "e2e-three-vm",
+    "description": "27 — Enrollment Public Endpoints (Three-VM)",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Host VM IP"
+    }
+  },
+  "constants": {
+    "TEST_LABEL": {
+      "value": "enroll-public-27"
+    }
+  },
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete",
+    "host_api_patch"
+  ],
+  "cleanup": [
+    {
+      "id": "cleanup-agent-cert",
+      "label": "Revoke test agent cert if enrollment succeeded",
+      "target": "host",
+      "when": {
+        "kind": "var_eq",
+        "variable": "ENROLL_OK",
+        "value": "true"
+      },
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${TEST_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-lookup-token",
+      "label": "Revoke unused lookup token",
+      "target": "host",
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "LOOKUP_TOKEN"
+      },
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/enroll/${TEST_LABEL}-lookup"
+      }
+    },
+    {
+      "id": "cleanup-agent-files",
+      "label": "Remove temp CSR + key on agent VM",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "rm -f /tmp/enroll-27.key /tmp/enroll-27.csr /tmp/enroll-27-body.json"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "init-vars",
+      "label": "Initialize cleanup-referenced variables",
+      "steps": [
+        {
+          "id": "iv-1",
+          "label": "Init ENROLL_OK=\"\"",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLL_OK",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        },
+        {
+          "id": "iv-2",
+          "label": "Init LOOKUP_TOKEN=\"\"",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LOOKUP_TOKEN",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight: onboarding complete",
+      "steps": [
+        {
+          "id": "pf-1",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "pf-2",
+          "label": "Extract ONBOARDING_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ONBOARDING_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "pf-3",
+          "label": "Onboarding completed",
+          "target": "local",
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ONBOARDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "COMPLETED"
+              },
+              "message": "Onboarding is COMPLETED"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-enroll-token",
+      "label": "Admin creates enrollment token for enroll-public-27",
+      "steps": [
+        {
+          "id": "ct-1",
+          "label": "POST /api/certs/agent/enroll (admin)",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent/enroll",
+            "body": {
+              "label": "${TEST_LABEL}",
+              "capabilities": [
+                "tunnels:read"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            },
+            {
+              "variable": "TOKEN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "ct-2",
+          "label": "Token issuance returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "status",
+              "actual": {
+                "kind": "var",
+                "name": "TOKEN_STATUS"
+              },
+              "expected": 200,
+              "message": "POST /certs/agent/enroll returns 200"
+            }
+          }
+        },
+        {
+          "id": "ct-3",
+          "label": "Token issuance ok",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Token response ok=true"
+            }
+          }
+        },
+        {
+          "id": "ct-4",
+          "label": "Extract ENROLL_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLL_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".token // \"\""
+            }
+          }
+        },
+        {
+          "id": "ct-5",
+          "label": "Token value is non-empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENROLL_TOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Enrollment token value is non-empty"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "generate-csr",
+      "label": "Generate CSR on agent VM",
+      "steps": [
+        {
+          "id": "csr-1",
+          "label": "openssl genrsa on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "openssl genrsa -out /tmp/enroll-27.key 2048 2>/dev/null"
+          }
+        },
+        {
+          "id": "csr-2",
+          "label": "openssl req -new on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "openssl req -new -key /tmp/enroll-27.key -out /tmp/enroll-27.csr -subj '/CN=agent:${TEST_LABEL}/O=Lamaste' 2>/dev/null"
+          }
+        },
+        {
+          "id": "csr-3",
+          "label": "Read CSR_PEM from agent",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- cat /tmp/enroll-27.csr"
+          },
+          "capture": [
+            {
+              "variable": "CSR_PEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "csr-4",
+          "label": "CSR is PEM-encoded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CSR_PEM"
+              },
+              "substring": "BEGIN CERTIFICATE REQUEST",
+              "message": "CSR contains BEGIN CERTIFICATE REQUEST marker"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "public-enroll",
+      "label": "POST /api/enroll/ from agent VM without mTLS",
+      "steps": [
+        {
+          "id": "pe-1",
+          "label": "Build enroll body locally",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg token \"$ENROLL_TOKEN\" --arg csr \"$CSR_PEM\" '{token:$token, csr:$csr}'"
+          },
+          "capture": [
+            {
+              "variable": "ENROLL_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "pe-2",
+          "label": "Transfer enroll body to agent VM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "LOCAL_TMP=$(mktemp /tmp/enroll-27-body-XXXXXXXX.json); echo \"$ENROLL_BODY\" > \"$LOCAL_TMP\"; multipass transfer \"$LOCAL_TMP\" lamaste-agent:/tmp/enroll-27-body.json; rm -f \"$LOCAL_TMP\"; echo done"
+          }
+        },
+        {
+          "id": "pe-3",
+          "label": "POST /api/enroll/ from agent VM (no mTLS)",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk --max-time 60 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-27-body.json \"https://${HOST_IP}:9292/api/enroll/\" 2>/dev/null || echo '{\"ok\":false,\"error\":\"curl failed\"}'"
+          },
+          "capture": [
+            {
+              "variable": "ENROLL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "pe-4",
+          "label": "Extract ENROLL_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLL_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".ok // false"
+            }
+          }
+        },
+        {
+          "id": "pe-5",
+          "label": "Enrollment returns ok=true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENROLL_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /api/enroll/ returns ok=true"
+            }
+          }
+        },
+        {
+          "id": "pe-6",
+          "label": "Response carries label",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_LABEL"
+              },
+              "message": "Enroll response .label matches requested label"
+            }
+          }
+        },
+        {
+          "id": "pe-7",
+          "label": "Response carries serial",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".serial",
+              "message": "Enroll response .serial is non-empty"
+            }
+          }
+        },
+        {
+          "id": "pe-8",
+          "label": "Response carries signed cert",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".cert",
+              "message": "Enroll response .cert is non-empty"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "negative-enroll-bad-token",
+      "label": "Negative: POST /api/enroll/ with invalid token returns 401",
+      "steps": [
+        {
+          "id": "neg-1",
+          "label": "Build body with fake token (reuse CSR)",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg csr \"$CSR_PEM\" '{token:\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\", csr:$csr}' > /tmp/enroll-27-bad.json; echo ok"
+          }
+        },
+        {
+          "id": "neg-2",
+          "label": "Transfer bad body to agent",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass transfer /tmp/enroll-27-bad.json lamaste-agent:/tmp/enroll-27-bad.json; rm -f /tmp/enroll-27-bad.json; echo done"
+          }
+        },
+        {
+          "id": "neg-3",
+          "label": "POST /api/enroll/ with invalid token",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-27-bad.json \"https://${HOST_IP}:9292/api/enroll/\" 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "BAD_ENROLL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "neg-4",
+          "label": "Invalid token rejected with 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_ENROLL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "POST /api/enroll/ with invalid token returns 401"
+            }
+          }
+        },
+        {
+          "id": "neg-5",
+          "label": "Cleanup remote bad body",
+          "target": "agent",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/enroll-27-bad.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-endpoint",
+      "label": "POST /api/enroll/lookup returns pending token label",
+      "steps": [
+        {
+          "id": "lk-1",
+          "label": "Admin issues a second (unused) enrollment token for lookup",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent/enroll",
+            "body": {
+              "label": "${TEST_LABEL}-lookup",
+              "capabilities": [
+                "tunnels:read"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "LOOKUP_TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "lk-2",
+          "label": "Extract LOOKUP_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LOOKUP_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "LOOKUP_TOKEN_RESPONSE"
+              },
+              "expression": ".token // \"\""
+            }
+          }
+        },
+        {
+          "id": "lk-3",
+          "label": "LOOKUP_TOKEN captured",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "LOOKUP_TOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Second enrollment token captured for lookup test"
+            }
+          }
+        },
+        {
+          "id": "lk-4",
+          "label": "Build lookup body",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg token \"$LOOKUP_TOKEN\" '{token:$token}' > /tmp/enroll-27-lookup.json; echo ok"
+          }
+        },
+        {
+          "id": "lk-5",
+          "label": "Transfer lookup body to agent",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass transfer /tmp/enroll-27-lookup.json lamaste-agent:/tmp/enroll-27-lookup.json; rm -f /tmp/enroll-27-lookup.json; echo done"
+          }
+        },
+        {
+          "id": "lk-6",
+          "label": "POST /api/enroll/lookup from agent VM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk --max-time 30 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-27-lookup.json \"https://${HOST_IP}:9292/api/enroll/lookup\" 2>/dev/null || echo '{\"ok\":false}'"
+          },
+          "capture": [
+            {
+              "variable": "LOOKUP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "lk-7",
+          "label": "Lookup returns ok=true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOKUP_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /api/enroll/lookup returns ok=true"
+            }
+          }
+        },
+        {
+          "id": "lk-8",
+          "label": "Lookup returns expected label",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOKUP_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "literal",
+                "value": "enroll-public-27-lookup"
+              },
+              "message": "Lookup .label matches issued token label"
+            }
+          }
+        },
+        {
+          "id": "lk-9",
+          "label": "Cleanup remote lookup body",
+          "target": "agent",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/enroll-27-lookup.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "negative-lookup-bad-token",
+      "label": "Negative: POST /api/enroll/lookup with invalid token returns 401",
+      "steps": [
+        {
+          "id": "nlk-1",
+          "label": "Build bad lookup body",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo '{\"token\":\"0000000000000000000000000000000000000000000000000000000000000000\"}' > /tmp/enroll-27-badlookup.json; echo ok"
+          }
+        },
+        {
+          "id": "nlk-2",
+          "label": "Transfer bad lookup body",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass transfer /tmp/enroll-27-badlookup.json lamaste-agent:/tmp/enroll-27-badlookup.json; rm -f /tmp/enroll-27-badlookup.json; echo done"
+          }
+        },
+        {
+          "id": "nlk-3",
+          "label": "POST /api/enroll/lookup with bad token",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-27-badlookup.json \"https://${HOST_IP}:9292/api/enroll/lookup\" 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "BAD_LOOKUP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "nlk-4",
+          "label": "Bad lookup token rejected with 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_LOOKUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "POST /api/enroll/lookup with invalid token returns 401"
+            }
+          }
+        },
+        {
+          "id": "nlk-5",
+          "label": "Cleanup remote bad lookup body",
+          "target": "agent",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/enroll-27-badlookup.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-enrollment",
+      "label": "DELETE /api/certs/agent/enroll/:label revokes the unused lookup token",
+      "steps": [
+        {
+          "id": "del-1",
+          "label": "DELETE /api/certs/agent/enroll/${TEST_LABEL}-lookup (admin)",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/enroll/${TEST_LABEL}-lookup"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            },
+            {
+              "variable": "DELETE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "del-2",
+          "label": "DELETE returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "status",
+              "actual": {
+                "kind": "var",
+                "name": "DELETE_STATUS"
+              },
+              "expected": 200,
+              "message": "DELETE /certs/agent/enroll/:label returns 200"
+            }
+          }
+        },
+        {
+          "id": "del-3",
+          "label": "DELETE reports revoked=true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".revoked",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Delete response .revoked=true (unused token was removed)"
+            }
+          }
+        },
+        {
+          "id": "del-4",
+          "label": "Clear LOOKUP_TOKEN (prevents cleanup double-revoke)",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LOOKUP_TOKEN",
+            "from": {
+              "kind": "literal",
+              "value": ""
+            }
+          }
+        },
+        {
+          "id": "del-5",
+          "label": "Lookup after delete returns 401",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sleep 13; jq -n --arg token \"$(jq -r '.token' <<<\"$LOOKUP_TOKEN_RESPONSE\")\" '{token:$token}' > /tmp/enroll-27-postdel.json; multipass transfer /tmp/enroll-27-postdel.json lamaste-agent:/tmp/enroll-27-postdel.json 2>/dev/null; rm -f /tmp/enroll-27-postdel.json; multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-27-postdel.json \"https://${HOST_IP}:9292/api/enroll/lookup\" 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "POST_DELETE_LOOKUP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "del-6",
+          "label": "Revoked token no longer resolvable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "POST_DELETE_LOOKUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Lookup of revoked token returns 401"
+            }
+          }
+        },
+        {
+          "id": "del-7",
+          "label": "Cleanup remote post-delete body",
+          "target": "agent",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "rm -f /tmp/enroll-27-postdel.json"
+          }
+        }
+      ]
+    }
+  ]
+}

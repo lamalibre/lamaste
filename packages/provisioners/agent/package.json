@@ -1,0 +1,43 @@
+{
+  "name": "@lamalibre/create-lamaste-agent",
+  "version": "2.0.0",
+  "description": "Upgrade Lamaste agent authentication to hardware-bound (Keychain) certificate",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "create-lamaste-agent": "bin/create-lamaste-agent.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "execa": "^9.0.0",
+    "listr2": "^8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/provisioners/agent"
+  },
+  "homepage": "https://github.com/lamalibre/lamaste#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/lamaste/issues"
+  },
+  "keywords": [
+    "lamaste",
+    "agent",
+    "keychain",
+    "mtls",
+    "hardware-bound",
+    "certificate"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

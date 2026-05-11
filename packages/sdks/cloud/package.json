@@ -1,0 +1,39 @@
+{
+  "name": "@lamalibre/lamaste-cloud",
+  "version": "2.0.0",
+  "description": "Cloud provider abstraction for Lamaste server and storage provisioning",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "lamaste-cloud": "./bin/lamaste-cloud.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@lamalibre/lamaste": "*",
+    "undici": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/sdks/cloud"
+  },
+  "license": "SEE LICENSE IN ../../LICENSE.md"
+}

@@ -1,4 +1,4 @@
-# Portlama E2E: 11 — Input Validation & Security Hardening
+# Lamaste E2E: 11 — Input Validation & Security Hardening
 
 > Started at `2026-03-30 13:06:59 UTC`
 
@@ -51,8 +51,8 @@
 
 ## File permissions
 
-✅ `13:07:00` /etc/portlama/tunnels.json has correct permissions (600)  
-⏭️ `13:07:00` /etc/portlama/sites.json not found  
+✅ `13:07:00` /etc/lamaste/tunnels.json has correct permissions (600)  
+⏭️ `13:07:00` /etc/lamaste/sites.json not found  
 ✅ `13:07:00` panel.json has correct permissions (640)  
 
 ---

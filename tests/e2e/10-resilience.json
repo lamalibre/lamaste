@@ -1,0 +1,852 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 10,
+    "name": "Resilience",
+    "suite": "e2e",
+    "description": "10 — Resilience",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq",
+      "systemctl"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Set SVC_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SERVICES_BEFORE\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .status' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "SVC_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Service $svc status before tests: $SVC_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Service $svc status before tests: $SVC_STATUS"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping resilience tests — onboarding not complete\"\n  end_test\n  exit $?\nfi\n\n# Verify all services are active before starting\nSERVICES_BEFORE=$(api_get \"services\")\nfor svc in nginx chisel authelia lamalibre-lamaste-serverd; do\n  SVC_STATUS=$(echo \"$SERVICES_BEFORE\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .status' 2>/dev/null || echo \"unknown\")\n  log_info \"Service $svc status before tests: $SVC_STATUS\"\ndone"
+    },
+    {
+      "id": "nginx-failure-and-recovery",
+      "label": "nginx failure and recovery",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "Stopping nginx...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Stopping nginx..."
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set SERVICES_NGINX_DOWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_api_direct \"services\""
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_NGINX_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Extract NGINX_STATUS_DOWN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NGINX_STATUS_DOWN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVICES_NGINX_DOWN"
+              },
+              "expression": ".services[] | select(.name == \"nginx\") | .status"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "API shows nginx as '$NGINX_STATUS_DOWN' after stop",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "API shows nginx as '$NGINX_STATUS_DOWN' after stop"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "NGINX_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "NGINX_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Expected nginx status 'inactive' or 'failed', got '$NGINX_STATUS_DOWN'",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected nginx status 'inactive' or 'failed', got '$NGINX_STATUS_DOWN'"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "NGINX_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "NGINX_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set RESTART_NGINX",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_api_direct_post \"services/nginx/restart\""
+          },
+          "capture": [
+            {
+              "variable": "RESTART_NGINX",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "nginx restart via API returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESTART_NGINX"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "nginx restart via API returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Set NGINX_STATUS_UP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active nginx 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "NGINX_STATUS_UP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "nginx is active after API restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_STATUS_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "nginx is active after API restart"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_NGINX_UP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Extract NGINX_API_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NGINX_API_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVICES_NGINX_UP"
+              },
+              "expression": ".services[] | select(.name == \"nginx\") | .status"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "API shows nginx as active after restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_API_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "API shows nginx as active after restart"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"nginx failure and recovery\"\n# ---------------------------------------------------------------------------\n\n# Helper to query panel directly (bypassing nginx) when nginx is down.\n# Includes mTLS simulation headers since the Fastify middleware checks X-SSL-Client-Verify.\n_api_direct() {\n  curl -s --max-time \"$CURL_TIMEOUT\" \\\n    -H \"Accept: application/json\" \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=admin\" \\\n    \"http://127.0.0.1:3100/api/$1\"\n}\n_api_direct_post() {\n  local _def='{}'; local body=\"${2:-$_def}\"\n  curl -s --max-time \"$CURL_TIMEOUT\" \\\n    -H \"Accept: application/json\" \\\n    -H \"X-SSL-Client-Verify: SUCCESS\" \\\n    -H \"X-SSL-Client-DN: CN=admin\" \\\n    -X POST -H \"Content-Type: application/json\" -d \"$body\" \\\n    \"http://127.0.0.1:3100/api/$1\"\n}\n\n# Stop nginx directly via systemctl\nlog_info \"Stopping nginx...\"\nsudo systemctl stop nginx 2>/dev/null || true\nsleep 2\n\n# Verify nginx shows as inactive/failed via direct API (nginx is down, can't proxy)\nSERVICES_NGINX_DOWN=$(_api_direct \"services\")\nNGINX_STATUS_DOWN=$(echo \"$SERVICES_NGINX_DOWN\" | jq -r '.services[] | select(.name == \"nginx\") | .status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$NGINX_STATUS_DOWN\" = \"inactive\" ] || [ \"$NGINX_STATUS_DOWN\" = \"failed\" ]; then\n  log_pass \"API shows nginx as '$NGINX_STATUS_DOWN' after stop\"\nelse\n  log_fail \"Expected nginx status 'inactive' or 'failed', got '$NGINX_STATUS_DOWN'\"\nfi\n\n# Restart nginx from the direct API\nRESTART_NGINX=$(_api_direct_post \"services/nginx/restart\")\nassert_json_field \"$RESTART_NGINX\" '.ok' 'true' \"nginx restart via API returned ok: true\" || true\n\n# Wait for nginx to come back\nsleep 2\n\nNGINX_STATUS_UP=$(systemctl is-active nginx 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_STATUS_UP\" \"active\" \"nginx is active after API restart\" || true\n\n# Verify via API as well (nginx is back, so we can use normal API)\nSERVICES_NGINX_UP=$(api_get \"services\")\nNGINX_API_STATUS=$(echo \"$SERVICES_NGINX_UP\" | jq -r '.services[] | select(.name == \"nginx\") | .status' 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_API_STATUS\" \"active\" \"API shows nginx as active after restart\" || true"
+    },
+    {
+      "id": "chisel-failure-and-recovery",
+      "label": "chisel failure and recovery",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "Stopping chisel...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Stopping chisel..."
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_CHISEL_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Extract CHISEL_STATUS_DOWN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CHISEL_STATUS_DOWN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVICES_CHISEL_DOWN"
+              },
+              "expression": ".services[] | select(.name == \"chisel\") | .status"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "API shows chisel as '$CHISEL_STATUS_DOWN' after stop",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "API shows chisel as '$CHISEL_STATUS_DOWN' after stop"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CHISEL_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CHISEL_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Expected chisel status 'inactive' or 'failed', got '$CHISEL_STATUS_DOWN'",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected chisel status 'inactive' or 'failed', got '$CHISEL_STATUS_DOWN'"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "CHISEL_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "CHISEL_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "POST /api/services/chisel/restart",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/chisel/restart"
+          },
+          "capture": [
+            {
+              "variable": "RESTART_CHISEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "chisel restart via API returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESTART_CHISEL"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "chisel restart via API returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set CHISEL_STATUS_UP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active chisel 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_STATUS_UP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "chisel is active after API restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_STATUS_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "chisel is active after API restart"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"chisel failure and recovery\"\n# ---------------------------------------------------------------------------\n\n# Stop chisel directly via systemctl\nlog_info \"Stopping chisel...\"\nsudo systemctl stop chisel 2>/dev/null || true\nsleep 2\n\n# Verify chisel shows as inactive/failed via API\nSERVICES_CHISEL_DOWN=$(api_get \"services\")\nCHISEL_STATUS_DOWN=$(echo \"$SERVICES_CHISEL_DOWN\" | jq -r '.services[] | select(.name == \"chisel\") | .status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$CHISEL_STATUS_DOWN\" = \"inactive\" ] || [ \"$CHISEL_STATUS_DOWN\" = \"failed\" ]; then\n  log_pass \"API shows chisel as '$CHISEL_STATUS_DOWN' after stop\"\nelse\n  log_fail \"Expected chisel status 'inactive' or 'failed', got '$CHISEL_STATUS_DOWN'\"\nfi\n\n# Restart chisel from the API\nRESTART_CHISEL=$(api_post \"services/chisel/restart\")\nassert_json_field \"$RESTART_CHISEL\" '.ok' 'true' \"chisel restart via API returned ok: true\" || true\n\n# Wait for chisel to come back\nsleep 2\n\nCHISEL_STATUS_UP=$(systemctl is-active chisel 2>/dev/null || echo \"unknown\")\nassert_eq \"$CHISEL_STATUS_UP\" \"active\" \"chisel is active after API restart\" || true"
+    },
+    {
+      "id": "authelia-failure-and-recovery",
+      "label": "authelia failure and recovery",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "Stopping authelia...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Stopping authelia..."
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_AUTH_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Extract AUTH_STATUS_DOWN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTH_STATUS_DOWN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVICES_AUTH_DOWN"
+              },
+              "expression": ".services[] | select(.name == \"authelia\") | .status"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "API shows authelia as '$AUTH_STATUS_DOWN' after stop",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "API shows authelia as '$AUTH_STATUS_DOWN' after stop"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "AUTH_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "AUTH_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Expected authelia status 'inactive' or 'failed', got '$AUTH_STATUS_DOWN'",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected authelia status 'inactive' or 'failed', got '$AUTH_STATUS_DOWN'"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "AUTH_STATUS_DOWN",
+                "value": "inactive"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AUTH_STATUS_DOWN",
+                "value": "failed"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "POST /api/services/authelia/restart",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/authelia/restart"
+          },
+          "capture": [
+            {
+              "variable": "RESTART_AUTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "authelia restart via API returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESTART_AUTH"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "authelia restart via API returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Set AUTH_STATUS_UP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active authelia 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "AUTH_STATUS_UP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "authelia is active after API restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_STATUS_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "authelia is active after API restart"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"authelia failure and recovery\"\n# ---------------------------------------------------------------------------\n\nlog_info \"Stopping authelia...\"\nsudo systemctl stop authelia 2>/dev/null || true\nsleep 2\n\nSERVICES_AUTH_DOWN=$(api_get \"services\")\nAUTH_STATUS_DOWN=$(echo \"$SERVICES_AUTH_DOWN\" | jq -r '.services[] | select(.name == \"authelia\") | .status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$AUTH_STATUS_DOWN\" = \"inactive\" ] || [ \"$AUTH_STATUS_DOWN\" = \"failed\" ]; then\n  log_pass \"API shows authelia as '$AUTH_STATUS_DOWN' after stop\"\nelse\n  log_fail \"Expected authelia status 'inactive' or 'failed', got '$AUTH_STATUS_DOWN'\"\nfi\n\nRESTART_AUTH=$(api_post \"services/authelia/restart\")\nassert_json_field \"$RESTART_AUTH\" '.ok' 'true' \"authelia restart via API returned ok: true\" || true\n\nsleep 2\n\nAUTH_STATUS_UP=$(systemctl is-active authelia 2>/dev/null || echo \"unknown\")\nassert_eq \"$AUTH_STATUS_UP\" \"active\" \"authelia is active after API restart\" || true"
+    },
+    {
+      "id": "panel-survives-all-service-disruptions",
+      "label": "Panel survives all service disruptions",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "GET /api/health",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "health"
+          },
+          "capture": [
+            {
+              "variable": "HEALTH_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Panel health is ok after all disruptions",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEALTH_FINAL"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "Panel health is ok after all disruptions"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Set FINAL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SERVICES_FINAL\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .status' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "FINAL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Service $svc is active at end of resilience test",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FINAL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Service $svc is active at end of resilience test"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel survives all service disruptions\"\n# ---------------------------------------------------------------------------\n\n# The panel should have stayed up the entire time\nHEALTH_FINAL=$(api_get \"health\")\nassert_json_field \"$HEALTH_FINAL\" '.status' 'ok' \"Panel health is ok after all disruptions\" || true\n\n# Final service status check\nSERVICES_FINAL=$(api_get \"services\")\nfor svc in nginx chisel authelia lamalibre-lamaste-serverd; do\n  FINAL_STATUS=$(echo \"$SERVICES_FINAL\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .status' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$FINAL_STATUS\" \"active\" \"Service $svc is active at end of resilience test\" || true\ndone"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 10 — Resilience\n# ============================================================================\n# Verifies service failure detection and recovery:\n# - Stop nginx, verify dashboard shows it as inactive\n# - Restart nginx from API, verify it recovers\n# - Stop chisel, verify dashboard shows it as inactive\n# - Restart chisel from API, verify it recovers\n# - Verify panel stays up throughout\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq systemctl\n\nbegin_test \"10 — Resilience\"\n\n# Safety: ensure all services are restored on exit\ncleanup_services() {\n  sudo systemctl start nginx 2>/dev/null || true\n  sudo systemctl start chisel 2>/dev/null || true\n  sudo systemctl start authelia 2>/dev/null || true\n}\ntrap cleanup_services EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

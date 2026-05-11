@@ -1,4 +1,4 @@
-# Portlama E2E: 09 — IP Fallback
+# Lamaste E2E: 09 — IP Fallback
 
 > Started at `2026-03-30 13:06:46 UTC`
 

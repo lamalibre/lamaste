@@ -1,0 +1,1135 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 3,
+    "name": "Onboarding Flow",
+    "suite": "e2e",
+    "description": "03 — Onboarding Flow",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN",
+      "default": "test.example.com"
+    },
+    "TEST_EMAIL": {
+      "description": "TEST_EMAIL",
+      "default": "admin@example.com"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "initial-onboarding-status",
+      "label": "Initial onboarding status",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract CURRENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CURRENT_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "STATUS_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Current onboarding status: $CURRENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Current onboarding status: $CURRENT_STATUS"
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Onboarding already completed — testing post-completion behavior",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Onboarding already completed — testing post-completion behavior"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "POST /api/onboarding/domain",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/domain",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "POST /onboarding/domain returns 410 after completion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOMAIN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "POST /onboarding/domain returns 410 after completion"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "POST /api/onboarding/verify-dns",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/verify-dns",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DNS_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "POST /onboarding/verify-dns returns 410 after completion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DNS_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "POST /onboarding/verify-dns returns 410 after completion"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/onboarding/provision",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/provision",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PROVISION_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "POST /onboarding/provision returns 410 after completion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PROVISION_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "410"
+              },
+              "message": "POST /onboarding/provision returns 410 after completion"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STATUS_CODE",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "GET /onboarding/status still returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET /onboarding/status still returns 200"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "COMPLETED"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Initial onboarding status\"\n# ---------------------------------------------------------------------------\n\nSTATUS_RESPONSE=$(api_get \"onboarding/status\")\nCURRENT_STATUS=$(echo \"$STATUS_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\n\nlog_info \"Current onboarding status: $CURRENT_STATUS\"\n\nif [ \"$CURRENT_STATUS\" = \"COMPLETED\" ]; then\n  log_info \"Onboarding already completed — testing post-completion behavior\"\n\n  # Verify onboarding endpoints return 410 Gone\n  DOMAIN_STATUS=$(api_post_status \"onboarding/domain\" \"{\\\"domain\\\":\\\"$TEST_DOMAIN\\\",\\\"email\\\":\\\"$TEST_EMAIL\\\"}\")\n  assert_eq \"$DOMAIN_STATUS\" \"410\" \"POST /onboarding/domain returns 410 after completion\" || true\n\n  DNS_STATUS=$(api_post_status \"onboarding/verify-dns\")\n  assert_eq \"$DNS_STATUS\" \"410\" \"POST /onboarding/verify-dns returns 410 after completion\" || true\n\n  PROVISION_STATUS=$(api_post_status \"onboarding/provision\")\n  assert_eq \"$PROVISION_STATUS\" \"410\" \"POST /onboarding/provision returns 410 after completion\" || true\n\n  # Status endpoint is always accessible (no guard)\n  STATUS_CODE=$(api_get_status \"onboarding/status\")\n  assert_eq \"$STATUS_CODE\" \"200\" \"GET /onboarding/status still returns 200\" || true\n\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "set-domain",
+      "label": "Set domain",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "POST /api/onboarding/domain",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/domain",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Domain set successfully",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAIN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Domain set successfully"
+            }
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Domain matches input",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOMAIN_RESPONSE"
+              },
+              "path": ".domain",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_DOMAIN"
+              },
+              "message": "Domain matches input"
+            }
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Status is DOMAIN_SET after setting domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_AFTER"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "DOMAIN_SET"
+              },
+              "message": "Status is DOMAIN_SET after setting domain"
+            }
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Skipping domain setup — status is $CURRENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Skipping domain setup — status is $CURRENT_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "FRESH"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "CURRENT_STATUS",
+                "value": "DOMAIN_SET"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Set domain\"\n# ---------------------------------------------------------------------------\n\nif [ \"$CURRENT_STATUS\" = \"FRESH\" ] || [ \"$CURRENT_STATUS\" = \"DOMAIN_SET\" ]; then\n  DOMAIN_RESPONSE=$(api_post \"onboarding/domain\" \"{\\\"domain\\\":\\\"$TEST_DOMAIN\\\",\\\"email\\\":\\\"$TEST_EMAIL\\\"}\")\n  assert_json_field \"$DOMAIN_RESPONSE\" '.ok' 'true' \"Domain set successfully\" || true\n  assert_json_field \"$DOMAIN_RESPONSE\" '.domain' \"$TEST_DOMAIN\" \"Domain matches input\" || true\n\n  # Verify status updated\n  STATUS_AFTER=$(api_get \"onboarding/status\")\n  assert_json_field \"$STATUS_AFTER\" '.status' 'DOMAIN_SET' \"Status is DOMAIN_SET after setting domain\" || true\nelse\n  log_info \"Skipping domain setup — status is $CURRENT_STATUS\"\nfi"
+    },
+    {
+      "id": "domain-validation",
+      "label": "Domain validation",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "POST /api/onboarding/domain",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/domain",
+            "body": {
+              "domain": "",
+              "email": "bad"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Invalid domain/email rejected (HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invalid domain/email rejected (HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Invalid domain/email should be rejected (got HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invalid domain/email should be rejected (got HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Domain validation\"\n# ---------------------------------------------------------------------------\n\n# Test invalid domain\nINVALID_STATUS=$(api_post_status \"onboarding/domain\" '{\"domain\":\"\",\"email\":\"bad\"}')\nif [ \"$INVALID_STATUS\" = \"400\" ] || [ \"$INVALID_STATUS\" = \"422\" ]; then\n  log_pass \"Invalid domain/email rejected (HTTP $INVALID_STATUS)\"\nelse\n  log_fail \"Invalid domain/email should be rejected (got HTTP $INVALID_STATUS)\"\nfi"
+    },
+    {
+      "id": "dns-verification",
+      "label": "DNS verification",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "POST /api/onboarding/verify-dns",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/verify-dns"
+          },
+          "capture": [
+            {
+              "variable": "DNS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Extract DNS_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DNS_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DNS_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "DNS verification passed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "DNS verification passed"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DNS_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "DNS response contains correct domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DNS_RESPONSE"
+              },
+              "path": ".domain",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_DOMAIN"
+              },
+              "message": "DNS response contains correct domain"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "DNS_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Extract DNS_MSG",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DNS_MSG",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DNS_RESPONSE"
+              },
+              "expression": ".message"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DNS_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "DNS verification returned ok=false: $DNS_MSG",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "DNS verification returned ok=false: $DNS_MSG"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DNS_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "This is expected if DNS is not yet configured for $TEST_DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "This is expected if DNS is not yet configured for $TEST_DOMAIN"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "DNS_OK",
+            "value": "true"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"DNS verification\"\n# ---------------------------------------------------------------------------\n\nif ! skip_if_no_dns \"DNS verification requires real DNS — set SKIP_DNS_TESTS=0 to run\"; then\n  DNS_RESPONSE=$(api_post \"onboarding/verify-dns\")\n  DNS_OK=$(echo \"$DNS_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\n\n  if [ \"$DNS_OK\" = \"true\" ]; then\n    log_pass \"DNS verification passed\"\n    assert_json_field \"$DNS_RESPONSE\" '.domain' \"$TEST_DOMAIN\" \"DNS response contains correct domain\" || true\n  else\n    DNS_MSG=$(echo \"$DNS_RESPONSE\" | jq -r '.message' 2>/dev/null || echo \"no message\")\n    log_info \"DNS verification returned ok=false: $DNS_MSG\"\n    log_info \"This is expected if DNS is not yet configured for $TEST_DOMAIN\"\n  fi\nfi"
+    },
+    {
+      "id": "provisioning",
+      "label": "Provisioning",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "CURRENT_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "POST /api/onboarding/provision",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/provision"
+          },
+          "capture": [
+            {
+              "variable": "PROVISION_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "DNS_READY"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Extract PROVISION_STATUS_CODE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PROVISION_STATUS_CODE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PROVISION_RESPONSE"
+              },
+              "expression": ".ok // empty"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CURRENT_STATUS",
+            "value": "DNS_READY"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Provisioning started (HTTP 202)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Provisioning started (HTTP 202)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PROVISION_STATUS_CODE",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Provisioning response: $PROVISION_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Provisioning response: $PROVISION_RESPONSE"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PROVISION_STATUS_CODE",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Waiting for provisioning to complete...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Waiting for provisioning to complete..."
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "PROV_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Provisioning completed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Provisioning completed"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PROV_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PROV_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set ELAPSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(ELAPSED + 5)"
+          },
+          "capture": [
+            {
+              "variable": "ELAPSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "PROV_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Unexpected status during provisioning: $PROV_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unexpected status during provisioning: $PROV_STATUS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PROV_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Provisioning timed out after ${PROVISION_TIMEOUT}s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Provisioning timed out after ${PROVISION_TIMEOUT}s"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "DNS not verified — provisioning requires DNS_READY status",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "DNS not verified — provisioning requires DNS_READY status"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "POST /api/onboarding/provision",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "onboarding/provision",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PROV_REJECT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Provisioning rejected without DNS verification (HTTP 409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PROV_REJECT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Provisioning rejected without DNS verification (HTTP 409)"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Skipping provisioning — status is $CURRENT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Skipping provisioning — status is $CURRENT_STATUS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Provisioning\"\n# ---------------------------------------------------------------------------\n\nCURRENT_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$CURRENT_STATUS\" = \"DNS_READY\" ]; then\n  PROVISION_RESPONSE=$(api_post \"onboarding/provision\")\n  PROVISION_STATUS_CODE=$(echo \"$PROVISION_RESPONSE\" | jq -r '.ok // empty' 2>/dev/null || echo \"\")\n\n  if [ \"$PROVISION_STATUS_CODE\" = \"true\" ]; then\n    log_pass \"Provisioning started (HTTP 202)\"\n  else\n    log_info \"Provisioning response: $PROVISION_RESPONSE\"\n  fi\n\n  # Wait for provisioning to complete (poll status)\n  log_info \"Waiting for provisioning to complete...\"\n  PROVISION_TIMEOUT=300\n  ELAPSED=0\n  while [ \"$ELAPSED\" -lt \"$PROVISION_TIMEOUT\" ]; do\n    PROV_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\n    if [ \"$PROV_STATUS\" = \"COMPLETED\" ]; then\n      log_pass \"Provisioning completed\"\n      break\n    elif [ \"$PROV_STATUS\" = \"PROVISIONING\" ]; then\n      sleep 5\n      ELAPSED=$((ELAPSED + 5))\n    else\n      log_fail \"Unexpected status during provisioning: $PROV_STATUS\"\n      break\n    fi\n  done\n\n  if [ \"$ELAPSED\" -ge \"$PROVISION_TIMEOUT\" ]; then\n    log_fail \"Provisioning timed out after ${PROVISION_TIMEOUT}s\"\n  fi\nelif [ \"$CURRENT_STATUS\" = \"DOMAIN_SET\" ]; then\n  if ! skip_if_no_dns \"Cannot provision without DNS verification\"; then\n    log_info \"DNS not verified — provisioning requires DNS_READY status\"\n  fi\n\n  # Verify that provisioning is rejected when DNS is not ready\n  PROV_REJECT_STATUS=$(api_post_status \"onboarding/provision\")\n  assert_eq \"$PROV_REJECT_STATUS\" \"409\" \"Provisioning rejected without DNS verification (HTTP 409)\" || true\nelse\n  log_info \"Skipping provisioning — status is $CURRENT_STATUS\"\nfi"
+    },
+    {
+      "id": "post-provisioning-service-checks",
+      "label": "Post-provisioning service checks",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "FINAL_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "Set SVC_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active \"$svc\" 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "SVC_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "FINAL_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Service $svc is active after provisioning",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SVC_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Service $svc is active after provisioning"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "FINAL_STATUS",
+            "value": "COMPLETED"
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Set LISTEN_443",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ss -tlnp | grep ':443 ' || true"
+          },
+          "capture": [
+            {
+              "variable": "LISTEN_443",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "nginx is listening on port 443",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx is listening on port 443"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "LISTEN_443"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Nothing is listening on port 443",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Nothing is listening on port 443"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "LISTEN_443"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "ss command not available — cannot check port 443",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "ss command not available — cannot check port 443"
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Post-provisioning checks skipped — onboarding status is $FINAL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Post-provisioning checks skipped — onboarding status is $FINAL_STATUS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Post-provisioning service checks\"\n# ---------------------------------------------------------------------------\n\nFINAL_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$FINAL_STATUS\" = \"COMPLETED\" ]; then\n  # Check all services are running\n  for svc in nginx chisel authelia lamalibre-lamaste-serverd; do\n    SVC_STATUS=$(systemctl is-active \"$svc\" 2>/dev/null || echo \"unknown\")\n    assert_eq \"$SVC_STATUS\" \"active\" \"Service $svc is active after provisioning\" || true\n  done\n\n  # Verify nginx is listening on 443\n  if command -v ss &>/dev/null; then\n    LISTEN_443=$(ss -tlnp | grep ':443 ' || true)\n    if [ -n \"$LISTEN_443\" ]; then\n      log_pass \"nginx is listening on port 443\"\n    else\n      log_fail \"Nothing is listening on port 443\"\n    fi\n  else\n    log_skip \"ss command not available — cannot check port 443\"\n  fi\nelse\n  log_info \"Post-provisioning checks skipped — onboarding status is $FINAL_STATUS\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 03 — Onboarding Flow\n# ============================================================================\n# Verifies the complete onboarding sequence:\n# - Check initial status (FRESH)\n# - Set domain via POST /api/onboarding/domain\n# - Verify DNS via POST /api/onboarding/verify-dns (requires real DNS or skip)\n# - Trigger provisioning via POST /api/onboarding/provision\n# - Verify all services are running after provisioning\n# - Verify onboarding endpoints return 410 after completion\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\n: \"${TEST_DOMAIN:=test.example.com}\"\n: \"${TEST_EMAIL:=admin@example.com}\"\n\nbegin_test \"03 — Onboarding Flow\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

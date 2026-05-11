@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "node-ready",
+    "name": "Three-VM node-ready",
+    "description": "Install Node.js 22.x on host, agent, and visitor VMs and point @lamalibre at the Feria dev registry."
+  },
+  "sections": [
+    {
+      "id": "install-node",
+      "label": "Install Node.js 22.x and configure Feria registry",
+      "parallel": true,
+      "steps": [
+        {
+          "id": "node-host",
+          "label": "Install Node.js + Feria registry on host",
+          "target": "host",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+        },
+        {
+          "id": "node-agent",
+          "label": "Install Node.js + Feria registry on agent",
+          "target": "agent",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+        },
+        {
+          "id": "node-visitor",
+          "label": "Install Node.js + Feria registry on visitor",
+          "target": "visitor",
+          "op": { "type": "exec", "command": "# inlined bash" },
+          "bash": "set -euo pipefail\nif command -v npm >/dev/null 2>&1; then\n  echo \"npm already available ($(npm --version))\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\nGATEWAY=\"$(ip route | awk '/default/{print $3; exit}')\"\nif [ -z \"${GATEWAY}\" ]; then GATEWAY=\"192.168.2.1\"; fi\nprintf '@lamalibre:registry=http://%s:4873\\n' \"${GATEWAY}\" | tee /root/.npmrc /home/ubuntu/.npmrc >/dev/null\n"
+        }
+      ]
+    }
+  ]
+}

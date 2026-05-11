@@ -1,4 +1,4 @@
-# Portlama E2E: 19 — Panel Expose Lifecycle
+# Lamaste E2E: 19 — Panel Expose Lifecycle
 
 > Started at `2026-03-30 13:07:58 UTC`
 
@@ -28,7 +28,7 @@
 ✅ `13:08:03` Panel tunnel has an FQDN  
 ✅ `13:08:03` Panel tunnel has a createdAt timestamp  
 ✅ `13:08:03` Panel tunnel agentLabel matches  
-ℹ️ `13:08:03` Exposed panel tunnel: agent-panel-e2e-1774876078.test.portlama.local (ID: d78eba91-ecdf-4f01-8941-754b2332c6c0)  
+ℹ️ `13:08:03` Exposed panel tunnel: agent-panel-e2e-1774876078.test.lamaste.local (ID: d78eba91-ecdf-4f01-8941-754b2332c6c0)  
 
 ## Verify panel tunnel in tunnel listing
 
@@ -37,7 +37,7 @@
 
 ## Verify nginx mTLS vhost created (not app vhost)
 
-✅ `13:08:03` mTLS panel vhost exists at /etc/nginx/sites-enabled/portlama-agent-panel-agent-panel-e2e-1774876078  
+✅ `13:08:03` mTLS panel vhost exists at /etc/nginx/sites-enabled/lamaste-agent-panel-agent-panel-e2e-1774876078  
 ✅ `13:08:03` No app vhost created (correct — panel uses mTLS vhost)  
 ✅ `13:08:03` nginx -t passes after panel expose  
 

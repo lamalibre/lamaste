@@ -1,0 +1,37 @@
+{
+  "name": "@lamalibre/create-lamaste-desktop",
+  "version": "2.0.0",
+  "description": "Download and launch the Lamaste Desktop app",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "bin": {
+    "create-lamaste-desktop": "bin/create-lamaste-desktop.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/provisioners/desktop"
+  },
+  "homepage": "https://github.com/lamalibre/lamaste#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/lamaste/issues"
+  },
+  "keywords": [
+    "lamaste",
+    "desktop",
+    "tauri",
+    "tunnel",
+    "installer"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -46,7 +46,7 @@ an individual is officially representing the project in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported by opening an issue at
-[github.com/lamalibre/portlama/issues](https://github.com/lamalibre/portlama/issues)
+[github.com/lamalibre/lamaste/issues](https://github.com/lamalibre/lamaste/issues)
 or contacting the project maintainers directly.
 
 All complaints will be reviewed and investigated promptly and fairly. All

@@ -1,0 +1,606 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 18,
+    "name": "JSON Installer Output",
+    "suite": "e2e",
+    "description": "18 — JSON Installer Output (--json flag)",
+    "deps": [],
+    "requires": [
+      "node",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "create-lamaste-json-redeploy-mode",
+      "label": "create-lamaste --json (redeploy mode)",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Set INSTALLER_PATH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "which create-lamaste 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALLER_PATH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Set JSON_OUTPUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "node \"$INSTALLER_PATH\" --json 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "JSON_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "No NDJSON output from create-lamaste --json",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No NDJSON output from create-lamaste --json"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "JSON_OUTPUT"
+            }
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_empty",
+        "variable": "INSTALLER_PATH"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"create-lamaste --json (redeploy mode)\"\n# ---------------------------------------------------------------------------\n\n# Run the installer in JSON mode and capture NDJSON output\nINSTALLER_PATH=\"/opt/lamalibre/lamaste/create-lamaste/bin/create-lamaste.js\"\nif [ ! -f \"$INSTALLER_PATH\" ]; then\n  # Fallback: find it via npx or global install\n  INSTALLER_PATH=$(which create-lamaste 2>/dev/null || echo \"\")\n  if [ -z \"$INSTALLER_PATH\" ]; then\n    log_skip \"create-lamaste not found in PATH or /opt/lamalibre/lamaste\"\n    end_test\n    exit 0\n  fi\nfi\n\nJSON_OUTPUT=$(node \"$INSTALLER_PATH\" --json 2>/dev/null || true)\n\nif [ -z \"$JSON_OUTPUT\" ]; then\n  log_fail \"No NDJSON output from create-lamaste --json\"\n  end_test\n  exit 1\nfi"
+    },
+    {
+      "id": "ndjson-line-validation",
+      "label": "NDJSON line validation",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "Set LINE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(LINE_COUNT + 1)"
+          },
+          "capture": [
+            {
+              "variable": "LINE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Set VALID_LINES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(VALID_LINES + 1)"
+          },
+          "capture": [
+            {
+              "variable": "VALID_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Line $LINE_COUNT is not valid JSON: $line",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Line $LINE_COUNT is not valid JSON: $line"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Set EVENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$line\" | jq -r '.event // empty'"
+          },
+          "capture": [
+            {
+              "variable": "EVENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "All $LINE_COUNT lines are valid JSON",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "All $LINE_COUNT lines are valid JSON"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Step events emitted: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Step events emitted: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=2"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Expected at least 2 step events, got: $STEP_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected at least 2 step events, got: $STEP_EVENTS"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STEP_EVENTS",
+            "value": ">=2"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"NDJSON line validation\"\n# ---------------------------------------------------------------------------\n\nLINE_COUNT=0\nVALID_LINES=0\nSTEP_EVENTS=0\nCOMPLETE_EVENTS=0\nERROR_EVENTS=0\n\nwhile IFS= read -r line; do\n  if [ -z \"$line\" ]; then\n    continue\n  fi\n  LINE_COUNT=$((LINE_COUNT + 1))\n\n  # Verify each line is valid JSON\n  if echo \"$line\" | jq empty 2>/dev/null; then\n    VALID_LINES=$((VALID_LINES + 1))\n  else\n    log_fail \"Line $LINE_COUNT is not valid JSON: $line\"\n    continue\n  fi\n\n  EVENT=$(echo \"$line\" | jq -r '.event // empty')\n  case \"$EVENT\" in\n    step)     STEP_EVENTS=$((STEP_EVENTS + 1)) ;;\n    complete) COMPLETE_EVENTS=$((COMPLETE_EVENTS + 1)) ;;\n    error)    ERROR_EVENTS=$((ERROR_EVENTS + 1)) ;;\n  esac\ndone <<< \"$JSON_OUTPUT\"\n\nif [ \"$LINE_COUNT\" -gt 0 ] && [ \"$VALID_LINES\" -eq \"$LINE_COUNT\" ]; then\n  log_pass \"All $LINE_COUNT lines are valid JSON\"\nelse\n  log_fail \"JSON validation: $VALID_LINES/$LINE_COUNT lines valid\"\nfi\n\nif [ \"$STEP_EVENTS\" -ge 2 ]; then\n  log_pass \"Step events emitted: $STEP_EVENTS\"\nelse\n  log_fail \"Expected at least 2 step events, got: $STEP_EVENTS\"\nfi"
+    },
+    {
+      "id": "complete-event-validation",
+      "label": "Complete event validation",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "Exactly one complete event emitted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Exactly one complete event emitted"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Set COMPLETE_LINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JSON_OUTPUT\" | grep '\"event\":\"complete\"' || echo \"$JSON_OUTPUT\" | grep '\"complete\"'"
+          },
+          "capture": [
+            {
+              "variable": "COMPLETE_LINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Extract IP",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "IP",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.ip // empty"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Extract PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_URL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.panelUrl // empty"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Extract P12_PATH",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PATH",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.p12Path // empty"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Extract P12_PW_PATH",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PW_PATH",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".server.p12PasswordPath // empty"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Server IP present: $IP",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Server IP present: $IP"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "IP"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Server IP missing from complete event",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Server IP missing from complete event"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "IP"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Panel URL present and uses HTTPS: $PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel URL present and uses HTTPS: $PANEL_URL"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PANEL_URL"
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Panel URL missing or not HTTPS: $PANEL_URL",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel URL missing or not HTTPS: $PANEL_URL"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "PANEL_URL"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "P12 path within expected directory: $P12_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "P12 path within expected directory: $P12_PATH"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "P12_PATH"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "P12 path missing or unexpected: $P12_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "P12 path missing or unexpected: $P12_PATH"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "P12_PATH"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "P12 password path within expected directory: $P12_PW_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "P12 password path within expected directory: $P12_PW_PATH"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "P12_PW_PATH"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "P12 password path missing or unexpected: $P12_PW_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "P12 password path missing or unexpected: $P12_PW_PATH"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "P12_PW_PATH"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Installer emitted error event instead of complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Installer emitted error event instead of complete"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Expected exactly one complete event, got: $COMPLETE_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Expected exactly one complete event, got: $COMPLETE_EVENTS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | grep '\"event\":\"complete\"' || echo \"$JSON_OUTPUT\" | grep '\"complete\"')\n\n  # Verify server info fields\n  IP=$(echo \"$COMPLETE_LINE\" | jq -r '.server.ip // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.server.panelUrl // empty')\n  P12_PATH=$(echo \"$COMPLETE_LINE\" | jq -r '.server.p12Path // empty')\n  P12_PW_PATH=$(echo \"$COMPLETE_LINE\" | jq -r '.server.p12PasswordPath // empty')\n\n  if [ -n \"$IP\" ]; then\n    log_pass \"Server IP present: $IP\"\n  else\n    log_fail \"Server IP missing from complete event\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS: $PANEL_URL\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$P12_PATH\" ] && [[ \"$P12_PATH\" == /etc/lamalibre/lamaste/pki/* ]]; then\n    log_pass \"P12 path within expected directory: $P12_PATH\"\n  else\n    log_fail \"P12 path missing or unexpected: $P12_PATH\"\n  fi\n\n  if [ -n \"$P12_PW_PATH\" ] && [[ \"$P12_PW_PATH\" == /etc/lamalibre/lamaste/pki/* ]]; then\n    log_pass \"P12 password path within expected directory: $P12_PW_PATH\"\n  else\n    log_fail \"P12 password path missing or unexpected: $P12_PW_PATH\"\n  fi\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  log_fail \"Installer emitted error event instead of complete\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
+    },
+    {
+      "id": "step-status-validation",
+      "label": "Step status validation",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Extract HAS_ENV_CHECK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HAS_ENV_CHECK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "JSON_OUTPUT"
+              },
+              "expression": "select(.event==\"step\" and .step==\"check_environment\") | .step"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "check_environment step present",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "check_environment step present"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "HAS_ENV_CHECK"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "check_environment step missing",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "check_environment step missing"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "HAS_ENV_CHECK"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Extract INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INVALID_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "JSON_OUTPUT"
+              },
+              "expression": "select(.event==\"step\") | .status // \"null\""
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "All step events have valid status values",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "All step events have valid status values"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "INVALID_STATUS"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Invalid step status found: $INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invalid step status found: $INVALID_STATUS"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "INVALID_STATUS"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step status validation\"\n# ---------------------------------------------------------------------------\n\n# In redeploy mode, expect check_environment and redeploy_panel steps\nHAS_ENV_CHECK=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"step\" and .step==\"check_environment\") | .step' 2>/dev/null | head -1)\nif [ -n \"$HAS_ENV_CHECK\" ]; then\n  log_pass \"check_environment step present\"\nelse\n  log_fail \"check_environment step missing\"\nfi\n\n# Verify step events have valid status values\nINVALID_STATUS=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"step\") | .status // \"null\"' 2>/dev/null | grep -v -E '^(running|complete|skipped|failed)$' | head -1 || true)\nif [ -z \"$INVALID_STATUS\" ]; then\n  log_pass \"All step events have valid status values\"\nelse\n  log_fail \"Invalid step status found: $INVALID_STATUS\"\nfi"
+    },
+    {
+      "id": "panel-health-after-redeploy",
+      "label": "Panel health after redeploy",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "Set HEALTH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" --max-time \"$CURL_TIMEOUT\" \"${BASE_URL}/api/health\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Panel healthy after --json redeploy",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel healthy after --json redeploy"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Panel not healthy after --json redeploy: $HEALTH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel not healthy after --json redeploy: $HEALTH"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel health after redeploy\"\n# ---------------------------------------------------------------------------\n\n# Wait for the panel service to restart after redeploy\nfor i in 1 2 3 4 5; do\n  HEALTH=$(curl -sk --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" \\\n    --max-time \"$CURL_TIMEOUT\" \"${BASE_URL}/api/health\" 2>/dev/null || echo \"\")\n  if echo \"$HEALTH\" | jq -e '.status == \"ok\"' &>/dev/null; then\n    break\n  fi\n  sleep 1\ndone\n\nif echo \"$HEALTH\" | jq -e '.status == \"ok\"' &>/dev/null; then\n  log_pass \"Panel healthy after --json redeploy\"\nelse\n  log_fail \"Panel not healthy after --json redeploy: $HEALTH\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 18 — JSON Installer Output (--json flag)\n# ============================================================================\n# Verifies that create-lamaste --json produces valid NDJSON output:\n# - Emits step events with running/complete/skipped status\n# - Emits a complete event with server info on success\n# - All lines are valid JSON\n# - Server info includes expected fields (ip, panelUrl, p12Path, p12PasswordPath)\n#\n# Since the system already has Lamaste installed, this runs in redeploy mode.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands node jq\n\nbegin_test \"18 — JSON Installer Output\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

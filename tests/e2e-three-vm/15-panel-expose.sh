@@ -6,12 +6,12 @@
 #
 # 1. Admin creates agent cert with panel:expose capability
 # 2. Agent exposes panel via POST /api/tunnels/expose-panel
-# 3. Verify mTLS nginx vhost created on host (portlama-agent-panel-* prefix)
+# 3. Verify mTLS nginx vhost created on host (lamaste-agent-panel-* prefix)
 # 4. Agent starts panel HTTP server on localhost:9393
-# 5. Agent runs portlama-agent update to pick up panel tunnel in chisel
+# 5. Agent runs lamaste-agent update to pick up panel tunnel in chisel
 # 6. Verify panel server accessible from host through chisel tunnel
 # 7. Verify mTLS vhost serves panel content via FQDN (mTLS, not Authelia)
-# 8. Agent runs portlama-agent panel --status to verify CLI
+# 8. Agent runs lamaste-agent panel --status to verify CLI
 # 9. Agent retracts panel via DELETE /api/tunnels/retract-panel
 # 10. Verify vhost removed, traffic stopped
 # ============================================================================
@@ -27,19 +27,19 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
-agent_exec() { multipass exec portlama-agent -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
+agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 # Agent-cert API helpers (called from host, using agent's extracted PEM cert)
@@ -47,7 +47,7 @@ host_agent_api_get() {
   local cert_path="$1"
   local key_path="$2"
   local api_path="$3"
-  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}"
+  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}"
 }
 
 host_agent_api_post() {
@@ -55,21 +55,21 @@ host_agent_api_post() {
   local key_path="$2"
   local api_path="$3"
   local body="$4"
-  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '${body}' https://127.0.0.1:9292/api/${api_path}"
+  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '${body}' https://127.0.0.1:9292/api/${api_path}"
 }
 
 host_agent_api_delete() {
   local cert_path="$1"
   local key_path="$2"
   local api_path="$3"
-  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}"
+  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}"
 }
 
 host_agent_api_get_status() {
   local cert_path="$1"
   local key_path="$2"
   local api_path="$3"
-  host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}" 2>/dev/null || echo "000"
+  host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}" 2>/dev/null || echo "000"
 }
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ cleanup() {
   log_info "Cleaning up test resources..."
 
   # Stop panel HTTP server on agent if running
-  agent_exec "pkill -f 'panel-server-entry' 2>/dev/null || true" 2>/dev/null || true
+  agent_exec "pkill -f 'serverd-entry' 2>/dev/null || true" 2>/dev/null || true
 
   # Retract panel tunnel via agent cert (if available)
   if [ -n "$PANEL_CERT_PATH" ] && [ -n "$PANEL_KEY_PATH" ]; then
@@ -110,7 +110,7 @@ cleanup() {
   agent_exec "sed -i '/${PANEL_FQDN}/d' /etc/hosts 2>/dev/null || true" 2>/dev/null || true
 
   # Refresh agent config to remove panel tunnel from chisel
-  agent_exec "portlama-agent update 2>/dev/null || true" 2>/dev/null || true
+  agent_exec "lamaste-agent update 2>/dev/null || true" 2>/dev/null || true
 
   # Revoke panel agent cert and clean up PEM files
   host_api_delete "certs/agent/panel-expose-e2e" 2>/dev/null || true
@@ -124,18 +124,18 @@ log_section "Pre-flight: re-extract admin PEM from P12"
 
 # Prior tests (single-VM test 16 enrollment tokens, test 14 json-installer
 # redeploy) can leave the admin cert in a revoked state or PEM files out of
-# sync with the P12. Run portlama-reset-admin to get a guaranteed fresh,
+# sync with the P12. Run lamaste-reset-admin to get a guaranteed fresh,
 # unrevoked admin cert, then re-extract PEM from the new P12.
-host_exec "portlama-reset-admin 2>/dev/null || true"
+host_exec "lamaste-reset-admin 2>/dev/null || true"
 sleep 2
 
-host_exec "P12PASS=\$(cat /etc/portlama/pki/.p12-password); \
-  openssl pkcs12 -in /etc/portlama/pki/client.p12 -clcerts -nokeys -out /etc/portlama/pki/client.crt -passin \"pass:\$P12PASS\" -legacy 2>/dev/null || \
-  openssl pkcs12 -in /etc/portlama/pki/client.p12 -clcerts -nokeys -out /etc/portlama/pki/client.crt -passin \"pass:\$P12PASS\"; \
-  openssl pkcs12 -in /etc/portlama/pki/client.p12 -nocerts -nodes -out /etc/portlama/pki/client.key -passin \"pass:\$P12PASS\" -legacy 2>/dev/null || \
-  openssl pkcs12 -in /etc/portlama/pki/client.p12 -nocerts -nodes -out /etc/portlama/pki/client.key -passin \"pass:\$P12PASS\"; \
-  chmod 644 /etc/portlama/pki/client.crt; chmod 600 /etc/portlama/pki/client.key; \
-  chown portlama:portlama /etc/portlama/pki/client.crt /etc/portlama/pki/client.key" 2>/dev/null || true
+host_exec "P12PASS=\$(cat /etc/lamalibre/lamaste/pki/.p12-password); \
+  openssl pkcs12 -in /etc/lamalibre/lamaste/pki/client.p12 -clcerts -nokeys -out /etc/lamalibre/lamaste/pki/client.crt -passin \"pass:\$P12PASS\" -legacy 2>/dev/null || \
+  openssl pkcs12 -in /etc/lamalibre/lamaste/pki/client.p12 -clcerts -nokeys -out /etc/lamalibre/lamaste/pki/client.crt -passin \"pass:\$P12PASS\"; \
+  openssl pkcs12 -in /etc/lamalibre/lamaste/pki/client.p12 -nocerts -nodes -out /etc/lamalibre/lamaste/pki/client.key -passin \"pass:\$P12PASS\" -legacy 2>/dev/null || \
+  openssl pkcs12 -in /etc/lamalibre/lamaste/pki/client.p12 -nocerts -nodes -out /etc/lamalibre/lamaste/pki/client.key -passin \"pass:\$P12PASS\"; \
+  chmod 644 /etc/lamalibre/lamaste/pki/client.crt; chmod 600 /etc/lamalibre/lamaste/pki/client.key; \
+  chown lamaste:lamaste /etc/lamalibre/lamaste/pki/client.crt /etc/lamalibre/lamaste/pki/client.key" 2>/dev/null || true
 log_pass "Admin cert reset and PEM re-extracted from P12"
 
 # Wait for panel to be healthy (may still be restarting after reset)
@@ -180,7 +180,7 @@ assert_json_field_not_empty "$CERT_RESPONSE" '.p12Password' "Agent cert has a p1
 log_info "Created agent cert: panel-expose-e2e"
 
 # Extract PEM cert and key on host VM
-P12_PATH="/etc/portlama/pki/agents/panel-expose-e2e/client.p12"
+P12_PATH="/etc/lamalibre/lamaste/pki/agents/panel-expose-e2e/client.p12"
 PANEL_CERT_PATH="/tmp/e2e-panel-expose-cert.pem"
 PANEL_KEY_PATH="/tmp/e2e-panel-expose-key.pem"
 host_exec "openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${PANEL_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${PANEL_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'"
@@ -221,12 +221,12 @@ PANEL_SUBDOMAIN="$ACTUAL_SUBDOMAIN"
 log_section "Verify mTLS nginx vhost on host"
 # ---------------------------------------------------------------------------
 
-# Panel vhosts use portlama-agent-panel- prefix (not portlama-app-)
-VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/portlama-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/portlama-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no")
+# Panel vhosts use lamaste-agent-panel- prefix (not lamaste-app-)
+VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no")
 assert_eq "$VHOST_EXISTS" "yes" "mTLS panel vhost exists in sites-enabled" || true
 
 # Verify no app vhost was created (panel uses mTLS, not Authelia)
-APP_VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/portlama-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/portlama-app-${PANEL_SUBDOMAIN} && echo yes || echo no")
+APP_VHOST_EXISTS=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} && echo yes || echo no")
 assert_eq "$APP_VHOST_EXISTS" "no" "No Authelia app vhost created for panel tunnel" || true
 
 # Verify nginx config valid
@@ -252,7 +252,7 @@ log_pass "Added ${PANEL_FQDN} to agent /etc/hosts"
 # Start a simple HTTP server on the panel port to simulate the panel server.
 # In production, the panel Fastify server would serve the SPA.
 # For this test, a Python HTTP server with a marker file suffices.
-MARKER="PORTLAMA_PANEL_OK_$(date +%s)"
+MARKER="LAMALIBRE_LAMASTE_PANEL_OK_$(date +%s)"
 agent_exec "echo '${MARKER}' > /tmp/panel-test-index.html"
 agent_exec "mkdir -p /tmp/panel-api && echo '{\"status\":\"ok\"}' > /tmp/panel-api/health"
 agent_exec "nohup python3 -m http.server ${PANEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
@@ -263,7 +263,7 @@ AGENT_HTTP_CHECK=$(agent_exec "curl -sf -o /dev/null -w '%{http_code}' --max-tim
 assert_eq "$AGENT_HTTP_CHECK" "200" "Panel HTTP server running on agent at port ${PANEL_PORT}" || true
 
 # Refresh agent config to pick up the panel tunnel in chisel
-agent_exec "portlama-agent update"
+agent_exec "lamaste-agent update"
 
 # Wait for chisel to establish the panel tunnel
 log_info "Waiting for Chisel tunnel to establish for panel..."
@@ -281,7 +281,7 @@ if [ "$TUNNEL_READY" = "true" ]; then
   log_pass "Chisel tunnel established for panel (port ${PANEL_PORT} accessible on host)"
 else
   log_fail "Chisel tunnel for panel failed to establish within 15 seconds"
-  AGENT_LOG=$(agent_exec "tail -20 ~/.portlama/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'")
+  AGENT_LOG=$(agent_exec "tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'")
   log_info "Chisel agent log: $AGENT_LOG"
 fi
 
@@ -298,7 +298,7 @@ log_section "Verify mTLS vhost serves panel via FQDN (no Authelia needed)"
 
 # The panel vhost uses mTLS verification (ssl_verify_client), not Authelia.
 # Access WITH mTLS cert should succeed (no Authelia redirect/302).
-MTLS_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/portlama/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "000")
+MTLS_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "000")
 if [ "$MTLS_STATUS" = "200" ]; then
   log_pass "mTLS vhost serves panel content via FQDN (HTTP 200)"
 elif [ "$MTLS_STATUS" = "502" ]; then
@@ -330,7 +330,7 @@ log_section "Verify vhost removed after retract"
 
 sleep 2  # wait for nginx reload
 
-VHOST_AFTER=$(host_exec "test -f /etc/nginx/sites-enabled/portlama-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/portlama-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no")
+VHOST_AFTER=$(host_exec "test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no")
 assert_eq "$VHOST_AFTER" "no" "mTLS panel vhost removed after retract" || true
 
 NGINX_TEST_AFTER=$(host_exec "nginx -t 2>&1 || true")
@@ -344,13 +344,13 @@ STATUS_RETRACTED=$(host_agent_api_get "$PANEL_CERT_PATH" "$PANEL_KEY_PATH" "tunn
 assert_json_field "$STATUS_RETRACTED" '.enabled' 'false' "Panel shows as disabled after retract" || true
 
 # Verify panel content no longer accessible via FQDN
-RETRACTED_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/portlama/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "000")
+RETRACTED_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "000")
 if [ "$RETRACTED_STATUS" != "200" ]; then
   log_pass "Panel content not accessible via FQDN after retract (HTTP $RETRACTED_STATUS)"
 else
   # Check if content still matches — if the vhost was removed but another server block
   # catches the request, the content won't match our marker.
-  RETRACTED_CONTENT=$(host_exec "curl -sk --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/portlama/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "")
+  RETRACTED_CONTENT=$(host_exec "curl -sk --max-time 10 --cert ${PANEL_CERT_PATH} --key ${PANEL_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt https://${PANEL_FQDN}/panel-test-index.html 2>/dev/null" || echo "")
   if ! echo "$RETRACTED_CONTENT" | grep -qF "$MARKER"; then
     log_pass "Panel content not accessible via FQDN after retract (different server block)"
   else
@@ -365,6 +365,6 @@ PANEL_TUNNEL_ID=""
 agent_exec "pkill -f 'python3 -m http.server ${PANEL_PORT}' 2>/dev/null || true" 2>/dev/null || true
 
 # Refresh agent config to remove panel tunnel from chisel
-agent_exec "portlama-agent update 2>/dev/null || true" 2>/dev/null || true
+agent_exec "lamaste-agent update 2>/dev/null || true" 2>/dev/null || true
 
 end_test

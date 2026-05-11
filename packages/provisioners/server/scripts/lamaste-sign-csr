@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+#
+# lamaste-sign-csr — root-only wrapper for signing agent CSRs with the panel CA.
+#
+# This script is invoked via sudo from the lamaste service user. It exists to
+# replace a previous wildcard sudoers entry that allowed:
+#
+#   lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -req -in /etc/lamalibre/lamaste/pki/* *
+#
+# The trailing wildcard let a compromised lamaste process forge admin certs by
+# dropping a CSR with /CN=admin and pointing the wildcard arguments at it. This
+# wrapper hardcodes the CA paths, validates every argument, and rejects CSRs
+# whose subject CN is "admin" — those certs are issued only by the dedicated
+# `lamaste-server reset-admin` flow, which runs as root directly.
+#
+# Usage:
+#   lamaste-sign-csr <csr-path> <out-cert-path> <serial-hex> <days>
+#
+# - <csr-path>      must resolve under /etc/lamalibre/lamaste/pki/agents/
+# - <out-cert-path> must resolve under /etc/lamalibre/lamaste/pki/agents/
+# - <serial-hex>    lower-case hex, 1–32 chars
+# - <days>          integer, 1–7300
+
+set -euo pipefail
+
+PKI_AGENTS_DIR="/etc/lamalibre/lamaste/pki/agents"
+CA_CERT="/etc/lamalibre/lamaste/pki/ca.crt"
+CA_KEY="/etc/lamalibre/lamaste/pki/ca.key"
+
+err() {
+  printf '%s: %s\n' "lamaste-sign-csr" "$1" >&2
+  exit 1
+}
+
+# Canonicalise the agents dir once. If the dir doesn't exist we'll fail later
+# with a clearer message, so don't error here — but if it does exist, use the
+# realpath form so symlink-equivalent paths match.
+if [[ -d "$PKI_AGENTS_DIR" ]]; then
+  PKI_AGENTS_REAL="$(realpath -e -- "$PKI_AGENTS_DIR")"
+else
+  PKI_AGENTS_REAL="$PKI_AGENTS_DIR"
+fi
+
+if [[ $# -ne 4 ]]; then
+  err "usage: lamaste-sign-csr <csr-path> <out-cert-path> <serial-hex> <days>"
+fi
+
+csr_arg="$1"
+out_arg="$2"
+serial="$3"
+days="$4"
+
+# --- argument shape checks ------------------------------------------------
+
+# Reject any path traversal characters early so we don't depend on realpath
+# canonicalising them away.
+if [[ "$csr_arg" == *$'\n'* || "$csr_arg" == *$'\t'* ]]; then
+  err "csr path contains control characters"
+fi
+if [[ "$out_arg" == *$'\n'* || "$out_arg" == *$'\t'* ]]; then
+  err "out cert path contains control characters"
+fi
+
+# Serial: hex, 1..32 chars. Lower-case only — the caller normalises before
+# passing it in (and tightening the alphabet shrinks the attack surface).
+if ! [[ "$serial" =~ ^[0-9a-f]{1,32}$ ]]; then
+  err "serial must be lowercase hex (1-32 chars)"
+fi
+
+# Days: positive integer 1..7300.
+if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+  err "days must be an integer"
+fi
+if (( days < 1 || days > 7300 )); then
+  err "days must be in 1..7300"
+fi
+
+# --- CSR path: must exist and resolve under the agents PKI dir ------------
+
+if [[ ! -f "$csr_arg" ]]; then
+  err "csr path does not exist: $csr_arg"
+fi
+
+# realpath -e canonicalises symlinks and fails if anything along the path is
+# missing — defends against TOCTOU swaps to a symlink pointing outside the dir.
+csr_real="$(realpath -e -- "$csr_arg")"
+case "$csr_real" in
+  "$PKI_AGENTS_REAL"/*) ;;
+  *) err "csr path must resolve under $PKI_AGENTS_DIR/ (got $csr_real)" ;;
+esac
+
+# --- Out cert path: parent must resolve under agents PKI dir --------------
+
+# The out file may not exist yet (we are creating it), so resolve its parent.
+out_dir="$(dirname -- "$out_arg")"
+if [[ ! -d "$out_dir" ]]; then
+  err "out cert parent directory does not exist: $out_dir"
+fi
+out_dir_real="$(realpath -e -- "$out_dir")"
+case "$out_dir_real" in
+  "$PKI_AGENTS_REAL"|"$PKI_AGENTS_REAL"/*) ;;
+  *) err "out cert path must resolve under $PKI_AGENTS_DIR/ (got $out_dir_real)" ;;
+esac
+out_basename="$(basename -- "$out_arg")"
+if [[ -z "$out_basename" || "$out_basename" == "." || "$out_basename" == ".." ]]; then
+  err "out cert basename invalid"
+fi
+# Re-assemble the canonical out path (after parent canonicalisation).
+out_real="$out_dir_real/$out_basename"
+
+# --- CSR subject inspection: reject CN=admin ------------------------------
+
+# Read the subject line. -noout suppresses the CSR re-emit, -subject prints it.
+# The -nameopt RFC2253 form normalises ordering and escaping so we can match
+# reliably (default openssl format varies between versions).
+subject_line="$(openssl req -in "$csr_real" -noout -subject -nameopt RFC2253 2>/dev/null || true)"
+if [[ -z "$subject_line" ]]; then
+  err "could not read CSR subject — invalid CSR"
+fi
+
+# Strip the "subject=" prefix.
+subject="${subject_line#subject=}"
+subject="${subject# }"
+
+# Extract the CN. RFC2253 form puts attributes comma-separated, e.g.
+#   "CN=agent:foo,O=Lamaste"  or  "O=Lamaste,CN=admin"
+# We take whatever follows the first "CN=" up to (but not including) the next
+# unescaped comma. Backslash-escaped commas inside a value are not handled —
+# our allow-list rejects backslashes anyway.
+cn=""
+IFS=',' read -ra parts <<< "$subject"
+for part in "${parts[@]}"; do
+  trimmed="${part# }"
+  if [[ "$trimmed" == CN=* ]]; then
+    cn="${trimmed#CN=}"
+    break
+  fi
+done
+
+if [[ -z "$cn" ]]; then
+  err "CSR subject has no CN: $subject"
+fi
+
+# Hard reject: admin certs must come from `lamaste-server reset-admin`,
+# which runs as root directly and never goes through this wrapper.
+if [[ "$cn" == "admin" ]]; then
+  err "refusing to sign admin CSR — use lamaste-server reset-admin"
+fi
+
+# Defence in depth: reject anything that contains a backslash (RFC2253 escapes
+# we don't want to interpret) or characters that openssl/x509 might mishandle.
+if [[ "$cn" == *\\* ]]; then
+  err "CN contains escape sequences: $cn"
+fi
+
+# Allow only the agent / plugin-agent shapes the panel actually issues.
+# Mirrors the panel's own label regex: ^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?$
+# Plugin-agent labels are colon-joined: plugin-agent:<delegating>:<plugin>
+agent_label_re='^(agent|plugin-agent):[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?(:[a-z0-9][a-z0-9-]{0,61}[a-z0-9]?)?$'
+if ! [[ "$cn" =~ $agent_label_re ]]; then
+  err "CSR CN does not match agent label format: $cn"
+fi
+
+# --- Sanity check on the CA paths -----------------------------------------
+
+if [[ ! -f "$CA_CERT" ]]; then
+  err "CA cert missing: $CA_CERT"
+fi
+if [[ ! -f "$CA_KEY" ]]; then
+  err "CA key missing: $CA_KEY"
+fi
+
+# --- Sign ------------------------------------------------------------------
+
+# The sudoers rule pins THIS path; openssl runs as root and writes the cert
+# into the agent dir. exec replaces the shell so no extra process layer.
+exec /usr/bin/openssl x509 \
+  -req \
+  -in "$csr_real" \
+  -CA "$CA_CERT" \
+  -CAkey "$CA_KEY" \
+  -days "$days" \
+  -set_serial "0x${serial}" \
+  -sha256 \
+  -out "$out_real"

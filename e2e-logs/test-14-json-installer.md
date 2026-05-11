@@ -1,9 +1,9 @@
-# Portlama E2E: 14 — JSON Installer Output (Three-VM)
+# Lamaste E2E: 14 — JSON Installer Output (Three-VM)
 
 > Started at `2026-03-30 13:11:54 UTC`
 
 
-## create-portlama --json on host VM (redeploy mode)
+## create-lamaste --json on host VM (redeploy mode)
 
 
 ## NDJSON line validation

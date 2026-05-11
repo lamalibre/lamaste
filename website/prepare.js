@@ -153,13 +153,13 @@ const landingPage = `---
 layout: home
 
 hero:
-  name: Portlama
+  name: Lamaste
   text: Self-hosted secure tunneling
   tagline: Expose local web apps through a cheap VPS. Zero-login admin via client certificates. Never SSH again.
   actions:
     - theme: brand
       text: Get Started
-      link: /00-introduction/what-is-portlama
+      link: /00-introduction/what-is-lamaste
     - theme: alt
       text: Quick Start
       link: /00-introduction/quickstart

@@ -1,0 +1,642 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 7,
+    "name": "Certificate Renewal",
+    "suite": "e2e",
+    "description": "07 — Certificate Renewal",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping certificate tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "list-certificates",
+      "label": "List certificates",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "GET /api/certs",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs"
+          },
+          "capture": [
+            {
+              "variable": "CERTS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Set CERT_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$CERTS_RESPONSE\" | jq '.certs | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "GET /api/certs returns $CERT_COUNT certificates",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "GET /api/certs returns $CERT_COUNT certificates"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "No certificates listed (this is expected if certbot has not issued any yet)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "No certificates listed (this is expected if certbot has not issued any yet)"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Set FIRST_CERT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$CERTS_RESPONSE\" | jq '.certs[0]' 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "FIRST_CERT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Certificate has a type field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "FIRST_CERT"
+              },
+              "path": ".type",
+              "message": "Certificate has a type field"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Certificate has a domain field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "FIRST_CERT"
+              },
+              "path": ".domain",
+              "message": "Certificate has a domain field"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Certificate has an expiresAt field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "FIRST_CERT"
+              },
+              "path": ".expiresAt",
+              "message": "Certificate has an expiresAt field"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Set DAYS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$FIRST_CERT\" | jq '.daysUntilExpiry' 2>/dev/null || echo \"null\""
+          },
+          "capture": [
+            {
+              "variable": "DAYS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Certificate has numeric daysUntilExpiry: $DAYS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Certificate has numeric daysUntilExpiry: $DAYS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "DAYS",
+                "value": "null"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "DAYS",
+                "value": ""
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Certificate daysUntilExpiry is missing or null",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Certificate daysUntilExpiry is missing or null"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "DAYS",
+                "value": "null"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "DAYS",
+                "value": ""
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"List certificates\"\n# ---------------------------------------------------------------------------\n\nCERTS_RESPONSE=$(api_get \"certs\")\nCERT_COUNT=$(echo \"$CERTS_RESPONSE\" | jq '.certs | length' 2>/dev/null || echo \"0\")\n\nif [ \"$CERT_COUNT\" -gt 0 ]; then\n  log_pass \"GET /api/certs returns $CERT_COUNT certificates\"\nelse\n  log_info \"No certificates listed (this is expected if certbot has not issued any yet)\"\nfi\n\n# Verify certificate fields\nif [ \"$CERT_COUNT\" -gt 0 ]; then\n  FIRST_CERT=$(echo \"$CERTS_RESPONSE\" | jq '.certs[0]' 2>/dev/null || echo \"{}\")\n  assert_json_field_not_empty \"$FIRST_CERT\" '.type' \"Certificate has a type field\" || true\n  assert_json_field_not_empty \"$FIRST_CERT\" '.domain' \"Certificate has a domain field\" || true\n  assert_json_field_not_empty \"$FIRST_CERT\" '.expiresAt' \"Certificate has an expiresAt field\" || true\n\n  # Check daysUntilExpiry is a number\n  DAYS=$(echo \"$FIRST_CERT\" | jq '.daysUntilExpiry' 2>/dev/null || echo \"null\")\n  if [ \"$DAYS\" != \"null\" ] && [ \"$DAYS\" != \"\" ]; then\n    log_pass \"Certificate has numeric daysUntilExpiry: $DAYS\"\n  else\n    log_fail \"Certificate daysUntilExpiry is missing or null\"\n  fi\nfi"
+    },
+    {
+      "id": "force-renew-certificate",
+      "label": "Force renew certificate",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "POST /api/certs/$RENEW_DOMAIN/renew",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/$RENEW_DOMAIN/renew"
+          },
+          "capture": [
+            {
+              "variable": "RENEW_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "DOMAIN"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "DOMAIN",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Extract RENEW_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "RENEW_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RENEW_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "DOMAIN"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "DOMAIN",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Certificate renewal succeeded for $RENEW_DOMAIN",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Certificate renewal succeeded for $RENEW_DOMAIN"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Renewal response contains correct domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RENEW_RESPONSE"
+              },
+              "path": ".domain",
+              "expected": {
+                "kind": "var",
+                "name": "RENEW_DOMAIN"
+              },
+              "message": "Renewal response contains correct domain"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Renewal response contains new expiry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "RENEW_RESPONSE"
+              },
+              "path": ".newExpiry",
+              "message": "Renewal response contains new expiry"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Extract RENEW_ERROR",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "RENEW_ERROR",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RENEW_RESPONSE"
+              },
+              "expression": ".error"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Certificate renewal returned: $RENEW_ERROR",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Certificate renewal returned: $RENEW_ERROR"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "No domain configured — cannot test renewal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No domain configured — cannot test renewal"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Force renew certificate\"\n# ---------------------------------------------------------------------------\n\nif skip_if_no_dns \"Certificate renewal requires real Let's Encrypt — skipping\"; then\n  DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\n\n  if [ -n \"$DOMAIN\" ] && [ \"$DOMAIN\" != \"null\" ]; then\n    # Try to renew the panel cert (panel.<domain>)\n    RENEW_DOMAIN=\"panel.${DOMAIN}\"\n    RENEW_RESPONSE=$(api_post \"certs/$RENEW_DOMAIN/renew\")\n    RENEW_OK=$(echo \"$RENEW_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\n\n    if [ \"$RENEW_OK\" = \"true\" ]; then\n      log_pass \"Certificate renewal succeeded for $RENEW_DOMAIN\"\n      assert_json_field \"$RENEW_RESPONSE\" '.domain' \"$RENEW_DOMAIN\" \"Renewal response contains correct domain\" || true\n      assert_json_field_not_empty \"$RENEW_RESPONSE\" '.newExpiry' \"Renewal response contains new expiry\" || true\n    else\n      RENEW_ERROR=$(echo \"$RENEW_RESPONSE\" | jq -r '.error' 2>/dev/null || echo \"unknown\")\n      log_info \"Certificate renewal returned: $RENEW_ERROR\"\n    fi\n  else\n    log_skip \"No domain configured — cannot test renewal\"\n  fi\nfi"
+    },
+    {
+      "id": "renew-nonexistent-certificate",
+      "label": "Renew nonexistent certificate",
+      "steps": [
+        {
+          "id": "step-22",
+          "label": "POST /api/certs/nonexistent.example.com/renew",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/nonexistent.example.com/renew",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RENEW_404_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Renew nonexistent cert returns HTTP $RENEW_404_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Renew nonexistent cert returns HTTP $RENEW_404_STATUS"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "RENEW_404_STATUS",
+                "value": "404"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "RENEW_404_STATUS",
+                "value": "500"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Renew nonexistent cert unexpected status: HTTP $RENEW_404_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Renew nonexistent cert unexpected status: HTTP $RENEW_404_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "RENEW_404_STATUS",
+                "value": "404"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "RENEW_404_STATUS",
+                "value": "500"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Renew nonexistent certificate\"\n# ---------------------------------------------------------------------------\n\nif skip_if_no_dns \"Certbot test requires real infrastructure — skipping\"; then\n  RENEW_404_STATUS=$(api_post_status \"certs/nonexistent.example.com/renew\")\n  if [ \"$RENEW_404_STATUS\" = \"404\" ] || [ \"$RENEW_404_STATUS\" = \"500\" ]; then\n    log_pass \"Renew nonexistent cert returns HTTP $RENEW_404_STATUS\"\n  else\n    log_fail \"Renew nonexistent cert unexpected status: HTTP $RENEW_404_STATUS\"\n  fi\nfi"
+    },
+    {
+      "id": "auto-renew-timer-status",
+      "label": "Auto-renew timer status",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "GET /api/certs/auto-renew-status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/auto-renew-status"
+          },
+          "capture": [
+            {
+              "variable": "AUTORENEW_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Extract AUTORENEW_ACTIVE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTORENEW_ACTIVE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "AUTORENEW_RESPONSE"
+              },
+              "expression": ".active"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Certbot auto-renew timer is active",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Certbot auto-renew timer is active"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AUTORENEW_ACTIVE",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Auto-renew has a next run time",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "AUTORENEW_RESPONSE"
+              },
+              "path": ".nextRun",
+              "message": "Auto-renew has a next run time"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AUTORENEW_ACTIVE",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Certbot auto-renew timer is not active (may need certbot.timer enabled)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Certbot auto-renew timer is not active (may need certbot.timer enabled)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AUTORENEW_ACTIVE",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Could not determine auto-renew timer status",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Could not determine auto-renew timer status"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AUTORENEW_ACTIVE",
+            "value": "true"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Auto-renew timer status\"\n# ---------------------------------------------------------------------------\n\nAUTORENEW_RESPONSE=$(api_get \"certs/auto-renew-status\")\nAUTORENEW_ACTIVE=$(echo \"$AUTORENEW_RESPONSE\" | jq -r '.active' 2>/dev/null || echo \"null\")\n\nif [ \"$AUTORENEW_ACTIVE\" = \"true\" ]; then\n  log_pass \"Certbot auto-renew timer is active\"\n  assert_json_field_not_empty \"$AUTORENEW_RESPONSE\" '.nextRun' \"Auto-renew has a next run time\" || true\nelif [ \"$AUTORENEW_ACTIVE\" = \"false\" ]; then\n  log_info \"Certbot auto-renew timer is not active (may need certbot.timer enabled)\"\nelse\n  log_fail \"Could not determine auto-renew timer status\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 07 — Certificate Renewal\n# ============================================================================\n# Verifies certificate management:\n# - List certificates via GET /api/certs\n# - Force renew a certificate via POST /api/certs/:domain/renew\n# - Check auto-renew timer via GET /api/certs/auto-renew-status\n#\n# NOTE: Certificate renewal requires real Let's Encrypt infrastructure.\n# Tests that call certbot are skipped when SKIP_DNS_TESTS=1.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"07 — Certificate Renewal\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -38,10 +38,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: desktop-v${{ github.event.inputs.version }}
-          name: Portlama Desktop v${{ github.event.inputs.version }}
+          name: Lamaste Desktop v${{ github.event.inputs.version }}
           prerelease: ${{ github.event.inputs.prerelease }}
           body: |
-            ## Portlama Desktop v${{ github.event.inputs.version }}
+            ## Lamaste Desktop v${{ github.event.inputs.version }}
 
             ### Installation
 
@@ -49,12 +49,12 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | macOS Apple Silicon (M1/M2/M3/M4) | `Portlama_${{ github.event.inputs.version }}_aarch64.dmg` |
-            | macOS Intel | `Portlama_${{ github.event.inputs.version }}_x64.dmg` |
-            | Linux x64 (Debian/Ubuntu) | `portlama_${{ github.event.inputs.version }}_amd64.deb` |
-            | Linux x64 (AppImage) | `portlama_${{ github.event.inputs.version }}_amd64.AppImage` |
-            | Linux arm64 (Debian/Ubuntu) | `portlama_${{ github.event.inputs.version }}_arm64.deb` |
-            | Linux arm64 (AppImage) | `portlama_${{ github.event.inputs.version }}_aarch64.AppImage` |
+            | macOS Apple Silicon (M1/M2/M3/M4) | `Lamaste_${{ github.event.inputs.version }}_aarch64.dmg` |
+            | macOS Intel | `Lamaste_${{ github.event.inputs.version }}_x64.dmg` |
+            | Linux x64 (Debian/Ubuntu) | `lamaste_${{ github.event.inputs.version }}_amd64.deb` |
+            | Linux x64 (AppImage) | `lamaste_${{ github.event.inputs.version }}_amd64.AppImage` |
+            | Linux arm64 (Debian/Ubuntu) | `lamaste_${{ github.event.inputs.version }}_arm64.deb` |
+            | Linux arm64 (AppImage) | `lamaste_${{ github.event.inputs.version }}_aarch64.AppImage` |
 
             > **macOS note:** The app is not code-signed. On first launch, right-click → Open, or go to System Settings → Privacy & Security → Open Anyway.
 
@@ -93,7 +93,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: packages/portlama-desktop/src-tauri
+          workspaces: packages/clients/desktop/src-tauri
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -111,7 +111,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        working-directory: packages/portlama-desktop
+        working-directory: packages/clients/desktop
         run: npx tauri build --target ${{ matrix.target }}
 
       - name: Upload macOS .dmg to release
@@ -120,7 +120,7 @@ jobs:
         with:
           tag_name: desktop-v${{ github.event.inputs.version }}
           files: |
-            packages/portlama-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            packages/clients/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
 
       - name: Upload Linux .deb and .AppImage to release
         if: runner.os == 'Linux'
@@ -128,5 +128,5 @@ jobs:
         with:
           tag_name: desktop-v${{ github.event.inputs.version }}
           files: |
-            packages/portlama-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
-            packages/portlama-desktop/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            packages/clients/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            packages/clients/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage

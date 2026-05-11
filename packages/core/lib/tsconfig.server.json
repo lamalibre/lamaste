@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/server/**/*.ts"],
+  "exclude": ["src/agent/**", "src/*.ts"],
+  "references": [
+    { "path": "./tsconfig.shared.json" }
+  ]
+}

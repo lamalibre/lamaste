@@ -1,4 +1,4 @@
-# Portlama E2E: 07 — Static Site Visitor Journey (Three-VM)
+# Lamaste E2E: 07 — Static Site Visitor Journey (Three-VM)
 
 > Started at `2026-03-30 13:10:55 UTC`
 
@@ -13,7 +13,7 @@
 
 ✅ `13:10:56` Site creation returned ok: true  
 ✅ `13:10:56` Site has an ID  
-ℹ️ `13:10:56` Created site ID: 1e1d2152-36e6-4d28-b384-ae400129e3ab (e2eblog.test.portlama.local)  
+ℹ️ `13:10:56` Created site ID: 1e1d2152-36e6-4d28-b384-ae400129e3ab (e2eblog.test.lamaste.local)  
 ✅ `13:10:56` Site FQDN matches expected value  
 
 ## Write test index.html to site directory
@@ -23,7 +23,7 @@
 ## Visit site from visitor VM WITHOUT auth — should redirect to Authelia
 
 ✅ `13:10:58` Unauthenticated request redirected/rejected (HTTP 302)  
-✅ `13:10:59` Redirect points to Authelia portal (auth.test.portlama.local)  
+✅ `13:10:59` Redirect points to Authelia portal (auth.test.lamaste.local)  
 
 ## Reset TOTP before authentication
 

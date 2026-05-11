@@ -10,7 +10,7 @@
 # - Admin verifies with code, uses cookie
 # - Disable 2FA, verify IP access restored
 #
-# IMPORTANT: This test always runs portlama-reset-admin at the end to ensure
+# IMPORTANT: This test always runs lamaste-reset-admin at the end to ensure
 # clean state for subsequent tests.
 # ============================================================================
 
@@ -26,7 +26,7 @@ require_commands multipass curl jq node
 # ---------------------------------------------------------------------------
 
 host_api_get() {
-  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh GET "$1"
+  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh GET "$1"
 }
 
 host_api_post() {
@@ -34,10 +34,10 @@ host_api_post() {
   local body="$2"
   local b64body
   b64body=$(echo -n "$body" | base64)
-  multipass exec portlama-host -- sudo /tmp/vm-api-helper.sh POST "$path" "$b64body"
+  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh POST "$path" "$b64body"
 }
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
 
 # ---------------------------------------------------------------------------
 # Helper: generate TOTP code from a base32 secret
@@ -93,11 +93,11 @@ cleanup_2fa() {
   fi
   # Background the multipass exec and kill it after 30s if it hangs.
   # Multipass exec can spin at 100% CPU on SSH connection failures.
-  multipass exec portlama-host -- sudo bash -c '
-    if command -v portlama-reset-admin >/dev/null 2>&1; then
-      portlama-reset-admin
+  multipass exec lamaste-host -- sudo bash -c '
+    if command -v lamaste-reset-admin >/dev/null 2>&1; then
+      lamaste-reset-admin
     else
-      node /opt/portlama/panel-server/src/cli/reset-admin.js 2>/dev/null
+      node /opt/lamalibre/lamaste/serverd/src/cli/reset-admin.js 2>/dev/null
     fi
   ' >/dev/null 2>&1 &
   local pid=$!
@@ -163,17 +163,17 @@ log_section "Agent API calls still work without 2FA session"
 # Agent uses its own cert (CN=agent:...) which bypasses 2FA
 # IP vhost is disabled when 2FA is on, so agent must use domain
 # Multi-agent: extract PEM from per-agent P12 for curl usage
-AGENT_P12="/home/ubuntu/.portlama/agents/e2e-agent/client.p12"
+AGENT_P12="/home/ubuntu/.lamalibre/lamaste/agents/e2e-agent/client.p12"
 AGENT_CERT="/tmp/agent-e2e.crt"
 AGENT_KEY="/tmp/agent-e2e.key"
-multipass exec portlama-agent -- sudo bash -c "
-  P12_PASS=\$(jq -r '.p12Password' /home/ubuntu/.portlama/agents/e2e-agent/config.json)
+multipass exec lamaste-agent -- sudo bash -c "
+  P12_PASS=\$(jq -r '.p12Password' /home/ubuntu/.lamalibre/lamaste/agents/e2e-agent/config.json)
   openssl pkcs12 -in ${AGENT_P12} -clcerts -nokeys -passin pass:\${P12_PASS} -out ${AGENT_CERT} 2>/dev/null
   openssl pkcs12 -in ${AGENT_P12} -nocerts -nodes -passin pass:\${P12_PASS} -out ${AGENT_KEY} 2>/dev/null
   chmod 600 ${AGENT_KEY}
 " 2>/dev/null || true
 
-AGENT_HEALTH_DOMAIN=$(multipass exec portlama-agent -- curl -sk --max-time 30 \
+AGENT_HEALTH_DOMAIN=$(multipass exec lamaste-agent -- curl -sk --max-time 30 \
   --cert "${AGENT_CERT}" \
   --key "${AGENT_KEY}" \
   -H 'Accept: application/json' \
@@ -183,7 +183,7 @@ if echo "$AGENT_HEALTH_DOMAIN" | jq -e '.status' &>/dev/null; then
   log_pass "Agent API call succeeds via domain without 2FA session"
 else
   # Agent may still reach via IP if vhost removal is still propagating
-  AGENT_HEALTH_IP=$(multipass exec portlama-agent -- curl -sk --max-time 30 \
+  AGENT_HEALTH_IP=$(multipass exec lamaste-agent -- curl -sk --max-time 30 \
     --cert "${AGENT_CERT}" \
     --key "${AGENT_KEY}" \
     -H 'Accept: application/json' \
@@ -197,17 +197,17 @@ else
 fi
 
 # Clean up temp PEM files
-multipass exec portlama-agent -- rm -f "${AGENT_CERT}" "${AGENT_KEY}" 2>/dev/null || true
+multipass exec lamaste-agent -- rm -f "${AGENT_CERT}" "${AGENT_KEY}" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 log_section "Admin request without cookie returns 401"
 # ---------------------------------------------------------------------------
 
-ADMIN_NO_SESSION=$(multipass exec portlama-host -- curl -sk -o /dev/null -w '%{http_code}' \
+ADMIN_NO_SESSION=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \
   --max-time 30 \
-  --cert /etc/portlama/pki/client.crt \
-  --key /etc/portlama/pki/client.key \
-  --cacert /etc/portlama/pki/ca.crt \
+  --cert /etc/lamalibre/lamaste/pki/client.crt \
+  --key /etc/lamalibre/lamaste/pki/client.key \
+  --cacert /etc/lamalibre/lamaste/pki/ca.crt \
   "https://panel.${DOMAIN}/api/system/stats" 2>/dev/null || echo "000")
 
 assert_eq "$ADMIN_NO_SESSION" "401" "Admin request without session cookie returns 401" || true
@@ -222,17 +222,17 @@ wait_for_next_totp_window
 VERIFY_CODE=$(generate_totp_code "$MANUAL_KEY")
 
 # Verify on host — capture cookie
-VERIFY_RESULT=$(multipass exec portlama-host -- sudo bash -c "
+VERIFY_RESULT=$(multipass exec lamaste-host -- sudo bash -c "
   HEADERS=\$(mktemp)
   BODY=\$(curl -sk -D \"\$HEADERS\" --max-time 30 \\
-    --cert /etc/portlama/pki/client.crt \\
-    --key /etc/portlama/pki/client.key \\
-    --cacert /etc/portlama/pki/ca.crt \\
+    --cert /etc/lamalibre/lamaste/pki/client.crt \\
+    --key /etc/lamalibre/lamaste/pki/client.key \\
+    --cacert /etc/lamalibre/lamaste/pki/ca.crt \\
     -X POST \\
     -H 'Content-Type: application/json' \\
     -d '{\"code\":\"${VERIFY_CODE}\"}' \\
     'https://panel.${DOMAIN}/api/settings/2fa/verify' 2>/dev/null)
-  COOKIE=\$(grep -i 'set-cookie' \"\$HEADERS\" | grep 'portlama_2fa_session' | head -1 | sed 's/.*portlama_2fa_session=//;s/;.*//')
+  COOKIE=\$(grep -i 'set-cookie' \"\$HEADERS\" | grep 'lamaste_2fa_session' | head -1 | sed 's/.*lamaste_2fa_session=//;s/;.*//')
   rm -f \"\$HEADERS\"
   echo \"{\\\"body\\\": \$BODY, \\\"cookie\\\": \\\"\$COOKIE\\\"}\"
 " 2>/dev/null || echo '{}')
@@ -250,12 +250,12 @@ if [ -n "$HOST_COOKIE" ] && [ "$HOST_COOKIE" != "null" ]; then
   log_pass "Session cookie received"
 
   # Use cookie for an authenticated request
-  AUTH_STATUS=$(multipass exec portlama-host -- curl -sk -o /dev/null -w '%{http_code}' \
+  AUTH_STATUS=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \
     --max-time 30 \
-    --cert /etc/portlama/pki/client.crt \
-    --key /etc/portlama/pki/client.key \
-    --cacert /etc/portlama/pki/ca.crt \
-    -b "portlama_2fa_session=${HOST_COOKIE}" \
+    --cert /etc/lamalibre/lamaste/pki/client.crt \
+    --key /etc/lamalibre/lamaste/pki/client.key \
+    --cacert /etc/lamalibre/lamaste/pki/ca.crt \
+    -b "lamaste_2fa_session=${HOST_COOKIE}" \
     "https://panel.${DOMAIN}/api/system/stats" 2>/dev/null || echo "000")
 
   assert_eq "$AUTH_STATUS" "200" "Authenticated request with cookie returns 200" || true
@@ -273,13 +273,13 @@ wait_for_next_totp_window
 DISABLE_CODE=$(generate_totp_code "$MANUAL_KEY")
 
 # Disable via domain with session cookie
-DISABLE_RESULT=$(multipass exec portlama-host -- curl -sk --max-time 30 \
-  --cert /etc/portlama/pki/client.crt \
-  --key /etc/portlama/pki/client.key \
-  --cacert /etc/portlama/pki/ca.crt \
+DISABLE_RESULT=$(multipass exec lamaste-host -- curl -sk --max-time 30 \
+  --cert /etc/lamalibre/lamaste/pki/client.crt \
+  --key /etc/lamalibre/lamaste/pki/client.key \
+  --cacert /etc/lamalibre/lamaste/pki/ca.crt \
   -X POST \
   -H 'Content-Type: application/json' \
-  -b "portlama_2fa_session=${HOST_COOKIE}" \
+  -b "lamaste_2fa_session=${HOST_COOKIE}" \
   -d "{\"code\":\"${DISABLE_CODE}\"}" \
   "https://panel.${DOMAIN}/api/settings/2fa/disable" 2>/dev/null || echo '{}')
 
@@ -289,11 +289,11 @@ assert_json_field "$DISABLE_RESULT" '.enabled' 'false' "2FA disabled successfull
 sleep 2
 
 # Verify IP access restored
-IP_STATUS=$(multipass exec portlama-host -- curl -sk -o /dev/null -w '%{http_code}' \
+IP_STATUS=$(multipass exec lamaste-host -- curl -sk -o /dev/null -w '%{http_code}' \
   --max-time 10 \
-  --cert /etc/portlama/pki/client.crt \
-  --key /etc/portlama/pki/client.key \
-  --cacert /etc/portlama/pki/ca.crt \
+  --cert /etc/lamalibre/lamaste/pki/client.crt \
+  --key /etc/lamalibre/lamaste/pki/client.key \
+  --cacert /etc/lamalibre/lamaste/pki/ca.crt \
   "https://127.0.0.1:9292/api/health" 2>/dev/null || echo "000")
 
 if [ "$IP_STATUS" = "200" ]; then

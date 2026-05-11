@@ -1,0 +1,1610 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 4,
+    "name": "Tunnel Lifecycle",
+    "suite": "e2e",
+    "description": "04 — Tunnel Lifecycle",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_info \"Onboarding not completed (status: $ONBOARDING_STATUS). Tunnel creation requires onboarding.\"\n  log_skip \"Skipping tunnel lifecycle tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "create-tunnel",
+      "label": "Create tunnel",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Set CREATE_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat <<EOF { \"subdomain\": \"$TEST_SUBDOMAIN\", \"port\": $TEST_PORT, \"description\": \"$TEST_DESCRIPTION\" } EOF "
+          },
+          "capture": [
+            {
+              "variable": "CREATE_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "$CREATE_BODY"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Tunnel creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Tunnel subdomain matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.subdomain",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_SUBDOMAIN"
+              },
+              "message": "Tunnel subdomain matches"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Tunnel port matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.port",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_PORT"
+              },
+              "message": "Tunnel port matches"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Tunnel has an FQDN",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.fqdn",
+              "message": "Tunnel has an FQDN"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Tunnel has a createdAt timestamp",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.createdAt",
+              "message": "Tunnel has a createdAt timestamp"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Created tunnel ID: $TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created tunnel ID: $TUNNEL_ID"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel\"\n# ---------------------------------------------------------------------------\n\nCREATE_BODY=$(cat <<EOF\n{\n  \"subdomain\": \"$TEST_SUBDOMAIN\",\n  \"port\": $TEST_PORT,\n  \"description\": \"$TEST_DESCRIPTION\"\n}\nEOF\n)\n\nCREATE_RESPONSE=$(api_post \"tunnels\" \"$CREATE_BODY\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.subdomain' \"$TEST_SUBDOMAIN\" \"Tunnel subdomain matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.port' \"$TEST_PORT\" \"Tunnel port matches\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.fqdn' \"Tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.createdAt' \"Tunnel has a createdAt timestamp\" || true\n\nlog_info \"Created tunnel ID: $TUNNEL_ID\""
+    },
+    {
+      "id": "verify-tunnel-in-list",
+      "label": "Verify tunnel in list",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Set FOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .subdomain' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Tunnel appears in GET /api/tunnels",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_SUBDOMAIN"
+              },
+              "message": "Tunnel appears in GET /api/tunnels"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify tunnel in list\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(api_get \"tunnels\")\nFOUND=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .subdomain' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND\" \"$TEST_SUBDOMAIN\" \"Tunnel appears in GET /api/tunnels\" || true"
+    },
+    {
+      "id": "verify-nginx-configuration",
+      "label": "Verify nginx configuration",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Nginx vhost exists at $VHOST_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Nginx vhost exists at $VHOST_PATH"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Nginx vhost exists at $VHOST_ALT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Nginx vhost exists at $VHOST_ALT"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Nginx vhost not found at $VHOST_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Nginx vhost not found at $VHOST_PATH"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set NGINX_TEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "nginx -t passes after tunnel creation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after tunnel creation"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx configuration\"\n# ---------------------------------------------------------------------------\n\n# Check vhost file exists\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"unknown\")\nVHOST_NAME=\"lamalibre-lamaste-app-${TEST_SUBDOMAIN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"Nginx vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"Nginx vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"Nginx vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify nginx config is still valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after tunnel creation\" || true"
+    },
+    {
+      "id": "validation-reserved-subdomain",
+      "label": "Validation: reserved subdomain",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "panel",
+              "port": 19999,
+              "description": "reserved test"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Reserved subdomain 'panel' rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reserved subdomain 'panel' rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: reserved subdomain\"\n# ---------------------------------------------------------------------------\n\nRESERVED_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"panel\",\"port\":19999,\"description\":\"reserved test\"}')\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved subdomain 'panel' rejected (HTTP 400)\" || true"
+    },
+    {
+      "id": "validation-duplicate-subdomain",
+      "label": "Validation: duplicate subdomain",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Duplicate subdomain rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Duplicate subdomain rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate subdomain\"\n# ---------------------------------------------------------------------------\n\nDUP_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"$TEST_SUBDOMAIN\\\",\\\"port\\\":19998,\\\"description\\\":\\\"dup test\\\"}\")\nassert_eq \"$DUP_STATUS\" \"400\" \"Duplicate subdomain rejected (HTTP 400)\" || true"
+    },
+    {
+      "id": "validation-duplicate-port",
+      "label": "Validation: duplicate port",
+      "steps": [
+        {
+          "id": "step-27",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_PORT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "Duplicate port rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_PORT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Duplicate port rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate port\"\n# ---------------------------------------------------------------------------\n\nDUP_PORT_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2edup-port\\\",\\\"port\\\":$TEST_PORT,\\\"description\\\":\\\"dup port test\\\"}\")\nassert_eq \"$DUP_PORT_STATUS\" \"400\" \"Duplicate port rejected (HTTP 400)\" || true"
+    },
+    {
+      "id": "validation-invalid-port",
+      "label": "Validation: invalid port",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "e2elow",
+              "port": 80,
+              "description": "low port"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "LOW_PORT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Port below 1024 rejected (HTTP $LOW_PORT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port below 1024 rejected (HTTP $LOW_PORT_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "LOW_PORT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "LOW_PORT_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "LOW_PORT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "LOW_PORT_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: invalid port\"\n# ---------------------------------------------------------------------------\n\nLOW_PORT_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2elow\",\"port\":80,\"description\":\"low port\"}')\nif [ \"$LOW_PORT_STATUS\" = \"400\" ] || [ \"$LOW_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $LOW_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)\"\nfi"
+    },
+    {
+      "id": "mac-plist-endpoint",
+      "label": "Mac plist endpoint",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "GET /api/tunnels/mac-plist?format=json",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/mac-plist?format=json"
+          },
+          "capture": [
+            {
+              "variable": "PLIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Mac plist endpoint returns plist content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "PLIST_RESPONSE"
+              },
+              "path": ".plist",
+              "message": "Mac plist endpoint returns plist content"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Mac plist endpoint\"\n# ---------------------------------------------------------------------------\n\nPLIST_RESPONSE=$(api_get \"tunnels/mac-plist?format=json\")\nassert_json_field_not_empty \"$PLIST_RESPONSE\" '.plist' \"Mac plist endpoint returns plist content\" || true\n\nFAKE_ID=\"00000000-0000-0000-0000-000000000000\""
+    },
+    {
+      "id": "disable-tunnel",
+      "label": "Disable tunnel",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOGGLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Tunnel disable returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOGGLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel disable returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_DISABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set ENABLED_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "ENABLED_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Tunnel shows as disabled in list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLED_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Tunnel shows as disabled in list"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Nginx sites-enabled symlink removed for disabled tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Nginx sites-enabled symlink removed for disabled tunnel"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Nginx sites-enabled symlink still exists for disabled tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Nginx sites-enabled symlink still exists for disabled tunnel"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set NGINX_TEST_DISABLED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_DISABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "nginx -t passes after tunnel disable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_DISABLED"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after tunnel disable"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "GET /api/tunnels/mac-plist?format=json",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/mac-plist?format=json"
+          },
+          "capture": [
+            {
+              "variable": "PLIST_DISABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Extract PLIST_CONTENT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PLIST_CONTENT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PLIST_DISABLED"
+              },
+              "expression": ".plist"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Disabled tunnel excluded from plist",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "PLIST_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "TEST_SUBDOMAIN"
+              },
+              "message": "Disabled tunnel excluded from plist"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Cannot disable — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot disable — no tunnel ID from creation step"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  TOGGLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": false}')\n  assert_json_field \"$TOGGLE_RESPONSE\" '.ok' 'true' \"Tunnel disable returned ok: true\" || true\n\n  # Verify tunnel shows as disabled in list\n  LIST_DISABLED=$(api_get \"tunnels\")\n  ENABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE\" \"false\" \"Tunnel shows as disabled in list\" || true\n\n  # Verify nginx vhost symlink removed (disabled = no symlink in sites-enabled)\n  if [ ! -L \"$VHOST_PATH\" ] && [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx sites-enabled symlink removed for disabled tunnel\"\n  else\n    log_fail \"Nginx sites-enabled symlink still exists for disabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_DISABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_DISABLED\" \"syntax is ok\" \"nginx -t passes after tunnel disable\" || true\n\n  # Verify disabled tunnel excluded from plist\n  PLIST_DISABLED=$(api_get \"tunnels/mac-plist?format=json\")\n  PLIST_CONTENT=$(echo \"$PLIST_DISABLED\" | jq -r '.plist' 2>/dev/null || echo \"\")\n  assert_not_contains \"$PLIST_CONTENT\" \"$TEST_SUBDOMAIN\" \"Disabled tunnel excluded from plist\" || true\nelse\n  log_skip \"Cannot disable — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "re-enable-tunnel",
+      "label": "Re-enable tunnel",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Tunnel re-enable returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel re-enable returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set ENABLED_STATE2",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "ENABLED_STATE2",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Tunnel shows as enabled in list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLED_STATE2"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel shows as enabled in list"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Nginx vhost restored for re-enabled tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Nginx vhost restored for re-enabled tunnel"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Nginx vhost not restored for re-enabled tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Nginx vhost not restored for re-enabled tunnel"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set NGINX_TEST_ENABLED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "nginx -t passes after tunnel re-enable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_ENABLED"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after tunnel re-enable"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "GET /api/tunnels/mac-plist?format=json",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/mac-plist?format=json"
+          },
+          "capture": [
+            {
+              "variable": "PLIST_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "Extract PLIST_CONTENT2",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PLIST_CONTENT2",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PLIST_ENABLED"
+              },
+              "expression": ".plist"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Re-enabled tunnel included in plist",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PLIST_CONTENT2"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "TEST_PORT"
+              },
+              "message": "Re-enabled tunnel included in plist"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Cannot re-enable — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot re-enable — no tunnel ID from creation step"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  ENABLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": true}')\n  assert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"Tunnel re-enable returned ok: true\" || true\n\n  # Verify tunnel shows as enabled in list\n  LIST_ENABLED=$(api_get \"tunnels\")\n  ENABLED_STATE2=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE2\" \"true\" \"Tunnel shows as enabled in list\" || true\n\n  # Verify nginx vhost symlink restored\n  if [ -L \"$VHOST_PATH\" ] || [ -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost restored for re-enabled tunnel\"\n  else\n    log_fail \"Nginx vhost not restored for re-enabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_ENABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_ENABLED\" \"syntax is ok\" \"nginx -t passes after tunnel re-enable\" || true\n\n  # Verify re-enabled tunnel included in plist\n  PLIST_ENABLED=$(api_get \"tunnels/mac-plist?format=json\")\n  PLIST_CONTENT2=$(echo \"$PLIST_ENABLED\" | jq -r '.plist' 2>/dev/null || echo \"\")\n  assert_contains \"$PLIST_CONTENT2\" \"$TEST_PORT\" \"Re-enabled tunnel included in plist\" || true\nelse\n  log_skip \"Cannot re-enable — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "toggle-nonexistent-tunnel",
+      "label": "Toggle nonexistent tunnel",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "PATCH /api/tunnels/$FAKE_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$FAKE_ID",
+            "body": {
+              "enabled": false
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "FAKE_TOGGLE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Toggle nonexistent tunnel returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FAKE_TOGGLE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Toggle nonexistent tunnel returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Toggle nonexistent tunnel\"\n# ---------------------------------------------------------------------------\n\nFAKE_TOGGLE_STATUS=$(api_patch_status \"tunnels/$FAKE_ID\" '{\"enabled\": false}')\nassert_eq \"$FAKE_TOGGLE_STATUS\" \"404\" \"Toggle nonexistent tunnel returns 404\" || true"
+    },
+    {
+      "id": "delete-tunnel",
+      "label": "Delete tunnel",
+      "steps": [
+        {
+          "id": "step-63",
+          "label": "DELETE /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/$TUNNEL_ID"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Tunnel deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel deletion returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Set FOUND_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Tunnel no longer in list after deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Tunnel no longer in list after deletion"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Nginx vhost removed after tunnel deletion",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Nginx vhost removed after tunnel deletion"
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Nginx vhost still exists after tunnel deletion",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Nginx vhost still exists after tunnel deletion"
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Set NGINX_TEST_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "nginx -t passes after tunnel deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_AFTER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after tunnel deletion"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Cannot delete — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot delete — no tunnel ID from creation step"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  DELETE_RESPONSE=$(api_delete \"tunnels/$TUNNEL_ID\")\n  assert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Tunnel deletion returned ok: true\" || true\n\n  # Verify tunnel is gone from list\n  LIST_AFTER=$(api_get \"tunnels\")\n  FOUND_AFTER=$(echo \"$LIST_AFTER\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\n  assert_eq \"$FOUND_AFTER\" \"\" \"Tunnel no longer in list after deletion\" || true\n\n  # Verify vhost removed\n  if [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost removed after tunnel deletion\"\n  else\n    log_fail \"Nginx vhost still exists after tunnel deletion\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_AFTER=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after tunnel deletion\" || true\nelse\n  log_skip \"Cannot delete — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "delete-nonexistent-tunnel",
+      "label": "Delete nonexistent tunnel",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "Set NOT_FOUND_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X DELETE \"${BASE_URL}/api/tunnels/$FAKE_ID\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOT_FOUND_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Delete nonexistent tunnel returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOT_FOUND_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Delete nonexistent tunnel returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete nonexistent tunnel\"\n# ---------------------------------------------------------------------------\n\nNOT_FOUND_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/$FAKE_ID\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOT_FOUND_STATUS\" \"404\" \"Delete nonexistent tunnel returns 404\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 04 — Tunnel Lifecycle\n# ============================================================================\n# Verifies tunnel CRUD operations:\n# - Create a tunnel via POST /api/tunnels\n# - Verify tunnel appears in GET /api/tunnels\n# - Verify nginx vhost is created and nginx -t passes\n# - Enable/disable tunnel via PATCH /api/tunnels/:id\n# - Delete tunnel via DELETE /api/tunnels/:id\n# - Verify cleanup (tunnel removed from list, vhost removed, nginx -t passes)\n# - Test validation (reserved subdomains, duplicate names, invalid ports)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nTEST_SUBDOMAIN=\"e2etest-$(date +%s)\"\nTEST_PORT=18080\nTEST_DESCRIPTION=\"E2E test tunnel\"\n\nbegin_test \"04 — Tunnel Lifecycle\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

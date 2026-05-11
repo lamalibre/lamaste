@@ -1,0 +1,692 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 6,
+    "name": "Service Control",
+    "suite": "e2e",
+    "description": "06 — Service Control",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping service control tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "list-services",
+      "label": "List services",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "GET /api/services",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "services"
+          },
+          "capture": [
+            {
+              "variable": "SERVICES_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Set SERVICE_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SERVICES_RESPONSE\" | jq '.services | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "SERVICE_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "GET /api/services returns $SERVICE_COUNT services",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "GET /api/services returns $SERVICE_COUNT services"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "GET /api/services returned no services",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "GET /api/services returned no services"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Set SVC_FOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SERVICES_RESPONSE\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .name' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "SVC_FOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Service '$svc' is in the service list",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SVC_FOUND"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$svc"
+              },
+              "message": "Service '$svc' is in the service list"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Extract NGINX_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NGINX_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SERVICES_RESPONSE"
+              },
+              "expression": ".services[] | select(.name == \"nginx\") | .status"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "nginx status is 'active'",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "nginx status is 'active'"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"List services\"\n# ---------------------------------------------------------------------------\n\nSERVICES_RESPONSE=$(api_get \"services\")\nSERVICE_COUNT=$(echo \"$SERVICES_RESPONSE\" | jq '.services | length' 2>/dev/null || echo \"0\")\n\nif [ \"$SERVICE_COUNT\" -gt 0 ]; then\n  log_pass \"GET /api/services returns $SERVICE_COUNT services\"\nelse\n  log_fail \"GET /api/services returned no services\"\nfi\n\n# Check that expected services are listed\nfor svc in nginx chisel authelia lamalibre-lamaste-serverd; do\n  SVC_FOUND=$(echo \"$SERVICES_RESPONSE\" | jq -r --arg n \"$svc\" '.services[] | select(.name == $n) | .name' 2>/dev/null || echo \"\")\n  assert_eq \"$SVC_FOUND\" \"$svc\" \"Service '$svc' is in the service list\" || true\ndone\n\n# Check that services have status fields\nNGINX_STATUS=$(echo \"$SERVICES_RESPONSE\" | jq -r '.services[] | select(.name == \"nginx\") | .status' 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_STATUS\" \"active\" \"nginx status is 'active'\" || true"
+    },
+    {
+      "id": "restart-nginx",
+      "label": "Restart nginx",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "POST /api/services/nginx/restart",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/nginx/restart"
+          },
+          "capture": [
+            {
+              "variable": "RESTART_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Extract RESTART_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "RESTART_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESTART_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "nginx restart request accepted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "nginx restart request accepted"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "RESTART_OK",
+                "value": "true"
+              },
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "RESTART_OK"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "nginx restart returned unexpected response: $RESTART_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "nginx restart returned unexpected response: $RESTART_RESPONSE"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "RESTART_OK",
+                "value": "true"
+              },
+              {
+                "kind": "var_not_empty",
+                "variable": "RESTART_OK"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set NGINX_ACTIVE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active nginx 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "NGINX_ACTIVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "nginx is active after restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_ACTIVE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "nginx is active after restart"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Restart nginx\"\n# ---------------------------------------------------------------------------\n\n# Restarting nginx may kill the connection since the request goes through nginx.\n# Tolerate curl errors — the key assertion is that nginx comes back up.\nRESTART_RESPONSE=$(api_post \"services/nginx/restart\" 2>/dev/null || echo '{\"ok\":true}')\nRESTART_OK=$(echo \"$RESTART_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"\")\nif [ \"$RESTART_OK\" = \"true\" ] || [ -z \"$RESTART_OK\" ]; then\n  log_pass \"nginx restart request accepted\"\nelse\n  log_fail \"nginx restart returned unexpected response: $RESTART_RESPONSE\"\nfi\n\n# Wait for nginx to come back\nsleep 3\nNGINX_ACTIVE=$(systemctl is-active nginx 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_ACTIVE\" \"active\" \"nginx is active after restart\" || true"
+    },
+    {
+      "id": "reload-nginx",
+      "label": "Reload nginx",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "POST /api/services/nginx/reload",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/nginx/reload"
+          },
+          "capture": [
+            {
+              "variable": "RELOAD_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "nginx reload returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELOAD_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "nginx reload returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reload nginx\"\n# ---------------------------------------------------------------------------\n\nRELOAD_RESPONSE=$(api_post \"services/nginx/reload\")\nassert_json_field \"$RELOAD_RESPONSE\" '.ok' 'true' \"nginx reload returned ok: true\" || true"
+    },
+    {
+      "id": "cannot-stop-lamalibre-lamaste-serverd",
+      "label": "Cannot stop lamalibre-lamaste-serverd",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "POST /api/services/lamalibre-lamaste-serverd/stop",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/lamalibre-lamaste-serverd/stop",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STOP_PANEL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Cannot stop lamalibre-lamaste-serverd (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STOP_PANEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Cannot stop lamalibre-lamaste-serverd (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "POST /api/services/lamalibre-lamaste-serverd/stop",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/lamalibre-lamaste-serverd/stop"
+          },
+          "capture": [
+            {
+              "variable": "STOP_PANEL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Error message explains why panel cannot be stopped",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STOP_PANEL_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Cannot stop the panel"
+              },
+              "message": "Error message explains why panel cannot be stopped"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cannot stop lamalibre-lamaste-serverd\"\n# ---------------------------------------------------------------------------\n\nSTOP_PANEL_STATUS=$(api_post_status \"services/lamalibre-lamaste-serverd/stop\")\nassert_eq \"$STOP_PANEL_STATUS\" \"400\" \"Cannot stop lamalibre-lamaste-serverd (HTTP 400)\" || true\n\n# Verify the error message\nSTOP_PANEL_RESPONSE=$(api_post \"services/lamalibre-lamaste-serverd/stop\")\nassert_contains \"$STOP_PANEL_RESPONSE\" \"Cannot stop the panel\" \"Error message explains why panel cannot be stopped\" || true"
+    },
+    {
+      "id": "restart-lamalibre-lamalibre-lamaste-serverd-is-allowed",
+      "label": "Restart lamalibre-lamaste-serverd is allowed",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "POST /api/services/lamalibre-lamaste-serverd/restart",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/lamalibre-lamaste-serverd/restart"
+          },
+          "capture": [
+            {
+              "variable": "RESTART_PANEL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Extract RESTART_PANEL_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "RESTART_PANEL_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RESTART_PANEL_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "lamalibre-lamaste-serverd restart request accepted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamalibre-lamaste-serverd restart request accepted"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "RESTART_PANEL_OK",
+                "value": "true"
+              },
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "RESTART_PANEL_OK"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "RESTART_PANEL_OK",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "lamalibre-lamaste-serverd restart returned unexpected response: $RESTART_PANEL_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamalibre-lamaste-serverd restart returned unexpected response: $RESTART_PANEL_RESPONSE"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "RESTART_PANEL_OK",
+                "value": "true"
+              },
+              {
+                "kind": "var_not_empty",
+                "variable": "RESTART_PANEL_OK"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "RESTART_PANEL_OK",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Panel is responsive after restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel is responsive after restart"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Panel did not come back up after restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel did not come back up after restart"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Restart lamalibre-lamaste-serverd is allowed\"\n# ---------------------------------------------------------------------------\n\n# Restarting the panel may kill the connection mid-response. Tolerate curl errors.\nRESTART_PANEL_RESPONSE=$(api_post \"services/lamalibre-lamaste-serverd/restart\" 2>/dev/null || echo '{}')\nRESTART_PANEL_OK=$(echo \"$RESTART_PANEL_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"\")\nif [ \"$RESTART_PANEL_OK\" = \"true\" ] || [ -z \"$RESTART_PANEL_OK\" ] || [ \"$RESTART_PANEL_OK\" = \"null\" ]; then\n  log_pass \"lamalibre-lamaste-serverd restart request accepted\"\nelse\n  log_fail \"lamalibre-lamaste-serverd restart returned unexpected response: $RESTART_PANEL_RESPONSE\"\nfi\n\n# Wait for the panel to come back up after restart\nsleep 3\nif wait_for_http \"${BASE_URL}/api/health\" 30 --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\"; then\n  log_pass \"Panel is responsive after restart\"\nelse\n  log_fail \"Panel did not come back up after restart\"\nfi"
+    },
+    {
+      "id": "invalid-service-name",
+      "label": "Invalid service name",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "POST /api/services/nonexistent-service/restart",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/nonexistent-service/restart",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_SVC_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Unknown service rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_SVC_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Unknown service rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid service name\"\n# ---------------------------------------------------------------------------\n\nINVALID_SVC_STATUS=$(api_post_status \"services/nonexistent-service/restart\")\nassert_eq \"$INVALID_SVC_STATUS\" \"400\" \"Unknown service rejected (HTTP 400)\" || true"
+    },
+    {
+      "id": "invalid-action",
+      "label": "Invalid action",
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "POST /api/services/nginx/destroy",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "services/nginx/destroy",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_ACTION_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Invalid action 'destroy' rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_ACTION_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Invalid action 'destroy' rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid action\"\n# ---------------------------------------------------------------------------\n\nINVALID_ACTION_STATUS=$(api_post_status \"services/nginx/destroy\")\nassert_eq \"$INVALID_ACTION_STATUS\" \"400\" \"Invalid action 'destroy' rejected (HTTP 400)\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 06 — Service Control\n# ============================================================================\n# Verifies service management operations:\n# - List services via GET /api/services\n# - Restart a service via POST /api/services/:name/restart\n# - Verify service is still active after restart\n# - Test: cannot stop lamalibre-lamaste-serverd from the UI\n# - Test: invalid service name is rejected\n# - Test: invalid action is rejected\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"06 — Service Control\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

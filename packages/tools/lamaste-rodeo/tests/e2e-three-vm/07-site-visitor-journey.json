@@ -1,0 +1,1324 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 7,
+    "name": "Static Site Visitor Journey",
+    "suite": "e2e-three-vm",
+    "description": "07 — Static Site Visitor Journey (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    },
+    "TEST_USER_PASSWORD": {
+      "description": "TEST_USER_PASSWORD"
+    }
+  },
+  "constants": {
+    "SITE_NAME": {
+      "value": "e2eblog"
+    },
+    "SITE_FQDN": {
+      "value": "${SITE_NAME}.${TEST_DOMAIN}",
+      "expression": true
+    },
+    "MARKER": {
+      "value": "E2E_SITE_TEST_OK_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Delete /tmp/authelia-site-cookies.txt||",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/authelia-site-cookies.txt||"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Remove /etc/hosts entry",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${SITE_FQDN}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE sites/${SITE_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "sites/${SITE_ID}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping site visitor journey tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "pre-flight-ensure-oathtool-is-available-on-visitor-vm",
+      "label": "Pre-flight: ensure oathtool is available on visitor VM",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": ""
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OATHTOOL_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "OATHTOOL_CHECK",
+        "value": "no"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: ensure oathtool is available on visitor VM\"\n# ---------------------------------------------------------------------------\n\nOATHTOOL_CHECK=$(visitor_exec \"command -v oathtool && echo yes || echo no\" 2>/dev/null || echo \"no\")\nif [ \"$OATHTOOL_CHECK\" = \"no\" ]; then\n  log_skip \"oathtool not available on visitor VM. Skipping TOTP-dependent tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "create-managed-static-site-via-api",
+      "label": "Create managed static site via API",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "POST /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "sites",
+            "body": "{\"name\":\""
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Site creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Extract SITE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.id"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Site has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".site.id",
+              "message": "Site has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Created site ID: $SITE_ID (${SITE_FQDN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created site ID: $SITE_ID (${SITE_FQDN})"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract SITE_FQDN_ACTUAL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SITE_FQDN_ACTUAL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".site.fqdn"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Site FQDN matches expected value",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SITE_FQDN_ACTUAL"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "SITE_FQDN"
+              },
+              "message": "Site FQDN matches expected value"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create managed static site via API\"\n# ---------------------------------------------------------------------------\n\nCREATE_RESPONSE=$(host_api_post \"sites\" '{\"name\":\"'\"${SITE_NAME}\"'\",\"type\":\"managed\",\"spaMode\":false,\"autheliaProtected\":true}')\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Site creation returned ok: true\" || true\n\nSITE_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.site.id' \"Site has an ID\" || true\nlog_info \"Created site ID: $SITE_ID (${SITE_FQDN})\"\n\nSITE_FQDN_ACTUAL=$(echo \"$CREATE_RESPONSE\" | jq -r '.site.fqdn' 2>/dev/null || echo \"\")\nassert_eq \"$SITE_FQDN_ACTUAL\" \"$SITE_FQDN\" \"Site FQDN matches expected value\" || true"
+    },
+    {
+      "id": "write-test-index-html-to-site-directory",
+      "label": "Write test index.html to site directory",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "echo '<h1>${MARKER}</h1>' > /var/www/lamaste/${SITE_ID}/index.html"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /var/www/lamaste/${SITE_ID}/index.html 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "WROTE_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "index.html written to site directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "WROTE_FILE"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "index.html written to site directory"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${SITE_FQDN}' /etc/hosts || echo '${HOST_IP} ${SITE_FQDN}' >> /etc/hosts"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Write test index.html to site directory\"\n# ---------------------------------------------------------------------------\n\nhost_exec \"echo '<h1>${MARKER}</h1>' > /var/www/lamaste/${SITE_ID}/index.html\"\nWROTE_FILE=$(host_exec \"cat /var/www/lamaste/${SITE_ID}/index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$WROTE_FILE\" \"$MARKER\" \"index.html written to site directory\" || true\n\n# Wait for nginx to settle after site creation\nsleep 2\n\n# Add /etc/hosts entry on visitor for the site subdomain\nvisitor_exec \"grep -q '${SITE_FQDN}' /etc/hosts || echo '${HOST_IP} ${SITE_FQDN}' >> /etc/hosts\""
+    },
+    {
+      "id": "visit-site-from-visitor-vm-without-auth-should-redirect-to-authelia",
+      "label": "Visit site from visitor VM WITHOUT auth — should redirect to Authelia",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Redirect points to Authelia portal (auth.${TEST_DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Redirect points to Authelia portal (auth.${TEST_DOMAIN})"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Request returned 401 (Authelia enforcement confirmed)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Request returned 401 (Authelia enforcement confirmed)"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit site from visitor VM WITHOUT auth — should redirect to Authelia\"\n# ---------------------------------------------------------------------------\n\nUNAUTH_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\n\nif [ \"$UNAUTH_STATUS\" = \"302\" ] || [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)\"\nelse\n  log_fail \"Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS\"\nfi\n\n# Verify redirect target is the Authelia portal\nUNAUTH_LOCATION=$(visitor_exec \"curl -sk -o /dev/null -w '%{redirect_url}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"\")\nif echo \"$UNAUTH_LOCATION\" | grep -qF \"auth.${TEST_DOMAIN}\"; then\n  log_pass \"Redirect points to Authelia portal (auth.${TEST_DOMAIN})\"\nelif [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Request returned 401 (Authelia enforcement confirmed)\"\nelse\n  log_fail \"Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)\"\nfi"
+    },
+    {
+      "id": "reset-totp-before-authentication",
+      "label": "Reset TOTP before authentication",
+      "steps": [
+        {
+          "id": "step-22",
+          "label": "POST /api/users/${TEST_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Extract TOTP_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "TOTP reset succeeded, got otpauth URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "TOTP reset succeeded, got otpauth URI"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Failed to reset TOTP for ${TEST_USER} (response: $TOTP_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to reset TOTP for ${TEST_USER} (response: $TOTP_RESPONSE)"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Extract TOTP_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Failed to extract TOTP secret from URI: $TOTP_URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to extract TOTP secret from URI: $TOTP_URI"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_SECRET"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reset TOTP before authentication\"\n# ---------------------------------------------------------------------------\n\n# Reset TOTP for the test user to get a known secret\n# IMPORTANT: TOTP must be reset BEFORE firstfactor auth, not after.\n# If reset after firstfactor, Authelia may reject the secondfactor because\n# the TOTP configuration changed mid-session.\nTOTP_RESPONSE=$(host_api_post \"users/${TEST_USER}/reset-totp\" '{}')\nTOTP_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\n\nif echo \"$TOTP_URI\" | grep -q \"^otpauth://\"; then\n  log_pass \"TOTP reset succeeded, got otpauth URI\"\nelse\n  log_fail \"Failed to reset TOTP for ${TEST_USER} (response: $TOTP_RESPONSE)\"\nfi\n\n# Extract the TOTP secret from the URI\nTOTP_SECRET=$(echo \"$TOTP_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\nif [ -z \"$TOTP_SECRET\" ]; then\n  log_fail \"Failed to extract TOTP secret from URI: $TOTP_URI\"\nfi\n\n# Let Authelia pick up the new TOTP configuration and ensure we submit the\n# code in a fresh 30-second window (anti-replay protection would reject a\n# code reused from a prior test within the same window).\nwait_for_next_totp_window"
+    },
+    {
+      "id": "authenticate-with-authelia-from-visitor-vm-firstfactor",
+      "label": "Authenticate with Authelia from visitor VM (firstfactor)",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-site-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Extract AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTH_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "AUTH_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Authelia firstfactor authentication succeeded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia firstfactor authentication succeeded"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Authelia firstfactor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia firstfactor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AUTH_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Authenticate with Authelia from visitor VM (firstfactor)\"\n# ---------------------------------------------------------------------------\n\nAUTH_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"password\\\":\\\"${TEST_USER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false,\\\"targetURL\\\":\\\"https://${SITE_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\n\nAUTH_STATUS=$(echo \"$AUTH_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$AUTH_STATUS\" = \"OK\" ]; then\n  log_pass \"Authelia firstfactor authentication succeeded\"\nelse\n  log_fail \"Authelia firstfactor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)\"\nfi"
+    },
+    {
+      "id": "authenticate-with-authelia-from-visitor-vm-secondfactor-totp",
+      "label": "Authenticate with Authelia from visitor VM (secondfactor TOTP)",
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "'${TOTP_SECRET}'"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Generated TOTP code with oathtool on visitor VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Generated TOTP code with oathtool on visitor VM"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "TOTP_CODE"
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Failed to generate TOTP code",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to generate TOTP code"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_CODE"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-site-cookies",
+              "load": "authelia-site-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOTP_AUTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Extract TOTP_AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_AUTH_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_AUTH_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Authelia secondfactor TOTP authentication succeeded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia secondfactor TOTP authentication succeeded"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Authelia secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Authenticate with Authelia from visitor VM (secondfactor TOTP)\"\n# ---------------------------------------------------------------------------\n\n# Generate a TOTP code on visitor VM using oathtool\nTOTP_CODE=$(visitor_exec \"oathtool --totp --base32 '${TOTP_SECRET}'\" 2>/dev/null || echo \"\")\nif [ -n \"$TOTP_CODE\" ]; then\n  log_pass \"Generated TOTP code with oathtool on visitor VM\"\nelse\n  log_fail \"Failed to generate TOTP code\"\nfi\n\n# POST secondfactor TOTP from visitor VM\nTOTP_AUTH_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-site-cookies.txt -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOTP_CODE}\\\",\\\"targetURL\\\":\\\"https://${SITE_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\n\nTOTP_AUTH_STATUS=$(echo \"$TOTP_AUTH_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$TOTP_AUTH_STATUS\" = \"OK\" ]; then\n  log_pass \"Authelia secondfactor TOTP authentication succeeded\"\nelse\n  log_fail \"Authelia secondfactor TOTP authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)\"\nfi"
+    },
+    {
+      "id": "visit-site-from-visitor-vm-with-auth-should-return-content",
+      "label": "Visit site from visitor VM WITH auth — should return content",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-site-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Authenticated request returns site content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Authenticated request returns site content"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-site-cookies"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_HTTP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Authenticated request returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_HTTP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Authenticated request returns HTTP 200"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit site from visitor VM WITH auth — should return content\"\n# ---------------------------------------------------------------------------\n\nAUTH_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null\" || echo \"\")\nassert_contains \"$AUTH_CONTENT\" \"$MARKER\" \"Authenticated request returns site content\" || true\n\nAUTH_HTTP_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\nassert_eq \"$AUTH_HTTP_STATUS\" \"200\" \"Authenticated request returns HTTP 200\" || true"
+    },
+    {
+      "id": "disable-authelia-protection",
+      "label": "Disable Authelia protection",
+      "steps": [
+        {
+          "id": "step-44",
+          "label": "PATCH /api/sites/${SITE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "sites/${SITE_ID}",
+            "body": {
+              "autheliaProtected": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Disable Authelia protection returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Disable Authelia protection returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Site shows autheliaProtected: false",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESPONSE"
+              },
+              "path": ".site.autheliaProtected",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Site shows autheliaProtected: false"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable Authelia protection\"\n# ---------------------------------------------------------------------------\n\nDISABLE_RESPONSE=$(host_api_patch \"sites/${SITE_ID}\" '{\"autheliaProtected\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"Disable Authelia protection returned ok: true\" || true\nassert_json_field \"$DISABLE_RESPONSE\" '.site.autheliaProtected' 'false' \"Site shows autheliaProtected: false\" || true\n\n# Wait for nginx reload\nsleep 2"
+    },
+    {
+      "id": "visit-site-from-visitor-vm-without-auth-should-now-return-content-unprotected",
+      "label": "Visit site from visitor VM WITHOUT auth — should now return content (unprotected)",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNPROTECTED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Unprotected site returns HTTP 200 without auth",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNPROTECTED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Unprotected site returns HTTP 200 without auth"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNPROTECTED_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Unprotected site returns expected content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "UNPROTECTED_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Unprotected site returns expected content"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visit site from visitor VM WITHOUT auth — should now return content (unprotected)\"\n# ---------------------------------------------------------------------------\n\nUNPROTECTED_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\nassert_eq \"$UNPROTECTED_STATUS\" \"200\" \"Unprotected site returns HTTP 200 without auth\" || true\n\nUNPROTECTED_CONTENT=$(visitor_exec \"curl -sk --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"\")\nassert_contains \"$UNPROTECTED_CONTENT\" \"$MARKER\" \"Unprotected site returns expected content\" || true"
+    },
+    {
+      "id": "re-enable-authelia-protection",
+      "label": "Re-enable Authelia protection",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "PATCH /api/sites/${SITE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "sites/${SITE_ID}",
+            "body": {
+              "autheliaProtected": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "REENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Re-enable Authelia protection returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REENABLE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Re-enable Authelia protection returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Site shows autheliaProtected: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REENABLE_RESPONSE"
+              },
+              "path": ".site.autheliaProtected",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site shows autheliaProtected: true"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable Authelia protection\"\n# ---------------------------------------------------------------------------\n\nREENABLE_RESPONSE=$(host_api_patch \"sites/${SITE_ID}\" '{\"autheliaProtected\":true}')\nassert_json_field \"$REENABLE_RESPONSE\" '.ok' 'true' \"Re-enable Authelia protection returned ok: true\" || true\nassert_json_field \"$REENABLE_RESPONSE\" '.site.autheliaProtected' 'true' \"Site shows autheliaProtected: true\" || true\n\n# Wait for nginx reload\nsleep 2"
+    },
+    {
+      "id": "verify-protection-is-back-visitor-without-auth-should-redirect",
+      "label": "Verify protection is back — visitor without auth should redirect",
+      "steps": [
+        {
+          "id": "step-56",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${SITE_FQDN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "REPROTECTED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Re-protected site redirects/rejects unauthenticated request (HTTP $REPROTECTED_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Re-protected site redirects/rejects unauthenticated request (HTTP $REPROTECTED_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "REPROTECTED_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "REPROTECTED_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Re-protected site should redirect (302 or 401), got HTTP $REPROTECTED_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Re-protected site should redirect (302 or 401), got HTTP $REPROTECTED_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "REPROTECTED_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "REPROTECTED_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify protection is back — visitor without auth should redirect\"\n# ---------------------------------------------------------------------------\n\nREPROTECTED_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null\" || echo \"000\")\n\nif [ \"$REPROTECTED_STATUS\" = \"302\" ] || [ \"$REPROTECTED_STATUS\" = \"401\" ]; then\n  log_pass \"Re-protected site redirects/rejects unauthenticated request (HTTP $REPROTECTED_STATUS)\"\nelse\n  log_fail \"Re-protected site should redirect (302 or 401), got HTTP $REPROTECTED_STATUS\"\nfi"
+    },
+    {
+      "id": "cleanup-delete-site-via-api",
+      "label": "Cleanup: delete site via API",
+      "steps": [
+        {
+          "id": "step-59",
+          "label": "DELETE /api/sites/${SITE_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "sites/${SITE_ID}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Site deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Site deletion returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "GET /api/sites",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "sites"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "Set FOUND_SITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg name \"$SITE_NAME\" '.sites[] | select(.name == $name) | .name' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Site no longer appears in site list after deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_SITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Site no longer appears in site list after deletion"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: delete site via API\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESPONSE=$(host_api_delete \"sites/${SITE_ID}\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Site deletion returned ok: true\" || true\n\n# Mark ID as empty so the trap cleanup doesn't try to delete again\nSITE_ID=\"\"\n\n# Verify site is gone from the list\nLIST_RESPONSE=$(host_api_get \"sites\")\nFOUND_SITE=$(echo \"$LIST_RESPONSE\" | jq -r --arg name \"$SITE_NAME\" '.sites[] | select(.name == $name) | .name' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_SITE\" \"\" \"Site no longer appears in site list after deletion\" || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_patch",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 07 — Static Site Visitor Journey (Three-VM)\n# ============================================================================\n# Tests the full visitor experience for a managed static site from an external\n# visitor VM:\n#\n# 1. Create a managed static site via API (Authelia-protected)\n# 2. Write a test index.html to the site directory\n# 3. Visit site from visitor VM without auth — should redirect to Authelia (302)\n# 4. Authenticate with Authelia from visitor VM (firstfactor + secondfactor TOTP)\n# 5. Visit site from visitor VM with auth — should return site content (200)\n# 6. Disable Authelia protection via PATCH\n# 7. Visit site from visitor VM without auth — should now return content (200)\n# 8. Re-enable Authelia protection via PATCH\n# 9. Visit site from visitor VM without auth — should redirect again (302)\n# 10. Cleanup: delete the site\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSITE_NAME=\"e2eblog\"\nSITE_FQDN=\"${SITE_NAME}.${TEST_DOMAIN}\"\nSITE_ID=\"\"\nMARKER=\"E2E_SITE_TEST_OK_$(date +%s)\"\n\nbegin_test \"07 — Static Site Visitor Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  visitor_exec \"rm -f /tmp/authelia-site-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${SITE_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$SITE_ID\" ] && [ \"$SITE_ID\" != \"null\" ]; then\n    host_api_delete \"sites/${SITE_ID}\" 2>/dev/null || true\n  fi\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

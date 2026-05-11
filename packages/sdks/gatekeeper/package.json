@@ -1,0 +1,48 @@
+{
+  "name": "@lamalibre/lamaste-gatekeeper",
+  "version": "2.0.0",
+  "description": "Authorization layer for Lamaste — groups, grants, and tunnel access control",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    }
+  },
+  "bin": {
+    "lamaste-gatekeeper": "dist/cli/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp -R src/lib/migrations dist/lib/migrations"
+  },
+  "engines": {
+    "node": ">=22.5.0 <25.0.0"
+  },
+  "dependencies": {
+    "@lamalibre/lamaste": "*",
+    "fastify": "^5.3.3",
+    "undici": "^7.8.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/sdks/gatekeeper"
+  },
+  "license": "SEE LICENSE IN ../../LICENSE.md"
+}

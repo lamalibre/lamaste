@@ -1,0 +1,34 @@
+{
+  "name": "@lamalibre/lamaste-tickets",
+  "version": "2.0.0",
+  "description": "SDK for Lamaste ticket system — panel-mediated agent-to-agent authorization",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "undici": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/sdks/tickets"
+  },
+  "license": "SEE LICENSE IN ../../LICENSE.md"
+}

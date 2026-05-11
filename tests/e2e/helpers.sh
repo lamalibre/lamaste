@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Portlama E2E Test Helpers
+# Lamaste E2E Test Helpers
 # ============================================================================
 # Shared functions for all E2E test scripts. Source this file at the top of
 # every test:
@@ -15,9 +15,9 @@ set -euo pipefail
 # Configuration — override via environment variables before sourcing
 # ---------------------------------------------------------------------------
 : "${BASE_URL:=https://127.0.0.1:9292}"
-: "${CERT_PATH:=/etc/portlama/pki/client.crt}"
-: "${KEY_PATH:=/etc/portlama/pki/client.key}"
-: "${CA_PATH:=/etc/portlama/pki/ca.crt}"
+: "${CERT_PATH:=/etc/lamalibre/lamaste/pki/client.crt}"
+: "${KEY_PATH:=/etc/lamalibre/lamaste/pki/client.key}"
+: "${CA_PATH:=/etc/lamalibre/lamaste/pki/ca.crt}"
 : "${CURL_TIMEOUT:=30}"
 : "${SKIP_DNS_TESTS:=0}"
 # Direct URL to Fastify (port 3100, HTTP, no nginx/mTLS) for public endpoints
@@ -428,12 +428,12 @@ begin_test() {
   local name="$1"
   echo ""
   echo "============================================================================"
-  echo -e "${_CYAN} Portlama E2E: ${name}${_RESET}"
+  echo -e "${_CYAN} Lamaste E2E: ${name}${_RESET}"
   echo "============================================================================"
   echo ""
   if [ -n "${_LOG_FILE:-}" ]; then
     {
-      echo "# Portlama E2E: ${name}"
+      echo "# Lamaste E2E: ${name}"
       echo ""
       echo "> Started at \`$(date -u '+%Y-%m-%d %H:%M:%S UTC')\`"
       echo ""

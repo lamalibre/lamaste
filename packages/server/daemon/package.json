@@ -1,0 +1,43 @@
+{
+  "name": "@lamalibre/lamaste-serverd",
+  "version": "2.0.0",
+  "description": "Lamaste server daemon — REST API and plugin host",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js | pino-pretty",
+    "build": "echo 'No build step for lamaste-serverd'",
+    "lint": "eslint ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/server/daemon"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/cors": "^11.0.0",
+    "@fastify/multipart": "^9.4.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/static": "^8.0.0",
+    "@fastify/websocket": "^11.0.0",
+    "@lamalibre/lamaste": "^2.0.0",
+    "bcryptjs": "^3.0.3",
+    "execa": "^9.6.1",
+    "fastify": "^5.8.4",
+    "fastify-plugin": "^5.0.0",
+    "js-yaml": "^4.1.1",
+    "systeminformation": "^5.31.4",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=22.5.0 <25.0.0"
+  }
+}

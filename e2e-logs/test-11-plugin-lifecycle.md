@@ -1,4 +1,4 @@
-# Portlama E2E: 11 — Plugin Lifecycle (Three-VM)
+# Lamaste E2E: 11 — Plugin Lifecycle (Three-VM)
 
 > Started at `2026-03-30 13:11:39 UTC`
 

@@ -1,4 +1,4 @@
-# Portlama E2E: 04 — Authelia Authentication (Three-VM)
+# Lamaste E2E: 04 — Authelia Authentication (Three-VM)
 
 > Started at `2026-03-30 13:09:36 UTC`
 
@@ -17,7 +17,7 @@
 ## Test: unauthenticated access is redirected (from visitor VM)
 
 ✅ `13:09:55` Unauthenticated request redirected/rejected (HTTP 302)  
-✅ `13:09:55` Redirect points to Authelia portal (auth.test.portlama.local)  
+✅ `13:09:55` Redirect points to Authelia portal (auth.test.lamaste.local)  
 
 ## Test: authenticated access succeeds (from visitor VM)
 
@@ -39,7 +39,7 @@
 
 ## Test: Authelia portal is accessible (from visitor VM)
 
-✅ `13:09:59` Authelia portal accessible at https://auth.test.portlama.local (HTTP 200)  
+✅ `13:09:59` Authelia portal accessible at https://auth.test.lamaste.local (HTTP 200)  
 
 ---
 

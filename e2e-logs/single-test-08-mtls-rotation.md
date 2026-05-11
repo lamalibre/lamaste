@@ -1,4 +1,4 @@
-# Portlama E2E: 08 — mTLS Rotation
+# Lamaste E2E: 08 — mTLS Rotation
 
 > Started at `2026-03-30 13:06:45 UTC`
 

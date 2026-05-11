@@ -54,7 +54,7 @@ assert_json_field_not_empty "$CERT_RESPONSE" '.p12Password' "Agent cert has a p1
 log_info "Created agent cert: ${AGENT_LABEL}"
 
 # Extract PEM cert and key from .p12 for use with curl
-P12_PATH="/etc/portlama/pki/agents/${AGENT_LABEL}/client.p12"
+P12_PATH="/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12"
 AGENT_CERT_PATH="/tmp/e2e-panel-cert.pem"
 AGENT_KEY_PATH="/tmp/e2e-panel-key.pem"
 sudo openssl pkcs12 -in "${P12_PATH}" -clcerts -nokeys -out "${AGENT_CERT_PATH}" -passin "pass:${P12_PASSWORD}" -legacy 2>/dev/null \
@@ -182,7 +182,7 @@ assert_eq "$FOUND_LABEL" "$AGENT_LABEL" "Panel tunnel shows correct agentLabel i
 log_section "Verify nginx mTLS vhost created (not app vhost)"
 # ---------------------------------------------------------------------------
 
-VHOST_NAME="portlama-agent-panel-${PANEL_SUBDOMAIN}"
+VHOST_NAME="lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}"
 VHOST_PATH="/etc/nginx/sites-enabled/${VHOST_NAME}"
 
 if [ -f "$VHOST_PATH" ] || [ -L "$VHOST_PATH" ]; then
@@ -196,8 +196,8 @@ else
   fi
 fi
 
-# Verify it is NOT an app vhost (app vhosts use portlama-app- prefix)
-APP_VHOST="/etc/nginx/sites-enabled/portlama-app-${PANEL_SUBDOMAIN}"
+# Verify it is NOT an app vhost (app vhosts use lamaste-app- prefix)
+APP_VHOST="/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN}"
 if [ ! -f "$APP_VHOST" ] && [ ! -L "$APP_VHOST" ]; then
   log_pass "No app vhost created (correct — panel uses mTLS vhost)"
 else
@@ -240,7 +240,7 @@ NOPANEL_CERT_RESPONSE=$(api_post "certs/agent" '{"label":"nopanel-e2e","capabili
 assert_json_field "$NOPANEL_CERT_RESPONSE" '.ok' 'true' "Agent cert without panel:expose created" || true
 
 NOPANEL_P12_PW=$(echo "$NOPANEL_CERT_RESPONSE" | jq -r '.p12Password' 2>/dev/null || echo "")
-NOPANEL_P12="/etc/portlama/pki/agents/nopanel-e2e/client.p12"
+NOPANEL_P12="/etc/lamalibre/lamaste/pki/agents/nopanel-e2e/client.p12"
 NOPANEL_CERT="/tmp/e2e-nopanel-cert.pem"
 NOPANEL_KEY="/tmp/e2e-nopanel-key.pem"
 sudo openssl pkcs12 -in "${NOPANEL_P12}" -clcerts -nokeys -out "${NOPANEL_CERT}" -passin "pass:${NOPANEL_P12_PW}" -legacy 2>/dev/null \

@@ -1,4 +1,4 @@
-# Portlama E2E: 07 — Certificate Renewal
+# Lamaste E2E: 07 — Certificate Renewal
 
 > Started at `2026-03-30 13:06:45 UTC`
 

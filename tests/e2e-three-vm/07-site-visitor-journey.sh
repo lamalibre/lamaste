@@ -28,23 +28,23 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
-visitor_exec() { multipass exec portlama-visitor -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
+visitor_exec() { multipass exec lamaste-visitor -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_patch() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -112,8 +112,8 @@ assert_eq "$SITE_FQDN_ACTUAL" "$SITE_FQDN" "Site FQDN matches expected value" ||
 log_section "Write test index.html to site directory"
 # ---------------------------------------------------------------------------
 
-host_exec "echo '<h1>${MARKER}</h1>' > /var/www/portlama/${SITE_ID}/index.html"
-WROTE_FILE=$(host_exec "cat /var/www/portlama/${SITE_ID}/index.html 2>/dev/null" || echo "")
+host_exec "echo '<h1>${MARKER}</h1>' > /var/www/lamaste/${SITE_ID}/index.html"
+WROTE_FILE=$(host_exec "cat /var/www/lamaste/${SITE_ID}/index.html 2>/dev/null" || echo "")
 assert_contains "$WROTE_FILE" "$MARKER" "index.html written to site directory" || true
 
 # Wait for nginx to settle after site creation

@@ -1,0 +1,2096 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 15,
+    "name": "Plugin Lifecycle",
+    "suite": "e2e",
+    "description": "15 — Plugin Lifecycle",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE plugins/push-install/policies/${CREATED_POLICY_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/push-install/policies/${CREATED_POLICY_ID}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "PATCH plugins/push-install/config",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "PATCH",
+        "path": "plugins/push-install/config",
+        "body": {
+          "enabled": false
+        }
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Track created resources for cleanup\nCREATED_POLICY_ID=\"\"\n\ncleanup() {\n  # Delete test push install policy if it still exists\n  if [ -n \"$CREATED_POLICY_ID\" ]; then\n    api_delete \"plugins/push-install/policies/${CREATED_POLICY_ID}\" 2>/dev/null || true\n  fi\n  # Disable push install globally\n  api_patch \"plugins/push-install/config\" '{\"enabled\":false}' 2>/dev/null || true\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Empty initial plugin list\n# ==========================================================================="
+    },
+    {
+      "id": "empty-initial-plugin-list",
+      "label": "Empty initial plugin list",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "PLUGINS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Set PLUGIN_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PLUGINS_RESPONSE\" | jq '.plugins | length' 2>/dev/null || echo \"-1\""
+          },
+          "capture": [
+            {
+              "variable": "PLUGIN_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Initial plugin list is empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PLUGIN_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Initial plugin list is empty"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Empty initial plugin list\"\n# ---------------------------------------------------------------------------\n\nPLUGINS_RESPONSE=$(api_get \"plugins\")\nPLUGIN_COUNT=$(echo \"$PLUGINS_RESPONSE\" | jq '.plugins | length' 2>/dev/null || echo \"-1\")\nassert_eq \"$PLUGIN_COUNT\" \"0\" \"Initial plugin list is empty\" || true\n\n# ===========================================================================\n# 2. Plugin install validation\n# ==========================================================================="
+    },
+    {
+      "id": "plugin-install-validation",
+      "label": "Plugin install validation",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": {
+              "packageName": "some-random-package"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_SCOPE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Non-@lamalibre package rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_SCOPE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Non-@lamalibre package rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": {
+              "packageName": ""
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "EMPTY_PKG_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Empty package name rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EMPTY_PKG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Empty package name rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Plugin install validation\"\n# ---------------------------------------------------------------------------\n\n# Non-@lamalibre package rejected\nINVALID_SCOPE_STATUS=$(api_post_status \"plugins/install\" '{\"packageName\":\"some-random-package\"}')\nassert_eq \"$INVALID_SCOPE_STATUS\" \"400\" \"Non-@lamalibre package rejected (HTTP 400)\" || true\n\n# Empty package name\nEMPTY_PKG_STATUS=$(api_post_status \"plugins/install\" '{\"packageName\":\"\"}')\nassert_eq \"$EMPTY_PKG_STATUS\" \"400\" \"Empty package name rejected (HTTP 400)\" || true\n\n# ===========================================================================\n# 3. Plugin detail for non-existent plugin\n# ==========================================================================="
+    },
+    {
+      "id": "plugin-detail-for-non-existent-plugin",
+      "label": "Plugin detail for non-existent plugin",
+      "steps": [
+        {
+          "id": "step-10",
+          "label": "GET /api/plugins/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/does-not-exist",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "MISSING_PLUGIN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "GET non-existent plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MISSING_PLUGIN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET non-existent plugin returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Plugin detail for non-existent plugin\"\n# ---------------------------------------------------------------------------\n\nMISSING_PLUGIN_STATUS=$(api_get_status \"plugins/does-not-exist\")\nassert_eq \"$MISSING_PLUGIN_STATUS\" \"404\" \"GET non-existent plugin returns 404\" || true\n\n# ===========================================================================\n# 4. Enable/disable non-existent plugin\n# ==========================================================================="
+    },
+    {
+      "id": "enable-disable-non-existent-plugin",
+      "label": "Enable/disable non-existent plugin",
+      "steps": [
+        {
+          "id": "step-12",
+          "label": "POST /api/plugins/does-not-exist/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/does-not-exist/enable",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_MISSING_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Enable non-existent plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLE_MISSING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Enable non-existent plugin returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "POST /api/plugins/does-not-exist/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/does-not-exist/disable",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_MISSING_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Disable non-existent plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLE_MISSING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Disable non-existent plugin returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enable/disable non-existent plugin\"\n# ---------------------------------------------------------------------------\n\nENABLE_MISSING_STATUS=$(api_post_status \"plugins/does-not-exist/enable\")\nassert_eq \"$ENABLE_MISSING_STATUS\" \"404\" \"Enable non-existent plugin returns 404\" || true\n\nDISABLE_MISSING_STATUS=$(api_post_status \"plugins/does-not-exist/disable\")\nassert_eq \"$DISABLE_MISSING_STATUS\" \"404\" \"Disable non-existent plugin returns 404\" || true\n\n# ===========================================================================\n# 5. Uninstall non-existent plugin\n# ==========================================================================="
+    },
+    {
+      "id": "uninstall-non-existent-plugin",
+      "label": "Uninstall non-existent plugin",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "DELETE /api/plugins/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/does-not-exist",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL_MISSING_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Uninstall non-existent plugin returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNINSTALL_MISSING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Uninstall non-existent plugin returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Uninstall non-existent plugin\"\n# ---------------------------------------------------------------------------\n\nUNINSTALL_MISSING_STATUS=$(api_delete_status \"plugins/does-not-exist\")\nassert_eq \"$UNINSTALL_MISSING_STATUS\" \"404\" \"Uninstall non-existent plugin returns 404\" || true\n\n# ===========================================================================\n# 6. Push install config defaults\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-config-defaults",
+      "label": "Push install config defaults",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "GET /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/config"
+          },
+          "capture": [
+            {
+              "variable": "PI_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Push install is disabled by default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PI_CONFIG"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Push install is disabled by default"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Default policy ID is 'default'",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PI_CONFIG"
+              },
+              "path": ".defaultPolicy",
+              "expected": {
+                "kind": "literal",
+                "value": "default"
+              },
+              "message": "Default policy ID is 'default'"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Set PI_POLICY_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PI_CONFIG\" | jq '.policies | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "PI_POLICY_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "At least one push install policy exists (count: ${PI_POLICY_COUNT})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "At least one push install policy exists (count: ${PI_POLICY_COUNT})"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PI_POLICY_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "No push install policies found",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No push install policies found"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PI_POLICY_COUNT",
+            "value": ">=1"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install config defaults\"\n# ---------------------------------------------------------------------------\n\nPI_CONFIG=$(api_get \"plugins/push-install/config\")\nassert_json_field \"$PI_CONFIG\" '.enabled' 'false' \"Push install is disabled by default\" || true\nassert_json_field \"$PI_CONFIG\" '.defaultPolicy' 'default' \"Default policy ID is 'default'\" || true\n\nPI_POLICY_COUNT=$(echo \"$PI_CONFIG\" | jq '.policies | length' 2>/dev/null || echo \"0\")\nif [ \"$PI_POLICY_COUNT\" -ge 1 ]; then\n  log_pass \"At least one push install policy exists (count: ${PI_POLICY_COUNT})\"\nelse\n  log_fail \"No push install policies found\"\nfi\n\n# ===========================================================================\n# 7. Push install config update\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-config-update",
+      "label": "Push install config update",
+      "steps": [
+        {
+          "id": "step-24",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_PI_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "PATCH push-install config returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_PI_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PATCH push-install config returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "GET /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/config"
+          },
+          "capture": [
+            {
+              "variable": "PI_CONFIG_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Push install is now enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PI_CONFIG_AFTER"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install is now enabled"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install config update\"\n# ---------------------------------------------------------------------------\n\nENABLE_PI_RESPONSE=$(api_patch \"plugins/push-install/config\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_PI_RESPONSE\" '.ok' 'true' \"PATCH push-install config returned ok: true\" || true\n\nPI_CONFIG_AFTER=$(api_get \"plugins/push-install/config\")\nassert_json_field \"$PI_CONFIG_AFTER\" '.enabled' 'true' \"Push install is now enabled\" || true\n\n# ===========================================================================\n# 8. Push install policy CRUD\n# ==========================================================================="
+    },
+    {
+      "id": "create-a-push-install-policy",
+      "label": "Create a push install policy",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "POST /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/policies",
+            "body": {
+              "name": "e2e-pi-test",
+              "description": "E2E test policy",
+              "allowedActions": [
+                "install",
+                "update"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "CREATE_PI_POLICY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Policy creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_PI_POLICY"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Policy creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Policy ID matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_PI_POLICY"
+              },
+              "path": ".policy.id",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-pi-test"
+              },
+              "message": "Policy ID matches"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create a push install policy\"\n# ---------------------------------------------------------------------------\n\nCREATE_PI_POLICY=$(api_post \"plugins/push-install/policies\" '{\"name\":\"e2e-pi-test\",\"description\":\"E2E test policy\",\"allowedActions\":[\"install\",\"update\"]}')\nassert_json_field \"$CREATE_PI_POLICY\" '.ok' 'true' \"Policy creation returned ok: true\" || true\nassert_json_field \"$CREATE_PI_POLICY\" '.policy.id' 'e2e-pi-test' \"Policy ID matches\" || true\nCREATED_POLICY_ID=\"e2e-pi-test\""
+    },
+    {
+      "id": "verify-policy-in-listing",
+      "label": "Verify policy in listing",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "GET /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/policies"
+          },
+          "capture": [
+            {
+              "variable": "PI_POLICIES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Extract FOUND_PI_POLICY",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FOUND_PI_POLICY",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PI_POLICIES"
+              },
+              "expression": ".policies[] | select(.id == \"e2e-pi-test\") | .id"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Created policy appears in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_PI_POLICY"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-pi-test"
+              },
+              "message": "Created policy appears in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify policy in listing\"\n# ---------------------------------------------------------------------------\n\nPI_POLICIES=$(api_get \"plugins/push-install/policies\")\nFOUND_PI_POLICY=$(echo \"$PI_POLICIES\" | jq -r '.policies[] | select(.id == \"e2e-pi-test\") | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_PI_POLICY\" \"e2e-pi-test\" \"Created policy appears in listing\" || true"
+    },
+    {
+      "id": "update-the-push-install-policy",
+      "label": "Update the push install policy",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "PATCH /api/plugins/push-install/policies/e2e-pi-test",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/policies/e2e-pi-test",
+            "body": {
+              "description": "Updated by E2E"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_PI_POLICY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Policy update returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_PI_POLICY"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Policy update returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Description updated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_PI_POLICY"
+              },
+              "path": ".policy.description",
+              "expected": {
+                "kind": "literal",
+                "value": "Updated by E2E"
+              },
+              "message": "Description updated"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Update the push install policy\"\n# ---------------------------------------------------------------------------\n\nUPDATE_PI_POLICY=$(api_patch \"plugins/push-install/policies/e2e-pi-test\" '{\"description\":\"Updated by E2E\"}')\nassert_json_field \"$UPDATE_PI_POLICY\" '.ok' 'true' \"Policy update returned ok: true\" || true\nassert_json_field \"$UPDATE_PI_POLICY\" '.policy.description' 'Updated by E2E' \"Description updated\" || true"
+    },
+    {
+      "id": "cannot-delete-the-default-push-install-policy",
+      "label": "Cannot delete the default push install policy",
+      "steps": [
+        {
+          "id": "step-38",
+          "label": "DELETE /api/plugins/push-install/policies/default",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/policies/default",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DELETE_DEFAULT_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Cannot delete the default policy (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELETE_DEFAULT_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Cannot delete the default policy (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cannot delete the default push install policy\"\n# ---------------------------------------------------------------------------\n\nDELETE_DEFAULT_PI_STATUS=$(api_delete_status \"plugins/push-install/policies/default\")\nassert_eq \"$DELETE_DEFAULT_PI_STATUS\" \"400\" \"Cannot delete the default policy (HTTP 400)\" || true"
+    },
+    {
+      "id": "delete-the-e2e-pi-test-policy",
+      "label": "Delete the e2e-pi-test policy",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "DELETE /api/plugins/push-install/policies/e2e-pi-test",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/policies/e2e-pi-test"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_PI_POLICY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Policy deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_PI_POLICY"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Policy deletion returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "GET /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/policies"
+          },
+          "capture": [
+            {
+              "variable": "PI_POLICIES_AFTER_DELETE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Extract FOUND_DELETED_PI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FOUND_DELETED_PI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PI_POLICIES_AFTER_DELETE"
+              },
+              "expression": ".policies[] | select(.id == \"e2e-pi-test\") | .id"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Deleted policy no longer in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_DELETED_PI"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Deleted policy no longer in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete the e2e-pi-test policy\"\n# ---------------------------------------------------------------------------\n\nDELETE_PI_POLICY=$(api_delete \"plugins/push-install/policies/e2e-pi-test\")\nassert_json_field \"$DELETE_PI_POLICY\" '.ok' 'true' \"Policy deletion returned ok: true\" || true\nCREATED_POLICY_ID=\"\"\n\n# Verify removal\nPI_POLICIES_AFTER_DELETE=$(api_get \"plugins/push-install/policies\")\nFOUND_DELETED_PI=$(echo \"$PI_POLICIES_AFTER_DELETE\" | jq -r '.policies[] | select(.id == \"e2e-pi-test\") | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_DELETED_PI\" \"\" \"Deleted policy no longer in listing\" || true\n\n# ===========================================================================\n# 9. Push install policy validation\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-policy-validation",
+      "label": "Push install policy validation",
+      "steps": [
+        {
+          "id": "step-46",
+          "label": "POST /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/policies",
+            "body": {
+              "name": ""
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "EMPTY_PI_NAME_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "POST policy with empty name rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EMPTY_PI_NAME_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST policy with empty name rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "POST /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/policies",
+            "body": {
+              "name": "dup-pi-test",
+              "id": "dup-pi-test"
+            }
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-49",
+          "label": "POST /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/policies",
+            "body": {
+              "name": "dup-pi-test",
+              "id": "dup-pi-test"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "POST policy with duplicate ID rejected (HTTP 409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "POST policy with duplicate ID rejected (HTTP 409)"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "DELETE /api/plugins/push-install/policies/dup-pi-test",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/policies/dup-pi-test"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-52",
+          "label": "PATCH /api/plugins/push-install/policies/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/policies/does-not-exist",
+            "body": {
+              "name": "updated"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_MISSING_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "PATCH non-existent policy returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_MISSING_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "PATCH non-existent policy returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "DELETE /api/plugins/push-install/policies/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/policies/does-not-exist",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DELETE_MISSING_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "DELETE non-existent policy returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELETE_MISSING_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "DELETE non-existent policy returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install policy validation\"\n# ---------------------------------------------------------------------------\n\n# Empty name\nEMPTY_PI_NAME_STATUS=$(api_post_status \"plugins/push-install/policies\" '{\"name\":\"\"}')\nassert_eq \"$EMPTY_PI_NAME_STATUS\" \"400\" \"POST policy with empty name rejected (HTTP 400)\" || true\n\n# Duplicate policy ID\napi_post \"plugins/push-install/policies\" '{\"name\":\"dup-pi-test\",\"id\":\"dup-pi-test\"}' > /dev/null 2>&1 || true\nDUP_PI_STATUS=$(api_post_status \"plugins/push-install/policies\" '{\"name\":\"dup-pi-test\",\"id\":\"dup-pi-test\"}')\nassert_eq \"$DUP_PI_STATUS\" \"409\" \"POST policy with duplicate ID rejected (HTTP 409)\" || true\napi_delete \"plugins/push-install/policies/dup-pi-test\" > /dev/null 2>&1 || true\n\n# PATCH non-existent policy returns 404\nPATCH_MISSING_PI_STATUS=$(api_patch_status \"plugins/push-install/policies/does-not-exist\" '{\"name\":\"updated\"}')\nassert_eq \"$PATCH_MISSING_PI_STATUS\" \"404\" \"PATCH non-existent policy returns 404\" || true\n\n# DELETE non-existent policy returns 404\nDELETE_MISSING_PI_STATUS=$(api_delete_status \"plugins/push-install/policies/does-not-exist\")\nassert_eq \"$DELETE_MISSING_PI_STATUS\" \"404\" \"DELETE non-existent policy returns 404\" || true\n\n# ===========================================================================\n# 10. Push install enable/disable for agent\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-enable-disable-for-agent",
+      "label": "Push install enable/disable for agent",
+      "steps": [
+        {
+          "id": "step-56",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_CERTS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Set AGENT_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENT_CERTS_RESPONSE\" | jq '.agents | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "Extract AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AGENT_LABEL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "AGENT_CERTS_RESPONSE"
+              },
+              "expression": ".agents[0].label"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Found agent: ${AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Found agent: ${AGENT_LABEL}"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 5
+            }
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_PI_AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Push install enable for agent returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_PI_AGENT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install enable for agent returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "pushInstallEnabledUntil is set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_PI_AGENT"
+              },
+              "path": ".pushInstallEnabledUntil",
+              "message": "pushInstallEnabledUntil is set"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "DELETE /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_PI_AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Push install disable for agent returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_PI_AGENT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install disable for agent returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Agent label is empty — skipping agent push install tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Agent label is empty — skipping agent push install tests"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "AGENT_LABEL"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "No agent certificates — skipping agent push install tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No agent certificates — skipping agent push install tests"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install enable/disable for agent\"\n# ---------------------------------------------------------------------------\n\nAGENT_CERTS_RESPONSE=$(api_get \"certs/agent\")\nAGENT_COUNT=$(echo \"$AGENT_CERTS_RESPONSE\" | jq '.agents | length' 2>/dev/null || echo \"0\")\n\nif [ \"$AGENT_COUNT\" -gt 0 ]; then\n  AGENT_LABEL=$(echo \"$AGENT_CERTS_RESPONSE\" | jq -r '.agents[0].label' 2>/dev/null || echo \"\")\n\n  if [ -n \"$AGENT_LABEL\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n    log_info \"Found agent: ${AGENT_LABEL}\"\n\n    # Enable push install for agent\n    ENABLE_PI_AGENT=$(api_post \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\n    assert_json_field \"$ENABLE_PI_AGENT\" '.ok' 'true' \"Push install enable for agent returned ok: true\" || true\n    assert_json_field_not_empty \"$ENABLE_PI_AGENT\" '.pushInstallEnabledUntil' \"pushInstallEnabledUntil is set\" || true\n\n    # Disable push install for agent\n    DISABLE_PI_AGENT=$(api_delete \"plugins/push-install/enable/${AGENT_LABEL}\")\n    assert_json_field \"$DISABLE_PI_AGENT\" '.ok' 'true' \"Push install disable for agent returned ok: true\" || true\n  else\n    log_skip \"Agent label is empty — skipping agent push install tests\"\n  fi\nelse\n  log_skip \"No agent certificates — skipping agent push install tests\"\nfi\n\n# ===========================================================================\n# 11. Push install without global toggle\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-without-global-toggle",
+      "label": "Push install without global toggle",
+      "steps": [
+        {
+          "id": "step-67",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 5
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_NO_GLOBAL_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Cannot enable push install when globally disabled (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLE_NO_GLOBAL_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Cannot enable push install when globally disabled (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "No agent certificates — skipping global toggle guard test",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No agent certificates — skipping global toggle guard test"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install without global toggle\"\n# ---------------------------------------------------------------------------\n\n# Disable push install globally\napi_patch \"plugins/push-install/config\" '{\"enabled\":false}' > /dev/null 2>&1\n\nif [ \"$AGENT_COUNT\" -gt 0 ] && [ -n \"${AGENT_LABEL:-}\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n  ENABLE_NO_GLOBAL_PI_STATUS=$(api_post_status \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\n  assert_eq \"$ENABLE_NO_GLOBAL_PI_STATUS\" \"400\" \"Cannot enable push install when globally disabled (HTTP 400)\" || true\nelse\n  log_skip \"No agent certificates — skipping global toggle guard test\"\nfi\n\n# ===========================================================================\n# 12. Push install sessions audit log\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-sessions-audit-log",
+      "label": "Push install sessions audit log",
+      "steps": [
+        {
+          "id": "step-71",
+          "label": "GET /api/plugins/push-install/sessions",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/sessions"
+          },
+          "capture": [
+            {
+              "variable": "SESSIONS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Extract SESSIONS_TYPE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SESSIONS_TYPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SESSIONS_RESPONSE"
+              },
+              "expression": ".sessions | type"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "GET push-install sessions returns a sessions array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESSIONS_TYPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "array"
+              },
+              "message": "GET push-install sessions returns a sessions array"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install sessions audit log\"\n# ---------------------------------------------------------------------------\n\nSESSIONS_RESPONSE=$(api_get \"plugins/push-install/sessions\")\nSESSIONS_TYPE=$(echo \"$SESSIONS_RESPONSE\" | jq -r '.sessions | type' 2>/dev/null || echo \"unknown\")\nassert_eq \"$SESSIONS_TYPE\" \"array\" \"GET push-install sessions returns a sessions array\" || true\n\n# ===========================================================================\n# 13. Push install input validation\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-input-validation",
+      "label": "Push install input validation",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": true
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 0
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DURATION_ZERO_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "POST enable with durationMinutes: 0 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DURATION_ZERO_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST enable with durationMinutes: 0 rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 9999
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DURATION_HIGH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "POST enable with durationMinutes: 9999 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DURATION_HIGH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST enable with durationMinutes: 9999 rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "No agent certificates — skipping push install enable validation tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No agent certificates — skipping push install enable validation tests"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "defaultPolicy": "does-not-exist"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_DEFAULT_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "PATCH config with non-existent defaultPolicy rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_DEFAULT_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH config with non-existent defaultPolicy rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "POST /api/plugins/push-install/enable/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/does-not-exist",
+            "body": {
+              "durationMinutes": 5
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_MISSING_AGENT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "POST enable for non-existent agent returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLE_MISSING_AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "POST enable for non-existent agent returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "DELETE /api/plugins/push-install/enable/does-not-exist",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/enable/does-not-exist",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_MISSING_AGENT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "DELETE enable for non-existent agent returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLE_MISSING_AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "DELETE enable for non-existent agent returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "POST /api/plugins/push-install/enable/INVALID_LABEL!",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/INVALID_LABEL!",
+            "body": {
+              "durationMinutes": 5
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_LABEL_PI_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "POST enable with invalid label format rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_LABEL_PI_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST enable with invalid label format rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "GET /api/plugins/INVALID_NAME!",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/INVALID_NAME!",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_NAME_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "GET plugin with invalid name rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_NAME_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "GET plugin with invalid name rejected (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install input validation\"\n# ---------------------------------------------------------------------------\n\n# Enable with duration 0 (min is 5)\nif [ \"$AGENT_COUNT\" -gt 0 ] && [ -n \"${AGENT_LABEL:-}\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n  # Re-enable globally for validation tests\n  api_patch \"plugins/push-install/config\" '{\"enabled\":true}' > /dev/null 2>&1\n\n  DURATION_ZERO_STATUS=$(api_post_status \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":0}')\n  assert_eq \"$DURATION_ZERO_STATUS\" \"400\" \"POST enable with durationMinutes: 0 rejected (HTTP 400)\" || true\n\n  DURATION_HIGH_STATUS=$(api_post_status \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":9999}')\n  assert_eq \"$DURATION_HIGH_STATUS\" \"400\" \"POST enable with durationMinutes: 9999 rejected (HTTP 400)\" || true\nelse\n  log_skip \"No agent certificates — skipping push install enable validation tests\"\nfi\n\n# Invalid config update\nINVALID_DEFAULT_PI_STATUS=$(api_patch_status \"plugins/push-install/config\" '{\"defaultPolicy\":\"does-not-exist\"}')\nassert_eq \"$INVALID_DEFAULT_PI_STATUS\" \"400\" \"PATCH config with non-existent defaultPolicy rejected (HTTP 400)\" || true\n\n# Enable for non-existent agent\nENABLE_MISSING_AGENT_STATUS=$(api_post_status \"plugins/push-install/enable/does-not-exist\" '{\"durationMinutes\":5}')\nassert_eq \"$ENABLE_MISSING_AGENT_STATUS\" \"404\" \"POST enable for non-existent agent returns 404\" || true\n\n# Disable for non-existent agent\nDISABLE_MISSING_AGENT_STATUS=$(api_delete_status \"plugins/push-install/enable/does-not-exist\")\nassert_eq \"$DISABLE_MISSING_AGENT_STATUS\" \"404\" \"DELETE enable for non-existent agent returns 404\" || true\n\n# Invalid agent label format\nINVALID_LABEL_PI_STATUS=$(api_post_status \"plugins/push-install/enable/INVALID_LABEL!\" '{\"durationMinutes\":5}')\nassert_eq \"$INVALID_LABEL_PI_STATUS\" \"400\" \"POST enable with invalid label format rejected (HTTP 400)\" || true\n\n# Invalid plugin name format\nINVALID_NAME_STATUS=$(api_get_status \"plugins/INVALID_NAME!\")\nassert_eq \"$INVALID_NAME_STATUS\" \"400\" \"GET plugin with invalid name rejected (HTTP 400)\" || true\n\n# ===========================================================================\n# 14. Cleanup\n# ==========================================================================="
+    },
+    {
+      "id": "cleanup",
+      "label": "Cleanup",
+      "steps": [
+        {
+          "id": "step-90",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_PI_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "Push install disabled globally for cleanup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_PI_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install disabled globally for cleanup"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "GET /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/config"
+          },
+          "capture": [
+            {
+              "variable": "FINAL_PI_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "Push install is disabled after cleanup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FINAL_PI_CONFIG"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Push install is disabled after cleanup"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Cleanup complete — plugin state restored",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Cleanup complete — plugin state restored"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup\"\n# ---------------------------------------------------------------------------\n\nDISABLE_PI_RESPONSE=$(api_patch \"plugins/push-install/config\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_PI_RESPONSE\" '.ok' 'true' \"Push install disabled globally for cleanup\" || true\n\nFINAL_PI_CONFIG=$(api_get \"plugins/push-install/config\")\nassert_json_field \"$FINAL_PI_CONFIG\" '.enabled' 'false' \"Push install is disabled after cleanup\" || true\n\n# Remove trap since cleanup is done\ntrap - EXIT\n\nlog_pass \"Cleanup complete — plugin state restored\""
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 15 — Plugin Lifecycle\n# ============================================================================\n# Verifies plugin management and push-install endpoints:\n# - Empty initial plugin list\n# - Plugin install validation (non-@lamalibre rejected)\n# - Plugin enable/disable lifecycle\n# - Push install config defaults\n# - Push install policy CRUD\n# - Push install enable/disable for agent\n# - Push install sessions audit log\n# - Input validation (invalid names, states)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"15 — Plugin Lifecycle\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

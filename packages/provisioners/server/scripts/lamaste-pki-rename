@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+#
+# lamaste-pki-rename — root-only wrapper for renaming files inside
+# /etc/lamalibre/lamaste/pki/.
+#
+# Replaces a previous wildcard sudoers entry that allowed:
+#
+#   lamaste ALL=(root) NOPASSWD: /usr/bin/mv /etc/lamalibre/lamaste/pki/*.new /etc/lamalibre/lamaste/pki/*
+#
+# The trailing wildcard let a compromised lamaste process overwrite arbitrary
+# files in the PKI directory (e.g. ca.crt, ca.key). This wrapper accepts
+# basenames only, validates them against an allow-list charset, and constrains
+# both source and destination to /etc/lamalibre/lamaste/pki/ via realpath.
+#
+# Usage:
+#   lamaste-pki-rename <src-basename> <dst-basename>
+#
+# - basenames must match ^[A-Za-z0-9._-]+$ (1..128 chars)
+# - both must resolve under /etc/lamalibre/lamaste/pki/ (no slashes — basenames only)
+
+set -euo pipefail
+
+PKI_DIR="/etc/lamalibre/lamaste/pki"
+
+err() {
+  printf '%s: %s\n' "lamaste-pki-rename" "$1" >&2
+  exit 1
+}
+
+# Canonicalise the PKI dir once. Allows the caller to symlink /etc/lamalibre/lamaste
+# without breaking comparisons (and keeps macOS dev shims happy too).
+if [[ -d "$PKI_DIR" ]]; then
+  PKI_REAL="$(realpath -e -- "$PKI_DIR")"
+else
+  err "PKI dir does not exist: $PKI_DIR"
+fi
+
+if [[ $# -ne 2 ]]; then
+  err "usage: lamaste-pki-rename <src-basename> <dst-basename>"
+fi
+
+src="$1"
+dst="$2"
+
+# --- argument shape checks ------------------------------------------------
+
+basename_re='^[A-Za-z0-9._-]+$'
+
+if (( ${#src} < 1 || ${#src} > 128 )); then
+  err "src length must be 1..128"
+fi
+if (( ${#dst} < 1 || ${#dst} > 128 )); then
+  err "dst length must be 1..128"
+fi
+
+if ! [[ "$src" =~ $basename_re ]]; then
+  err "src must match $basename_re"
+fi
+if ! [[ "$dst" =~ $basename_re ]]; then
+  err "dst must match $basename_re"
+fi
+
+# basename charset above already excludes /, but be explicit about ./ ..
+if [[ "$src" == "." || "$src" == ".." ]]; then
+  err "src basename invalid"
+fi
+if [[ "$dst" == "." || "$dst" == ".." ]]; then
+  err "dst basename invalid"
+fi
+
+src_path="$PKI_REAL/$src"
+# Destination is built from the canonicalised PKI dir + validated basename,
+# so it cannot escape via symlink in the parent. The pre-existing-symlink
+# check below covers the case where someone planted a symlink at the dst
+# basename itself.
+dst_path="$PKI_REAL/$dst"
+
+# Source must exist; resolve through any symlinks and verify the realpath
+# is still inside the PKI dir.
+if [[ ! -e "$src_path" ]]; then
+  err "src does not exist: $src_path"
+fi
+src_real="$(realpath -e -- "$src_path")"
+case "$src_real" in
+  "$PKI_REAL"/*) ;;
+  *) err "src must resolve under $PKI_DIR/ (got $src_real)" ;;
+esac
+
+# If the destination already exists as a symlink, refuse — we don't want to
+# follow a symlink and overwrite something outside the dir.
+if [[ -L "$dst_path" ]]; then
+  err "dst is a symlink, refusing to follow: $dst_path"
+fi
+
+# --- Rename ----------------------------------------------------------------
+
+exec /usr/bin/mv -- "$src_real" "$dst_path"

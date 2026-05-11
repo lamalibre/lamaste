@@ -1,0 +1,935 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 11,
+    "name": "Plugin Lifecycle",
+    "suite": "e2e-three-vm",
+    "description": "11 — Plugin Lifecycle (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE plugins/push-install/policies/${CREATED_POLICY_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/push-install/policies/${CREATED_POLICY_ID}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "PATCH plugins/push-install/config",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "PATCH",
+        "path": "plugins/push-install/config"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nCREATED_POLICY_ID=\"\"\n\ncleanup() {\n  local _discard\n  if [ -n \"$CREATED_POLICY_ID\" ]; then\n    _discard=$(host_api_delete \"plugins/push-install/policies/${CREATED_POLICY_ID}\" 2>/dev/null) || true\n  fi\n  _discard=$(host_api_patch \"plugins/push-install/config\" '{\"enabled\":false}' 2>/dev/null) || true\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Plugin list and push-install config\n# ==========================================================================="
+    },
+    {
+      "id": "plugin-list-is-initially-empty",
+      "label": "Plugin list is initially empty",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "PLUGINS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Set PLUGIN_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PLUGINS\" | jq '.plugins | length' 2>/dev/null || echo \"-1\""
+          },
+          "capture": [
+            {
+              "variable": "PLUGIN_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Initial plugin list is empty on host VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PLUGIN_COUNT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Initial plugin list is empty on host VM"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Plugin list is initially empty\"\n# ---------------------------------------------------------------------------\n\nPLUGINS=$(host_api_get \"plugins\")\nPLUGIN_COUNT=$(echo \"$PLUGINS\" | jq '.plugins | length' 2>/dev/null || echo \"-1\")\nassert_eq \"$PLUGIN_COUNT\" \"0\" \"Initial plugin list is empty on host VM\" || true"
+    },
+    {
+      "id": "push-install-config-defaults",
+      "label": "Push-install config defaults",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "GET /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/config"
+          },
+          "capture": [
+            {
+              "variable": "PI_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Push install is disabled by default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PI_CONFIG"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Push install is disabled by default"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Default policy is 'default'",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PI_CONFIG"
+              },
+              "path": ".defaultPolicy",
+              "expected": {
+                "kind": "literal",
+                "value": "default"
+              },
+              "message": "Default policy is 'default'"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push-install config defaults\"\n# ---------------------------------------------------------------------------\n\nPI_CONFIG=$(host_api_get \"plugins/push-install/config\")\nassert_json_field \"$PI_CONFIG\" '.enabled' 'false' \"Push install is disabled by default\" || true\nassert_json_field \"$PI_CONFIG\" '.defaultPolicy' 'default' \"Default policy is 'default'\" || true\n\n# ===========================================================================\n# 2. Push install policy CRUD on host VM\n# ==========================================================================="
+    },
+    {
+      "id": "create-push-install-policy",
+      "label": "Create push install policy",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "POST /api/plugins/push-install/policies",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/policies",
+            "body": {
+              "name": "three-vm-test",
+              "description": "Three-VM test policy"
+            }
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Policy creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Policy creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Policy ID matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESULT"
+              },
+              "path": ".policy.id",
+              "expected": {
+                "kind": "literal",
+                "value": "three-vm-test"
+              },
+              "message": "Policy ID matches"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create push install policy\"\n# ---------------------------------------------------------------------------\n\nCREATE_RESULT=$(host_api_post \"plugins/push-install/policies\" '{\"name\":\"three-vm-test\",\"description\":\"Three-VM test policy\"}')\nassert_json_field \"$CREATE_RESULT\" '.ok' 'true' \"Policy creation returned ok: true\" || true\nassert_json_field \"$CREATE_RESULT\" '.policy.id' 'three-vm-test' \"Policy ID matches\" || true\nCREATED_POLICY_ID=\"three-vm-test\""
+    },
+    {
+      "id": "delete-test-policy",
+      "label": "Delete test policy",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "DELETE /api/plugins/push-install/policies/three-vm-test",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/policies/three-vm-test"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Policy deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Policy deletion returned ok: true"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete test policy\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESULT=$(host_api_delete \"plugins/push-install/policies/three-vm-test\")\nassert_json_field \"$DELETE_RESULT\" '.ok' 'true' \"Policy deletion returned ok: true\" || true\nCREATED_POLICY_ID=\"\"\n\n# ===========================================================================\n# 3. Push install enable/disable for agent across VMs\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-for-agent",
+      "label": "Push install for agent",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "_DISCARD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_CERTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Set AGENT_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENT_CERTS\" | jq '.agents | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Extract AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AGENT_LABEL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "AGENT_CERTS"
+              },
+              "expression": ".agents[0].label"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Found agent: ${AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Found agent: ${AGENT_LABEL}"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 5
+            }
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Push install enabled for agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install enabled for agent"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "pushInstallEnabledUntil is set",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESULT"
+              },
+              "path": ".pushInstallEnabledUntil",
+              "message": "pushInstallEnabledUntil is set"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "GET /api/plugins/push-install/agent-status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/agent-status"
+          },
+          "capture": [
+            {
+              "variable": "PI_AGENT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Agent status response: ${PI_AGENT_STATUS}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent status response: ${PI_AGENT_STATUS}"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "DELETE /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Push install disabled for agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install disabled for agent"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "AGENT_LABEL"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Agent label is empty — skipping push install agent tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Agent label is empty — skipping push install agent tests"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "AGENT_LABEL"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "AGENT_LABEL",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "No agent certificates — skipping push install agent tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No agent certificates — skipping push install agent tests"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install for agent\"\n# ---------------------------------------------------------------------------\n\n# Enable push install globally\n_DISCARD=$(host_api_patch \"plugins/push-install/config\" '{\"enabled\":true}')\n\nAGENT_CERTS=$(host_api_get \"certs/agent\")\nAGENT_COUNT=$(echo \"$AGENT_CERTS\" | jq '.agents | length' 2>/dev/null || echo \"0\")\n\nif [ \"$AGENT_COUNT\" -gt 0 ]; then\n  AGENT_LABEL=$(echo \"$AGENT_CERTS\" | jq -r '.agents[0].label' 2>/dev/null || echo \"\")\n\n  if [ -n \"$AGENT_LABEL\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n    log_info \"Found agent: ${AGENT_LABEL}\"\n\n    # Enable with short time window\n    ENABLE_RESULT=$(host_api_post \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\n    assert_json_field \"$ENABLE_RESULT\" '.ok' 'true' \"Push install enabled for agent\" || true\n    assert_json_field_not_empty \"$ENABLE_RESULT\" '.pushInstallEnabledUntil' \"pushInstallEnabledUntil is set\" || true\n\n    # Verify agent can check its own status\n    PI_AGENT_STATUS=$(host_api_get \"plugins/push-install/agent-status\")\n    log_info \"Agent status response: ${PI_AGENT_STATUS}\"\n\n    # Disable\n    DISABLE_RESULT=$(host_api_delete \"plugins/push-install/enable/${AGENT_LABEL}\")\n    assert_json_field \"$DISABLE_RESULT\" '.ok' 'true' \"Push install disabled for agent\" || true\n  else\n    log_skip \"Agent label is empty — skipping push install agent tests\"\n  fi\nelse\n  log_skip \"No agent certificates — skipping push install agent tests\"\nfi\n\n# ===========================================================================\n# 4. Push install without global toggle (guard test)\n# ==========================================================================="
+    },
+    {
+      "id": "push-install-guard-global-toggle-off",
+      "label": "Push install guard: global toggle off",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "_DISCARD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/push-install/enable/${AGENT_LABEL}",
+            "body": {
+              "durationMinutes": 5
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_NO_GLOBAL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Cannot enable push install when globally disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLE_NO_GLOBAL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Cannot enable push install when globally disabled"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "No agent certificates — skipping global toggle guard test",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No agent certificates — skipping global toggle guard test"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENT_LABEL",
+            "value": "null"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install guard: global toggle off\"\n# ---------------------------------------------------------------------------\n\n_DISCARD=$(host_api_patch \"plugins/push-install/config\" '{\"enabled\":false}')\n\nif [ \"$AGENT_COUNT\" -gt 0 ] && [ -n \"${AGENT_LABEL:-}\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n  ENABLE_NO_GLOBAL_STATUS=$(host_api_post_status \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\n  assert_eq \"$ENABLE_NO_GLOBAL_STATUS\" \"400\" \"Cannot enable push install when globally disabled\" || true\nelse\n  log_skip \"No agent certificates — skipping global toggle guard test\"\nfi\n\n# ===========================================================================\n# 5. Sessions audit log\n# ==========================================================================="
+    },
+    {
+      "id": "sessions-audit-log",
+      "label": "Sessions audit log",
+      "steps": [
+        {
+          "id": "step-34",
+          "label": "GET /api/plugins/push-install/sessions",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/sessions"
+          },
+          "capture": [
+            {
+              "variable": "SESSIONS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Extract SESSIONS_TYPE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SESSIONS_TYPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SESSIONS"
+              },
+              "expression": ".sessions | type"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Push install sessions is an array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESSIONS_TYPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "array"
+              },
+              "message": "Push install sessions is an array"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sessions audit log\"\n# ---------------------------------------------------------------------------\n\nSESSIONS=$(host_api_get \"plugins/push-install/sessions\")\nSESSIONS_TYPE=$(echo \"$SESSIONS\" | jq -r '.sessions | type' 2>/dev/null || echo \"unknown\")\nassert_eq \"$SESSIONS_TYPE\" \"array\" \"Push install sessions is an array\" || true\n\n# ===========================================================================\n# 6. Cleanup\n# ==========================================================================="
+    },
+    {
+      "id": "cleanup",
+      "label": "Cleanup",
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": false
+            }
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESULT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Push install disabled globally for cleanup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESULT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Push install disabled globally for cleanup"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Cleanup complete — plugin state restored",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Cleanup complete — plugin state restored"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup\"\n# ---------------------------------------------------------------------------\n\nDISABLE_RESULT=$(host_api_patch \"plugins/push-install/config\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESULT\" '.ok' 'true' \"Push install disabled globally for cleanup\" || true\n\ntrap - EXIT\n\nlog_pass \"Cleanup complete — plugin state restored\""
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_patch",
+    "host_api_delete",
+    "host_api_post_status",
+    "host_api_delete_status"
+  ],
+  "headerRaw": "# ============================================================================\n# 11 — Plugin Lifecycle (Three-VM)\n# ============================================================================\n# Verifies plugin management and push-install across VMs:\n#\n# Section 1:  REST API tests (plugin list, push-install config, policy CRUD)\n# Section 2:  Push install enable/disable for agent across VMs\n# Section 3:  Time window expiry validation\n# Section 4:  Input validation + cleanup\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nHOST_VM=\"lamaste-host\"\nAPI_HELPER=\"/tmp/vm-api-helper.sh\"\nAPI_STATUS_HELPER=\"/tmp/vm-api-status-helper.sh\"\n\n# Base64-encode body before passing through multipass exec — no special chars.\n_b64() { printf '%s' \"$1\" | base64 | tr -d '\\n'; }\n\n# All API calls run via helper scripts ON the VM — no quoting issues.\nhost_api_get()    { multipass exec \"${HOST_VM}\" -- sudo \"${API_HELPER}\" GET \"$1\"; }\nhost_api_post()   { multipass exec \"${HOST_VM}\" -- sudo \"${API_HELPER}\" POST \"$1\" \"$(_b64 \"$2\")\"; }\nhost_api_patch()  { multipass exec \"${HOST_VM}\" -- sudo \"${API_HELPER}\" PATCH \"$1\" \"$(_b64 \"$2\")\"; }\nhost_api_delete() { multipass exec \"${HOST_VM}\" -- sudo \"${API_HELPER}\" DELETE \"$1\"; }\n\nhost_api_post_status()   { multipass exec \"${HOST_VM}\" -- sudo \"${API_STATUS_HELPER}\" POST \"$1\" \"$(_b64 \"$2\")\" 2>/dev/null || echo \"000\"; }\nhost_api_delete_status() { multipass exec \"${HOST_VM}\" -- sudo \"${API_STATUS_HELPER}\" DELETE \"$1\" 2>/dev/null || echo \"000\"; }\n\nbegin_test \"11 — Plugin Lifecycle (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -1,0 +1,1225 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 17,
+    "name": "Identity System",
+    "suite": "e2e-three-vm",
+    "description": "17 — Identity System (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {
+    "AGENT_LABEL": {
+      "value": "identity-agent"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Delete /tmp/e2e-identity-*.pem||",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-identity-*.pem||"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping identity system tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "1-identity-api-list-users-admin-cert",
+      "label": "1. Identity API — list users (admin cert)",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "GET /api/identity/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/identity/users returns users array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "USERS_RESPONSE"
+              },
+              "path": ".users",
+              "message": "GET /api/identity/users returns users array"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Set USERS_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_RESPONSE\" | jq '.users | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "USERS_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Identity users list contains at least one user (count: $USERS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Identity users list contains at least one user (count: $USERS_COUNT)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "USERS_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Identity users list should contain at least one user (count: $USERS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Identity users list should contain at least one user (count: $USERS_COUNT)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "USERS_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Extract FIRST_USERNAME",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "FIRST_USERNAME",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "USERS_RESPONSE"
+              },
+              "expression": ".users[0].username"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "First user in list: $FIRST_USERNAME",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "First user in list: $FIRST_USERNAME"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"1. Identity API — list users (admin cert)\"\n# ===========================================================================\n\nUSERS_RESPONSE=$(host_api_get \"identity/users\")\nassert_json_field_not_empty \"$USERS_RESPONSE\" '.users' \"GET /api/identity/users returns users array\" || true\n\nUSERS_COUNT=$(echo \"$USERS_RESPONSE\" | jq '.users | length' 2>/dev/null || echo \"0\")\nif [ \"$USERS_COUNT\" -ge 1 ]; then\n  log_pass \"Identity users list contains at least one user (count: $USERS_COUNT)\"\nelse\n  log_fail \"Identity users list should contain at least one user (count: $USERS_COUNT)\"\nfi\n\n# Get the first username for the single-user lookup test\nFIRST_USERNAME=$(echo \"$USERS_RESPONSE\" | jq -r '.users[0].username' 2>/dev/null || echo \"\")\nlog_info \"First user in list: $FIRST_USERNAME\""
+    },
+    {
+      "id": "2-identity-api-single-user-lookup-admin-cert",
+      "label": "2. Identity API — single user lookup (admin cert)",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "GET /api/identity/users/${FIRST_USERNAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users/${FIRST_USERNAME}"
+          },
+          "capture": [
+            {
+              "variable": "USER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "GET /api/identity/users/:username returns correct user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "USER_RESPONSE"
+              },
+              "path": ".user.username",
+              "expected": {
+                "kind": "var",
+                "name": "FIRST_USERNAME"
+              },
+              "message": "GET /api/identity/users/:username returns correct user"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Single user has displayname field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "USER_RESPONSE"
+              },
+              "path": ".user.displayname",
+              "message": "Single user has displayname field"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Single user has groups field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "USER_RESPONSE"
+              },
+              "path": ".user.groups",
+              "message": "Single user has groups field"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "No users found for single-user lookup test",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No users found for single-user lookup test"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "FIRST_USERNAME"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/identity/users/nonexistent-user-e2e",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "NOTFOUND_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "GET /api/identity/users/:username returns 404 for non-existent user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOTFOUND_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET /api/identity/users/:username returns 404 for non-existent user"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"2. Identity API — single user lookup (admin cert)\"\n# ===========================================================================\n\nif [ -n \"$FIRST_USERNAME\" ] && [ \"$FIRST_USERNAME\" != \"null\" ]; then\n  USER_RESPONSE=$(host_api_get \"identity/users/${FIRST_USERNAME}\")\n  assert_json_field \"$USER_RESPONSE\" '.user.username' \"$FIRST_USERNAME\" \"GET /api/identity/users/:username returns correct user\" || true\n  assert_json_field_not_empty \"$USER_RESPONSE\" '.user.displayname' \"Single user has displayname field\" || true\n  assert_json_field_not_empty \"$USER_RESPONSE\" '.user.groups' \"Single user has groups field\" || true\nelse\n  log_skip \"No users found for single-user lookup test\"\nfi\n\n# Verify 404 for non-existent user\nNOTFOUND_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/identity/users/nonexistent-user-e2e 2>/dev/null\" || echo \"000\")\nassert_eq \"$NOTFOUND_STATUS\" \"404\" \"GET /api/identity/users/:username returns 404 for non-existent user\" || true"
+    },
+    {
+      "id": "3-identity-api-list-groups-admin-cert",
+      "label": "3. Identity API — list groups (admin cert)",
+      "steps": [
+        {
+          "id": "step-15",
+          "label": "GET /api/identity/groups",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/groups"
+          },
+          "capture": [
+            {
+              "variable": "GROUPS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "GET /api/identity/groups returns groups array",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "GROUPS_RESPONSE"
+              },
+              "path": ".groups",
+              "message": "GET /api/identity/groups returns groups array"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Set GROUPS_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$GROUPS_RESPONSE\" | jq '.groups | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "GROUPS_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Identity groups list contains at least one group (count: $GROUPS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Identity groups list contains at least one group (count: $GROUPS_COUNT)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "GROUPS_COUNT",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Identity groups list should contain at least one group (count: $GROUPS_COUNT)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Identity groups list should contain at least one group (count: $GROUPS_COUNT)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "GROUPS_COUNT",
+            "value": ">=1"
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"3. Identity API — list groups (admin cert)\"\n# ===========================================================================\n\nGROUPS_RESPONSE=$(host_api_get \"identity/groups\")\nassert_json_field_not_empty \"$GROUPS_RESPONSE\" '.groups' \"GET /api/identity/groups returns groups array\" || true\n\nGROUPS_COUNT=$(echo \"$GROUPS_RESPONSE\" | jq '.groups | length' 2>/dev/null || echo \"0\")\nif [ \"$GROUPS_COUNT\" -ge 1 ]; then\n  log_pass \"Identity groups list contains at least one group (count: $GROUPS_COUNT)\"\nelse\n  log_fail \"Identity groups list should contain at least one group (count: $GROUPS_COUNT)\"\nfi"
+    },
+    {
+      "id": "4-identity-api-self-returns-400-on-mtls-vhost",
+      "label": "4. Identity API — /self returns 400 on mTLS vhost",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/identity/self",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "SELF_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "GET /api/identity/self returns 400 on mTLS vhost (no Remote-* headers)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SELF_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "GET /api/identity/self returns 400 on mTLS vhost (no Remote-* headers)"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"4. Identity API — /self returns 400 on mTLS vhost\"\n# ===========================================================================\n\n# On the mTLS panel vhost (127.0.0.1:9292), nginx strips Remote-* headers,\n# so /api/identity/self should return 400 (no identity headers present).\nSELF_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/identity/self 2>/dev/null\" || echo \"000\")\nassert_eq \"$SELF_STATUS\" \"400\" \"GET /api/identity/self returns 400 on mTLS vhost (no Remote-* headers)\" || true"
+    },
+    {
+      "id": "5-nginx-header-stripping-forged-remote-user-rejected",
+      "label": "5. nginx header stripping — forged Remote-User rejected",
+      "steps": [
+        {
+          "id": "step-22",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/identity/self",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Remote-User": "attacker",
+              "Remote-Groups": "admins",
+              "Remote-Name": "Evil Admin",
+              "Remote-Email": "evil@attacker.com"
+            }
+          },
+          "capture": [
+            {
+              "variable": "FORGED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Forged Remote-User header stripped by nginx (still returns 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FORGED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Forged Remote-User header stripped by nginx (still returns 400)"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/identity/self",
+            "tlsVerify": false,
+            "timeout": 30,
+            "headers": {
+              "Remote-User": "attacker"
+            }
+          },
+          "capture": [
+            {
+              "variable": "FORGED_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Response confirms identity headers not present despite forged header",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "FORGED_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Identity headers not present"
+              },
+              "message": "Response confirms identity headers not present despite forged header"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"5. nginx header stripping — forged Remote-User rejected\"\n# ===========================================================================\n\n# Send a request with a forged Remote-User header through the mTLS panel vhost.\n# nginx should strip all Remote-* headers before proxying to Fastify, so\n# /api/identity/self should still return 400 regardless of the forged header.\nFORGED_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' -H 'Remote-User: attacker' -H 'Remote-Groups: admins' -H 'Remote-Name: Evil Admin' -H 'Remote-Email: evil@attacker.com' https://127.0.0.1:9292/api/identity/self 2>/dev/null\" || echo \"000\")\nassert_eq \"$FORGED_STATUS\" \"400\" \"Forged Remote-User header stripped by nginx (still returns 400)\" || true\n\n# Also verify the response body confirms headers were not present\nFORGED_BODY=$(host_exec \"curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' -H 'Remote-User: attacker' https://127.0.0.1:9292/api/identity/self 2>/dev/null\" || echo \"{}\")\nassert_contains \"$FORGED_BODY\" \"Identity headers not present\" \"Response confirms identity headers not present despite forged header\" || true"
+    },
+    {
+      "id": "6-capability-gating-agent-without-identity-query-gets-403",
+      "label": "6. Capability gating — agent without identity:query gets 403",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Agent cert creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Agent cert has a p12 password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".p12Password",
+              "message": "Agent cert has a p12 password"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Created agent cert: ${AGENT_LABEL} (capabilities: [tunnels:read])",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created agent cert: ${AGENT_LABEL} (capabilities: [tunnels:read])"
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Extracted PEM cert and key from .p12",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted PEM cert and key from .p12"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/identity/users",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "AGENT_USERS_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Agent without identity:query rejected with 403 on /identity/users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_USERS_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent without identity:query rejected with 403 on /identity/users"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "GET /api/identity/groups",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/groups",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "AGENT_GROUPS_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Agent without identity:query rejected with 403 on /identity/groups",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_GROUPS_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent without identity:query rejected with 403 on /identity/groups"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"6. Capability gating — agent without identity:query gets 403\"\n# ===========================================================================\n\n# Create an agent cert WITHOUT identity:query capability\nCERT_RESPONSE=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent cert creation returned ok: true\" || true\n\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Agent cert has a p12 password\" || true\n\nlog_info \"Created agent cert: ${AGENT_LABEL} (capabilities: [tunnels:read])\"\n\n# Extract PEM cert and key from .p12 for use with curl\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-identity-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-identity-key.pem\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'\"\n\nlog_pass \"Extracted PEM cert and key from .p12\"\n\n# Attempt to call identity endpoints with the agent cert (no identity:query) — should get 403\nAGENT_USERS_STATUS=$(host_agent_api_get_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"identity/users\")\nassert_eq \"$AGENT_USERS_STATUS\" \"403\" \"Agent without identity:query rejected with 403 on /identity/users\" || true\n\nAGENT_GROUPS_STATUS=$(host_agent_api_get_status \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"identity/groups\")\nassert_eq \"$AGENT_GROUPS_STATUS\" \"403\" \"Agent without identity:query rejected with 403 on /identity/groups\" || true"
+    },
+    {
+      "id": "7-capability-gating-grant-identity-query-verify-access",
+      "label": "7. Capability gating — grant identity:query, verify access",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "PATCH /api/certs/agent/${AGENT_LABEL}/capabilities",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/${AGENT_LABEL}/capabilities",
+            "body": {
+              "capabilities": [
+                "tunnels:read",
+                "identity:query"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "PATCH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Capability update to add identity:query returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Capability update to add identity:query returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Updated agent capabilities: [tunnels:read, identity:query]",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Updated agent capabilities: [tunnels:read, identity:query]"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "GET /api/identity/users",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_USERS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Agent with identity:query can access /identity/users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_USERS_AFTER"
+              },
+              "path": ".users",
+              "message": "Agent with identity:query can access /identity/users"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "GET /api/identity/groups",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/groups"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_GROUPS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Agent with identity:query can access /identity/groups",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_GROUPS_AFTER"
+              },
+              "path": ".groups",
+              "message": "Agent with identity:query can access /identity/groups"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set AGENT_USERS_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENT_USERS_AFTER\" | jq '.users | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_USERS_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Agent sees the same number of users as admin (count: $AGENT_USERS_COUNT)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_USERS_COUNT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "USERS_COUNT"
+              },
+              "message": "Agent sees the same number of users as admin (count: $AGENT_USERS_COUNT)"
+            }
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"7. Capability gating — grant identity:query, verify access\"\n# ===========================================================================\n\n# Update agent capabilities to include identity:query\nPATCH_RESPONSE=$(host_api_patch \"certs/agent/${AGENT_LABEL}/capabilities\" '{\"capabilities\":[\"tunnels:read\",\"identity:query\"]}')\nassert_json_field \"$PATCH_RESPONSE\" '.ok' 'true' \"Capability update to add identity:query returned ok: true\" || true\n\nlog_info \"Updated agent capabilities: [tunnels:read, identity:query]\"\n\n# Now the agent should be able to access identity endpoints\nAGENT_USERS_AFTER=$(host_agent_api_get \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"identity/users\")\nassert_json_field_not_empty \"$AGENT_USERS_AFTER\" '.users' \"Agent with identity:query can access /identity/users\" || true\n\nAGENT_GROUPS_AFTER=$(host_agent_api_get \"$AGENT_CERT_PATH\" \"$AGENT_KEY_PATH\" \"identity/groups\")\nassert_json_field_not_empty \"$AGENT_GROUPS_AFTER\" '.groups' \"Agent with identity:query can access /identity/groups\" || true\n\n# Verify the agent gets the same user count as admin\nAGENT_USERS_COUNT=$(echo \"$AGENT_USERS_AFTER\" | jq '.users | length' 2>/dev/null || echo \"0\")\nassert_eq \"$AGENT_USERS_COUNT\" \"$USERS_COUNT\" \"Agent sees the same number of users as admin (count: $AGENT_USERS_COUNT)\" || true"
+    },
+    {
+      "id": "8-password-hash-exclusion-verification",
+      "label": "8. Password hash exclusion verification",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "GET /api/identity/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users"
+          },
+          "capture": [
+            {
+              "variable": "USERS_RAW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Set HAS_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$USERS_RAW\" | jq '[.users[] | has(\"password\")] | any' 2>/dev/null || echo \"true\""
+          },
+          "capture": [
+            {
+              "variable": "HAS_PASSWORD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "No user in /identity/users response contains a password field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HAS_PASSWORD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "No user in /identity/users response contains a password field"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Raw response contains password hash patterns (bcrypt or argon2 detected)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Raw response contains password hash patterns (bcrypt or argon2 detected)"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "No password hash patterns found in raw /identity/users response",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "No password hash patterns found in raw /identity/users response"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "GET /api/identity/users/${FIRST_USERNAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "identity/users/${FIRST_USERNAME}"
+          },
+          "capture": [
+            {
+              "variable": "SINGLE_USER_RAW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set SINGLE_HAS_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SINGLE_USER_RAW\" | jq '.user | has(\"password\")' 2>/dev/null || echo \"true\""
+          },
+          "capture": [
+            {
+              "variable": "SINGLE_HAS_PASSWORD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Single user endpoint does not contain password field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SINGLE_HAS_PASSWORD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Single user endpoint does not contain password field"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "FIRST_USERNAME"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "FIRST_USERNAME",
+                "value": "null"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"8. Password hash exclusion verification\"\n# ===========================================================================\n\n# Verify that the /api/identity/users response does NOT contain a password field.\n# The readUsers() function strips password hashes, so they must never appear in output.\nUSERS_RAW=$(host_api_get \"identity/users\")\n\n# Check that no user object contains a \"password\" key\nHAS_PASSWORD=$(echo \"$USERS_RAW\" | jq '[.users[] | has(\"password\")] | any' 2>/dev/null || echo \"true\")\nassert_eq \"$HAS_PASSWORD\" \"false\" \"No user in /identity/users response contains a password field\" || true\n\n# Double-check: search for common password hash prefixes in the raw JSON\nif echo \"$USERS_RAW\" | grep -qE '\\$2[aby]?\\$|\\$argon2'; then\n  log_fail \"Raw response contains password hash patterns (bcrypt or argon2 detected)\"\nelse\n  log_pass \"No password hash patterns found in raw /identity/users response\"\nfi\n\n# Also verify single-user endpoint does not expose password\nif [ -n \"$FIRST_USERNAME\" ] && [ \"$FIRST_USERNAME\" != \"null\" ]; then\n  SINGLE_USER_RAW=$(host_api_get \"identity/users/${FIRST_USERNAME}\")\n  SINGLE_HAS_PASSWORD=$(echo \"$SINGLE_USER_RAW\" | jq '.user | has(\"password\")' 2>/dev/null || echo \"true\")\n  assert_eq \"$SINGLE_HAS_PASSWORD\" \"false\" \"Single user endpoint does not contain password field\" || true\nfi"
+    },
+    {
+      "id": "9-cleanup",
+      "label": "9. Cleanup",
+      "steps": [
+        {
+          "id": "step-58",
+          "label": "All test sections completed. EXIT trap will handle resource cleanup.",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "All test sections completed. EXIT trap will handle resource cleanup."
+          }
+        }
+      ],
+      "bash": "# ===========================================================================\nlog_section \"9. Cleanup\"\n# ===========================================================================\n\n# Cleanup is handled by the EXIT trap. Log that we reached this point cleanly.\nlog_info \"All test sections completed. EXIT trap will handle resource cleanup.\""
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_patch",
+    "host_api_delete",
+    "host_agent_api_get",
+    "host_agent_api_get_status"
+  ],
+  "headerRaw": "# ============================================================================\n# 17 — Identity System (Three-VM)\n# ============================================================================\n# Tests the identity API endpoints that expose Authelia user/group data\n# through the panel API, with proper mTLS authentication and capability gating.\n#\n# 1. Identity API via mTLS (host VM) — users, single user, groups, self\n# 2. nginx header stripping verification — forged Remote-User rejected\n# 3. Capability gating with agent cert — 403 without identity:query\n# 4. Password hash exclusion — no password field in user data\n#\n# Runs from the developer's Mac and uses `multipass exec` to interact with VMs.\n#\n# Required environment variables:\n#   HOST_IP      — IP address of the host VM\n#   TEST_DOMAIN  — Domain configured for testing\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent cert API helpers — use extracted PEM cert/key from the agent's .p12\nhost_agent_api_get() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  host_exec \"curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}\"\n}\n\nhost_agent_api_get_status() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nAGENT_LABEL=\"identity-agent\"\nAGENT_CERT_PATH=\"\"\nAGENT_KEY_PATH=\"\"\n\nbegin_test \"17 — Identity System (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Revoke agent cert\n  host_api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  # Clean up extracted PEM files\n  host_exec \"rm -f /tmp/e2e-identity-*.pem 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -14,7 +14,7 @@
 ## Testing done
 
 - [ ] Syntax check passed: `node --check packages/**/*.js`
-- [ ] Installer dry-run works: `node packages/create-portlama/bin/create-portlama.js --help`
+- [ ] Installer dry-run works: `node packages/provisioners/server/bin/create-lamaste.js --help`
 - [ ] Tested on real droplet (if applicable)
 
 ## Security checklist

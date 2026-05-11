@@ -58,10 +58,12 @@ assert_not_eq "$EXPIRES_AT" "" "Token has expiresAt" || true
 assert_json_field "$TOKEN_RESPONSE" '.label' "$TOKEN_LABEL" "Token response contains correct label" || true
 
 # ---------------------------------------------------------------------------
-log_section "Duplicate token for same label rejected"
+log_section "Duplicate token for same label silently replaced"
 # ---------------------------------------------------------------------------
+# Creating a token for a label that already has an active (unused, unexpired)
+# token silently replaces it (retried installations don't fail).
 
-DUP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+DUP_RESPONSE=$(curl -s -w '\n%{http_code}' \
   --max-time "$CURL_TIMEOUT" \
   --insecure \
   --cert "$CERT_PATH" \
@@ -70,9 +72,18 @@ DUP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -X POST \
   -H "Content-Type: application/json" \
   -d "{\"label\":\"${TOKEN_LABEL}\",\"capabilities\":[\"tunnels:read\"]}" \
-  "${BASE_URL}/api/certs/agent/enroll" 2>/dev/null || echo "000")
+  "${BASE_URL}/api/certs/agent/enroll" 2>/dev/null || echo '{}
+000')
+DUP_STATUS=$(echo "$DUP_RESPONSE" | tail -1)
+DUP_BODY=$(echo "$DUP_RESPONSE" | sed '$d')
 
-assert_eq "$DUP_STATUS" "409" "Duplicate token for active label returns 409" || true
+assert_eq "$DUP_STATUS" "200" "Duplicate token for active label returns 200 (replaced)" || true
+
+# The replacement gives a new token — use it for subsequent enrollment
+NEW_TOKEN=$(echo "$DUP_BODY" | jq -r '.token' 2>/dev/null || echo "")
+if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ]; then
+  TOKEN="$NEW_TOKEN"
+fi
 
 # ---------------------------------------------------------------------------
 log_section "Public enrollment endpoint reachable without mTLS"
@@ -103,7 +114,7 @@ log_section "Enrollment with invalid token rejected"
 # Generate a valid CSR for the enrollment test
 openssl genrsa -out "$TEMP_DIR/agent.key" 2048 2>/dev/null
 openssl req -new -key "$TEMP_DIR/agent.key" -out "$TEMP_DIR/agent.csr" \
-  -subj "/CN=agent:pending/O=Portlama" 2>/dev/null
+  -subj "/CN=agent:pending/O=Lamaste" 2>/dev/null
 CSR_PEM=$(cat "$TEMP_DIR/agent.csr")
 
 INVALID_TOKEN_RESPONSE=$(curl -s \
@@ -195,7 +206,7 @@ log_section "Admin upgrade to hardware-bound"
 # Generate admin CSR
 openssl genrsa -out "$TEMP_DIR/admin.key" 2048 2>/dev/null
 openssl req -new -key "$TEMP_DIR/admin.key" -out "$TEMP_DIR/admin.csr" \
-  -subj "/CN=admin/O=Portlama" 2>/dev/null
+  -subj "/CN=admin/O=Lamaste" 2>/dev/null
 ADMIN_CSR_PEM=$(cat "$TEMP_DIR/admin.csr")
 
 UPGRADE_RESPONSE=$(api_post "certs/admin/upgrade-to-hardware-bound" "{\"csr\":$(echo "$ADMIN_CSR_PEM" | jq -Rs .)}")
@@ -231,42 +242,15 @@ fi
 log_section "Revert admin to P12 mode (for other tests)"
 # ---------------------------------------------------------------------------
 
-# Directly patch the config to revert — in real scenario this would be portlama-reset-admin
-# We use the panel direct URL to bypass mTLS for this reset
-# Actually we need to update the config file. Since this is a single-VM test,
-# we can update panel.json directly.
-PKI_DIR="/etc/portlama/pki"
-PANEL_CONFIG="${PORTLAMA_CONFIG:-/etc/portlama/panel.json}"
+# `lamaste-server reset-admin` is the single production path for regenerating
+# the admin cert + reverting adminAuthMode to p12. It signs the new admin cert
+# directly as root (the panel daemon cannot sign CN=admin CSRs — B9 wrapper
+# rejects them), revokes the old serial, restarts the panel, and reloads nginx.
+# The new P12 password is written to /etc/lamalibre/lamaste/pki/.p12-password (mode 0600)
+# so we never have to parse it out of stdout.
+PANEL_CONFIG="${LAMALIBRE_LAMASTE_CONFIG:-/etc/lamalibre/lamaste/panel.json}"
 
-# Regenerate a valid admin cert (the upgrade revoked the old one)
-sudo openssl genrsa -out "${PKI_DIR}/client.key" 4096 2>/dev/null
-sudo openssl req -new -key "${PKI_DIR}/client.key" -out "${PKI_DIR}/client.csr" \
-  -subj "/CN=Portlama Client/O=Portlama" 2>/dev/null
-sudo openssl x509 -req -in "${PKI_DIR}/client.csr" \
-  -CA "${PKI_DIR}/ca.crt" -CAkey "${PKI_DIR}/ca.key" -CAcreateserial \
-  -out "${PKI_DIR}/client.crt" -days 730 -sha256 2>/dev/null
-sudo rm -f "${PKI_DIR}/client.csr" "${PKI_DIR}/ca.srl"
-sudo chmod 600 "${PKI_DIR}/client.key"
-sudo chmod 644 "${PKI_DIR}/client.crt"
-sudo chown portlama:portlama "${PKI_DIR}/client.key" "${PKI_DIR}/client.crt"
-
-# Clear revocation list (admin upgrade entries would block the new cert)
-echo '{"revoked":[]}' | sudo tee "${PKI_DIR}/revoked.json" > /dev/null
-sudo chown portlama:portlama "${PKI_DIR}/revoked.json"
-
-# Revert adminAuthMode to p12
-TMP_CONFIG=$(mktemp)
-sudo jq '.adminAuthMode = "p12"' "$PANEL_CONFIG" > "$TMP_CONFIG"
-sudo mv "$TMP_CONFIG" "$PANEL_CONFIG"
-sudo chmod 640 "$PANEL_CONFIG"
-sudo chown portlama:portlama "$PANEL_CONFIG"
-
-# Reload nginx to pick up ssl_verify_client optional after any config changes
-sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null || true
-
-# Restart panel to pick up the new cert and config
-sudo systemctl restart portlama-panel 2>/dev/null || true
-sleep 3
+sudo lamaste-server reset-admin > /dev/null 2>&1
 
 log_pass "Reverted admin to P12 mode with fresh cert"
 

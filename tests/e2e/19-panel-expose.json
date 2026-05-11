@@ -1,0 +1,1571 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 19,
+    "name": "Panel Expose Lifecycle",
+    "suite": "e2e",
+    "description": "19 — Panel Expose Lifecycle",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/retract-panel",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/retract-panel"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE tunnels/${PANEL_TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${PANEL_TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE certs/agent/nopanel-e2e",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/nopanel-e2e"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_info \"Onboarding not completed (status: $ONBOARDING_STATUS). Panel expose requires onboarding.\"\n  log_skip \"Skipping panel expose tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "verify-panel-expose-is-a-valid-capability",
+      "label": "Verify panel:expose is a valid capability",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Agent cert with panel:expose created successfully",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert with panel:expose created successfully"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Agent cert has a p12 password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".p12Password",
+              "message": "Agent cert has a p12 password"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Created agent cert: ${AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created agent cert: ${AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Extracted PEM cert and key from .p12",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted PEM cert and key from .p12"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify panel:expose is a valid capability\"\n# ---------------------------------------------------------------------------\n\n# Create an agent cert with panel:expose — if the capability is invalid the\n# server will reject it with a validation error.\nAGENT_LABEL=\"panel-e2e-$(date +%s)\"\nCERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"panel:expose\"]}')\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent cert with panel:expose created successfully\" || true\n\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Agent cert has a p12 password\" || true\n\nlog_info \"Created agent cert: ${AGENT_LABEL}\"\n\n# Extract PEM cert and key from .p12 for use with curl\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-panel-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-panel-key.pem\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\"\n\nlog_pass \"Extracted PEM cert and key from .p12\"\n\n# Agent cert curl helper\n_agent_curl() {\n  curl -s \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    --insecure \\\n    --cert \"$AGENT_CERT_PATH\" \\\n    --key \"$AGENT_KEY_PATH\" \\\n    --cacert \"$CA_PATH\" \\\n    -H \"Accept: application/json\" \\\n    \"$@\"\n}\n\nagent_api_get() {\n  _agent_curl \"${BASE_URL}/api/$1\"\n}\n\nagent_api_post() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\"\n}\n\nagent_api_post_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_delete() {\n  _agent_curl -X DELETE \"${BASE_URL}/api/$1\"\n}\n\nagent_api_delete_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' -X DELETE \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_get_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_patch_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\n# Cleanup function — always runs on exit\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Retract panel tunnel if it exists\n  agent_api_delete \"tunnels/retract-panel\" 2>/dev/null || true\n  # Also try admin delete in case agent delete fails\n  if [ -n \"$PANEL_TUNNEL_ID\" ] && [ \"$PANEL_TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  # Revoke agent certs\n  api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  api_delete \"certs/agent/nopanel-e2e\" 2>/dev/null || true\n  # Clean up PEM files\n  sudo rm -f \"${AGENT_CERT_PATH}\" \"${AGENT_KEY_PATH}\" /tmp/e2e-nopanel-*.pem 2>/dev/null || true\n}\ntrap cleanup EXIT"
+    },
+    {
+      "id": "expose-panel-check-agent-panel-status-before-expose",
+      "label": "Expose panel: check agent-panel-status before expose",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "GET /api/tunnels/agent-panel-status",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-panel-status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Panel not exposed initially",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_BEFORE"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Panel not exposed initially"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "No FQDN before expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_BEFORE"
+              },
+              "path": ".fqdn",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "No FQDN before expose"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Expose panel: check agent-panel-status before expose\"\n# ---------------------------------------------------------------------------\n\nSTATUS_BEFORE=$(agent_api_get \"tunnels/agent-panel-status\")\nassert_json_field \"$STATUS_BEFORE\" '.enabled' 'false' \"Panel not exposed initially\" || true\nassert_json_field \"$STATUS_BEFORE\" '.fqdn' 'null' \"No FQDN before expose\" || true"
+    },
+    {
+      "id": "expose-panel-post-api-tunnels-expose-panel",
+      "label": "Expose panel: POST /api/tunnels/expose-panel",
+      "steps": [
+        {
+          "id": "step-46",
+          "label": "POST /api/tunnels/expose-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels/expose-panel",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "EXPOSE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Expose panel returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Expose panel returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Panel tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Panel tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Panel tunnel type is 'panel'",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.type",
+              "expected": {
+                "kind": "literal",
+                "value": "panel"
+              },
+              "message": "Panel tunnel type is 'panel'"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Extract PANEL_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Extract PANEL_FQDN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_FQDN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.fqdn"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Extract PANEL_SUBDOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_SUBDOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.subdomain"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Panel subdomain matches agent-<label>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.subdomain",
+              "expected": {
+                "kind": "expr",
+                "template": "agent-${AGENT_LABEL}"
+              },
+              "message": "Panel subdomain matches agent-<label>"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Panel tunnel port matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.port",
+              "expected": {
+                "kind": "var",
+                "name": "PANEL_PORT"
+              },
+              "message": "Panel tunnel port matches"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Panel tunnel has an FQDN",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.fqdn",
+              "message": "Panel tunnel has an FQDN"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Panel tunnel has a createdAt timestamp",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.createdAt",
+              "message": "Panel tunnel has a createdAt timestamp"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Panel tunnel agentLabel matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPOSE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Panel tunnel agentLabel matches"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Expose panel: POST /api/tunnels/expose-panel\"\n# ---------------------------------------------------------------------------\n\nEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.ok' 'true' \"Expose panel returned ok: true\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.id' \"Panel tunnel has an ID\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.type' 'panel' \"Panel tunnel type is 'panel'\" || true\n\nPANEL_TUNNEL_ID=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nPANEL_FQDN=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.fqdn' 2>/dev/null || echo \"\")\nPANEL_SUBDOMAIN=$(echo \"$EXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain' 2>/dev/null || echo \"\")\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.subdomain' \"agent-${AGENT_LABEL}\" \"Panel subdomain matches agent-<label>\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.port' \"$PANEL_PORT\" \"Panel tunnel port matches\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.fqdn' \"Panel tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$EXPOSE_RESPONSE\" '.tunnel.createdAt' \"Panel tunnel has a createdAt timestamp\" || true\nassert_json_field \"$EXPOSE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"Panel tunnel agentLabel matches\" || true\n\nlog_info \"Exposed panel tunnel: ${PANEL_FQDN} (ID: ${PANEL_TUNNEL_ID})\""
+    },
+    {
+      "id": "verify-panel-tunnel-in-tunnel-listing",
+      "label": "Verify panel tunnel in tunnel listing",
+      "steps": [
+        {
+          "id": "step-59",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Set FOUND_TYPE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .type' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_TYPE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Panel tunnel shows type 'panel' in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_TYPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "panel"
+              },
+              "message": "Panel tunnel shows type 'panel' in listing"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Set FOUND_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .agentLabel' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "Panel tunnel shows correct agentLabel in listing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_LABEL"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Panel tunnel shows correct agentLabel in listing"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify panel tunnel in tunnel listing\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(api_get \"tunnels\")\nFOUND_TYPE=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .type' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_TYPE\" \"panel\" \"Panel tunnel shows type 'panel' in listing\" || true\n\nFOUND_LABEL=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .agentLabel' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_LABEL\" \"$AGENT_LABEL\" \"Panel tunnel shows correct agentLabel in listing\" || true"
+    },
+    {
+      "id": "verify-nginx-mtls-vhost-created-not-app-vhost",
+      "label": "Verify nginx mTLS vhost created (not app vhost)",
+      "steps": [
+        {
+          "id": "step-66",
+          "label": "mTLS panel vhost exists at $VHOST_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "mTLS panel vhost exists at $VHOST_PATH"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "mTLS panel vhost exists at $VHOST_ALT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "mTLS panel vhost exists at $VHOST_ALT"
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "mTLS panel vhost not found at $VHOST_PATH",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "mTLS panel vhost not found at $VHOST_PATH"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "No app vhost created (correct — panel uses mTLS vhost)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "No app vhost created (correct — panel uses mTLS vhost)"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "App vhost was created instead of mTLS panel vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "App vhost was created instead of mTLS panel vhost"
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set NGINX_TEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "nginx -t passes after panel expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after panel expose"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx mTLS vhost created (not app vhost)\"\n# ---------------------------------------------------------------------------\n\nVHOST_NAME=\"lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"mTLS panel vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"mTLS panel vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify it is NOT an app vhost (app vhosts use lamalibre-lamaste-app- prefix)\nAPP_VHOST=\"/etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN}\"\nif [ ! -f \"$APP_VHOST\" ] && [ ! -L \"$APP_VHOST\" ]; then\n  log_pass \"No app vhost created (correct — panel uses mTLS vhost)\"\nelse\n  log_fail \"App vhost was created instead of mTLS panel vhost\"\nfi\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
+    },
+    {
+      "id": "verify-agent-panel-status-after-expose",
+      "label": "Verify agent-panel-status after expose",
+      "steps": [
+        {
+          "id": "step-75",
+          "label": "GET /api/tunnels/agent-panel-status",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-panel-status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Panel shows as enabled after expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_AFTER"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Panel shows as enabled after expose"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Panel status FQDN matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_AFTER"
+              },
+              "path": ".fqdn",
+              "expected": {
+                "kind": "var",
+                "name": "PANEL_FQDN"
+              },
+              "message": "Panel status FQDN matches"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Panel status port matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_AFTER"
+              },
+              "path": ".port",
+              "expected": {
+                "kind": "var",
+                "name": "PANEL_PORT"
+              },
+              "message": "Panel status port matches"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify agent-panel-status after expose\"\n# ---------------------------------------------------------------------------\n\nSTATUS_AFTER=$(agent_api_get \"tunnels/agent-panel-status\")\nassert_json_field \"$STATUS_AFTER\" '.enabled' 'true' \"Panel shows as enabled after expose\" || true\nassert_json_field \"$STATUS_AFTER\" '.fqdn' \"$PANEL_FQDN\" \"Panel status FQDN matches\" || true\nassert_json_field \"$STATUS_AFTER\" '.port' \"$PANEL_PORT\" \"Panel status port matches\" || true"
+    },
+    {
+      "id": "duplicate-expose-returns-409",
+      "label": "Duplicate expose returns 409",
+      "steps": [
+        {
+          "id": "step-79",
+          "label": "POST /api/tunnels/expose-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels/expose-panel",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "Duplicate panel expose returns 409 Conflict",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Duplicate panel expose returns 409 Conflict"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Duplicate expose returns 409\"\n# ---------------------------------------------------------------------------\n\nDUP_STATUS=$(agent_api_post_status \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_eq \"$DUP_STATUS\" \"409\" \"Duplicate panel expose returns 409 Conflict\" || true"
+    },
+    {
+      "id": "validation-agent-prefix-reserved-for-non-panel-tunnels",
+      "label": "Validation: agent- prefix reserved for non-panel tunnels",
+      "steps": [
+        {
+          "id": "step-81",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "agent- prefix rejected for non-panel tunnel (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "agent- prefix rejected for non-panel tunnel (HTTP 400)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: agent- prefix reserved for non-panel tunnels\"\n# ---------------------------------------------------------------------------\n\nRESERVED_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-test\\\",\\\"port\\\":19999,\\\"description\\\":\\\"reserved test\\\"}\")\nassert_eq \"$RESERVED_STATUS\" \"400\" \"agent- prefix rejected for non-panel tunnel (HTTP 400)\" || true"
+    },
+    {
+      "id": "capability-check-agent-without-panel-expose-gets-403",
+      "label": "Capability check: agent without panel:expose gets 403",
+      "steps": [
+        {
+          "id": "step-83",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": {
+              "label": "nopanel-e2e",
+              "capabilities": [
+                "tunnels:read",
+                "tunnels:write"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "Agent cert without panel:expose created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "NOPANEL_CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert without panel:expose created"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Extract NOPANEL_P12_PW",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NOPANEL_P12_PW",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "NOPANEL_CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Set NOPANEL_EXPOSE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" -X POST -H \"Content-Type: application/json\" -d \"{\\\"port\\\":${PANEL_PORT}}\" \"${BASE_URL}/api/tunnels/expose-panel\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_EXPOSE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "Expose panel returns 403 without panel:expose capability",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_EXPOSE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Expose panel returns 403 without panel:expose capability"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "Set NOPANEL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \"${BASE_URL}/api/tunnels/agent-panel-status\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-94",
+          "label": "Agent panel status returns 403 without panel:expose capability",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent panel status returns 403 without panel:expose capability"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Set NOPANEL_RETRACT_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" -X DELETE \"${BASE_URL}/api/tunnels/retract-panel\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_RETRACT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-96",
+          "label": "Retract panel returns 403 without panel:expose capability",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_RETRACT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Retract panel returns 403 without panel:expose capability"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: agent without panel:expose gets 403\"\n# ---------------------------------------------------------------------------\n\n# Create agent cert WITHOUT panel:expose\nNOPANEL_CERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"nopanel-e2e\",\"capabilities\":[\"tunnels:read\",\"tunnels:write\"]}')\nassert_json_field \"$NOPANEL_CERT_RESPONSE\" '.ok' 'true' \"Agent cert without panel:expose created\" || true\n\nNOPANEL_P12_PW=$(echo \"$NOPANEL_CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nNOPANEL_P12=\"/etc/lamalibre/lamaste/pki/agents/nopanel-e2e/client.p12\"\nNOPANEL_CERT=\"/tmp/e2e-nopanel-cert.pem\"\nNOPANEL_KEY=\"/tmp/e2e-nopanel-key.pem\"\nsudo openssl pkcs12 -in \"${NOPANEL_P12}\" -clcerts -nokeys -out \"${NOPANEL_CERT}\" -passin \"pass:${NOPANEL_P12_PW}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${NOPANEL_P12}\" -clcerts -nokeys -out \"${NOPANEL_CERT}\" -passin \"pass:${NOPANEL_P12_PW}\"\nsudo openssl pkcs12 -in \"${NOPANEL_P12}\" -nocerts -nodes -out \"${NOPANEL_KEY}\" -passin \"pass:${NOPANEL_P12_PW}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${NOPANEL_P12}\" -nocerts -nodes -out \"${NOPANEL_KEY}\" -passin \"pass:${NOPANEL_P12_PW}\"\n\n# Expose-panel should return 403\nNOPANEL_EXPOSE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X POST -H \"Content-Type: application/json\" -d \"{\\\"port\\\":${PANEL_PORT}}\" \\\n  \"${BASE_URL}/api/tunnels/expose-panel\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_EXPOSE_STATUS\" \"403\" \"Expose panel returns 403 without panel:expose capability\" || true\n\n# Agent-panel-status should return 403\nNOPANEL_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  \"${BASE_URL}/api/tunnels/agent-panel-status\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_STATUS\" \"403\" \"Agent panel status returns 403 without panel:expose capability\" || true\n\n# Retract-panel should return 403\nNOPANEL_RETRACT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/retract-panel\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_RETRACT_STATUS\" \"403\" \"Retract panel returns 403 without panel:expose capability\" || true"
+    },
+    {
+      "id": "capability-check-patch-panel-tunnel-requires-panel-expose",
+      "label": "Capability check: PATCH panel tunnel requires panel:expose",
+      "steps": [
+        {
+          "id": "step-97",
+          "label": "Set NOPANEL_TOGGLE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" -X PATCH -H \"Content-Type: application/json\" -d '{\"enabled\":false}' \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_TOGGLE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-98",
+          "label": "PATCH panel tunnel returns 403 without panel:expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_TOGGLE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "PATCH panel tunnel returns 403 without panel:expose"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: PATCH panel tunnel requires panel:expose\"\n# ---------------------------------------------------------------------------\n\n# Agent without panel:expose cannot toggle a panel tunnel\nNOPANEL_TOGGLE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X PATCH -H \"Content-Type: application/json\" -d '{\"enabled\":false}' \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_TOGGLE_STATUS\" \"403\" \"PATCH panel tunnel returns 403 without panel:expose\" || true"
+    },
+    {
+      "id": "capability-check-delete-panel-tunnel-requires-panel-expose",
+      "label": "Capability check: DELETE panel tunnel requires panel:expose",
+      "steps": [
+        {
+          "id": "step-99",
+          "label": "Set NOPANEL_DELETE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" -X DELETE \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_DELETE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "DELETE panel tunnel returns 403 without panel:expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_DELETE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "DELETE panel tunnel returns 403 without panel:expose"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: DELETE panel tunnel requires panel:expose\"\n# ---------------------------------------------------------------------------\n\nNOPANEL_DELETE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_DELETE_STATUS\" \"403\" \"DELETE panel tunnel returns 403 without panel:expose\" || true"
+    },
+    {
+      "id": "cross-agent-spoofing-generic-post-api-tunnels-with-type-panel",
+      "label": "Cross-agent spoofing: generic POST /api/tunnels with type=panel",
+      "steps": [
+        {
+          "id": "step-101",
+          "label": "POST /api/tunnels",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "SPOOF_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "Cross-agent panel tunnel spoofing rejected (HTTP 403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SPOOF_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Cross-agent panel tunnel spoofing rejected (HTTP 403)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cross-agent spoofing: generic POST /api/tunnels with type=panel\"\n# ---------------------------------------------------------------------------\n\n# Agent with panel:expose can only create panel tunnels matching their own label.\n# Attempt to create a panel tunnel for a different agent (wrong subdomain).\nSPOOF_STATUS=$(agent_api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-evil-agent\\\",\\\"port\\\":19998,\\\"type\\\":\\\"panel\\\"}\")\nassert_eq \"$SPOOF_STATUS\" \"403\" \"Cross-agent panel tunnel spoofing rejected (HTTP 403)\" || true"
+    },
+    {
+      "id": "retract-panel-delete-api-tunnels-retract-panel",
+      "label": "Retract panel: DELETE /api/tunnels/retract-panel",
+      "steps": [
+        {
+          "id": "step-103",
+          "label": "DELETE /api/tunnels/retract-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/retract-panel"
+          },
+          "capture": [
+            {
+              "variable": "RETRACT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "Retract panel returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RETRACT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Retract panel returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "Set FOUND_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "Panel tunnel no longer in list after retract",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Panel tunnel no longer in list after retract"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "mTLS panel vhost removed after retract",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "mTLS panel vhost removed after retract"
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "mTLS panel vhost still exists after retract",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "mTLS panel vhost still exists after retract"
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set NGINX_TEST_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "nginx -t passes after panel retract",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_AFTER"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after panel retract"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Retract panel: DELETE /api/tunnels/retract-panel\"\n# ---------------------------------------------------------------------------\n\nRETRACT_RESPONSE=$(agent_api_delete \"tunnels/retract-panel\")\nassert_json_field \"$RETRACT_RESPONSE\" '.ok' 'true' \"Retract panel returned ok: true\" || true\n\n# Verify panel tunnel is gone from listing\nLIST_AFTER=$(api_get \"tunnels\")\nFOUND_AFTER=$(echo \"$LIST_AFTER\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_AFTER\" \"\" \"Panel tunnel no longer in list after retract\" || true\n\n# Verify mTLS vhost removed\nif [ ! -f \"$VHOST_PATH\" ] && [ ! -L \"$VHOST_PATH\" ]; then\n  log_pass \"mTLS panel vhost removed after retract\"\nelse\n  log_fail \"mTLS panel vhost still exists after retract\"\nfi\n\n# Verify nginx config still valid\nNGINX_TEST_AFTER=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after panel retract\" || true\n\n# Reset tunnel ID so cleanup doesn't try to delete again\nPANEL_TUNNEL_ID=\"\""
+    },
+    {
+      "id": "verify-agent-panel-status-after-retract",
+      "label": "Verify agent-panel-status after retract",
+      "steps": [
+        {
+          "id": "step-113",
+          "label": "GET /api/tunnels/agent-panel-status",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-panel-status"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_RETRACTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "Panel shows as disabled after retract",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_RETRACTED"
+              },
+              "path": ".enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Panel shows as disabled after retract"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify agent-panel-status after retract\"\n# ---------------------------------------------------------------------------\n\nSTATUS_RETRACTED=$(agent_api_get \"tunnels/agent-panel-status\")\nassert_json_field \"$STATUS_RETRACTED\" '.enabled' 'false' \"Panel shows as disabled after retract\" || true"
+    },
+    {
+      "id": "retract-nonexistent-panel-returns-404",
+      "label": "Retract nonexistent panel returns 404",
+      "steps": [
+        {
+          "id": "step-115",
+          "label": "DELETE /api/tunnels/retract-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/retract-panel",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RETRACT_AGAIN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "Retract nonexistent panel returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RETRACT_AGAIN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Retract nonexistent panel returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Retract nonexistent panel returns 404\"\n# ---------------------------------------------------------------------------\n\nRETRACT_AGAIN_STATUS=$(agent_api_delete_status \"tunnels/retract-panel\")\nassert_eq \"$RETRACT_AGAIN_STATUS\" \"404\" \"Retract nonexistent panel returns 404\" || true"
+    },
+    {
+      "id": "validation-expose-panel-with-invalid-port",
+      "label": "Validation: expose-panel with invalid port",
+      "steps": [
+        {
+          "id": "step-117",
+          "label": "POST /api/tunnels/expose-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels/expose-panel",
+            "body": {
+              "port": 80
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_PORT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_PORT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_PORT_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_PORT_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_PORT_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: expose-panel with invalid port\"\n# ---------------------------------------------------------------------------\n\nINVALID_PORT_STATUS=$(agent_api_post_status \"tunnels/expose-panel\" '{\"port\":80}')\nif [ \"$INVALID_PORT_STATUS\" = \"400\" ] || [ \"$INVALID_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)\"\nfi"
+    }
+  ],
+  "apiHelpers": [
+    "agent_api_get",
+    "agent_api_post",
+    "agent_api_post_status",
+    "agent_api_delete",
+    "agent_api_delete_status",
+    "agent_api_get_status",
+    "agent_api_patch_status"
+  ],
+  "headerRaw": "# ============================================================================\n# 19 — Panel Expose Lifecycle\n# ============================================================================\n# Verifies the agent panel expose feature (server-side):\n# - panel:expose capability exists in BASE_CAPABILITIES\n# - POST /api/tunnels/expose-panel creates a panel tunnel with mTLS vhost\n# - GET /api/tunnels/agent-panel-status returns panel tunnel status\n# - DELETE /api/tunnels/retract-panel removes the panel tunnel\n# - agent- subdomain prefix reserved for panel tunnels only\n# - Panel tunnel type appears correctly in tunnel listing\n# - Capability checks: 403 without panel:expose\n# - Cross-agent spoofing prevention via generic POST /api/tunnels\n# - PATCH panel tunnel requires panel:expose capability\n# - DELETE panel tunnel requires panel:expose capability\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nPANEL_PORT=19393\nPANEL_TUNNEL_ID=\"\"\n\nbegin_test \"19 — Panel Expose Lifecycle\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

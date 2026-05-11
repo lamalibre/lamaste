@@ -1,0 +1,1063 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 12,
+    "name": "Enrollment Token Lifecycle",
+    "suite": "e2e-three-vm",
+    "description": "12 — Enrollment Token Lifecycle (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Extract STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ONBOARDING"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" || echo '{\"status\":\"unknown\"}')\nSTATUS=$(echo \"$ONBOARDING\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not complete — skipping enrollment tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\""
+    },
+    {
+      "id": "admin-auth-mode-defaults-to-p12",
+      "label": "Admin auth mode defaults to p12",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "GET /api/certs/admin/auth-mode",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/admin/auth-mode"
+          },
+          "capture": [
+            {
+              "variable": "AUTH_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Admin auth mode is p12",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_MODE"
+              },
+              "path": ".adminAuthMode",
+              "expected": {
+                "kind": "literal",
+                "value": "p12"
+              },
+              "message": "Admin auth mode is p12"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin auth mode defaults to p12\"\n# ---------------------------------------------------------------------------\n\nAUTH_MODE=$(host_api_get \"certs/admin/auth-mode\" || echo '{}')\nassert_json_field \"$AUTH_MODE\" '.adminAuthMode' 'p12' \"Admin auth mode is p12\" || true"
+    },
+    {
+      "id": "create-enrollment-token-on-host",
+      "label": "Create enrollment token on host",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "POST /api/certs/agent/enroll",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent/enroll",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Token created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Token created"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Extract TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".token"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Token value is empty — cannot continue enrollment tests",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Token value is empty — cannot continue enrollment tests"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "TOKEN"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "TOKEN",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Token value present (${#TOKEN} chars)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Token value present (${#TOKEN} chars)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create enrollment token on host\"\n# ---------------------------------------------------------------------------\n\nTOKEN_LABEL=\"e2e-enroll-$(date +%s)\"\nTOKEN_RESPONSE=$(host_api_post \"certs/agent/enroll\" \"{\\\"label\\\":\\\"${TOKEN_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\",\\\"tunnels:write\\\"]}\" || echo '{\"ok\":false}')\nassert_json_field \"$TOKEN_RESPONSE\" '.ok' 'true' \"Token created\" || true\n\nTOKEN=$(echo \"$TOKEN_RESPONSE\" | jq -r '.token' 2>/dev/null || echo \"\")\nif [ -z \"$TOKEN\" ] || [ \"$TOKEN\" = \"null\" ]; then\n  log_fail \"Token value is empty — cannot continue enrollment tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Token value present (${#TOKEN} chars)\""
+    },
+    {
+      "id": "public-enrollment-reachable-from-agent-vm-without-mtls",
+      "label": "Public enrollment reachable from agent VM without mTLS",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "Set AGENT_ENROLL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d '{\"token\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"csr\":\"-----BEGIN CERTIFICATE REQUEST-----\\nfake\\n-----END CERTIFICATE REQUEST-----\"}' \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_ENROLL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Enrollment endpoint reachable from agent VM without mTLS (HTTP $AGENT_ENROLL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Enrollment endpoint reachable from agent VM without mTLS (HTTP $AGENT_ENROLL_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "AGENT_ENROLL_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "AGENT_ENROLL_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Enrollment endpoint not reachable from agent VM (HTTP $AGENT_ENROLL_STATUS — expected 400 or 401)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Enrollment endpoint not reachable from agent VM (HTTP $AGENT_ENROLL_STATUS — expected 400 or 401)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_ENROLL_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "AGENT_ENROLL_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Public enrollment reachable from agent VM without mTLS\"\n# ---------------------------------------------------------------------------\n\n# Agent VM calls the host's enrollment endpoint WITHOUT any client cert\nAGENT_ENROLL_STATUS=$(multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' \\\n  --max-time 30 \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"token\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"csr\":\"-----BEGIN CERTIFICATE REQUEST-----\\nfake\\n-----END CERTIFICATE REQUEST-----\"}' \\\n  \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo \"000\")\n\n# 400 = CSR validation failed, 401 = invalid token — both prove endpoint is reachable\nif [ \"$AGENT_ENROLL_STATUS\" = \"400\" ] || [ \"$AGENT_ENROLL_STATUS\" = \"401\" ]; then\n  log_pass \"Enrollment endpoint reachable from agent VM without mTLS (HTTP $AGENT_ENROLL_STATUS)\"\nelse\n  log_fail \"Enrollment endpoint not reachable from agent VM (HTTP $AGENT_ENROLL_STATUS — expected 400 or 401)\"\nfi"
+    },
+    {
+      "id": "generate-csr-on-agent-vm-and-enroll",
+      "label": "Generate CSR on agent VM and enroll",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "openssl genrsa -out /tmp/enroll-test.key 2048 2>/dev/null"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "openssl req -new -key /tmp/enroll-test.key -out /tmp/enroll-test.csr -subj '/CN=agent:${TOKEN_LABEL}/O=Lamaste' 2>/dev/null"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set CSR_PEM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- cat /tmp/enroll-test.csr"
+          },
+          "capture": [
+            {
+              "variable": "CSR_PEM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Set ENROLL_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg token \"$TOKEN\" --arg csr \"$CSR_PEM\" '{token: $token, csr: $csr}'"
+          },
+          "capture": [
+            {
+              "variable": "ENROLL_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Set LOCAL_BODY_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/enroll-body-XXXXXXXX.json"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_BODY_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Set ENROLL_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk --max-time 60 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-body.json \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo '{\"ok\":false,\"error\":\"curl failed\"}'"
+          },
+          "capture": [
+            {
+              "variable": "ENROLL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Extract ENROLL_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLL_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".ok // \"false\""
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Agent enrolled successfully",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent enrolled successfully"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "ENROLL_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Extract ENROLL_ERR",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENROLL_ERR",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".error // \"unknown\""
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "ENROLL_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Agent enrollment failed: $ENROLL_ERR",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent enrollment failed: $ENROLL_ERR"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "ENROLL_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Enrolled label matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "TOKEN_LABEL"
+              },
+              "message": "Enrolled label matches"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Extract SERIAL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SERIAL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ENROLL_RESPONSE"
+              },
+              "expression": ".serial // \"\""
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Enrollment returns serial",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERIAL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Enrollment returns serial"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Generate CSR on agent VM and enroll\"\n# ---------------------------------------------------------------------------\n\n# Generate keypair + CSR on agent VM.\n# The panel's CSR signer enforces that the CN matches the token's enrolled\n# label exactly (i.e. `agent:<label>`). Older clients used `agent:pending` as\n# a placeholder and asked the server to rewrite the subject; that shortcut is\n# gone (see packages/server/daemon/src/lib/csr-signing.js). Build the CSR with\n# the final CN up front.\nagent_exec \"openssl genrsa -out /tmp/enroll-test.key 2048 2>/dev/null\"\nagent_exec \"openssl req -new -key /tmp/enroll-test.key -out /tmp/enroll-test.csr -subj '/CN=agent:${TOKEN_LABEL}/O=Lamaste' 2>/dev/null\"\n\n# Read CSR from agent VM\nCSR_PEM=$(multipass exec lamaste-agent -- cat /tmp/enroll-test.csr)\n\n# Build JSON body and transfer to agent VM via temp file\nENROLL_BODY=$(jq -n --arg token \"$TOKEN\" --arg csr \"$CSR_PEM\" '{token: $token, csr: $csr}')\nLOCAL_BODY_TMP=$(mktemp /tmp/enroll-body-XXXXXXXX.json)\necho \"$ENROLL_BODY\" > \"$LOCAL_BODY_TMP\"\nmultipass transfer \"$LOCAL_BODY_TMP\" lamaste-agent:/tmp/enroll-body.json\nrm -f \"$LOCAL_BODY_TMP\"\n\n# Enroll from agent VM (no mTLS cert needed)\nENROLL_RESPONSE=$(multipass exec lamaste-agent -- curl -sk \\\n  --max-time 60 \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  -d @/tmp/enroll-body.json \\\n  \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo '{\"ok\":false,\"error\":\"curl failed\"}')\n\nENROLL_OK=$(echo \"$ENROLL_RESPONSE\" | jq -r '.ok // \"false\"' 2>/dev/null || echo \"false\")\nif [ \"$ENROLL_OK\" = \"true\" ]; then\n  log_pass \"Agent enrolled successfully\"\nelse\n  ENROLL_ERR=$(echo \"$ENROLL_RESPONSE\" | jq -r '.error // \"unknown\"' 2>/dev/null || echo \"unknown\")\n  log_fail \"Agent enrollment failed: $ENROLL_ERR\"\nfi\n\nassert_json_field \"$ENROLL_RESPONSE\" '.label' \"$TOKEN_LABEL\" \"Enrolled label matches\" || true\n\nSERIAL=$(echo \"$ENROLL_RESPONSE\" | jq -r '.serial // \"\"' 2>/dev/null || echo \"\")\nassert_not_eq \"$SERIAL\" \"\" \"Enrollment returns serial\" || true"
+    },
+    {
+      "id": "token-replay-rejected",
+      "label": "Token replay rejected",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "Set REPLAY_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d @/tmp/enroll-body.json \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "REPLAY_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Token replay rejected with 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPLAY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Token replay rejected with 401"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Token replay rejected\"\n# ---------------------------------------------------------------------------\n\nREPLAY_STATUS=$(multipass exec lamaste-agent -- curl -sk -o /dev/null -w '%{http_code}' \\\n  --max-time 30 \\\n  -X POST \\\n  -H 'Content-Type: application/json' \\\n  -d @/tmp/enroll-body.json \\\n  \"https://${HOST_IP}:9292/api/enroll\" 2>/dev/null || echo \"000\")\n\nassert_eq \"$REPLAY_STATUS\" \"401\" \"Token replay rejected with 401\" || true"
+    },
+    {
+      "id": "enrolled-agent-in-registry-with-hardware-bound-method",
+      "label": "Enrolled agent in registry with hardware-bound method",
+      "steps": [
+        {
+          "id": "step-32",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Set METHOD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENTS\" | jq -r \"[.agents[] | select(.label==\\\"${TOKEN_LABEL}\\\" and .revoked==false)] | last | .enrollmentMethod\" 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "METHOD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Agent shows enrollmentMethod: hardware-bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "METHOD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "hardware-bound"
+              },
+              "message": "Agent shows enrollmentMethod: hardware-bound"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enrolled agent in registry with hardware-bound method\"\n# ---------------------------------------------------------------------------\n\nAGENTS=$(host_api_get \"certs/agent\" || echo '{\"agents\":[]}')\nMETHOD=$(echo \"$AGENTS\" | jq -r \"[.agents[] | select(.label==\\\"${TOKEN_LABEL}\\\" and .revoked==false)] | last | .enrollmentMethod\" 2>/dev/null || echo \"unknown\")\nassert_eq \"$METHOD\" \"hardware-bound\" \"Agent shows enrollmentMethod: hardware-bound\" || true"
+    },
+    {
+      "id": "verify-lamaste-agent-status-shows-enrolled-agent",
+      "label": "Verify lamaste-agent status shows enrolled agent",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent status 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_STATUS_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "lamaste-agent status shows config present",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "lamaste-agent status shows config present"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "lamaste-agent status does not show config present",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamaste-agent status does not show config present"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Status output: $AGENT_STATUS_OUTPUT",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Status output: $AGENT_STATUS_OUTPUT"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled"
+          },
+          "capture": [
+            {
+              "variable": "SYSTEMD_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "SYSTEMD_ENABLED",
+            "value": "enabled"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "SYSTEMD_ENABLED",
+            "value": "enabled"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "test -f ~/.lamalibre/lamaste/agents/e2e-agent/config.json && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG_EXISTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Agent config file exists after setup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_EXISTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Agent config file exists after setup"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify lamaste-agent status shows enrolled agent\"\n# ---------------------------------------------------------------------------\n\n# The agent VM was enrolled during setup-agent.sh using lamaste-agent setup --token.\n# Verify the lamaste-agent CLI can report its status correctly.\n# Note: the agent may show \"not loaded\" if no tunnels are configured (chisel needs\n# at least one remote). We check for \"Config: present\" to confirm setup completed.\nAGENT_STATUS_OUTPUT=$(agent_exec \"lamaste-agent status 2>&1 || true\")\nif echo \"$AGENT_STATUS_OUTPUT\" | grep -q \"Config:.*present\"; then\n  log_pass \"lamaste-agent status shows config present\"\nelse\n  log_fail \"lamaste-agent status does not show config present\"\n  log_info \"Status output: $AGENT_STATUS_OUTPUT\"\nfi\n\n# Verify systemd service is enabled (it may not be active if no tunnels are configured)\n# Multi-agent: service name includes the label set during setup-agent.sh.\n# The agent installs as a user-level systemd unit (linger enabled), so we query\n# the per-user manager via XDG_RUNTIME_DIR + --user.\nSYSTEMD_ENABLED=$(agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled\")\nif [ \"$SYSTEMD_ENABLED\" = \"enabled\" ]; then\n  log_pass \"systemd service lamalibre-lamaste-chisel-e2e-agent is enabled\"\nelse\n  log_fail \"systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)\"\nfi\n\n# Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)\nCONFIG_EXISTS=$(agent_exec \"test -f ~/.lamalibre/lamaste/agents/e2e-agent/config.json && echo yes || echo no\")\nassert_eq \"$CONFIG_EXISTS\" \"yes\" \"Agent config file exists after setup\" || true"
+    },
+    {
+      "id": "clean-up-revoke-test-agent",
+      "label": "Clean up: revoke test agent",
+      "steps": [
+        {
+          "id": "step-46",
+          "label": "Cleaned up test agent and temp files",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Cleaned up test agent and temp files"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Clean up: revoke test agent\"\n# ---------------------------------------------------------------------------\n\nmultipass exec lamaste-host -- sudo curl -sk --max-time 10 \\\n  --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt \\\n  -X DELETE \"https://127.0.0.1:9292/api/certs/agent/${TOKEN_LABEL}\" 2>/dev/null || true\nagent_exec \"rm -f /tmp/enroll-test.key /tmp/enroll-test.csr /tmp/enroll-body.json\" 2>/dev/null || true\nlog_pass \"Cleaned up test agent and temp files\""
+    },
+    {
+      "id": "admin-upgrade-endpoint-is-locked-down-b9",
+      "label": "Admin upgrade endpoint is locked down (B9)",
+      "steps": [
+        {
+          "id": "step-47",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl genrsa -out /tmp/admin-up.key 2048 2>/dev/null && openssl req -new -key /tmp/admin-up.key -out /tmp/admin-up.csr -subj '/CN=admin/O=Lamaste' 2>/dev/null"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/admin-up.csr"
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_CSR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Set ADMIN_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg csr \"$ADMIN_CSR\" '{csr: $csr}'"
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Set LOCAL_ADMIN_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp /tmp/admin-up-body-XXXXXXXX.json"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_ADMIN_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/certs/admin/upgrade-to-hardware-bound",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 60,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPGRADE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/upgrade-body.json"
+          },
+          "capture": [
+            {
+              "variable": "UPGRADE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Panel-initiated admin upgrade returns 503",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UPGRADE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "Panel-initiated admin upgrade returns 503"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Extract UPGRADE_ERR",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "UPGRADE_ERR",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "expression": ".error // empty"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Error message references \\`lamaste-server reset-admin\\` recovery path",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Error message references \\`lamaste-server reset-admin\\` recovery path"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Unexpected upgrade error body: $UPGRADE_ERR",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unexpected upgrade error body: $UPGRADE_ERR"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "GET /api/certs/admin/auth-mode",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/admin/auth-mode"
+          },
+          "capture": [
+            {
+              "variable": "AUTH_MODE_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Admin auth mode still p12 after refused upgrade",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTH_MODE_AFTER"
+              },
+              "path": ".adminAuthMode",
+              "expected": {
+                "kind": "literal",
+                "value": "p12"
+              },
+              "message": "Admin auth mode still p12 after refused upgrade"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin upgrade endpoint is locked down (B9)\"\n# ---------------------------------------------------------------------------\n\n# Panel-initiated admin cert issuance was disabled for security (B9 hardening).\n# The only way to re-issue an admin cert is `sudo lamaste-server reset-admin`\n# on the server console. Verify the panel route returns 503 with the expected\n# actionable error message, and that nothing mutates admin auth state.\n\n# Generate a well-formed admin CSR on the host so the request reaches the\n# route handler rather than failing on input validation.\nhost_exec \"openssl genrsa -out /tmp/admin-up.key 2048 2>/dev/null && openssl req -new -key /tmp/admin-up.key -out /tmp/admin-up.csr -subj '/CN=admin/O=Lamaste' 2>/dev/null\"\nADMIN_CSR=$(host_exec \"cat /tmp/admin-up.csr\")\n\nADMIN_BODY=$(jq -n --arg csr \"$ADMIN_CSR\" '{csr: $csr}')\nLOCAL_ADMIN_TMP=$(mktemp /tmp/admin-up-body-XXXXXXXX.json)\necho \"$ADMIN_BODY\" > \"$LOCAL_ADMIN_TMP\"\nmultipass transfer \"$LOCAL_ADMIN_TMP\" lamaste-host:/tmp/admin-up-body.json\nrm -f \"$LOCAL_ADMIN_TMP\"\n\nUPGRADE_STATUS=$(host_exec \"curl -sk -o /tmp/upgrade-body.json -w '%{http_code}' --max-time 60 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d @/tmp/admin-up-body.json https://127.0.0.1:9292/api/certs/admin/upgrade-to-hardware-bound\" || echo \"000\")\nUPGRADE_RESPONSE=$(host_exec \"cat /tmp/upgrade-body.json\" 2>/dev/null || echo '{}')\n\nassert_eq \"$UPGRADE_STATUS\" \"503\" \"Panel-initiated admin upgrade returns 503\" || true\n\nUPGRADE_ERR=$(echo \"$UPGRADE_RESPONSE\" | jq -r '.error // empty' 2>/dev/null || echo \"\")\nif echo \"$UPGRADE_ERR\" | grep -q \"reset-admin\"; then\n  log_pass \"Error message references \\`lamaste-server reset-admin\\` recovery path\"\nelse\n  log_fail \"Unexpected upgrade error body: $UPGRADE_ERR\"\nfi\n\n# Panel state must still be p12 — a 503 short-circuits before any mutation.\nAUTH_MODE_AFTER=$(host_api_get \"certs/admin/auth-mode\" || echo '{}')\nassert_json_field \"$AUTH_MODE_AFTER\" '.adminAuthMode' 'p12' \"Admin auth mode still p12 after refused upgrade\" || true"
+    },
+    {
+      "id": "p12-rotation-lockdown",
+      "label": "P12 rotation lockdown",
+      "steps": [
+        {
+          "id": "step-62",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/certs/mtls/rotate",
+            "tlsVerify": false,
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "P12 rotation blocked (HTTP $ROTATE_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "P12 rotation blocked (HTTP $ROTATE_STATUS)"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "P12 rotation blocked — nginx rejected the client cert (HTTP $ROTATE_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "P12 rotation blocked — nginx rejected the client cert (HTTP $ROTATE_STATUS)"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Unexpected status for P12 rotation: HTTP $ROTATE_STATUS (expected 503/410/496/000)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unexpected status for P12 rotation: HTTP $ROTATE_STATUS (expected 503/410/496/000)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"P12 rotation lockdown\"\n# ---------------------------------------------------------------------------\n\n# The P12 rotation endpoint is disabled alongside admin CSR signing — same\n# B9 guarantee, same recovery path. Accept either the 503 from the lib layer\n# or the mTLS-level rejection (000/496) if the cert has since been revoked.\nROTATE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST https://127.0.0.1:9292/api/certs/mtls/rotate\" 2>/dev/null || echo \"000\")\n\ncase \"$ROTATE_STATUS\" in\n  503|410)\n    log_pass \"P12 rotation blocked (HTTP $ROTATE_STATUS)\"\n    ;;\n  496|000|0000|00000)\n    log_pass \"P12 rotation blocked — nginx rejected the client cert (HTTP $ROTATE_STATUS)\"\n    ;;\n  *)\n    log_fail \"Unexpected status for P12 rotation: HTTP $ROTATE_STATUS (expected 503/410/496/000)\"\n    ;;\nesac\n\n# Clean up temp files on host (no panel.json revert needed — nothing changed).\nhost_exec \"rm -f /tmp/admin-up.key /tmp/admin-up.csr /tmp/admin-up-body.json /tmp/upgrade-body.json\" 2>/dev/null || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 12 — Enrollment Token Lifecycle (Three-VM)\n# ============================================================================\n# Tests the hardware-bound certificate enrollment flow across VMs:\n# - Token creation on host\n# - Public enrollment endpoint reachable from agent VM without mTLS\n# - CSR-based enrollment\n# - Agent registry shows hardware-bound enrollment method\n# - Admin upgrade + P12 lockdown\n# - Revert for subsequent tests\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq openssl\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\n# Use the vm-api-helper.sh on the host VM for reliable API calls.\n# It avoids quoting issues with multipass exec + sudo bash -c.\nhost_api_get() {\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh GET \"$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh POST \"$path\" \"$b64body\"\n}\n\nhost_api_delete() {\n  multipass exec lamaste-host -- sudo /tmp/vm-api-helper.sh DELETE \"$1\"\n}\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nbegin_test \"12 — Enrollment Token Lifecycle (Three-VM)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\n# ---------------------------------------------------------------------------\nend_test\n"
+}

@@ -1,4 +1,4 @@
-# Portlama E2E: 10 — Resilience
+# Lamaste E2E: 10 — Resilience
 
 > Started at `2026-03-30 13:06:46 UTC`
 
@@ -8,7 +8,7 @@
 ℹ️ `13:06:46` Service nginx status before tests: active  
 ℹ️ `13:06:46` Service chisel status before tests: active  
 ℹ️ `13:06:46` Service authelia status before tests: active  
-ℹ️ `13:06:46` Service portlama-panel status before tests: active  
+ℹ️ `13:06:46` Service lamaste-panel status before tests: active  
 
 ## nginx failure and recovery
 
@@ -38,7 +38,7 @@
 ✅ `13:06:59` Service nginx is active at end of resilience test  
 ✅ `13:06:59` Service chisel is active at end of resilience test  
 ✅ `13:06:59` Service authelia is active at end of resilience test  
-✅ `13:06:59` Service portlama-panel is active at end of resilience test  
+✅ `13:06:59` Service lamaste-panel is active at end of resilience test  
 
 ---
 

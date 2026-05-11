@@ -1,4 +1,4 @@
-# Portlama E2E: 16 — Agent JSON Setup Output (Three-VM)
+# Lamaste E2E: 16 — Agent JSON Setup Output (Three-VM)
 
 > Started at `2026-03-30 13:12:53 UTC`
 
@@ -6,7 +6,7 @@
 ## Pre-flight: check onboarding is complete
 
 ✅ `13:12:53` Onboarding is complete  
-✅ `13:12:54` portlama-agent found on agent VM: /usr/bin/portlama-agent  
+✅ `13:12:54` lamaste-agent found on agent VM: /usr/bin/lamaste-agent  
 
 ## --json requires token
 
@@ -16,7 +16,7 @@
 
 ✅ `13:12:54` Enrollment token generated for json-test-3vm  
 
-## portlama-agent setup --json on agent VM
+## lamaste-agent setup --json on agent VM
 
 
 ## NDJSON line validation

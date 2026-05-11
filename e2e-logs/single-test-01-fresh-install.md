@@ -1,4 +1,4 @@
-# Portlama E2E: 01 — Fresh Install
+# Lamaste E2E: 01 — Fresh Install
 
 > Started at `2026-03-30 13:06:17 UTC`
 
@@ -9,7 +9,7 @@
 
 ## Panel server service
 
-✅ `13:06:17` portlama-panel service is active  
+✅ `13:06:17` lamaste-panel service is active  
 
 ## Health endpoint
 

@@ -1,0 +1,44 @@
+{
+  "name": "@lamalibre/local-plugin-hostd",
+  "version": "2.0.0",
+  "description": "Local plugin host daemon for Lamaste — serves locally installed plugins on 127.0.0.1:9293 without mTLS or server enrollment",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "author": "Code Lama Software",
+  "main": "src/index.js",
+  "bin": {
+    "lamalibre-local-plugin-hostd": "bin/lamalibre-local-plugin-hostd.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lamalibre/lamaste.git",
+    "directory": "packages/agent/plugin-hostd"
+  },
+  "homepage": "https://github.com/lamalibre/lamaste#readme",
+  "bugs": {
+    "url": "https://github.com/lamalibre/lamaste/issues"
+  },
+  "keywords": [
+    "lamaste",
+    "plugin",
+    "local",
+    "daemon",
+    "fastify"
+  ],
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@lamalibre/lamaste": "^2.0.0",
+    "execa": "^9.0.0",
+    "fastify": "^5.8.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

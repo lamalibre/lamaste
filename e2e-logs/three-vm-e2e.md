@@ -5,7 +5,7 @@
 
 ---
 
-# Portlama Three-VM End-to-End Test Suite
+# Lamaste Three-VM End-to-End Test Suite
 
 
 | Key | Value |
@@ -13,7 +13,7 @@
 | **HOST_IP** | `10.13.37.1` |
 | **AGENT_IP** | `10.13.37.2` |
 | **VISITOR_IP** | `10.13.37.3` |
-| **TEST_DOMAIN** | `test.portlama.local` |
+| **TEST_DOMAIN** | `test.lamaste.local` |
 | **TEST_USER** | `testuser` |
 | **Date** | `2026-03-30 13:08:14 UTC` |
 | **Log file** | `<repo>/e2e-logs/run-all.md` |

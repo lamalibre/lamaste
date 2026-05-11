@@ -1,0 +1,49 @@
+{
+  "name": "@lamalibre/lamaste-server-ui",
+  "version": "2.0.0",
+  "description": "Lamaste server management panel frontend",
+  "private": true,
+  "type": "module",
+  "main": "src/admin/index.js",
+  "exports": {
+    ".": "./src/admin/index.js",
+    "./pages/*": "./src/admin/pages/*",
+    "./components/*": "./src/admin/components/*",
+    "./context/*": "./src/admin/context/*",
+    "./lib/*": "./src/admin/lib/*"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "@tanstack/react-query": "^5.0.0",
+    "clsx": "^2.1.0",
+    "dompurify": "^3.3.3",
+    "lucide-react": "^0.383.0",
+    "marked": "^17.0.4",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-router-dom": "^6.23.0",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AnonVans/lamaste.git",
+    "directory": "packages/server/ui"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

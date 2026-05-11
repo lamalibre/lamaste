@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for Portlama
+about: Suggest an idea for Lamaste
 labels: enhancement
 ---
 
@@ -8,11 +8,11 @@ labels: enhancement
 
 <!-- Check all that apply -->
 
-- [ ] Installer (`create-portlama`)
-- [ ] Panel server (`panel-server`)
+- [ ] Installer (`create-lamaste`)
+- [ ] Panel server (`serverd`)
 - [ ] Panel client (`panel-client`)
-- [ ] Agent (`portlama-agent`)
-- [ ] Desktop (`portlama-desktop`)
+- [ ] Agent (`lamaste-agent`)
+- [ ] Desktop (`lamaste-desktop`)
 
 ## Problem / Motivation
 

@@ -4,7 +4,7 @@
 
 
 ============================================================================
-  Portlama End-to-End Test Suite
+  Lamaste End-to-End Test Suite
 ============================================================================
 
   BASE_URL:       https://127.0.0.1:9292
@@ -14,7 +14,7 @@
   Running: 01-fresh-install.sh
 
 ============================================================================
- Portlama E2E: 01 — Fresh Install
+ Lamaste E2E: 01 — Fresh Install
 ============================================================================
 
 
@@ -22,7 +22,7 @@
   [PASS] Node.js installed: v20.20.0
 
 --- Panel server service ---
-  [PASS] portlama-panel service is active
+  [PASS] lamaste-panel service is active
 
 --- Health endpoint ---
   [PASS] Health endpoint returns status: ok
@@ -44,7 +44,7 @@
   Running: 02-mtls-enforcement.sh
 
 ============================================================================
- Portlama E2E: 02 — mTLS Enforcement
+ Lamaste E2E: 02 — mTLS Enforcement
 ============================================================================
 
 
@@ -69,7 +69,7 @@
   Running: 03-onboarding-flow.sh
 
 ============================================================================
- Portlama E2E: 03 — Onboarding Flow
+ Lamaste E2E: 03 — Onboarding Flow
 ============================================================================
 
 
@@ -88,7 +88,7 @@
   Running: 04-tunnel-lifecycle.sh
 
 ============================================================================
- Portlama E2E: 04 — Tunnel Lifecycle
+ Lamaste E2E: 04 — Tunnel Lifecycle
 ============================================================================
 
 
@@ -107,7 +107,7 @@
   [PASS] Tunnel appears in GET /api/tunnels
 
 --- Verify nginx configuration ---
-  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/portlama-app-e2etest-1774875977
+  [PASS] Nginx vhost exists at /etc/nginx/sites-enabled/lamaste-app-e2etest-1774875977
   [PASS] nginx -t passes after tunnel creation
 
 --- Validation: reserved subdomain ---
@@ -158,7 +158,7 @@
   Running: 05-user-lifecycle.sh
 
 ============================================================================
- Portlama E2E: 05 — User Lifecycle
+ Lamaste E2E: 05 — User Lifecycle
 ============================================================================
 
 
@@ -215,7 +215,7 @@
   Running: 06-service-control.sh
 
 ============================================================================
- Portlama E2E: 06 — Service Control
+ Lamaste E2E: 06 — Service Control
 ============================================================================
 
 
@@ -226,7 +226,7 @@
   [PASS] Service 'nginx' is in the service list
   [PASS] Service 'chisel' is in the service list
   [PASS] Service 'authelia' is in the service list
-  [PASS] Service 'portlama-panel' is in the service list
+  [PASS] Service 'lamaste-panel' is in the service list
   [PASS] nginx status is 'active'
 
 --- Restart nginx ---
@@ -236,12 +236,12 @@
 --- Reload nginx ---
   [PASS] nginx reload returned ok: true
 
---- Cannot stop portlama-panel ---
-  [PASS] Cannot stop portlama-panel (HTTP 400)
+--- Cannot stop lamaste-panel ---
+  [PASS] Cannot stop lamaste-panel (HTTP 400)
   [PASS] Error message explains why panel cannot be stopped
 
---- Restart portlama-panel is allowed ---
-  [PASS] portlama-panel restart request accepted
+--- Restart lamaste-panel is allowed ---
+  [PASS] lamaste-panel restart request accepted
   [PASS] Panel is responsive after restart
 
 --- Invalid service name ---
@@ -257,7 +257,7 @@
   Running: 07-cert-renewal.sh
 
 ============================================================================
- Portlama E2E: 07 — Certificate Renewal
+ Lamaste E2E: 07 — Certificate Renewal
 ============================================================================
 
 
@@ -287,7 +287,7 @@
   Running: 08-mtls-rotation.sh
 
 ============================================================================
- Portlama E2E: 08 — mTLS Rotation
+ Lamaste E2E: 08 — mTLS Rotation
 ============================================================================
 
 
@@ -317,7 +317,7 @@
   Running: 09-ip-fallback.sh
 
 ============================================================================
- Portlama E2E: 09 — IP Fallback
+ Lamaste E2E: 09 — IP Fallback
 ============================================================================
 
 
@@ -350,7 +350,7 @@
   Running: 10-resilience.sh
 
 ============================================================================
- Portlama E2E: 10 — Resilience
+ Lamaste E2E: 10 — Resilience
 ============================================================================
 
 
@@ -358,7 +358,7 @@
   [INFO] Service nginx status before tests: active
   [INFO] Service chisel status before tests: active
   [INFO] Service authelia status before tests: active
-  [INFO] Service portlama-panel status before tests: active
+  [INFO] Service lamaste-panel status before tests: active
 
 --- nginx failure and recovery ---
   [INFO] Stopping nginx...
@@ -384,7 +384,7 @@
   [PASS] Service nginx is active at end of resilience test
   [PASS] Service chisel is active at end of resilience test
   [PASS] Service authelia is active at end of resilience test
-  [PASS] Service portlama-panel is active at end of resilience test
+  [PASS] Service lamaste-panel is active at end of resilience test
 
 ============================================================================
   Results: 15 passed, 0 failed, 0 skipped (15 total)
@@ -393,7 +393,7 @@
   Running: 11-input-validation.sh
 
 ============================================================================
- Portlama E2E: 11 — Input Validation & Security Hardening
+ Lamaste E2E: 11 — Input Validation & Security Hardening
 ============================================================================
 
 
@@ -436,8 +436,8 @@
   [PASS] Empty body to /api/users rejected (HTTP 400)
 
 --- File permissions ---
-  [PASS] /etc/portlama/tunnels.json has correct permissions (600)
-  [SKIP] /etc/portlama/sites.json not found
+  [PASS] /etc/lamaste/tunnels.json has correct permissions (600)
+  [SKIP] /etc/lamaste/sites.json not found
   [PASS] panel.json has correct permissions (640)
 
 ============================================================================
@@ -447,7 +447,7 @@
   Running: 12-user-invitations.sh
 
 ============================================================================
- Portlama E2E: 12 — User Invitations
+ Lamaste E2E: 12 — User Invitations
 ============================================================================
 
 
@@ -512,7 +512,7 @@
   Running: 13-site-lifecycle.sh
 
 ============================================================================
- Portlama E2E: 13 — Site Lifecycle
+ Lamaste E2E: 13 — Site Lifecycle
 ============================================================================
 
 
@@ -524,7 +524,7 @@
   [PASS] Site has an ID
   [PASS] Site name matches
   [PASS] Site type is managed
-  [INFO] Created site: e2esite.test.portlama.local (ID: ae423cb6-1bde-4745-915c-68f469c426f6)
+  [INFO] Created site: e2esite.test.lamaste.local (ID: ae423cb6-1bde-4745-915c-68f469c426f6)
 
 --- Verify site in listing ---
   [PASS] Site appears in listing
@@ -576,7 +576,7 @@
   Running: 15-plugin-lifecycle.sh
 
 ============================================================================
- Portlama E2E: 15 — Plugin Lifecycle
+ Lamaste E2E: 15 — Plugin Lifecycle
 ============================================================================
 
 
@@ -666,7 +666,7 @@
   Running: 16-enrollment-tokens.sh
 
 ============================================================================
- Portlama E2E: 16 — Hardware-Bound Certificate Enrollment
+ Lamaste E2E: 16 — Hardware-Bound Certificate Enrollment
 ============================================================================
 
 
@@ -728,7 +728,7 @@
   Running: 17-panel-2fa.sh
 
 ============================================================================
- Portlama E2E: 17 — Panel Built-in TOTP 2FA
+ Lamaste E2E: 17 — Panel Built-in TOTP 2FA
 ============================================================================
 
 
@@ -787,11 +787,11 @@
   Running: 18-json-installer.sh
 
 ============================================================================
- Portlama E2E: 18 — JSON Installer Output
+ Lamaste E2E: 18 — JSON Installer Output
 ============================================================================
 
 
---- create-portlama --json (redeploy mode) ---
+--- create-lamaste --json (redeploy mode) ---
 
 --- NDJSON line validation ---
   [PASS] All 5 lines are valid JSON
@@ -801,8 +801,8 @@
   [PASS] Exactly one complete event emitted
   [PASS] Server IP present: 192.168.2.9
   [PASS] Panel URL present and uses HTTPS: https://192.168.2.9:9292
-  [PASS] P12 path within expected directory: /etc/portlama/pki/client.p12
-  [PASS] P12 password path within expected directory: /etc/portlama/pki/.p12-password
+  [PASS] P12 path within expected directory: /etc/lamaste/pki/client.p12
+  [PASS] P12 password path within expected directory: /etc/lamaste/pki/.p12-password
 
 --- Step status validation ---
   [PASS] check_environment step present
@@ -818,7 +818,7 @@
   Running: 19-panel-expose.sh
 
 ============================================================================
- Portlama E2E: 19 — Panel Expose Lifecycle
+ Lamaste E2E: 19 — Panel Expose Lifecycle
 ============================================================================
 
 
@@ -843,14 +843,14 @@
   [PASS] Panel tunnel has an FQDN
   [PASS] Panel tunnel has a createdAt timestamp
   [PASS] Panel tunnel agentLabel matches
-  [INFO] Exposed panel tunnel: agent-panel-e2e-1774876078.test.portlama.local (ID: d78eba91-ecdf-4f01-8941-754b2332c6c0)
+  [INFO] Exposed panel tunnel: agent-panel-e2e-1774876078.test.lamaste.local (ID: d78eba91-ecdf-4f01-8941-754b2332c6c0)
 
 --- Verify panel tunnel in tunnel listing ---
   [PASS] Panel tunnel shows type 'panel' in listing
   [PASS] Panel tunnel shows correct agentLabel in listing
 
 --- Verify nginx mTLS vhost created (not app vhost) ---
-  [PASS] mTLS panel vhost exists at /etc/nginx/sites-enabled/portlama-agent-panel-agent-panel-e2e-1774876078
+  [PASS] mTLS panel vhost exists at /etc/nginx/sites-enabled/lamaste-agent-panel-agent-panel-e2e-1774876078
   [PASS] No app vhost created (correct — panel uses mTLS vhost)
   [PASS] nginx -t passes after panel expose
 
@@ -903,12 +903,12 @@
 {"error":"No panel tunnel found for this agent"}{"ok":true,"label":"panel-e2e-1774876078"}{"ok":true,"label":"nopanel-e2e"}  Running: 20-agent-json-setup.sh
 
 ============================================================================
- Portlama E2E: 20 — Agent JSON Setup Output
+ Lamaste E2E: 20 — Agent JSON Setup Output
 ============================================================================
 
 
 --- Pre-flight: check onboarding is complete ---
-  [SKIP] portlama-agent not found in PATH
+  [SKIP] lamaste-agent not found in PATH
 
 ============================================================================
   Results: 0 passed, 0 failed, 1 skipped (1 total)
@@ -917,7 +917,7 @@
   Running: 21-identity-system.sh
 
 ============================================================================
- Portlama E2E: 21 — Identity System
+ Lamaste E2E: 21 — Identity System
 ============================================================================
 
 

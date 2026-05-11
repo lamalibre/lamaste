@@ -1,0 +1,509 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 18,
+    "name": "Agent Plugin Hosting",
+    "suite": "e2e-three-vm",
+    "description": "18 — Agent Plugin Hosting (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent plugin hosting tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\""
+    },
+    {
+      "id": "create-agent-cert-for-plugin-reporting",
+      "label": "Create agent cert for plugin reporting",
+      "steps": [
+        {
+          "id": "step-3",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Extract CERT_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CERT_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Agent cert created for plugin reporting",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CERT_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert created for plugin reporting"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Extract P12_B64",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_B64",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".password"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "mkdir -p ${AGENT_CERT_DIR} && echo '${P12_B64}' | base64 -d > ${AGENT_CERT_DIR}/client.p12 && openssl pkcs12 -in ${AGENT_CERT_DIR}/client.p12 -out ${AGENT_CERT_DIR}/client.crt -clcerts -nokeys -passin pass:${P12_PASS} 2>/dev/null && openssl pkcs12 -in ${AGENT_CERT_DIR}/client.p12 -out ${AGENT_CERT_DIR}/client.key -nocerts -nodes -passin pass:${P12_PASS} 2>/dev/null && chmod 600 ${AGENT_CERT_DIR}/client.key"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Agent PEM cert extracted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent PEM cert extracted"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create agent cert for plugin reporting\"\n# ---------------------------------------------------------------------------\n\nAGENT_LABEL=\"plugin-report-$(date +%s)\"\nCERT_RESPONSE=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nCERT_OK=$(echo \"$CERT_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\nassert_eq \"$CERT_OK\" \"true\" \"Agent cert created for plugin reporting\" || true\n\n# Extract agent cert PEM files\nP12_B64=$(echo \"$CERT_RESPONSE\" | jq -r '.p12' 2>/dev/null || echo \"\")\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.password' 2>/dev/null || echo \"\")\nAGENT_CERT_DIR=\"/tmp/agent-plugin-test-${AGENT_LABEL}\"\n\nhost_exec \"mkdir -p ${AGENT_CERT_DIR} && echo '${P12_B64}' | base64 -d > ${AGENT_CERT_DIR}/client.p12 && openssl pkcs12 -in ${AGENT_CERT_DIR}/client.p12 -out ${AGENT_CERT_DIR}/client.crt -clcerts -nokeys -passin pass:${P12_PASS} 2>/dev/null && openssl pkcs12 -in ${AGENT_CERT_DIR}/client.p12 -out ${AGENT_CERT_DIR}/client.key -nocerts -nodes -passin pass:${P12_PASS} 2>/dev/null && chmod 600 ${AGENT_CERT_DIR}/client.key\"\nlog_pass \"Agent PEM cert extracted\"\n\n# ===========================================================================\n# 1. Agent reports plugin capabilities\n# ==========================================================================="
+    },
+    {
+      "id": "agent-reports-plugin-capabilities",
+      "label": "Agent reports plugin capabilities",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "POST /api/agents/plugins/report",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "test-sync",
+                  "version": "0.1.0",
+                  "capabilities": [
+                    "test-sync:connect",
+                    "test-sync:read"
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "REPORT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Extract REPORT_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REPORT_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REPORT_RESPONSE"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Extract REPORT_MERGED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REPORT_MERGED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REPORT_RESPONSE"
+              },
+              "expression": ".merged"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Plugin report accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPORT_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin report accepted"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Two capabilities merged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPORT_MERGED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Two capabilities merged"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Agent reports plugin capabilities\"\n\nREPORT_RESPONSE=$(host_agent_api_post \"${AGENT_CERT_DIR}/client.crt\" \"${AGENT_CERT_DIR}/client.key\" \"agents/plugins/report\" '{\"plugins\":[{\"name\":\"test-sync\",\"version\":\"0.1.0\",\"capabilities\":[\"test-sync:connect\",\"test-sync:read\"]}]}')\nREPORT_OK=$(echo \"$REPORT_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\nREPORT_MERGED=$(echo \"$REPORT_RESPONSE\" | jq -r '.merged' 2>/dev/null || echo \"0\")\nassert_eq \"$REPORT_OK\" \"true\" \"Plugin report accepted\" || true\nassert_eq \"$REPORT_MERGED\" \"2\" \"Two capabilities merged\" || true\n\n# ===========================================================================\n# 2. Capabilities are prefix-scoped\n# ==========================================================================="
+    },
+    {
+      "id": "capability-prefix-scoping",
+      "label": "Capability prefix scoping",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "POST /api/agents/plugins/report",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "myplugin",
+                  "version": "1.0.0",
+                  "capabilities": [
+                    "myplugin:action",
+                    "other:action"
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "SCOPED_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Extract SCOPED_MERGED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SCOPED_MERGED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SCOPED_RESPONSE"
+              },
+              "expression": ".merged"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Only myplugin:action merged (other:action rejected)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SCOPED_MERGED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Only myplugin:action merged (other:action rejected)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Capability prefix scoping\"\n\nSCOPED_RESPONSE=$(host_agent_api_post \"${AGENT_CERT_DIR}/client.crt\" \"${AGENT_CERT_DIR}/client.key\" \"agents/plugins/report\" '{\"plugins\":[{\"name\":\"myplugin\",\"version\":\"1.0.0\",\"capabilities\":[\"myplugin:action\",\"other:action\"]}]}')\nSCOPED_MERGED=$(echo \"$SCOPED_RESPONSE\" | jq -r '.merged' 2>/dev/null || echo \"0\")\nassert_eq \"$SCOPED_MERGED\" \"1\" \"Only myplugin:action merged (other:action rejected)\" || true\n\n# ===========================================================================\n# 3. Invalid capability format rejected\n# ==========================================================================="
+    },
+    {
+      "id": "invalid-capability-format-rejected",
+      "label": "Invalid capability format rejected",
+      "steps": [
+        {
+          "id": "step-19",
+          "label": "POST /api/agents/plugins/report",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "bad",
+                  "version": "1.0.0",
+                  "capabilities": [
+                    "nocolon"
+                  ]
+                }
+              ]
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "Capability without colon rejected with 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Capability without colon rejected with 400"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Invalid capability format rejected\"\n\nINVALID_STATUS=$(host_agent_api_post_status \"${AGENT_CERT_DIR}/client.crt\" \"${AGENT_CERT_DIR}/client.key\" \"agents/plugins/report\" '{\"plugins\":[{\"name\":\"bad\",\"version\":\"1.0.0\",\"capabilities\":[\"nocolon\"]}]}')\nassert_eq \"$INVALID_STATUS\" \"400\" \"Capability without colon rejected with 400\" || true\n\n# ===========================================================================\n# 4. Admin report also works\n# ==========================================================================="
+    },
+    {
+      "id": "admin-can-also-report",
+      "label": "Admin can also report",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "POST /api/agents/plugins/report",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/plugins/report",
+            "body": {
+              "plugins": [
+                {
+                  "name": "admin-plugin",
+                  "version": "1.0.0",
+                  "capabilities": [
+                    "admin-plugin:manage"
+                  ]
+                }
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_REPORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Extract ADMIN_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ADMIN_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ADMIN_REPORT"
+              },
+              "expression": ".ok"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Admin can report plugin capabilities",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_OK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Admin can report plugin capabilities"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Admin can also report\"\n\nADMIN_REPORT=$(host_api_post \"agents/plugins/report\" '{\"plugins\":[{\"name\":\"admin-plugin\",\"version\":\"1.0.0\",\"capabilities\":[\"admin-plugin:manage\"]}]}')\nADMIN_OK=$(echo \"$ADMIN_REPORT\" | jq -r '.ok' 2>/dev/null || echo \"false\")\nassert_eq \"$ADMIN_OK\" \"true\" \"Admin can report plugin capabilities\" || true\n\n# ===========================================================================\n# Cleanup\n# ===========================================================================\n\nhost_exec \"rm -rf ${AGENT_CERT_DIR}\" 2>/dev/null || true"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_post_status",
+    "host_agent_api_post",
+    "host_agent_api_post_status"
+  ],
+  "headerRaw": "# ============================================================================\n# 18 — Agent Plugin Hosting (Three-VM)\n# ============================================================================\n# Tests the agent plugin capability reporting feature across VMs:\n#\n# 1. Agent reports plugin capabilities to server\n# 2. Server accepts valid capability report\n# 3. Reported capabilities are prefix-scoped\n# 4. Invalid capability format rejected\n# 5. 'agents' is a reserved name in the server's plugin name validation\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post_status() {\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent-cert API helpers\nhost_agent_api_post() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  local data=\"$4\"\n  host_exec \"curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}\"\n}\n\nhost_agent_api_post_status() {\n  local cert_path=\"$1\"\n  local key_path=\"$2\"\n  local api_path=\"$3\"\n  local data=\"$4\"\n  host_exec \"curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}\"\n}\n\nbegin_test \"18 — Agent Plugin Hosting\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

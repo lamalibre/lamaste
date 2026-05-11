@@ -1,4 +1,4 @@
-# Portlama E2E: 21 — Identity System
+# Lamaste E2E: 21 — Identity System
 
 > Started at `2026-03-30 13:08:09 UTC`
 

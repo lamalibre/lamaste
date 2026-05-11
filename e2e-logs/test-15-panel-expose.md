@@ -1,4 +1,4 @@
-# Portlama E2E: 15 — Panel Expose (Three-VM)
+# Lamaste E2E: 15 — Panel Expose (Three-VM)
 
 > Started at `2026-03-30 13:12:19 UTC`
 
@@ -28,7 +28,7 @@
 ✅ `13:12:28` Tunnel type is 'panel'  
 ✅ `13:12:28` Panel subdomain matches agent-<label>  
 ✅ `13:12:28` Panel tunnel has an FQDN  
-ℹ️ `13:12:28` Exposed panel tunnel: agent-panel-expose-e2e.test.portlama.local (ID: a3deb6a9-14cd-477c-8685-bffa9958c80d)  
+ℹ️ `13:12:28` Exposed panel tunnel: agent-panel-expose-e2e.test.lamaste.local (ID: a3deb6a9-14cd-477c-8685-bffa9958c80d)  
 
 ## Verify mTLS nginx vhost on host
 
@@ -43,7 +43,7 @@
 
 ## Start panel HTTP server on agent and establish tunnel
 
-✅ `13:12:28` Added agent-panel-expose-e2e.test.portlama.local to agent /etc/hosts  
+✅ `13:12:28` Added agent-panel-expose-e2e.test.lamaste.local to agent /etc/hosts  
 ✅ `13:12:31` Panel HTTP server running on agent at port 9393  
 ℹ️ `13:12:37` Waiting for Chisel tunnel to establish for panel...  
 ✅ `13:12:37` Chisel tunnel established for panel (port 9393 accessible on host)  

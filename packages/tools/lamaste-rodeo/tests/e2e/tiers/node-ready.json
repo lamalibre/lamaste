@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "node-ready",
+    "name": "Single-VM node-ready",
+    "description": "Install Node.js 22.x and configure the Feria dev registry on the host VM."
+  },
+  "sections": [
+    {
+      "id": "install-node",
+      "label": "Install Node.js + Feria registry",
+      "steps": [
+        {
+          "id": "install-node-and-feria",
+          "label": "Install Node.js 22.x and configure Feria registry",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "bash -c 'install-node-and-feria'"
+          },
+          "bash": "set -euo pipefail\n\nif npm --version >/dev/null 2>&1; then\n  echo \"npm already installed: $(npm --version)\"\nelse\n  apt-get update\n  apt-get install -y ca-certificates curl gnupg\n  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -\n  apt-get install -y nodejs\nfi\n\n# Configure Feria dev registry — point @lamalibre packages at the host gateway.\nGATEWAY_IP=\"$(ip route | awk '/default/{print $3}')\"\nGATEWAY_IP=\"${GATEWAY_IP:-192.168.2.1}\"\necho \"@lamalibre:registry=http://${GATEWAY_IP}:4873\" | tee /root/.npmrc /home/ubuntu/.npmrc\n"
+        }
+      ]
+    }
+  ]
+}

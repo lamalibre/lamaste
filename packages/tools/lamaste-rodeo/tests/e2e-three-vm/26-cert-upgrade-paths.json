@@ -1,0 +1,1060 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 26,
+    "name": "Cert Upgrade Paths",
+    "suite": "e2e-three-vm",
+    "description": "26 — Agent Certificate Upgrade Paths (Three-VM)",
+    "deps": [
+      1
+    ],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq",
+      "openssl"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Host VM IP"
+    }
+  },
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-agent-cert",
+      "label": "Revoke test agent cert",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "curl -sk --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/certs/agent/cert-upgrade-agent 2>/dev/null || true"
+      }
+    },
+    {
+      "id": "cleanup-fixture-site",
+      "label": "Delete fixture site (lookup id by name, then DELETE by uuid)",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "SID=$(curl -skf --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://127.0.0.1:9292/api/sites 2>/dev/null | jq -r '.sites[] | select(.name==\"cert-upgrade-site\") | .id' | head -n1); [ -n \"$SID\" ] && curl -sk --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/sites/$SID 2>/dev/null || true"
+      }
+    },
+    {
+      "id": "cleanup-tmp-files",
+      "label": "Remove temp CSR/PEM files on host",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "rm -f /tmp/e2e-26-*.pem /tmp/e2e-26-*.key /tmp/e2e-26-*.csr /tmp/e2e-26-*.crt /tmp/e2e-26-*.json /tmp/e2e-26-p12pass 2>/dev/null || true"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-onboarding",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-onboarding-check",
+          "label": "Onboarding is COMPLETED",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ONBOARDING_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "COMPLETED"
+              },
+              "message": "Onboarding must be COMPLETED for cert upgrade path tests"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pre-create-cleanup",
+      "label": "Clear any stale test state from previous runs",
+      "steps": [
+        {
+          "id": "step-precleanup-site",
+          "label": "Delete leftover fixture site (by name lookup)",
+          "target": "host",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "SID=$(curl -skf --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt https://127.0.0.1:9292/api/sites 2>/dev/null | jq -r '.sites[] | select(.name==\"cert-upgrade-site\") | .id' | head -n1); if [ -n \"$SID\" ]; then curl -sk --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/sites/$SID > /dev/null 2>&1 || true; fi; echo done"
+          },
+          "capture": [
+            {
+              "variable": "PRECLEAN_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-precleanup-agent",
+          "label": "Revoke leftover agent cert",
+          "target": "host",
+          "continueOnError": true,
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 10 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/certs/agent/cert-upgrade-agent > /dev/null 2>&1 || true; echo done"
+          },
+          "capture": [
+            {
+              "variable": "PRECLEAN_AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "create-fixture-site",
+      "label": "Create fixture site for allowed-sites scoping",
+      "steps": [
+        {
+          "id": "step-create-site",
+          "label": "POST /api/sites (tolerant of non-2xx for introspection)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"name\":\"cert-upgrade-site\",\"type\":\"managed\",\"spaMode\":false,\"autheliaProtected\":false}' https://127.0.0.1:9292/api/sites 2>/dev/null || echo '{\"ok\":false}'"
+          },
+          "capture": [
+            {
+              "variable": "SITE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-site-ok",
+          "label": "Fixture site created (ok: true)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SITE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Fixture site created (ok: true)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "create-agent-cert",
+      "label": "Create agent cert (p12) with tunnels:read",
+      "steps": [
+        {
+          "id": "step-create-cert",
+          "label": "POST /api/certs/agent (tolerant)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"label\":\"cert-upgrade-agent\",\"capabilities\":[\"tunnels:read\"],\"allowedSites\":[]}' https://127.0.0.1:9292/api/certs/agent 2>/dev/null || echo '{\"ok\":false}'"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-cert-ok",
+          "label": "Agent cert creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent cert creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-set-old-serial",
+          "label": "Extract OLD_SERIAL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OLD_SERIAL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".serial"
+            }
+          }
+        },
+        {
+          "id": "step-set-p12pass",
+          "label": "Extract P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASSWORD",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-write-p12pass",
+          "label": "Write P12 password to host for openssl to read (avoids embedding in commands)",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass exec lamaste-host -- sudo bash -c \"echo -n '$P12_PASSWORD' > /tmp/e2e-26-p12pass && chmod 0600 /tmp/e2e-26-p12pass\""
+          }
+        },
+        {
+          "id": "step-extract-cert-pem",
+          "label": "Extract PEM cert from p12 (password via file)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in /etc/lamalibre/lamaste/pki/agents/cert-upgrade-agent/client.p12 -clcerts -nokeys -out /tmp/e2e-26-cert.pem -passin file:/tmp/e2e-26-p12pass -legacy 2>/dev/null || openssl pkcs12 -in /etc/lamalibre/lamaste/pki/agents/cert-upgrade-agent/client.p12 -clcerts -nokeys -out /tmp/e2e-26-cert.pem -passin file:/tmp/e2e-26-p12pass"
+          }
+        },
+        {
+          "id": "step-extract-key-pem",
+          "label": "Extract PEM key from p12 (password via file)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in /etc/lamalibre/lamaste/pki/agents/cert-upgrade-agent/client.p12 -nocerts -nodes -out /tmp/e2e-26-key.pem -passin file:/tmp/e2e-26-p12pass -legacy 2>/dev/null || openssl pkcs12 -in /etc/lamalibre/lamaste/pki/agents/cert-upgrade-agent/client.p12 -nocerts -nodes -out /tmp/e2e-26-key.pem -passin file:/tmp/e2e-26-p12pass"
+          }
+        },
+        {
+          "id": "step-chmod-key",
+          "label": "chmod key for curl",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "chmod 0600 /tmp/e2e-26-key.pem && rm -f /tmp/e2e-26-p12pass"
+          }
+        }
+      ]
+    },
+    {
+      "id": "upgrade-cert-happy-path",
+      "label": "Agent upgrade-cert: generate new CSR, post with agent cert, assert new cert issued",
+      "steps": [
+        {
+          "id": "step-snapshot-revoked-before",
+          "label": "Snapshot revoked.json before upgrade-cert (count entries for our label)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'"
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_JSON_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-count-revoked-before",
+          "label": "Count revoked entries for cert-upgrade-agent BEFORE upgrade",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REVOKED_BEFORE_COUNT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REVOKED_JSON_BEFORE"
+              },
+              "expression": "[.revoked[]? | select(.label | startswith(\"agent:cert-upgrade-agent\"))] | length"
+            }
+          }
+        },
+        {
+          "id": "step-gen-new-key",
+          "label": "Generate new RSA key on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl genrsa -out /tmp/e2e-26-new.key 2048 2>/dev/null"
+          }
+        },
+        {
+          "id": "step-gen-new-csr",
+          "label": "Generate new CSR with CN=agent:cert-upgrade-agent",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl req -new -key /tmp/e2e-26-new.key -out /tmp/e2e-26-new.csr -subj '/CN=agent:cert-upgrade-agent/O=Lamaste' 2>/dev/null"
+          }
+        },
+        {
+          "id": "step-build-upgrade-body",
+          "label": "Build upgrade-cert JSON body on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "jq -n --arg csr \"$(cat /tmp/e2e-26-new.csr)\" '{csr: $csr}' > /tmp/e2e-26-upgrade-body.json && echo ok"
+          },
+          "capture": [
+            {
+              "variable": "BUILD_BODY_OK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-upgrade-post",
+          "label": "POST /api/certs/agent/upgrade-cert with agent cert",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 30 --cert /tmp/e2e-26-cert.pem --key /tmp/e2e-26-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d @/tmp/e2e-26-upgrade-body.json https://127.0.0.1:9292/api/certs/agent/upgrade-cert 2>/dev/null || echo '{\"ok\":false,\"error\":\"curl failed\"}'"
+          },
+          "capture": [
+            {
+              "variable": "UPGRADE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-upgrade-ok",
+          "label": "upgrade-cert returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "upgrade-cert returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-new-serial",
+          "label": "Extract NEW_SERIAL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_SERIAL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "expression": ".serial // \"\""
+            }
+          }
+        },
+        {
+          "id": "step-new-serial-present",
+          "label": "New cert serial is non-empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_SERIAL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "upgrade-cert returns a new certificate serial"
+            }
+          }
+        },
+        {
+          "id": "step-serial-changed",
+          "label": "Serial changed between old and new cert",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_SERIAL"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OLD_SERIAL"
+              },
+              "message": "upgrade-cert issues a cert with a different serial than the old one"
+            }
+          }
+        },
+        {
+          "id": "step-cert-pem-present",
+          "label": "Response contains cert PEM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "UPGRADE_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "BEGIN CERTIFICATE"
+              },
+              "message": "upgrade-cert response contains a signed certificate PEM"
+            }
+          }
+        },
+        {
+          "id": "step-list-agents",
+          "label": "GET /api/certs/agent to check revocation",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENTS_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-check-enrollment-method",
+          "label": "Extract enrollmentMethod of newest non-revoked entry",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENTS_LIST\" | jq -r '[.agents[] | select(.label==\"cert-upgrade-agent\" and .revoked==false)] | last | .enrollmentMethod // \"unknown\"'"
+          },
+          "capture": [
+            {
+              "variable": "NEW_METHOD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-method-hardware-bound",
+          "label": "After upgrade, enrollmentMethod is hardware-bound",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_METHOD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "hardware-bound"
+              },
+              "message": "After upgrade-cert, agent registry shows enrollmentMethod=hardware-bound"
+            }
+          }
+        },
+        {
+          "id": "step-read-revoked-json",
+          "label": "Read /etc/lamalibre/lamaste/pki/revoked.json AFTER upgrade",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'"
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_JSON_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-count-revoked-after",
+          "label": "Count revoked entries for cert-upgrade-agent AFTER upgrade",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REVOKED_AFTER_COUNT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REVOKED_JSON_AFTER"
+              },
+              "expression": "[.revoked[]? | select(.label | startswith(\"agent:cert-upgrade-agent\"))] | length"
+            }
+          }
+        },
+        {
+          "id": "step-compute-revoked-delta",
+          "label": "Compute delta = AFTER - BEFORE (must be >= 1)",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo $(( REVOKED_AFTER_COUNT - REVOKED_BEFORE_COUNT ))"
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_DELTA",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-old-revoked",
+          "label": "Upgrade-cert added the old serial to revoked.json (delta >= 1)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "REVOKED_DELTA"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Old agent cert has been revoked during upgrade (revoked.json count grew)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "enroll-delegated-guards",
+      "label": "enroll-delegated: validate role guards",
+      "steps": [
+        {
+          "id": "step-delegated-admin",
+          "label": "Admin cert calling enroll-delegated (expect 403 — admin has no agent label)",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "DELEGATED_ADMIN_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-delegated-admin-assert",
+          "label": "Admin cert gets 403 on enroll-delegated (agent role required)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELEGATED_ADMIN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "enroll-delegated rejects admin cert with 403 (route requires agent role)"
+            }
+          }
+        },
+        {
+          "id": "step-copy-agent-key",
+          "label": "Reuse the freshly rotated key as agent private key for subsequent mTLS calls",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cp /tmp/e2e-26-new.key /tmp/e2e-26-agent.key && chmod 0600 /tmp/e2e-26-agent.key"
+          }
+        },
+        {
+          "id": "step-write-new-cert-local",
+          "label": "Write extracted PEM to local tmp file",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "LOCAL_CERT=$(mktemp /tmp/e2e-26-agent-cert-XXXXXXXX.crt) && echo \"$UPGRADE_RESPONSE\" | jq -r '.cert' > \"$LOCAL_CERT\" && echo \"$LOCAL_CERT\""
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_CERT_PATH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-transfer-new-cert",
+          "label": "Transfer the new cert PEM to host VM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "multipass transfer \"$LOCAL_CERT_PATH\" lamaste-host:/tmp/e2e-26-agent.crt && multipass exec lamaste-host -- sudo chmod 0644 /tmp/e2e-26-agent.crt && rm -f \"$LOCAL_CERT_PATH\" && echo ok"
+          },
+          "capture": [
+            {
+              "variable": "NEW_CERT_WRITTEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-new-cert-written-ok",
+          "label": "New cert PEM written to host filesystem",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_CERT_WRITTEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "ok"
+              },
+              "message": "New cert PEM successfully written to host"
+            }
+          }
+        },
+        {
+          "id": "step-delegated-agent-call",
+          "label": "Agent cert without owned ticket instance",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-26-agent.crt --key /tmp/e2e-26-agent.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "DELEGATED_AGENT_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-delegated-agent-assert",
+          "label": "Agent without ticket instance ownership is rejected (4xx)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "DELEGATED_AGENT_STATUS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "4"
+              },
+              "message": "enroll-delegated returns 4xx for agent without ticket scope/instance"
+            }
+          }
+        },
+        {
+          "id": "step-delegated-status-log",
+          "label": "enroll-delegated HTTP status logged",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "enroll-delegated with agent cert (no ticket instance) returned HTTP $DELEGATED_AGENT_STATUS"
+          }
+        }
+      ]
+    },
+    {
+      "id": "patch-allowed-sites",
+      "label": "PATCH /certs/agent/:label/allowed-sites",
+      "steps": [
+        {
+          "id": "step-patch-empty",
+          "label": "PATCH allowed-sites to []",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/cert-upgrade-agent/allowed-sites",
+            "body": {
+              "allowedSites": []
+            }
+          },
+          "capture": [
+            {
+              "variable": "PATCH_EMPTY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-patch-empty-ok",
+          "label": "PATCH allowed-sites=[] returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_EMPTY"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PATCH allowed-sites=[] returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-patch-empty-label",
+          "label": "PATCH allowed-sites=[] echoes label",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_EMPTY"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "literal",
+                "value": "cert-upgrade-agent"
+              },
+              "message": "PATCH allowed-sites response echoes agent label"
+            }
+          }
+        },
+        {
+          "id": "step-patch-fixture",
+          "label": "PATCH allowed-sites to [cert-upgrade-site]",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/cert-upgrade-agent/allowed-sites",
+            "body": {
+              "allowedSites": [
+                "cert-upgrade-site"
+              ]
+            }
+          },
+          "capture": [
+            {
+              "variable": "PATCH_FIXTURE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-patch-fixture-ok",
+          "label": "PATCH allowed-sites=[fixture] returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_FIXTURE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "PATCH allowed-sites=[cert-upgrade-site] returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-fixture-echoed",
+          "label": "Response echoes the assigned site name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PATCH_FIXTURE"
+              },
+              "path": ".allowedSites[0]",
+              "expected": {
+                "kind": "literal",
+                "value": "cert-upgrade-site"
+              },
+              "message": "PATCH allowed-sites response lists the fixture site"
+            }
+          }
+        },
+        {
+          "id": "step-verify-persist",
+          "label": "GET /api/certs/agent and confirm allowedSites persisted",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENTS_AFTER_PATCH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-persist-extract",
+          "label": "Extract persisted allowedSites[0]",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENTS_AFTER_PATCH\" | jq -r '[.agents[] | select(.label==\"cert-upgrade-agent\" and .revoked==false)] | last | .allowedSites[0] // \"\"'"
+          },
+          "capture": [
+            {
+              "variable": "PERSISTED_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-persist-assert",
+          "label": "allowedSites persisted in agent registry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PERSISTED_SITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "cert-upgrade-site"
+              },
+              "message": "allowedSites persists to agent registry after PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-patch-reject-invalid-site",
+          "label": "PATCH allowed-sites with invalid site name (UPPERCASE) → 4xx",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"allowedSites\":[\"INVALID-UPPERCASE\"]}' https://127.0.0.1:9292/api/certs/agent/cert-upgrade-agent/allowed-sites 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "INVALID_PATCH_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-invalid-patch-assert",
+          "label": "Invalid site name in PATCH returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_PATCH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH allowed-sites rejects uppercase site names with 400 (Zod regex validation)"
+            }
+          }
+        },
+        {
+          "id": "step-patch-unknown-label-status",
+          "label": "PATCH allowed-sites on unknown agent label → 404",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"allowedSites\":[]}' https://127.0.0.1:9292/api/certs/agent/does-not-exist-26/allowed-sites 2>/dev/null || echo 000"
+          },
+          "capture": [
+            {
+              "variable": "UNKNOWN_PATCH_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-unknown-label-assert",
+          "label": "Unknown label returns 404 Not Found",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNKNOWN_PATCH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "PATCH allowed-sites on unknown label returns 404"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_patch",
+    "host_api_delete"
+  ]
+}

@@ -22,19 +22,19 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
-agent_exec() { multipass exec portlama-agent -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
+agent_exec() { multipass exec lamaste-agent -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post_status() {
-  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 # Agent-cert API helpers
@@ -43,7 +43,7 @@ host_agent_api_post() {
   local key_path="$2"
   local api_path="$3"
   local data="$4"
-  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}"
+  host_exec "curl -skf --max-time 30 --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}"
 }
 
 host_agent_api_post_status() {
@@ -51,7 +51,7 @@ host_agent_api_post_status() {
   local key_path="$2"
   local api_path="$3"
   local data="$4"
-  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert ${cert_path} --key ${key_path} --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}"
+  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert ${cert_path} --key ${key_path} --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '${data}' https://127.0.0.1:9292/api/${api_path}"
 }
 
 begin_test "18 — Agent Plugin Hosting"

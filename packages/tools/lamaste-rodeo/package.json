@@ -1,0 +1,38 @@
+{
+  "name": "@lamalibre/lamaste-rodeo",
+  "version": "2.0.0",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "registry": "http://localhost:4873",
+    "access": "public"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Code Lama Software",
+  "description": "Lamaste project package for the rodeo test runner",
+  "scripts": {
+    "build": "echo 'no build'",
+    "lint": "echo 'no lint'"
+  },
+  "rodeoProject": {
+    "name": "lamaste",
+    "version": "0.1.1",
+    "config": "./rodeo.config.json",
+    "hooks": "./rodeo.hooks.js",
+    "suites": [
+      "three-vm",
+      "single-vm"
+    ],
+    "workspaceRoot": "../../.."
+  },
+  "files": [
+    "rodeo.config.json",
+    "rodeo.hooks.js",
+    "tests"
+  ],
+  "dependencies": {},
+  "peerDependencies": {
+    "@lamalibre/rodeo": "^0.1.0"
+  },
+  "devDependencies": {}
+}

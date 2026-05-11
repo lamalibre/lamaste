@@ -1,4 +1,4 @@
-# Portlama E2E: 13 — Site Lifecycle
+# Lamaste E2E: 13 — Site Lifecycle
 
 > Started at `2026-03-30 13:07:04 UTC`
 
@@ -13,7 +13,7 @@
 ✅ `13:07:05` Site has an ID  
 ✅ `13:07:05` Site name matches  
 ✅ `13:07:05` Site type is managed  
-ℹ️ `13:07:05` Created site: e2esite.test.portlama.local (ID: ae423cb6-1bde-4745-915c-68f469c426f6)  
+ℹ️ `13:07:05` Created site: e2esite.test.lamaste.local (ID: ae423cb6-1bde-4745-915c-68f469c426f6)  
 
 ## Verify site in listing
 

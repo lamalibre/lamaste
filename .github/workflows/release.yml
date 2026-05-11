@@ -40,12 +40,12 @@ jobs:
 
       - name: Copy repo-root files into package directory
         run: |
-          cp LICENSE packages/create-portlama/LICENSE
-          cp CHANGELOG.md packages/create-portlama/CHANGELOG.md
-          cp README.md packages/create-portlama/README.md
+          cp LICENSE packages/provisioners/server/LICENSE
+          cp CHANGELOG.md packages/provisioners/server/CHANGELOG.md
+          cp README.md packages/provisioners/server/README.md
 
       - name: Publish to npm
-        working-directory: packages/create-portlama
+        working-directory: packages/provisioners/server
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -57,5 +57,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Portlama v${{ steps.version.outputs.version }}
+          name: Lamaste v${{ steps.version.outputs.version }}
           generate_release_notes: true

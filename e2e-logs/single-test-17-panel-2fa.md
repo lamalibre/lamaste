@@ -1,4 +1,4 @@
-# Portlama E2E: 17 — Panel Built-in TOTP 2FA
+# Lamaste E2E: 17 — Panel Built-in TOTP 2FA
 
 > Started at `2026-03-30 13:07:11 UTC`
 

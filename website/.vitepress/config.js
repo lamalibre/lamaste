@@ -14,30 +14,30 @@ try {
 }
 
 export default defineConfig({
-  title: 'Portlama',
+  title: 'Lamaste',
   description: 'Self-hosted secure tunneling platform',
 
-  // GitHub Pages deploys to https://<org>.github.io/portlama/
-  base: '/portlama/',
+  // GitHub Pages deploys to https://<org>.github.io/lamaste/
+  base: '/lamaste/',
 
   srcDir: resolve(__dirname, '..', 'src'),
   outDir: resolve(__dirname, 'dist'),
 
-  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/portlama/logo.svg' }]],
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/lamaste/logo.svg' }]],
 
   themeConfig: {
-    siteTitle: 'Portlama',
+    siteTitle: 'Lamaste',
     logo: '/logo.svg',
 
     sidebar,
 
     nav: [
-      { text: 'Guide', link: '/00-introduction/what-is-portlama' },
+      { text: 'Guide', link: '/00-introduction/what-is-lamaste' },
       { text: 'API Reference', link: '/04-api-reference/overview' },
       { text: 'E2E Results', link: '/e2e-results/single-vm-e2e' },
     ],
 
-    socialLinks: [{ icon: 'github', link: 'https://github.com/lamalibre/portlama' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/lamalibre/lamaste' }],
 
     search: {
       provider: 'local',
@@ -45,7 +45,7 @@ export default defineConfig({
 
     editLink: {
       pattern:
-        'https://github.com/lamalibre/portlama/edit/main/packages/panel-client/public/docs/:path',
+        'https://github.com/lamalibre/lamaste/edit/main/packages/panel-client/public/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

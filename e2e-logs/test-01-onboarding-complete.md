@@ -1,4 +1,4 @@
-# Portlama E2E: 01 — Onboarding Complete Verification (Three-VM)
+# Lamaste E2E: 01 — Onboarding Complete Verification (Three-VM)
 
 > Started at `2026-03-30 13:08:21 UTC`
 
@@ -6,31 +6,31 @@
 ## Onboarding status
 
 ✅ `13:08:21` Onboarding status is COMPLETED  
-✅ `13:08:21` Domain is set in onboarding status: test.portlama.local  
+✅ `13:08:21` Domain is set in onboarding status: test.lamaste.local  
 
 ## Core services running
 
 ✅ `13:08:21` Service nginx is active  
 ✅ `13:08:21` Service chisel is active  
 ✅ `13:08:21` Service authelia is active  
-✅ `13:08:21` Service portlama-panel is active  
+✅ `13:08:21` Service lamaste-panel is active  
 
 ## Self-signed certificates exist
 
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/ca.crt  
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/ca.key  
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/client.crt  
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/client.key  
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/self-signed.pem  
-✅ `13:08:21` Certificate exists: /etc/portlama/pki/self-signed-key.pem  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/ca.crt  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/ca.key  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/client.crt  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/client.key  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/self-signed.pem  
+✅ `13:08:21` Certificate exists: /etc/lamaste/pki/self-signed-key.pem  
 
 ## Panel accessible via domain (mTLS)
 
-✅ `13:08:22` Panel accessible via https://panel.test.portlama.local (HTTP 200)  
+✅ `13:08:22` Panel accessible via https://panel.test.lamaste.local (HTTP 200)  
 
 ## DNS resolution
 
-✅ `13:08:37` DNS resolves test.portlama.local to 10.13.37.1 (from host VM)  
+✅ `13:08:37` DNS resolves test.lamaste.local to 10.13.37.1 (from host VM)  
 
 ## Agent VM connectivity
 
@@ -39,7 +39,7 @@
 ## Visitor VM connectivity
 
 ✅ `13:08:37` Visitor VM can reach host VM at 10.13.37.1:9292 (HTTP 400)  
-✅ `13:08:37` Visitor VM can reach Authelia at auth.test.portlama.local (HTTP 200)  
+✅ `13:08:37` Visitor VM can reach Authelia at auth.test.lamaste.local (HTTP 200)  
 
 ---
 

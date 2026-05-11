@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "meta": {
+    "tier": "provisioned",
+    "name": "Single-VM provisioned",
+    "description": "Run host onboarding via setup-host.sh and capture credentials for the test suite.",
+    "dependsOn": "installed"
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "Static IP of the single-VM host (injected from ctx.vmIps[host])."
+    },
+    "TEST_DOMAIN": {
+      "description": "Resolved test domain (injected from ctx.domain)."
+    }
+  },
+  "assets": {
+    "host": [
+      "setup-host.sh",
+      "logging.sh",
+      "vm-api-helper.sh",
+      "vm-api-status-helper.sh",
+      "certbot-shim.sh"
+    ]
+  },
+  "sections": [
+    {
+      "id": "host-setup",
+      "label": "Run host onboarding",
+      "steps": [
+        {
+          "id": "run-setup-host",
+          "label": "Execute setup-host.sh against the host VM",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "bash /tmp/e2e/setup-host.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\""
+          }
+        },
+        {
+          "id": "read-credentials",
+          "label": "Read captured credentials JSON from the host VM",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/lamalibre-lamaste-test-credentials.json"
+          },
+          "capture": [
+            { "variable": "HOST_IP_OUT",        "from": { "kind": "jq", "expression": ".hostIp" } },
+            { "variable": "TEST_DOMAIN_OUT",    "from": { "kind": "jq", "expression": ".testDomain" } },
+            { "variable": "ENROLLMENT_TOKEN",   "from": { "kind": "jq", "expression": ".enrollmentToken" } },
+            { "variable": "TEST_USER",          "from": { "kind": "jq", "expression": ".testUser" } },
+            { "variable": "TEST_USER_PASSWORD", "from": { "kind": "jq", "expression": ".testUserPassword" } },
+            { "variable": "AGENT_LABEL",        "from": { "kind": "jq", "expression": ".agentLabel" } }
+          ]
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "hostIp":           { "from": "HOST_IP_OUT",        "scope": "credentials" },
+    "testDomain":       { "from": "TEST_DOMAIN_OUT",    "scope": "credentials" },
+    "enrollmentToken":  { "from": "ENROLLMENT_TOKEN",   "scope": "credentials" },
+    "testUser":         { "from": "TEST_USER",          "scope": "credentials" },
+    "testUserPassword": { "from": "TEST_USER_PASSWORD", "scope": "credentials" },
+    "agentLabel":       { "from": "AGENT_LABEL",        "scope": "credentials" }
+  }
+}

@@ -1,0 +1,1106 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 5,
+    "name": "User Lifecycle",
+    "suite": "e2e",
+    "description": "05 — User Lifecycle",
+    "deps": [],
+    "requires": [
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "TEST_USER": {
+      "description": "TEST_USER"
+    }
+  },
+  "constants": {},
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping user lifecycle tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "create-user",
+      "label": "Create user",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Set CREATE_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat <<EOF { \"username\": \"$TEST_USERNAME\", \"displayname\": \"$TEST_DISPLAY\", \"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\" } EOF "
+          },
+          "capture": [
+            {
+              "variable": "CREATE_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "$CREATE_BODY"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "User creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "User creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Username matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".user.username",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_USERNAME"
+              },
+              "message": "Username matches"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Display name matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".user.displayname",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_DISPLAY"
+              },
+              "message": "Display name matches"
+            }
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Email matches",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".user.email",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_EMAIL"
+              },
+              "message": "Email matches"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create user\"\n# ---------------------------------------------------------------------------\n\nCREATE_BODY=$(cat <<EOF\n{\n  \"username\": \"$TEST_USERNAME\",\n  \"displayname\": \"$TEST_DISPLAY\",\n  \"email\": \"$TEST_EMAIL\",\n  \"password\": \"$TEST_PASSWORD\"\n}\nEOF\n)\n\nCREATE_RESPONSE=$(api_post \"users\" \"$CREATE_BODY\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"User creation returned ok: true\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.user.username' \"$TEST_USERNAME\" \"Username matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.user.displayname' \"$TEST_DISPLAY\" \"Display name matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.user.email' \"$TEST_EMAIL\" \"Email matches\" || true"
+    },
+    {
+      "id": "verify-user-in-list",
+      "label": "Verify user in list",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "LIST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Set FOUND_USER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "User appears in GET /api/users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_USER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_USERNAME"
+              },
+              "message": "User appears in GET /api/users"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set LIST_JSON",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u)' 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "LIST_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "No password field in user list response",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "LIST_JSON"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "password"
+              },
+              "message": "No password field in user list response"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "No bcrypt hash in user list response",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "LIST_JSON"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "$2b$"
+              },
+              "message": "No bcrypt hash in user list response"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify user in list\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(api_get \"users\")\nFOUND_USER=$(echo \"$LIST_RESPONSE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_USER\" \"$TEST_USERNAME\" \"User appears in GET /api/users\" || true\n\n# Verify password hash is NOT in the response\nLIST_JSON=$(echo \"$LIST_RESPONSE\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u)' 2>/dev/null || echo \"{}\")\nassert_not_contains \"$LIST_JSON\" \"password\" \"No password field in user list response\" || true\nassert_not_contains \"$LIST_JSON\" '$2b$' \"No bcrypt hash in user list response\" || true"
+    },
+    {
+      "id": "validation-duplicate-username",
+      "label": "Validation: duplicate username",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": "$CREATE_BODY",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DUP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Duplicate username rejected (HTTP 409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DUP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Duplicate username rejected (HTTP 409)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate username\"\n# ---------------------------------------------------------------------------\n\nDUP_STATUS=$(api_post_status \"users\" \"$CREATE_BODY\")\nassert_eq \"$DUP_STATUS\" \"409\" \"Duplicate username rejected (HTTP 409)\" || true"
+    },
+    {
+      "id": "validation-invalid-input",
+      "label": "Validation: invalid input",
+      "steps": [
+        {
+          "id": "step-15",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": {
+              "username": "x"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Incomplete user data rejected (HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Incomplete user data rejected (HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Incomplete user data should be rejected (got HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Incomplete user data should be rejected (got HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "POST /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users",
+            "body": {
+              "username": "e2eshort",
+              "displayname": "Short",
+              "email": "s@s.com",
+              "password": "abc"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "SHORT_PW_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Short password rejected (HTTP $SHORT_PW_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Short password rejected (HTTP $SHORT_PW_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "SHORT_PW_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "SHORT_PW_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Short password should be rejected (got HTTP $SHORT_PW_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Short password should be rejected (got HTTP $SHORT_PW_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "SHORT_PW_STATUS",
+                "value": "400"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "SHORT_PW_STATUS",
+                "value": "422"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: invalid input\"\n# ---------------------------------------------------------------------------\n\n# Missing required fields\nINVALID_STATUS=$(api_post_status \"users\" '{\"username\":\"x\"}')\nif [ \"$INVALID_STATUS\" = \"400\" ] || [ \"$INVALID_STATUS\" = \"422\" ]; then\n  log_pass \"Incomplete user data rejected (HTTP $INVALID_STATUS)\"\nelse\n  log_fail \"Incomplete user data should be rejected (got HTTP $INVALID_STATUS)\"\nfi\n\n# Short password\nSHORT_PW_STATUS=$(api_post_status \"users\" '{\"username\":\"e2eshort\",\"displayname\":\"Short\",\"email\":\"s@s.com\",\"password\":\"abc\"}')\nif [ \"$SHORT_PW_STATUS\" = \"400\" ] || [ \"$SHORT_PW_STATUS\" = \"422\" ]; then\n  log_pass \"Short password rejected (HTTP $SHORT_PW_STATUS)\"\nelse\n  log_fail \"Short password should be rejected (got HTTP $SHORT_PW_STATUS)\"\nfi"
+    },
+    {
+      "id": "reset-totp",
+      "label": "Reset TOTP",
+      "steps": [
+        {
+          "id": "step-21",
+          "label": "POST /api/users/$TEST_USERNAME/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/$TEST_USERNAME/reset-totp"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "TOTP reset returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "TOTP reset returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Extract TOTP_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "TOTP URI is a valid otpauth:// URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "TOTP URI is a valid otpauth:// URI"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "TOTP URI does not start with otpauth:// (got: $TOTP_URI)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "TOTP URI does not start with otpauth:// (got: $TOTP_URI)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reset TOTP\"\n# ---------------------------------------------------------------------------\n\nTOTP_RESPONSE=$(api_post \"users/$TEST_USERNAME/reset-totp\")\nassert_json_field \"$TOTP_RESPONSE\" '.ok' 'true' \"TOTP reset returned ok: true\" || true\n\nTOTP_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nif echo \"$TOTP_URI\" | grep -q \"^otpauth://\"; then\n  log_pass \"TOTP URI is a valid otpauth:// URI\"\nelse\n  log_fail \"TOTP URI does not start with otpauth:// (got: $TOTP_URI)\"\nfi"
+    },
+    {
+      "id": "totp-for-nonexistent-user",
+      "label": "TOTP for nonexistent user",
+      "steps": [
+        {
+          "id": "step-26",
+          "label": "POST /api/users/nonexistent-user-xyz/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/nonexistent-user-xyz/reset-totp",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "TOTP_404_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "TOTP reset for nonexistent user returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TOTP_404_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "TOTP reset for nonexistent user returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"TOTP for nonexistent user\"\n# ---------------------------------------------------------------------------\n\nTOTP_404_STATUS=$(api_post_status \"users/nonexistent-user-xyz/reset-totp\")\nassert_eq \"$TOTP_404_STATUS\" \"404\" \"TOTP reset for nonexistent user returns 404\" || true"
+    },
+    {
+      "id": "update-user",
+      "label": "Update user",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "PUT /api/users/$TEST_USERNAME",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PUT",
+            "path": "users/$TEST_USERNAME",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "User update returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "User update returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Display name updated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_RESPONSE"
+              },
+              "path": ".user.displayname",
+              "expected": {
+                "kind": "var",
+                "name": "UPDATED_DISPLAY"
+              },
+              "message": "Display name updated"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "LIST_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "Set FOUND_DISPLAY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_AFTER\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .displayname' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_DISPLAY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Display name persisted after update",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_DISPLAY"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "UPDATED_DISPLAY"
+              },
+              "message": "Display name persisted after update"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Update user\"\n# ---------------------------------------------------------------------------\n\nUPDATED_DISPLAY=\"Updated E2E User\"\nUPDATE_RESPONSE=$(api_put \"users/$TEST_USERNAME\" \"{\\\"displayname\\\":\\\"$UPDATED_DISPLAY\\\"}\")\nassert_json_field \"$UPDATE_RESPONSE\" '.ok' 'true' \"User update returned ok: true\" || true\nassert_json_field \"$UPDATE_RESPONSE\" '.user.displayname' \"$UPDATED_DISPLAY\" \"Display name updated\" || true\n\n# Verify the update persisted\nLIST_AFTER=$(api_get \"users\")\nFOUND_DISPLAY=$(echo \"$LIST_AFTER\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .displayname' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_DISPLAY\" \"$UPDATED_DISPLAY\" \"Display name persisted after update\" || true"
+    },
+    {
+      "id": "update-nonexistent-user",
+      "label": "Update nonexistent user",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "Set UPDATE_404_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X PUT -H \"Content-Type: application/json\" -d '{\"displayname\":\"Ghost\"}' \"${BASE_URL}/api/users/nonexistent-user-xyz\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_404_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Update nonexistent user returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UPDATE_404_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Update nonexistent user returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Update nonexistent user\"\n# ---------------------------------------------------------------------------\n\nUPDATE_404_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X PUT \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"displayname\":\"Ghost\"}' \\\n  \"${BASE_URL}/api/users/nonexistent-user-xyz\" 2>/dev/null || echo \"000\")\nassert_eq \"$UPDATE_404_STATUS\" \"404\" \"Update nonexistent user returns 404\" || true"
+    },
+    {
+      "id": "delete-user",
+      "label": "Delete user",
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "DELETE /api/users/$TEST_USERNAME",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "users/$TEST_USERNAME"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "User deletion returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "User deletion returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "LIST_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Set FOUND_FINAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_FINAL\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "User no longer in list after deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_FINAL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "User no longer in list after deletion"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete user\"\n# ---------------------------------------------------------------------------\n\nDELETE_RESPONSE=$(api_delete \"users/$TEST_USERNAME\")\nassert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"User deletion returned ok: true\" || true\n\n# Verify user is gone\nLIST_FINAL=$(api_get \"users\")\nFOUND_FINAL=$(echo \"$LIST_FINAL\" | jq -r --arg u \"$TEST_USERNAME\" '.users[] | select(.username == $u) | .username' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_FINAL\" \"\" \"User no longer in list after deletion\" || true"
+    },
+    {
+      "id": "cannot-delete-last-user",
+      "label": "Cannot delete last user",
+      "steps": [
+        {
+          "id": "step-42",
+          "label": "GET /api/users",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "users"
+          },
+          "capture": [
+            {
+              "variable": "REMAINING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Set USER_COUNT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$REMAINING\" | jq '.users | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "USER_COUNT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Extract LAST_USER",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "LAST_USER",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REMAINING"
+              },
+              "expression": ".users[0].username"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "USER_COUNT",
+            "value": "1"
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set LAST_DEL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X DELETE \"${BASE_URL}/api/users/$LAST_USER\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "LAST_DEL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "USER_COUNT",
+            "value": "1"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Cannot delete last user (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LAST_DEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Cannot delete last user (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "USER_COUNT",
+            "value": "1"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Cannot test last-user protection — $USER_COUNT users exist (need exactly 1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Cannot test last-user protection — $USER_COUNT users exist (need exactly 1)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "USER_COUNT",
+            "value": "1"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "This scenario is tested when only the admin user remains",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "This scenario is tested when only the admin user remains"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "USER_COUNT",
+            "value": "1"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cannot delete last user\"\n# ---------------------------------------------------------------------------\n\n# Get the list of remaining users\nREMAINING=$(api_get \"users\")\nUSER_COUNT=$(echo \"$REMAINING\" | jq '.users | length' 2>/dev/null || echo \"0\")\n\nif [ \"$USER_COUNT\" = \"1\" ]; then\n  LAST_USER=$(echo \"$REMAINING\" | jq -r '.users[0].username' 2>/dev/null || echo \"\")\n  LAST_DEL_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    --insecure \\\n    --cert \"$CERT_PATH\" \\\n    --key \"$KEY_PATH\" \\\n    --cacert \"$CA_PATH\" \\\n    -X DELETE \\\n    \"${BASE_URL}/api/users/$LAST_USER\" 2>/dev/null || echo \"000\")\n  assert_eq \"$LAST_DEL_STATUS\" \"400\" \"Cannot delete last user (HTTP 400)\" || true\nelse\n  log_info \"Cannot test last-user protection — $USER_COUNT users exist (need exactly 1)\"\n  log_info \"This scenario is tested when only the admin user remains\"\nfi"
+    },
+    {
+      "id": "delete-nonexistent-user",
+      "label": "Delete nonexistent user",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "Set DEL_404_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X DELETE \"${BASE_URL}/api/users/nonexistent-user-xyz\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "DEL_404_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Delete nonexistent user returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DEL_404_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Delete nonexistent user returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete nonexistent user\"\n# ---------------------------------------------------------------------------\n\nDEL_404_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/users/nonexistent-user-xyz\" 2>/dev/null || echo \"000\")\nassert_eq \"$DEL_404_STATUS\" \"404\" \"Delete nonexistent user returns 404\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 05 — User Lifecycle\n# ============================================================================\n# Verifies Authelia user CRUD operations:\n# - Create user via POST /api/users\n# - Verify user in GET /api/users (no password hash exposed)\n# - Reset TOTP via POST /api/users/:username/reset-totp\n# - Update user via PUT /api/users/:username\n# - Delete user via DELETE /api/users/:username\n# - Verify last-user deletion prevention\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nTEST_USERNAME=\"e2etest-$(date +%s)\"\nTEST_DISPLAY=\"E2E Test User\"\nTEST_EMAIL=\"e2etest@example.com\"\nTEST_PASSWORD=\"SecurePass123!!\"\n\nbegin_test \"05 — User Lifecycle\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

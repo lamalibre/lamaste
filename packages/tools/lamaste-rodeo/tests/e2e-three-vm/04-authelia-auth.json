@@ -1,0 +1,1155 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 4,
+    "name": "Authelia Authentication",
+    "suite": "e2e-three-vm",
+    "description": "04 — Authelia Authentication (Three-VM)",
+    "deps": [],
+    "requires": [
+      "multipass",
+      "curl",
+      "jq"
+    ]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    },
+    "TEST_USER": {
+      "description": "TEST_USER"
+    },
+    "TEST_USER_PASSWORD": {
+      "description": "TEST_USER_PASSWORD"
+    }
+  },
+  "constants": {
+    "TUNNEL_SUBDOMAIN": {
+      "value": "e2eauth"
+    },
+    "TUNNEL_PORT": {
+      "value": "18082"
+    },
+    "TUNNEL_FQDN": {
+      "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
+      "expression": true
+    },
+    "MARKER": {
+      "value": "LAMALIBRE_LAMASTE_AUTH_OK_$timestamp()",
+      "expression": true
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Kill process",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "pkill -f 'python3 -m http.server ${TUNNEL_PORT}'|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Remove /etc/hosts entry",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${TUNNEL_FQDN}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "Delete /tmp/e2e-auth-index.html||",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-auth-index.html||"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "Delete /tmp/authelia-cookies-valid.txt",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/authelia-cookies-valid.txt"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "Remove /etc/hosts entry",
+      "target": "visitor",
+      "continueOnError": true,
+      "op": {
+        "type": "hosts",
+        "action": "remove",
+        "ip": "",
+        "hostname": "${TUNNEL_FQDN}"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "DELETE tunnels/${TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-6",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "lamaste-agent update|| true",
+        "ignoreExit": true
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-verify-onboarding-is-complete",
+      "label": "Pre-flight: verify onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping Authelia auth tests.\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "create-tunnel-and-establish-connection",
+      "label": "Create tunnel and establish connection",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Tunnel creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Tunnel has an ID",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.id",
+              "message": "Tunnel has an ID"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Created tunnel ID: $TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Created tunnel ID: $TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${MARKER}' > /tmp/e2e-auth-index.html"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Waiting for Chisel tunnel to establish...",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Waiting for Chisel tunnel to establish..."
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-auth-index.html",
+            "statusOnly": true,
+            "timeout": 3
+          },
+          "capture": [
+            {
+              "variable": "CHECK",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Chisel tunnel established",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Chisel tunnel established"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TUNNEL_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Chisel tunnel failed to establish within 15 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel tunnel failed to establish within 15 seconds"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TUNNEL_READY",
+            "value": "true"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel and establish connection\"\n# ---------------------------------------------------------------------------\n\n# Create tunnel via API — accessMode \"authenticated\" so Authelia 1FA+2FA is\n# the sole gate. Default (\"restricted\") would additionally require a per-user\n# grant; covered by the gatekeeper-specific tests, not by this one.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID\"\n\n# Add /etc/hosts entries on agent\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\n\n# Add /etc/hosts entry on visitor for the tunnel subdomain\nvisitor_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\n\n# Start HTTP server on agent\nagent_exec \"echo '${MARKER}' > /tmp/e2e-auth-index.html\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\n# Refresh agent config to pick up the new tunnel\nagent_exec \"lamaste-agent update\"\n\n# Wait for tunnel to establish\nlog_info \"Waiting for Chisel tunnel to establish...\"\nTUNNEL_READY=false\nfor i in $(seq 1 15); do\n  CHECK=$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/e2e-auth-index.html 2>/dev/null\" || echo \"000\")\n  if [ \"$CHECK\" = \"200\" ]; then\n    TUNNEL_READY=true\n    break\n  fi\n  sleep 1\ndone\n\nif [ \"$TUNNEL_READY\" = \"true\" ]; then\n  log_pass \"Chisel tunnel established\"\nelse\n  log_fail \"Chisel tunnel failed to establish within 15 seconds\"\nfi"
+    },
+    {
+      "id": "test-unauthenticated-access-is-redirected-from-visitor-vm",
+      "label": "Test: unauthenticated access is redirected (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "UNAUTH_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "UNAUTH_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Redirect points to Authelia portal (auth.${TEST_DOMAIN})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Redirect points to Authelia portal (auth.${TEST_DOMAIN})"
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Request returned 401 (Authelia enforcement confirmed)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Request returned 401 (Authelia enforcement confirmed)"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Test: unauthenticated access is redirected (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Without any auth cookie, Authelia should redirect to the login portal.\nUNAUTH_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"000\")\n\nif [ \"$UNAUTH_STATUS\" = \"302\" ] || [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)\"\nelse\n  log_fail \"Unauthenticated request should be redirected (302 or 401), got HTTP $UNAUTH_STATUS\"\nfi\n\n# Verify the redirect goes to the Authelia portal\nUNAUTH_LOCATION=$(visitor_exec \"curl -sk -o /dev/null -w '%{redirect_url}' --max-time 15 https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"\")\nif echo \"$UNAUTH_LOCATION\" | grep -qF \"auth.${TEST_DOMAIN}\"; then\n  log_pass \"Redirect points to Authelia portal (auth.${TEST_DOMAIN})\"\nelif [ \"$UNAUTH_STATUS\" = \"401\" ]; then\n  log_pass \"Request returned 401 (Authelia enforcement confirmed)\"\nelse\n  log_fail \"Redirect does not point to Authelia portal (location: $UNAUTH_LOCATION)\"\nfi"
+    },
+    {
+      "id": "test-authenticated-access-succeeds-from-visitor-vm",
+      "label": "Test: authenticated access succeeds (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": ""
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "OATHTOOL_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "POST /api/users/${TEST_USER}/reset-totp",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "users/${TEST_USER}/reset-totp",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "TOTP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "TOTP reset returned otpauth URI",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "path": ".totpUri",
+              "message": "TOTP reset returned otpauth URI"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Extract OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OTPAUTH_URI",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_RESPONSE"
+              },
+              "expression": ".totpUri"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Extract TOTP_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_SECRET",
+            "from": {
+              "kind": "sed",
+              "input": {
+                "kind": "var",
+                "name": "OTPAUTH_URI"
+              },
+              "expression": "s/.*secret=\\([A-Z2-7]*\\).*/\\1/p"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_SECRET"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Extracted TOTP secret from otpauth URI",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted TOTP secret from otpauth URI"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-valid"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Extract AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTH_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "AUTH_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Authelia first factor authentication succeeded",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia first factor authentication succeeded"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Authelia first factor authentication failed (status: $AUTH_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia first factor authentication failed (status: $AUTH_STATUS)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AUTH_STATUS",
+            "value": "OK"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "OATHTOOL_CHECK",
+        "value": "yes"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Test: authenticated access succeeds (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# IMPORTANT: Reset TOTP BEFORE first factor auth.\n# If TOTP is reset after first factor, Authelia may reject the second factor\n# because the session's expected TOTP state changed mid-authentication.\n\n# Ensure oathtool is available on the visitor VM\nOATHTOOL_CHECK=$(visitor_exec \"command -v oathtool >/dev/null 2>&1 && echo yes || echo no\")\nif [ \"$OATHTOOL_CHECK\" != \"yes\" ]; then\n  log_skip \"oathtool not available on visitor VM. Skipping TOTP-dependent tests.\"\n  end_test\n  exit $?\nfi\n\n# Reset TOTP for test user via panel API to get a fresh secret\nTOTP_RESPONSE=$(host_api_post \"users/${TEST_USER}/reset-totp\" \"{}\")\nassert_json_field_not_empty \"$TOTP_RESPONSE\" '.totpUri' \"TOTP reset returned otpauth URI\" || true\n\n# Extract the TOTP secret from the otpauth URI (the secret= parameter)\nOTPAUTH_URI=$(echo \"$TOTP_RESPONSE\" | jq -r '.totpUri' 2>/dev/null || echo \"\")\nTOTP_SECRET=$(echo \"$OTPAUTH_URI\" | sed -n 's/.*secret=\\([A-Z2-7]*\\).*/\\1/p')\n\nif [ -z \"$TOTP_SECRET\" ]; then\n  log_fail \"Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI\"\n  end_test\n  exit $?\nfi\nlog_pass \"Extracted TOTP secret from otpauth URI\"\n\n# Let Authelia pick up the new TOTP configuration and ensure we submit the\n# code in a fresh 30-second window (anti-replay protection would reject a\n# code reused from a prior test within the same window).\nwait_for_next_totp_window\n\n# Now authenticate with first factor\nAUTH_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -c /tmp/authelia-cookies-valid.txt -X POST -H 'Content-Type: application/json' -d '{\\\"username\\\":\\\"${TEST_USER}\\\",\\\"password\\\":\\\"${TEST_USER_PASSWORD}\\\",\\\"keepMeLoggedIn\\\":false,\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null\" || echo '{}')\n\nAUTH_STATUS=$(echo \"$AUTH_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$AUTH_STATUS\" = \"OK\" ]; then\n  log_pass \"Authelia first factor authentication succeeded\"\nelse\n  log_fail \"Authelia first factor authentication failed (status: $AUTH_STATUS)\"\nfi"
+    },
+    {
+      "id": "second-factor-authentication-totp-from-visitor-vm",
+      "label": "Second factor authentication (TOTP) from visitor VM",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Generate TOTP on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "totp",
+            "secret": {
+              "kind": "var",
+              "name": "TOTP_SECRET"
+            },
+            "method": "oathtool"
+          },
+          "capture": [
+            {
+              "variable": "TOTP_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "TOTP_CODE"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Generated TOTP code: ${TOTP_CODE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Generated TOTP code: ${TOTP_CODE}"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "save": "authelia-valid",
+              "load": "authelia-valid"
+            },
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TOTP_AUTH_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Extract TOTP_AUTH_STATUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOTP_AUTH_STATUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOTP_AUTH_RESPONSE"
+              },
+              "expression": ".status"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Second factor authentication succeeded (TOTP accepted)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Second factor authentication succeeded (TOTP accepted)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TOTP_AUTH_STATUS",
+            "value": "OK"
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-valid"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Authenticated request returns tunnel content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Authenticated request returns tunnel content"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-valid"
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTH_HTTP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Authenticated request returns HTTP 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTH_HTTP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Authenticated request returns HTTP 200"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Second factor authentication (TOTP) from visitor VM\"\n# ---------------------------------------------------------------------------\n\n# Generate a TOTP code on visitor VM\nTOTP_CODE=$(visitor_exec \"oathtool --totp --base32 ${TOTP_SECRET}\" 2>/dev/null || echo \"\")\nif [ -z \"$TOTP_CODE\" ] || [ ${#TOTP_CODE} -ne 6 ]; then\n  log_fail \"oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')\"\n  end_test\n  exit $?\nfi\nlog_info \"Generated TOTP code: ${TOTP_CODE}\"\n\n# POST second factor to Authelia from visitor VM\nTOTP_AUTH_RESPONSE=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies-valid.txt -c /tmp/authelia-cookies-valid.txt -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"${TOTP_CODE}\\\",\\\"targetURL\\\":\\\"https://${TUNNEL_FQDN}/\\\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null\" || echo '{}')\n\nTOTP_AUTH_STATUS=$(echo \"$TOTP_AUTH_RESPONSE\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$TOTP_AUTH_STATUS\" = \"OK\" ]; then\n  log_pass \"Second factor authentication succeeded (TOTP accepted)\"\nelse\n  log_fail \"Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)\"\nfi\n\n# Fetch the tunnel URL from visitor VM with the valid session cookie\nAUTH_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies-valid.txt https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$AUTH_CONTENT\" \"$MARKER\" \"Authenticated request returns tunnel content\" || true\n\n# Also verify the HTTP status is 200\nAUTH_HTTP_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-cookies-valid.txt https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$AUTH_HTTP_STATUS\" \"200\" \"Authenticated request returns HTTP 200\" || true"
+    },
+    {
+      "id": "test-invalid-auth-cookie-is-rejected-from-visitor-vm",
+      "label": "Test: invalid auth cookie is rejected (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Exec on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "exec",
+            "command": "echo '# Netscape HTTP Cookie File' > /tmp/authelia-cookies-invalid.txt && echo 'auth.${TEST_DOMAIN}\\tFALSE\\t/\\tTRUE\\t0\\tauthelia_session\\tinvalid_session_value_12345' >> /tmp/authelia-cookies-invalid.txt"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-invalid"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INVALID_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Invalid auth cookie rejected (HTTP $INVALID_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Invalid auth cookie rejected (HTTP $INVALID_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "INVALID_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Invalid auth cookie should be rejected (302 or 401), got HTTP $INVALID_STATUS",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Invalid auth cookie should be rejected (302 or 401), got HTTP $INVALID_STATUS"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "302"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "INVALID_STATUS",
+                "value": "401"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${TUNNEL_FQDN}/e2e-auth-index.html",
+            "tlsVerify": false,
+            "timeout": 15,
+            "cookies": {
+              "load": "authelia-invalid"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INVALID_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "Invalid auth cookie does not return tunnel content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "INVALID_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Invalid auth cookie does not return tunnel content"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Test: invalid auth cookie is rejected (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Create a cookie jar with a bogus session cookie on visitor VM\nvisitor_exec \"echo '# Netscape HTTP Cookie File' > /tmp/authelia-cookies-invalid.txt && echo 'auth.${TEST_DOMAIN}\\tFALSE\\t/\\tTRUE\\t0\\tauthelia_session\\tinvalid_session_value_12345' >> /tmp/authelia-cookies-invalid.txt\"\n\nINVALID_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-cookies-invalid.txt https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"000\")\n\nif [ \"$INVALID_STATUS\" = \"302\" ] || [ \"$INVALID_STATUS\" = \"401\" ]; then\n  log_pass \"Invalid auth cookie rejected (HTTP $INVALID_STATUS)\"\nelse\n  log_fail \"Invalid auth cookie should be rejected (302 or 401), got HTTP $INVALID_STATUS\"\nfi\n\n# Verify the response does NOT contain the tunnel content\nINVALID_CONTENT=$(visitor_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies-invalid.txt https://${TUNNEL_FQDN}/e2e-auth-index.html 2>/dev/null\" || echo \"\")\nassert_not_contains \"$INVALID_CONTENT\" \"$MARKER\" \"Invalid auth cookie does not return tunnel content\" || true"
+    },
+    {
+      "id": "test-authelia-portal-is-accessible-from-visitor-vm",
+      "label": "Test: Authelia portal is accessible (from visitor VM)",
+      "steps": [
+        {
+          "id": "step-60",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://auth.${TEST_DOMAIN}/",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 15
+          },
+          "capture": [
+            {
+              "variable": "PORTAL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Authelia portal accessible at https://auth.${TEST_DOMAIN} (HTTP $PORTAL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia portal accessible at https://auth.${TEST_DOMAIN} (HTTP $PORTAL_STATUS)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_eq",
+                "variable": "PORTAL_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_eq",
+                "variable": "PORTAL_STATUS",
+                "value": "302"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Authelia portal not accessible (HTTP $PORTAL_STATUS)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia portal not accessible (HTTP $PORTAL_STATUS)"
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "PORTAL_STATUS",
+                "value": "200"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "PORTAL_STATUS",
+                "value": "302"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Test: Authelia portal is accessible (from visitor VM)\"\n# ---------------------------------------------------------------------------\n\n# Verify the Authelia portal itself is reachable from external visitor\nPORTAL_STATUS=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://auth.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$PORTAL_STATUS\" = \"200\" ] || [ \"$PORTAL_STATUS\" = \"302\" ]; then\n  log_pass \"Authelia portal accessible at https://auth.${TEST_DOMAIN} (HTTP $PORTAL_STATUS)\"\nelse\n  log_fail \"Authelia portal not accessible (HTTP $PORTAL_STATUS)\"\nfi"
+    }
+  ],
+  "apiHelpers": [
+    "host_api_get",
+    "host_api_post",
+    "host_api_delete"
+  ],
+  "headerRaw": "# ============================================================================\n# 04 — Authelia Authentication (Three-VM)\n# ============================================================================\n# Tests that Authelia properly protects tunnel access from an external visitor:\n#\n# 1. Curl tunnel URL WITHOUT auth cookie from visitor VM — should redirect (302)\n# 2. Curl tunnel URL WITH valid auth cookie from visitor VM — should return content\n# 3. Curl tunnel URL with INVALID auth cookie from visitor VM — should redirect\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2eauth\"\nTUNNEL_PORT=18082\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMALIBRE_LAMASTE_AUTH_OK_$(date +%s)\"\n\nbegin_test \"04 — Authelia Authentication (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/e2e-auth-index.html 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"rm -f /tmp/authelia-cookies-valid.txt /tmp/authelia-cookies-invalid.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

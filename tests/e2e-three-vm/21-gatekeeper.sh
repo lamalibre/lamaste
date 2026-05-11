@@ -4,7 +4,7 @@
 # ============================================================================
 # Tests the full Gatekeeper authorization flow across VMs:
 #
-# 1. Group and grant CRUD via panel-server proxy
+# 1. Group and grant CRUD via serverd proxy
 # 2. Tunnel access modes (public, authenticated, restricted)
 # 3. Access check diagnostics
 # 4. Gatekeeper service health and secret auth
@@ -22,34 +22,34 @@ require_commands multipass curl jq
 # VM exec helpers
 # ---------------------------------------------------------------------------
 
-host_exec() { multipass exec portlama-host -- sudo bash -c "$1"; }
+host_exec() { multipass exec lamaste-host -- sudo bash -c "$1"; }
 
 host_api_get() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_post_status() {
-  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1"
 }
 
 host_api_delete_status() {
-  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1"
+  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1"
 }
 
 host_api_get_status() {
-  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1"
 }
 
 host_api_patch() {
-  host_exec "curl -skf --max-time 30 --cert /etc/portlama/pki/client.crt --key /etc/portlama/pki/client.key --cacert /etc/portlama/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
+  host_exec "curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1"
 }
 
 begin_test "21 — Gatekeeper Authorization (Three-VM)"
@@ -84,11 +84,11 @@ else
 fi
 
 # Verify gatekeeper-secret file exists
-SECRET_EXISTS=$(host_exec "test -f /etc/portlama/gatekeeper-secret && echo yes || echo no")
+SECRET_EXISTS=$(host_exec "test -f /etc/lamalibre/lamaste/gatekeeper-secret && echo yes || echo no")
 assert_eq "$SECRET_EXISTS" "yes" "Gatekeeper API secret file exists" || true
 
 # Verify secret file permissions
-SECRET_PERMS=$(host_exec "stat -c '%a' /etc/portlama/gatekeeper-secret 2>/dev/null || stat -f '%Lp' /etc/portlama/gatekeeper-secret 2>/dev/null || echo 'unknown'")
+SECRET_PERMS=$(host_exec "stat -c '%a' /etc/lamalibre/lamaste/gatekeeper-secret 2>/dev/null || stat -f '%Lp' /etc/lamalibre/lamaste/gatekeeper-secret 2>/dev/null || echo 'unknown'")
 assert_eq "$SECRET_PERMS" "600" "Gatekeeper secret file has 0600 permissions" || true
 
 # ===========================================================================
