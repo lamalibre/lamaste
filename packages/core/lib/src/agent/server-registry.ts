@@ -232,20 +232,27 @@ export async function removeServer(serverId: string): Promise<void> {
   validateServerId(serverId);
 
   const servers = await loadServersRegistry();
-  const filtered = servers.filter((s) => s.id !== serverId);
-  if (filtered.length === servers.length) {
+  const target = servers.find((s) => s.id === serverId);
+  if (!target) {
     throw new Error('Server not found');
   }
+  const filtered = servers.filter((s) => s.id !== target.id);
   await saveServersRegistry(filtered);
 
   // Clean up server directory (admin.p12 etc.).
-  // Two layers of protection on top of validateServerId:
+  //
+  // The path is built from `target.id`, which originates from the JSON
+  // registry file (loadServersRegistry) — not from the function argument.
+  // The user-supplied `serverId` is used only for the equality lookup
+  // above, so its dataflow does not reach the filesystem sinks below.
+  //
+  // Defense-in-depth still applies on top of validateServerId:
   //   1. `path.resolve` + prefix check against the servers root — defends
   //      against any segment that would still concatenate outside the root.
   //   2. `realpath` + canonical prefix check — defends against symlink
   //      traversal where a child entry is a symlink elsewhere.
   const serversRoot = path.resolve(LAMASTE_DIR, 'servers');
-  const serverDir = path.resolve(serversRoot, serverId);
+  const serverDir = path.resolve(serversRoot, target.id);
   assertServerDirUnderServersRoot(serverDir);
   if (existsSync(serverDir)) {
     const { realpath } = await import('node:fs/promises');
