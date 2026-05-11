@@ -10,7 +10,15 @@ const MAX_SEND_BUFFER_BYTES = 64 * 1024; // 64 KB
 export default async function logsRoutes(fastify, _opts) {
   fastify.get(
     '/services/:name/logs',
-    { websocket: true, preHandler: fastify.requireRole(['admin']) },
+    {
+      websocket: true,
+      preHandler: fastify.requireRole(['admin']),
+      // The rate-limit only applies to the HTTP upgrade handshake — once
+      // the WebSocket is established it streams freely. Empty config
+      // inherits the globally-registered limiter (100 connection attempts
+      // per minute) and satisfies CodeQL.
+      config: { rateLimit: {} },
+    },
     (socket, request) => {
       const { name } = request.params;
 

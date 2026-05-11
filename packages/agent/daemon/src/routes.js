@@ -146,7 +146,9 @@ export default async function routes(fastify, opts) {
   // -----------------------------------------------------------------------
 
   // Status visibility — readable by any authenticated caller (no capability gate).
-  fastify.get('/status', async () => {
+  // Empty `rateLimit: {}` opts the route into the globally-registered limiter
+  // (100 req/min) and satisfies the CodeQL js/missing-rate-limiting dataflow.
+  fastify.get('/status', { config: { rateLimit: {} } }, async () => {
     const config = await loadAgentConfig(label);
     const running = await isAgentLoaded(label);
     const pid = running ? await getAgentPid(label) : null;
@@ -207,27 +209,43 @@ export default async function routes(fastify, opts) {
   // Tunnels (proxied to panel server)
   // -----------------------------------------------------------------------
 
-  fastify.get('/tunnels', { preHandler: requireCap('tunnels:read') }, async () => {
-    const config = await getConfig();
-    return panelApi.fetchTunnels(config);
-  });
+  fastify.get(
+    '/tunnels',
+    { preHandler: requireCap('tunnels:read'), config: { rateLimit: {} } },
+    async () => {
+      const config = await getConfig();
+      return panelApi.fetchTunnels(config);
+    },
+  );
 
-  fastify.post('/tunnels', { preHandler: requireCap('tunnels:write') }, async (request) => {
-    const config = await getConfig();
-    return panelApi.curlAuthenticatedJson(config, [
-      '-X',
-      'POST',
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify(request.body),
-      `${config.panelUrl}/api/tunnels`,
-    ]);
-  });
+  fastify.post(
+    '/tunnels',
+    {
+      preHandler: requireCap('tunnels:write'),
+      // Moderate tier — tunnel writes are management operations.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    async (request) => {
+      const config = await getConfig();
+      return panelApi.curlAuthenticatedJson(config, [
+        '-X',
+        'POST',
+        '-H',
+        'Content-Type: application/json',
+        '-d',
+        JSON.stringify(request.body),
+        `${config.panelUrl}/api/tunnels`,
+      ]);
+    },
+  );
 
   fastify.patch(
     '/tunnels/:id',
-    { preHandler: requireCap('tunnels:write') },
+    {
+      preHandler: requireCap('tunnels:write'),
+      // Moderate tier — tunnel writes are management operations.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const { id } = request.params;
       if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
@@ -246,7 +264,11 @@ export default async function routes(fastify, opts) {
 
   fastify.delete(
     '/tunnels/:id',
-    { preHandler: requireCap('tunnels:write') },
+    {
+      preHandler: requireCap('tunnels:write'),
+      // Moderate tier — tunnel writes are management operations.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const { id } = request.params;
       if (!UUID_RE.test(id)) return reply.code(400).send({ error: 'Invalid tunnel ID' });
@@ -279,17 +301,21 @@ export default async function routes(fastify, opts) {
   // Logs
   // -----------------------------------------------------------------------
 
-  fastify.get('/logs', { preHandler: requireCap('system:read') }, async () => {
-    const logPath = agentLogFile(label);
-    try {
-      // Use tail to avoid loading large log files into memory
-      const { stdout } = await execa('tail', ['-n', '200', logPath]);
-      return { logs: stdout };
-    } catch (err) {
-      if (err.exitCode) return { logs: '' };
-      throw err;
-    }
-  });
+  fastify.get(
+    '/logs',
+    { preHandler: requireCap('system:read'), config: { rateLimit: {} } },
+    async () => {
+      const logPath = agentLogFile(label);
+      try {
+        // Use tail to avoid loading large log files into memory
+        const { stdout } = await execa('tail', ['-n', '200', logPath]);
+        return { logs: stdout };
+      } catch (err) {
+        if (err.exitCode) return { logs: '' };
+        throw err;
+      }
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Config
@@ -298,7 +324,7 @@ export default async function routes(fastify, opts) {
   // Config visibility — already strips sensitive fields. Open to any
   // authenticated caller (Bearer/admin/agent/Authelia would all be safe;
   // /api/* is closed to Authelia by the auth hook regardless).
-  fastify.get('/config', async () => {
+  fastify.get('/config', { config: { rateLimit: {} } }, async () => {
     const config = await getConfig();
     // Strip sensitive fields
     return {
@@ -311,7 +337,7 @@ export default async function routes(fastify, opts) {
     };
   });
 
-  fastify.get('/panel-url', async () => {
+  fastify.get('/panel-url', { config: { rateLimit: {} } }, async () => {
     const config = await getConfig();
     return { url: config.panelUrl };
   });
@@ -323,61 +349,77 @@ export default async function routes(fastify, opts) {
   // Certificate operations are owner-privileged: rotation invalidates the
   // current cert, and download exports the agent's private key material.
   // Neither maps cleanly onto a base capability — restrict to admin and
-  // the desktop owner (Bearer token).
-  fastify.post('/certificate/rotate', { preHandler: requireOwner }, async () => {
-    const config = await getConfig();
-    return panelApi.curlAuthenticatedJson(config, [
-      '-X',
-      'POST',
-      `${config.panelUrl}/api/certs/mtls/rotate`,
-    ]);
-  });
+  // the desktop owner (Bearer token). Strict tier (5/min): credential-
+  // bearing endpoints — brute-force surface that must not blend with the
+  // 100/min global default.
+  fastify.post(
+    '/certificate/rotate',
+    {
+      preHandler: requireOwner,
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
+    async () => {
+      const config = await getConfig();
+      return panelApi.curlAuthenticatedJson(config, [
+        '-X',
+        'POST',
+        `${config.panelUrl}/api/certs/mtls/rotate`,
+      ]);
+    },
+  );
 
-  fastify.get('/certificate/download', { preHandler: requireOwner }, async (request, reply) => {
-    const config = await getConfig();
-    const authMethod = config.authMethod || 'p12';
+  fastify.get(
+    '/certificate/download',
+    {
+      preHandler: requireOwner,
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const config = await getConfig();
+      const authMethod = config.authMethod || 'p12';
 
-    // Hardware-bound (Keychain) certs are non-extractable by design.
-    // Surface a 410 Gone so the desktop UI can show a helpful message
-    // rather than offering a download that can never succeed.
-    if (authMethod !== 'p12') {
-      return reply.code(410).send({
-        error: 'Certificate is hardware-bound and cannot be exported',
-        authMethod,
-      });
-    }
-
-    if (!config.p12Path) {
-      return reply.code(404).send({ error: 'No P12 certificate configured' });
-    }
-
-    // Defense-in-depth: confine reads to the agent data directory so a
-    // malicious config file cannot exfiltrate arbitrary files via this
-    // endpoint. This also blocks symlinks that resolve outside the dir.
-    let resolvedPath;
-    try {
-      resolvedPath = await realpath(config.p12Path);
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        return reply.code(404).send({ error: 'P12 file does not exist' });
+      // Hardware-bound (Keychain) certs are non-extractable by design.
+      // Surface a 410 Gone so the desktop UI can show a helpful message
+      // rather than offering a download that can never succeed.
+      if (authMethod !== 'p12') {
+        return reply.code(410).send({
+          error: 'Certificate is hardware-bound and cannot be exported',
+          authMethod,
+        });
       }
-      throw err;
-    }
 
-    const agentRoot = path.resolve(agentDataDir(label));
-    const relative = path.relative(agentRoot, resolvedPath);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      return reply.code(403).send({ error: 'P12 path is outside the agent data directory' });
-    }
+      if (!config.p12Path) {
+        return reply.code(404).send({ error: 'No P12 certificate configured' });
+      }
 
-    const bytes = await readFile(resolvedPath);
-    const fileName = path.basename(resolvedPath) || 'client.p12';
-    reply
-      .header('Content-Type', 'application/x-pkcs12')
-      .header('Content-Disposition', `attachment; filename="${fileName}"`)
-      .header('Content-Length', String(bytes.length));
-    return reply.send(bytes);
-  });
+      // Defense-in-depth: confine reads to the agent data directory so a
+      // malicious config file cannot exfiltrate arbitrary files via this
+      // endpoint. This also blocks symlinks that resolve outside the dir.
+      let resolvedPath;
+      try {
+        resolvedPath = await realpath(config.p12Path);
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          return reply.code(404).send({ error: 'P12 file does not exist' });
+        }
+        throw err;
+      }
+
+      const agentRoot = path.resolve(agentDataDir(label));
+      const relative = path.relative(agentRoot, resolvedPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        return reply.code(403).send({ error: 'P12 path is outside the agent data directory' });
+      }
+
+      const bytes = await readFile(resolvedPath);
+      const fileName = path.basename(resolvedPath) || 'client.p12';
+      reply
+        .header('Content-Type', 'application/x-pkcs12')
+        .header('Content-Disposition', `attachment; filename="${fileName}"`)
+        .header('Content-Length', String(bytes.length));
+      return reply.send(bytes);
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Web Panel Expose/Retract
@@ -457,7 +499,7 @@ export default async function routes(fastify, opts) {
   // Plugin management is owner/admin-only — plugin code runs unsandboxed
   // in the agent daemon process; agent capabilities never grant install
   // rights regardless of bits set on the cert.
-  fastify.get('/plugins', { preHandler: requireOwner }, async () => {
+  fastify.get('/plugins', { preHandler: requireOwner, config: { rateLimit: {} } }, async () => {
     return readPluginRegistry(pluginCfg.registryPath);
   });
 
@@ -800,26 +842,30 @@ export default async function routes(fastify, opts) {
     return { ok: true };
   });
 
-  fastify.get('/agents/:label/logs', { preHandler: requireOwner }, async (request, reply) => {
-    const { label: targetLabel } = request.params;
-    if (!LABEL_RE.test(targetLabel)) {
-      return reply.code(400).send({ error: 'Invalid agent label' });
-    }
+  fastify.get(
+    '/agents/:label/logs',
+    { preHandler: requireOwner, config: { rateLimit: {} } },
+    async (request, reply) => {
+      const { label: targetLabel } = request.params;
+      if (!LABEL_RE.test(targetLabel)) {
+        return reply.code(400).send({ error: 'Invalid agent label' });
+      }
 
-    const agent = await getAgent(targetLabel);
-    if (!agent) {
-      return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
-    }
+      const agent = await getAgent(targetLabel);
+      if (!agent) {
+        return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
+      }
 
-    const logPath = agentLogFile(targetLabel);
-    try {
-      const { stdout } = await execa('tail', ['-n', '200', logPath]);
-      return { logs: stdout };
-    } catch (err) {
-      if (err.exitCode) return { logs: '' };
-      throw err;
-    }
-  });
+      const logPath = agentLogFile(targetLabel);
+      try {
+        const { stdout } = await execa('tail', ['-n', '200', logPath]);
+        return { logs: stdout };
+      } catch (err) {
+        if (err.exitCode) return { logs: '' };
+        throw err;
+      }
+    },
+  );
 
   fastify.get('/agents/:label/config', { preHandler: requireOwner }, async (request, reply) => {
     const { label: targetLabel } = request.params;
@@ -855,9 +901,13 @@ export default async function routes(fastify, opts) {
   // (the original stubs at /services, /services, /services/:id are above
   //  but these new paths use different semantics)
 
-  fastify.get('/services/registry', { preHandler: requireCap('services:read') }, async () => {
-    return loadServiceRegistry();
-  });
+  fastify.get(
+    '/services/registry',
+    { preHandler: requireCap('services:read'), config: { rateLimit: {} } },
+    async () => {
+      return loadServiceRegistry();
+    },
+  );
 
   fastify.post(
     '/services/custom',
@@ -922,7 +972,7 @@ export default async function routes(fastify, opts) {
   // owner-side concept (which servers does this OS user know about?).
   // Agent mTLS callers are scoped to one panel and must not enumerate or
   // mutate this registry. Owner/admin only.
-  fastify.get('/servers', { preHandler: requireOwner }, async () => {
+  fastify.get('/servers', { preHandler: requireOwner, config: { rateLimit: {} } }, async () => {
     return { servers: await getServers() };
   });
 
@@ -980,9 +1030,13 @@ export default async function routes(fastify, opts) {
     }
   });
 
-  fastify.get('/storage-servers', { preHandler: requireOwner }, async () => {
-    return { servers: await getStorageServers() };
-  });
+  fastify.get(
+    '/storage-servers',
+    { preHandler: requireOwner, config: { rateLimit: {} } },
+    async () => {
+      return { servers: await getStorageServers() };
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Mode Management
@@ -990,7 +1044,7 @@ export default async function routes(fastify, opts) {
 
   // Mode (agent vs admin) is a desktop-app concept tied to the active
   // server selection — owner/admin only.
-  fastify.get('/mode', { preHandler: requireOwner }, async () => {
+  fastify.get('/mode', { preHandler: requireOwner, config: { rateLimit: {} } }, async () => {
     const mode = await getServerMode();
     return { mode };
   });
@@ -1011,7 +1065,7 @@ export default async function routes(fastify, opts) {
     return { ok: true, mode };
   });
 
-  fastify.get('/admin-cert', { preHandler: requireOwner }, async () => {
+  fastify.get('/admin-cert', { preHandler: requireOwner, config: { rateLimit: {} } }, async () => {
     const hasCert = await hasAdminCert();
     return { hasAdminCert: hasCert };
   });

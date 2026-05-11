@@ -352,6 +352,10 @@ export default async function certsRoutes(fastify, _opts) {
     '/certs/mtls/download',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Strict tier — exports the admin client P12 private key. Capped at
+      // 5/min to limit the surface for an attacker who briefly gains an
+      // admin session and tries to exfiltrate the bundle.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       // Block P12 download when admin uses hardware-bound auth
@@ -734,6 +738,9 @@ export default async function certsRoutes(fastify, _opts) {
     '/certs/agent/:label/download',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Strict tier — exports an agent client P12 private key. Same
+      // ceiling as the admin P12 download.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const params = AgentLabelParamSchema.parse(request.params);

@@ -89,6 +89,10 @@ export default async function systemRoutes(fastify, _opts) {
     '/system/update',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Moderate tier — spawns a privileged update script via systemd-run;
+      // the global 100/min default is too generous for an operation that
+      // restarts the panel daemon.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const body = UpdateBodySchema.parse(request.body);

@@ -143,156 +143,180 @@ export async function authzRoutes(fastify: FastifyInstance): Promise<void> {
    * On 403, the response body is the full access-request HTML page
    * (nginx serves this inline on the tunnel's FQDN via error_page 403 =).
    */
-  fastify.get('/authz/check', async (request: FastifyRequest, reply: FastifyReply) => {
-    const requestId = request.id;
-    const cookie = request.headers['cookie'] ?? '';
-    const originalUrl = (request.headers['x-original-url'] as string) ?? '';
-
-    if (!cookie || !originalUrl) {
-      return reply.code(401).send();
-    }
-
-    // Parse and validate X-Original-URL before any other work.
-    // Defense-in-depth: the 127.0.0.1 bind + nginx auth_request boundary is
-    // the primary guarantee that this header is trustworthy; host matching
-    // ensures a misconfigured proxy chain cannot forge tunnel identity.
-    const parsed = parseOriginalUrl(originalUrl);
-    if (!parsed) {
-      request.log.info({ requestId, reason: 'invalid_original_url' }, 'authz denied');
-      return reply.code(401).send();
-    }
-
-    // Host header check: when nginx forwards the parent request's Host to the
-    // subrequest (default behavior for auth_request), the hostname portion
-    // must match the hostname parsed from X-Original-URL. Port differences
-    // are ignored — nginx often normalizes them. An absent Host header skips
-    // the check (some proxies strip it from internal subrequests).
-    const hostHeader = (request.headers['host'] as string | undefined) ?? '';
-    if (hostHeader) {
-      const hostOnly = hostHeader.split(':')[0]?.toLowerCase() ?? '';
-      if (hostOnly && hostOnly !== parsed.hostname.toLowerCase()) {
-        request.log.info(
-          { requestId, reason: 'host_header_mismatch', originalHost: parsed.hostname, hostHeader },
-          'authz denied',
-        );
-        return reply.code(401).send();
-      }
-    }
-
-    const tunnels = fastify.getTunnels();
-    const tunnel = findTunnelByFqdn(tunnels, parsed.hostname);
-    if (!tunnel) {
-      request.log.info(
-        { requestId, reason: 'unknown_tunnel_fqdn', fqdn: parsed.hostname },
-        'authz denied',
-      );
-      return reply.code(401).send();
-    }
-
-    // Check session cache (keyed by Authelia session cookie only to prevent
-    // cache pollution via unrelated cookies like CSRF tokens or analytics).
-    const autheliaCookie = extractAutheliaCookie(cookie);
-    if (!autheliaCookie) {
-      // No authelia_session — short-circuit before any cache work or the
-      // upstream Authelia /verify call. Without this, an unauthenticated
-      // request would still cost us an Authelia round-trip.
-      request.log.info(
-        { requestId, reason: 'missing_authelia_cookie', fqdn: parsed.hostname },
-        'authz denied',
-      );
-      return reply.code(401).send();
-    }
-    const cacheKey = hashCookie(autheliaCookie);
-    const sessionCache = fastify.getSessionCache();
-    const cached = sessionCache.get(cacheKey);
-    const now = Date.now();
-    let session: AutheliaSession | undefined;
-
-    if (cached && cached.expiresAt > now) {
-      session = cached;
-    } else {
-      if (cached) {
-        // Lazy TTL eviction — one stale entry pruned per request.
-        sessionCache.delete(cacheKey);
-      }
-      const validated = await validateWithAuthelia(cookie, originalUrl, requestId);
-      if (!validated) {
-        request.log.info(
-          { requestId, reason: 'authelia_rejected', fqdn: parsed.hostname },
-          'authz denied',
-        );
-        return reply.code(401).send();
-      }
-
-      // Opportunistic eviction — drop oldest (insertion-order head) when at cap.
-      while (sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
-        const oldestKey = sessionCache.keys().next().value;
-        if (oldestKey === undefined) break;
-        sessionCache.delete(oldestKey);
-      }
-
-      sessionCache.set(cacheKey, validated);
-      session = validated;
-    }
-
-    // Check access mode
-    if (tunnel.accessMode === 'public' || tunnel.accessMode === 'authenticated') {
-      setAutheliaHeaders(reply, session);
-      reply.header('Cache-Control', `public, max-age=${AUTHZ_SUCCESS_MAX_AGE_SECONDS}`);
-      reply.header('X-Gatekeeper-Cache-Version', String(fastify.getCacheVersion()));
-      return reply.code(200).send();
-    }
-
-    // restricted — check grants
-    const result = await checkAccess(session.username, 'tunnel', tunnel.id, {
-      adminContact: fastify.getSettings().adminEmail,
-      adminName: fastify.getSettings().adminName,
-    });
-
-    if (result.allowed) {
-      setAutheliaHeaders(reply, session);
-      reply.header('Cache-Control', `public, max-age=${AUTHZ_SUCCESS_MAX_AGE_SECONDS}`);
-      reply.header('X-Gatekeeper-Cache-Version', String(fastify.getCacheVersion()));
-      return reply.code(200).send();
-    }
-
-    request.log.info(
-      {
-        requestId,
-        reason: 'no_matching_grant',
-        username: session.username,
-        resourceType: 'tunnel',
-        resourceId: tunnel.id,
-        requiredGrant: `tunnel:${tunnel.id}`,
-        fqdn: parsed.hostname,
+  fastify.get(
+    '/authz/check',
+    {
+      // nginx is the only client (the gatekeeper binds 127.0.0.1) and
+      // it expects one call per cache miss on every protected request.
+      // Per-IP throttling here would punish legitimate traffic because
+      // every caller arrives as 127.0.0.1. We collapse the key to a
+      // single bucket and raise the ceiling to an effectively-unlimited
+      // 10k/min so the rate-limit is structurally present (CodeQL
+      // js/missing-rate-limiting) without breaking the hot path.
+      config: {
+        rateLimit: {
+          max: 10_000,
+          timeWindow: '1 minute',
+          keyGenerator: () => 'gatekeeper-internal',
+        },
       },
-      'authz denied',
-    );
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const requestId = request.id;
+      const cookie = request.headers['cookie'] ?? '';
+      const originalUrl = (request.headers['x-original-url'] as string) ?? '';
 
-    if (fastify.getSettings().accessLoggingEnabled) {
-      logAccessRequest({
-        timestamp: new Date().toISOString(),
-        username: session.username,
-        resourceType: 'tunnel',
-        resourceId: tunnel.id,
-        resourceFqdn: parsed.hostname,
+      if (!cookie || !originalUrl) {
+        return reply.code(401).send();
+      }
+
+      // Parse and validate X-Original-URL before any other work.
+      // Defense-in-depth: the 127.0.0.1 bind + nginx auth_request boundary is
+      // the primary guarantee that this header is trustworthy; host matching
+      // ensures a misconfigured proxy chain cannot forge tunnel identity.
+      const parsed = parseOriginalUrl(originalUrl);
+      if (!parsed) {
+        request.log.info({ requestId, reason: 'invalid_original_url' }, 'authz denied');
+        return reply.code(401).send();
+      }
+
+      // Host header check: when nginx forwards the parent request's Host to the
+      // subrequest (default behavior for auth_request), the hostname portion
+      // must match the hostname parsed from X-Original-URL. Port differences
+      // are ignored — nginx often normalizes them. An absent Host header skips
+      // the check (some proxies strip it from internal subrequests).
+      const hostHeader = (request.headers['host'] as string | undefined) ?? '';
+      if (hostHeader) {
+        const hostOnly = hostHeader.split(':')[0]?.toLowerCase() ?? '';
+        if (hostOnly && hostOnly !== parsed.hostname.toLowerCase()) {
+          request.log.info(
+            {
+              requestId,
+              reason: 'host_header_mismatch',
+              originalHost: parsed.hostname,
+              hostHeader,
+            },
+            'authz denied',
+          );
+          return reply.code(401).send();
+        }
+      }
+
+      const tunnels = fastify.getTunnels();
+      const tunnel = findTunnelByFqdn(tunnels, parsed.hostname);
+      if (!tunnel) {
+        request.log.info(
+          { requestId, reason: 'unknown_tunnel_fqdn', fqdn: parsed.hostname },
+          'authz denied',
+        );
+        return reply.code(401).send();
+      }
+
+      // Check session cache (keyed by Authelia session cookie only to prevent
+      // cache pollution via unrelated cookies like CSRF tokens or analytics).
+      const autheliaCookie = extractAutheliaCookie(cookie);
+      if (!autheliaCookie) {
+        // No authelia_session — short-circuit before any cache work or the
+        // upstream Authelia /verify call. Without this, an unauthenticated
+        // request would still cost us an Authelia round-trip.
+        request.log.info(
+          { requestId, reason: 'missing_authelia_cookie', fqdn: parsed.hostname },
+          'authz denied',
+        );
+        return reply.code(401).send();
+      }
+      const cacheKey = hashCookie(autheliaCookie);
+      const sessionCache = fastify.getSessionCache();
+      const cached = sessionCache.get(cacheKey);
+      const now = Date.now();
+      let session: AutheliaSession | undefined;
+
+      if (cached && cached.expiresAt > now) {
+        session = cached;
+      } else {
+        if (cached) {
+          // Lazy TTL eviction — one stale entry pruned per request.
+          sessionCache.delete(cacheKey);
+        }
+        const validated = await validateWithAuthelia(cookie, originalUrl, requestId);
+        if (!validated) {
+          request.log.info(
+            { requestId, reason: 'authelia_rejected', fqdn: parsed.hostname },
+            'authz denied',
+          );
+          return reply.code(401).send();
+        }
+
+        // Opportunistic eviction — drop oldest (insertion-order head) when at cap.
+        while (sessionCache.size >= MAX_SESSION_CACHE_ENTRIES) {
+          const oldestKey = sessionCache.keys().next().value;
+          if (oldestKey === undefined) break;
+          sessionCache.delete(oldestKey);
+        }
+
+        sessionCache.set(cacheKey, validated);
+        session = validated;
+      }
+
+      // Check access mode
+      if (tunnel.accessMode === 'public' || tunnel.accessMode === 'authenticated') {
+        setAutheliaHeaders(reply, session);
+        reply.header('Cache-Control', `public, max-age=${AUTHZ_SUCCESS_MAX_AGE_SECONDS}`);
+        reply.header('X-Gatekeeper-Cache-Version', String(fastify.getCacheVersion()));
+        return reply.code(200).send();
+      }
+
+      // restricted — check grants
+      const result = await checkAccess(session.username, 'tunnel', tunnel.id, {
+        adminContact: fastify.getSettings().adminEmail,
+        adminName: fastify.getSettings().adminName,
       });
-    }
 
-    // Access denied — return inline HTML page as 403 body.
-    // Cache-Control: no-store so nginx never caches the denial; the matching
-    // proxy_cache_valid 403 0 in the snippet is the authoritative setting.
-    const html = buildAccessRequestPage(session.username, parsed.hostname, {
-      adminContact: fastify.getSettings().adminEmail,
-      adminName: fastify.getSettings().adminName,
-    });
+      if (result.allowed) {
+        setAutheliaHeaders(reply, session);
+        reply.header('Cache-Control', `public, max-age=${AUTHZ_SUCCESS_MAX_AGE_SECONDS}`);
+        reply.header('X-Gatekeeper-Cache-Version', String(fastify.getCacheVersion()));
+        return reply.code(200).send();
+      }
 
-    return reply
-      .code(403)
-      .header('Cache-Control', 'no-store')
-      .type('text/html; charset=utf-8')
-      .send(html);
-  });
+      request.log.info(
+        {
+          requestId,
+          reason: 'no_matching_grant',
+          username: session.username,
+          resourceType: 'tunnel',
+          resourceId: tunnel.id,
+          requiredGrant: `tunnel:${tunnel.id}`,
+          fqdn: parsed.hostname,
+        },
+        'authz denied',
+      );
+
+      if (fastify.getSettings().accessLoggingEnabled) {
+        logAccessRequest({
+          timestamp: new Date().toISOString(),
+          username: session.username,
+          resourceType: 'tunnel',
+          resourceId: tunnel.id,
+          resourceFqdn: parsed.hostname,
+        });
+      }
+
+      // Access denied — return inline HTML page as 403 body.
+      // Cache-Control: no-store so nginx never caches the denial; the matching
+      // proxy_cache_valid 403 0 in the snippet is the authoritative setting.
+      const html = buildAccessRequestPage(session.username, parsed.hostname, {
+        adminContact: fastify.getSettings().adminEmail,
+        adminName: fastify.getSettings().adminName,
+      });
+
+      return reply
+        .code(403)
+        .header('Cache-Control', 'no-store')
+        .type('text/html; charset=utf-8')
+        .send(html);
+    },
+  );
 }
 
 /**

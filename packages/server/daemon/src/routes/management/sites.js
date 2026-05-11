@@ -329,6 +329,9 @@ export default async function sitesRoutes(fastify, _opts) {
     '/sites/:id/verify-dns',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Moderate tier — triggers DNS lookups and potentially certbot;
+      // the work is amplified per request and must be bounded.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const { id } = IdParamSchema.parse(request.params);

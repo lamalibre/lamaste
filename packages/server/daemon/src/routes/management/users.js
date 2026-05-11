@@ -70,6 +70,9 @@ export default async function usersRoutes(fastify, _opts) {
     '/users',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Strict tier — user creation hashes a fresh password and provisions
+      // an identity. Brute-forcing this surface is cheap if uncapped.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const body = CreateUserSchema.parse(request.body);
@@ -131,6 +134,10 @@ export default async function usersRoutes(fastify, _opts) {
     '/users/:username',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Strict tier — body may include a fresh password that we re-hash;
+      // treat as auth-adjacent and bound to the same 5/min ceiling as
+      // creation.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const { username } = UsernameParamSchema.parse(request.params);
@@ -198,6 +205,10 @@ export default async function usersRoutes(fastify, _opts) {
     '/users/:username',
     {
       preHandler: fastify.requireRole(['admin']),
+      // Moderate tier — destructive management write; the cascade also
+      // fires off gatekeeper/cleanup work, so we cap concurrency to avoid
+      // hammering downstream services.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
       const { username } = UsernameParamSchema.parse(request.params);

@@ -200,7 +200,14 @@ export default async function settingsRoutes(fastify, _opts) {
   // POST /settings/2fa/confirm — verify initial code and enable 2FA
   fastify.post(
     '/settings/2fa/confirm',
-    { preHandler: fastify.requireRole(['admin']) },
+    {
+      preHandler: fastify.requireRole(['admin']),
+      // Strict tier — TOTP confirmation is auth-adjacent. The in-file
+      // checkRateLimit/recordAttempt path also throttles per-IP failed
+      // attempts, but the global Fastify limiter caps total request
+      // volume regardless of TOTP outcome.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const config = getConfig();
 
@@ -252,7 +259,13 @@ export default async function settingsRoutes(fastify, _opts) {
   // POST /settings/2fa/verify — verify code and issue session (exempt from 2FA session)
   fastify.post(
     '/settings/2fa/verify',
-    { preHandler: fastify.requireRole(['admin']) },
+    {
+      preHandler: fastify.requireRole(['admin']),
+      // Strict tier — direct TOTP brute-force surface. The TOTP-specific
+      // ban after 5 invalid codes still applies; this cap bounds the
+      // total request volume per IP.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const config = getConfig();
 
@@ -273,7 +286,12 @@ export default async function settingsRoutes(fastify, _opts) {
   // POST /settings/2fa/disable — disable 2FA (requires valid session + code)
   fastify.post(
     '/settings/2fa/disable',
-    { preHandler: fastify.requireRole(['admin']) },
+    {
+      preHandler: fastify.requireRole(['admin']),
+      // Strict tier — disabling 2FA weakens auth posture; treat with the
+      // same ceiling as the other 2FA endpoints.
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
     async (request, reply) => {
       const config = getConfig();
 

@@ -225,7 +225,9 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   });
 
   // --- Health check (no label to avoid info leakage) ---
-  server.get('/api/health', async () => ({ status: 'ok' }));
+  // Empty `rateLimit: {}` opts the route into the globally-registered limiter
+  // and satisfies the CodeQL js/missing-rate-limiting dataflow.
+  server.get('/api/health', { config: { rateLimit: {} } }, async () => ({ status: 'ok' }));
 
   // --- REST API routes ---
   await server.register(routes, { prefix: '/api', label, panelApi });
@@ -325,22 +327,26 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
     requiredMode: 'agent',
     maxPlugins: 20,
   };
-  server.get('/plugin-bundles/:name/panel.js', async (request, reply) => {
-    const { name } = request.params;
-    if (!PLUGIN_NAME_RE.test(name)) {
-      reply.type('application/javascript');
-      return reply.code(400).send('// invalid plugin name');
-    }
-    try {
-      const source = await readPluginBundle(pluginCfg, name);
-      reply.type('application/javascript');
-      reply.header('Cache-Control', 'public, max-age=3600');
-      return source;
-    } catch {
-      reply.type('application/javascript');
-      return reply.code(404).send(`// plugin bundle not found: ${name}`);
-    }
-  });
+  server.get(
+    '/plugin-bundles/:name/panel.js',
+    { config: { rateLimit: {} } },
+    async (request, reply) => {
+      const { name } = request.params;
+      if (!PLUGIN_NAME_RE.test(name)) {
+        reply.type('application/javascript');
+        return reply.code(400).send('// invalid plugin name');
+      }
+      try {
+        const source = await readPluginBundle(pluginCfg, name);
+        reply.type('application/javascript');
+        reply.header('Cache-Control', 'public, max-age=3600');
+        return source;
+      } catch {
+        reply.type('application/javascript');
+        return reply.code(404).send(`// plugin bundle not found: ${name}`);
+      }
+    },
+  );
 
   // --- Static SPA files ---
   const staticRoot = path.resolve(__dirname, '..', 'panel-dist');

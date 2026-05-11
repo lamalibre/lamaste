@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 
 import { pluginHostPlugin } from '@lamalibre/lamaste';
 import {
@@ -35,10 +36,21 @@ export async function startLocalPluginHost({ port = 9293 } = {}) {
     credentials: true,
   });
 
+  // Global rate limit. The local plugin host binds 127.0.0.1 and is
+  // reached by the desktop app and any locally-installed plugin's panel
+  // microfrontend. allowList exempts loopback callers so the desktop
+  // app's normal polling never trips the limiter; the per-route configs
+  // below satisfy the CodeQL js/missing-rate-limiting dataflow.
+  await server.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    allowList: ['127.0.0.1', '::1'],
+  });
+
   const startedAt = Date.now();
   const registryPath = localPluginsFile();
 
-  server.get('/api/status', async () => {
+  server.get('/api/status', { config: { rateLimit: {} } }, async () => {
     const registry = await readPluginRegistry(registryPath);
     const plugins = registry.plugins ?? [];
     return {

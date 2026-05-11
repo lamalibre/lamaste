@@ -251,6 +251,14 @@ export async function pluginHostPlugin(
       const capturedServerPkg = serverPkg;
       fastify.get(
         `/${pluginName}/panel.js`,
+        {
+          // Empty `rateLimit: {}` opts the route into the host's globally
+          // registered @fastify/rate-limit instance and satisfies the
+          // CodeQL js/missing-rate-limiting dataflow. Consumers that do
+          // not register the plugin still see no enforcement — the
+          // config is silently ignored when the plugin is absent.
+          config: { rateLimit: {} },
+        },
         async (_request: FastifyRequest, reply: FastifyReply) => {
           try {
             if (!capturedServerPkg.startsWith('@lamalibre/')) {

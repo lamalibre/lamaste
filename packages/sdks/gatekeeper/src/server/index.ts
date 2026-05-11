@@ -1,6 +1,7 @@
 import '../boot.js';
 import crypto from 'node:crypto';
 import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -133,6 +134,20 @@ export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   const server = Fastify({
     logger: true,
     trustProxy: 1,
+  });
+
+  // Global rate limit. The gatekeeper binds to 127.0.0.1 and is reached
+  // exclusively by nginx auth_request and the panel proxy — both are
+  // local services. Because every caller arrives from 127.0.0.1, a
+  // per-IP limiter would collapse them into a single bucket and either
+  // be useless or punish legitimate nginx traffic. We collapse the key
+  // explicitly to one shared bucket and set a high ceiling; the hot
+  // /authz/check route then overrides this with its own ceiling that
+  // makes the "nginx-only" assumption explicit.
+  await server.register(rateLimit, {
+    max: 1000,
+    timeWindow: '1 minute',
+    keyGenerator: () => 'gatekeeper-internal',
   });
 
   // Load initial state
