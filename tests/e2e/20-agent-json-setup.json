@@ -555,7 +555,45 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-48",
+          "label": "Extract BOOT_PERSISTENCE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "BOOT_PERSISTENCE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".agent.bootPersistence // empty"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Complete event bootPersistence matches this user's lingering",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BOOT_PERSISTENCE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "EXPECTED_PERSISTENCE"
+              },
+              "message": "Complete event bootPersistence matches this user's lingering"
+            }
+          }
+        },
+        {
+          "id": "step-56",
           "label": "Extract ERROR_MSG",
           "target": "local",
           "op": {
@@ -572,7 +610,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-57",
           "label": "Agent setup emitted error: $ERROR_MSG",
           "target": "local",
           "op": {
@@ -582,7 +620,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-58",
           "label": "Expected exactly one complete event, got: $COMPLETE_EVENTS",
           "target": "local",
           "op": {
@@ -592,14 +630,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  # Verify agent info fields\n  LABEL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.label // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.panelUrl // empty')\n  AUTH_METHOD=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.authMethod // empty')\n\n  if [ \"$LABEL\" = \"$AGENT_LABEL\" ]; then\n    log_pass \"Agent label matches: $LABEL\"\n  else\n    log_fail \"Agent label mismatch: expected $AGENT_LABEL, got $LABEL\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS: $PANEL_URL\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$AUTH_METHOD\" ]; then\n    log_pass \"Auth method present: $AUTH_METHOD\"\n  else\n    log_fail \"Auth method missing from complete event\"\n  fi\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  ERROR_MSG=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"error\") | .message // \"unknown\"' 2>/dev/null | head -1)\n  log_fail \"Agent setup emitted error: $ERROR_MSG\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  # Verify agent info fields\n  LABEL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.label // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.panelUrl // empty')\n  AUTH_METHOD=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.authMethod // empty')\n\n  if [ \"$LABEL\" = \"$AGENT_LABEL\" ]; then\n    log_pass \"Agent label matches: $LABEL\"\n  else\n    log_fail \"Agent label mismatch: expected $AGENT_LABEL, got $LABEL\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS: $PANEL_URL\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$AUTH_METHOD\" ]; then\n    log_pass \"Auth method present: $AUTH_METHOD\"\n  else\n    log_fail \"Auth method missing from complete event\"\n  fi\n\n  # bootPersistence mirrors this user's systemd lingering: the chisel user\n  # unit starts at boot only when lingering is on\n  BOOT_PERSISTENCE=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.bootPersistence // empty')\n  case \"$(loginctl show-user \"$(id -un)\" --property=Linger --value 2>/dev/null || true)\" in\n    yes) EXPECTED_PERSISTENCE=\"enabled\" ;;\n    no) EXPECTED_PERSISTENCE=\"disabled\" ;;\n    *) EXPECTED_PERSISTENCE=\"unknown\" ;;\n  esac\n  assert_eq \"$BOOT_PERSISTENCE\" \"$EXPECTED_PERSISTENCE\" \"Complete event bootPersistence matches this user's lingering\" || true\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  ERROR_MSG=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"error\") | .message // \"unknown\"' 2>/dev/null | head -1)\n  log_fail \"Agent setup emitted error: $ERROR_MSG\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
     },
     {
       "id": "no-sensitive-data-in-ndjson-output",
       "label": "No sensitive data in NDJSON output",
       "steps": [
         {
-          "id": "step-52",
+          "id": "step-59",
           "label": "Enrollment token found in NDJSON output",
           "target": "local",
           "op": {
@@ -609,7 +647,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-60",
           "label": "Enrollment token not leaked in NDJSON output",
           "target": "local",
           "op": {
@@ -619,7 +657,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-61",
           "label": "P12 password field found in NDJSON output",
           "target": "local",
           "op": {
@@ -629,7 +667,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-62",
           "label": "No P12 password leaked in NDJSON output",
           "target": "local",
           "op": {
@@ -646,7 +684,7 @@
       "label": "Step status validation",
       "steps": [
         {
-          "id": "step-57",
+          "id": "step-64",
           "label": "Set HAS_STEP",
           "target": "local",
           "op": {
@@ -663,7 +701,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-65",
           "label": "$STEP_KEY step present",
           "target": "local",
           "op": {
@@ -677,7 +715,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-66",
           "label": "$STEP_KEY step missing",
           "target": "local",
           "op": {
@@ -694,7 +732,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-68",
           "label": "Extract INVALID_STATUS",
           "target": "local",
           "op": {
@@ -711,7 +749,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-69",
           "label": "All step events have valid status values",
           "target": "local",
           "op": {
@@ -728,7 +766,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-70",
           "label": "Invalid step status found: $INVALID_STATUS",
           "target": "local",
           "op": {
@@ -749,7 +787,7 @@
       "label": "Cleanup: uninstall test agent",
       "steps": [
         {
-          "id": "step-65",
+          "id": "step-72",
           "label": "DELETE /api/certs/agent/$AGENT_LABEL",
           "target": "host",
           "op": {
@@ -760,7 +798,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-66",
+          "id": "step-73",
           "label": "Test agent cleaned up",
           "target": "local",
           "op": {

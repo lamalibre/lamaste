@@ -182,15 +182,33 @@ else
   log_info "Status output: $AGENT_STATUS_OUTPUT"
 fi
 
-# Verify systemd service is enabled (it may not be active if no tunnels are configured)
-# Multi-agent: service name includes the label set during setup-agent.sh.
-# The agent installs as a user-level systemd unit (linger enabled), so we query
-# the per-user manager via XDG_RUNTIME_DIR + --user.
-SYSTEMD_ENABLED=$(agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled")
-if [ "$SYSTEMD_ENABLED" = "enabled" ]; then
-  log_pass "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled"
+# status reports the sync timer and the pinned chisel release
+assert_contains "$AGENT_STATUS_OUTPUT" "Sync:" "lamaste-agent status has a Sync: line" || true
+SYNC_LINE=$(echo "$AGENT_STATUS_OUTPUT" | grep "Sync:" | head -1 || true)
+assert_not_contains "$SYNC_LINE" "not installed" "Status Sync: line reports the timer installed" || true
+assert_not_contains "$SYNC_LINE" "failing" "Status Sync: line reports no failing sync" || true
+assert_not_contains "$SYNC_LINE" "not running" "Status Sync: line reports the timer running its program (last run under 120 s ago)" || true
+CHISEL_LINE=$(echo "$AGENT_STATUS_OUTPUT" | grep "Chisel:" | head -1 || true)
+assert_contains "$CHISEL_LINE" "1.12.0" "Status Chisel: line shows the pinned release 1.12.0" || true
+
+# The sync timer (user units — linger enabled — queried via XDG_RUNTIME_DIR +
+# --user; names carry the label set during setup-agent.sh) keeps the chisel
+# client converged with the panel. It must be enabled and running.
+SYNC_TIMER_ENABLED=$(agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo disabled")
+assert_eq "$SYNC_TIMER_ENABLED" "enabled" "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is enabled" || true
+SYNC_TIMER_ACTIVE=$(agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo inactive")
+assert_eq "$SYNC_TIMER_ACTIVE" "active" "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active" || true
+
+# The chisel unit runs exactly when the panel assigns this agent a tunnel:
+# with none it stays stopped (and disabled) instead of crash-looping
+CARRIED_TUNNELS=$(host_api_get "tunnels/agent-config?agent=test-agent" 2>/dev/null | jq '.tunnels | length' 2>/dev/null || echo "unknown")
+CHISEL_ACTIVE=$(agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || true")
+if [ "$CARRIED_TUNNELS" = "0" ]; then
+  assert_not_eq "$CHISEL_ACTIVE" "active" "Chisel unit is not running while the agent carries no tunnel (state: ${CHISEL_ACTIVE})" || true
+elif [ "$CARRIED_TUNNELS" = "unknown" ]; then
+  log_fail "Could not read the agent's tunnel count from agent-config"
 else
-  log_fail "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
+  assert_eq "$CHISEL_ACTIVE" "active" "Chisel unit is running while the agent carries ${CARRIED_TUNNELS} tunnel(s)" || true
 fi
 
 # Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)

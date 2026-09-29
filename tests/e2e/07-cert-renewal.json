@@ -268,6 +268,37 @@
         },
         {
           "id": "step-14",
+          "label": "Set CALLS_BEFORE_RENEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "CALLS_BEFORE_RENEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "DOMAIN"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "DOMAIN",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-15",
           "label": "POST /api/certs/$RENEW_DOMAIN/renew",
           "target": "host",
           "op": {
@@ -299,7 +330,7 @@
           }
         },
         {
-          "id": "step-15",
+          "id": "step-16",
           "label": "Extract RENEW_OK",
           "target": "local",
           "op": {
@@ -330,7 +361,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-17",
           "label": "Certificate renewal succeeded for $RENEW_DOMAIN",
           "target": "local",
           "op": {
@@ -345,7 +376,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-18",
           "label": "Renewal response contains correct domain",
           "target": "local",
           "continueOnError": true,
@@ -372,7 +403,7 @@
           }
         },
         {
-          "id": "step-18",
+          "id": "step-19",
           "label": "Renewal response contains new expiry",
           "target": "local",
           "continueOnError": true,
@@ -395,7 +426,55 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-20",
+          "label": "Set RENEW_CALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo tail -n +$((CALLS_BEFORE_RENEW + 1)) /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep ' renew ' | tail -1 || true"
+          },
+          "capture": [
+            {
+              "variable": "RENEW_CALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "certbot ran with the wrapper's renew argv (--no-random-sleep-on-renew)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RENEW_CALL"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "renew --cert-name ${RENEW_DOMAIN} --force-renewal --no-random-sleep-on-renew --non-interactive"
+              },
+              "message": "certbot ran with the wrapper's renew argv (--no-random-sleep-on-renew)"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "RENEW_OK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-22",
           "label": "Extract RENEW_ERROR",
           "target": "local",
           "op": {
@@ -417,7 +496,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-23",
           "label": "Certificate renewal returned: $RENEW_ERROR",
           "target": "local",
           "op": {
@@ -432,7 +511,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-24",
           "label": "No domain configured — cannot test renewal",
           "target": "local",
           "op": {
@@ -442,14 +521,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Force renew certificate\"\n# ---------------------------------------------------------------------------\n\nif skip_if_no_dns \"Certificate renewal requires real Let's Encrypt — skipping\"; then\n  DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\n\n  if [ -n \"$DOMAIN\" ] && [ \"$DOMAIN\" != \"null\" ]; then\n    # Try to renew the panel cert (panel.<domain>)\n    RENEW_DOMAIN=\"panel.${DOMAIN}\"\n    RENEW_RESPONSE=$(api_post \"certs/$RENEW_DOMAIN/renew\")\n    RENEW_OK=$(echo \"$RENEW_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\n\n    if [ \"$RENEW_OK\" = \"true\" ]; then\n      log_pass \"Certificate renewal succeeded for $RENEW_DOMAIN\"\n      assert_json_field \"$RENEW_RESPONSE\" '.domain' \"$RENEW_DOMAIN\" \"Renewal response contains correct domain\" || true\n      assert_json_field_not_empty \"$RENEW_RESPONSE\" '.newExpiry' \"Renewal response contains new expiry\" || true\n    else\n      RENEW_ERROR=$(echo \"$RENEW_RESPONSE\" | jq -r '.error' 2>/dev/null || echo \"unknown\")\n      log_info \"Certificate renewal returned: $RENEW_ERROR\"\n    fi\n  else\n    log_skip \"No domain configured — cannot test renewal\"\n  fi\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Force renew certificate\"\n# ---------------------------------------------------------------------------\n\nif skip_if_no_dns \"Certificate renewal requires real Let's Encrypt — skipping\"; then\n  DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\n\n  if [ -n \"$DOMAIN\" ] && [ \"$DOMAIN\" != \"null\" ]; then\n    # Try to renew the panel cert (panel.<domain>)\n    RENEW_DOMAIN=\"panel.${DOMAIN}\"\n    CALLS_BEFORE_RENEW=$(sudo cat /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | wc -l | tr -d ' ')\n    RENEW_RESPONSE=$(api_post \"certs/$RENEW_DOMAIN/renew\")\n    RENEW_OK=$(echo \"$RENEW_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"false\")\n\n    if [ \"$RENEW_OK\" = \"true\" ]; then\n      log_pass \"Certificate renewal succeeded for $RENEW_DOMAIN\"\n      assert_json_field \"$RENEW_RESPONSE\" '.domain' \"$RENEW_DOMAIN\" \"Renewal response contains correct domain\" || true\n      assert_json_field_not_empty \"$RENEW_RESPONSE\" '.newExpiry' \"Renewal response contains new expiry\" || true\n      # The wrapper's fixed argv: no random delay while an operator waits\n      RENEW_CALL=$(sudo tail -n +$((CALLS_BEFORE_RENEW + 1)) /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep ' renew ' | tail -1 || true)\n      assert_contains \"$RENEW_CALL\" \"renew --cert-name ${RENEW_DOMAIN} --force-renewal --no-random-sleep-on-renew --non-interactive\" \"certbot ran with the wrapper's renew argv (--no-random-sleep-on-renew)\" || true\n    else\n      RENEW_ERROR=$(echo \"$RENEW_RESPONSE\" | jq -r '.error' 2>/dev/null || echo \"unknown\")\n      log_info \"Certificate renewal returned: $RENEW_ERROR\"\n    fi\n  else\n    log_skip \"No domain configured — cannot test renewal\"\n  fi\nfi"
     },
     {
       "id": "renew-nonexistent-certificate",
       "label": "Renew nonexistent certificate",
       "steps": [
         {
-          "id": "step-22",
+          "id": "step-25",
           "label": "POST /api/certs/nonexistent.example.com/renew",
           "target": "host",
           "op": {
@@ -468,7 +547,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-26",
           "label": "Renew nonexistent cert returns HTTP $RENEW_404_STATUS",
           "target": "local",
           "op": {
@@ -493,7 +572,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-27",
           "label": "Renew nonexistent cert unexpected status: HTTP $RENEW_404_STATUS",
           "target": "local",
           "op": {
@@ -521,11 +600,380 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Renew nonexistent certificate\"\n# ---------------------------------------------------------------------------\n\nif skip_if_no_dns \"Certbot test requires real infrastructure — skipping\"; then\n  RENEW_404_STATUS=$(api_post_status \"certs/nonexistent.example.com/renew\")\n  if [ \"$RENEW_404_STATUS\" = \"404\" ] || [ \"$RENEW_404_STATUS\" = \"500\" ]; then\n    log_pass \"Renew nonexistent cert returns HTTP $RENEW_404_STATUS\"\n  else\n    log_fail \"Renew nonexistent cert unexpected status: HTTP $RENEW_404_STATUS\"\n  fi\nfi"
     },
     {
+      "id": "sudoers-certbot-and-certificate-reads-via-root-owned-wrappers",
+      "label": "Sudoers: certbot and certificate reads via root-owned wrappers",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "Set SUDOERS_RULES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "SUDOERS_RULES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "sudoers allows the lamaste-certbot wrapper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "NOPASSWD: /usr/local/sbin/lamaste-certbot"
+              },
+              "message": "sudoers allows the lamaste-certbot wrapper"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "sudoers allows the lamaste-cert-info wrapper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "NOPASSWD: /usr/local/sbin/lamaste-cert-info"
+              },
+              "message": "sudoers allows the lamaste-cert-info wrapper"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "sudoers has no direct certbot rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "/usr/bin/certbot"
+              },
+              "message": "sudoers has no direct certbot rule"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "sudoers has no rule reaching into /etc/letsencrypt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "/etc/letsencrypt"
+              },
+              "message": "sudoers has no rule reaching into /etc/letsencrypt"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set WRAPPER_STAT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' \"/usr/local/sbin/${wrapper}\" 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "WRAPPER_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "/usr/local/sbin/${wrapper} is root-owned 0755",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WRAPPER_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root root 755"
+              },
+              "message": "/usr/local/sbin/${wrapper} is root-owned 0755"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Set DIRECT_CERTBOT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied"
+          },
+          "capture": [
+            {
+              "variable": "DIRECT_CERTBOT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "lamaste cannot run /usr/bin/certbot through sudo",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DIRECT_CERTBOT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "denied"
+              },
+              "message": "lamaste cannot run /usr/bin/certbot through sudo"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "WRAP_DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "lamaste-certbot rejects extra arguments (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXTRA_ARG_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-certbot rejects extra arguments (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "lamaste-certbot rejects a malformed email (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_EMAIL_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-certbot rejects a malformed email (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "lamaste-cert-info rejects a traversing lineage name (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TRAVERSAL_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-cert-info rejects a traversing lineage name (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set PANEL_ENDDATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info \"panel.${WRAP_DOMAIN}\" enddate 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PANEL_ENDDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_ENDDATE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "notAfter="
+              },
+              "message": "lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Set ISSUES_TOTAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo grep -c ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "ISSUES_TOTAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Set ISSUES_NAMED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo grep ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep -c -- ' --cert-name ' || true"
+          },
+          "capture": [
+            {
+              "variable": "ISSUES_NAMED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${ISSUES_NAMED:-0}"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ISSUES_TOTAL"
+              },
+              "message": "Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "No certonly calls recorded by the certbot shim yet",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "No certonly calls recorded by the certbot shim yet"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sudoers: certbot and certificate reads via root-owned wrappers\"\n# ---------------------------------------------------------------------------\n\nSUDOERS_RULES=$(sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste 2>/dev/null || echo \"\")\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-certbot\" \"sudoers allows the lamaste-certbot wrapper\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-cert-info\" \"sudoers allows the lamaste-cert-info wrapper\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/usr/bin/certbot\" \"sudoers has no direct certbot rule\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/etc/letsencrypt\" \"sudoers has no rule reaching into /etc/letsencrypt\" || true\n\nfor wrapper in lamaste-certbot lamaste-cert-info; do\n  WRAPPER_STAT=$(stat -c '%U %G %a' \"/usr/local/sbin/${wrapper}\" 2>/dev/null || echo \"missing\")\n  assert_eq \"$WRAPPER_STAT\" \"root root 755\" \"/usr/local/sbin/${wrapper} is root-owned 0755\" || true\ndone\n\n# The service user cannot run certbot directly, and the wrappers refuse any\n# argument beyond their fixed shapes (a trailing --deploy-hook would run code\n# as root; a traversing lineage would read any file)\nDIRECT_CERTBOT=$(sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied)\nassert_eq \"$DIRECT_CERTBOT\" \"denied\" \"lamaste cannot run /usr/bin/certbot through sudo\" || true\nWRAP_DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\nEXTRA_ARG_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew \"panel.${WRAP_DOMAIN}\" --deploy-hook /bin/true >/dev/null 2>&1 || EXTRA_ARG_RC=$?\nassert_eq \"$EXTRA_ARG_RC\" \"2\" \"lamaste-certbot rejects extra arguments (exit 2)\" || true\nBAD_EMAIL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot issue \"-x@example.com\" \"panel.${WRAP_DOMAIN}\" \"panel.${WRAP_DOMAIN}\" >/dev/null 2>&1 || BAD_EMAIL_RC=$?\nassert_eq \"$BAD_EMAIL_RC\" \"2\" \"lamaste-certbot rejects a malformed email (exit 2)\" || true\nTRAVERSAL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1 || TRAVERSAL_RC=$?\nassert_eq \"$TRAVERSAL_RC\" \"2\" \"lamaste-cert-info rejects a traversing lineage name (exit 2)\" || true\nPANEL_ENDDATE=$(sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info \"panel.${WRAP_DOMAIN}\" enddate 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_ENDDATE\" \"notAfter=\" \"lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry\" || true\n\n# Every issue the panel ever made carried --cert-name (a fixed lineage name,\n# so a re-issue never drifts to <name>-0001)\nISSUES_TOTAL=$(sudo grep -c ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null || true)\nISSUES_NAMED=$(sudo grep ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep -c -- ' --cert-name ' || true)\nif [ \"${ISSUES_TOTAL:-0}\" -gt 0 ] 2>/dev/null; then\n  assert_eq \"${ISSUES_NAMED:-0}\" \"${ISSUES_TOTAL}\" \"Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)\" || true\nelse\n  log_skip \"No certonly calls recorded by the certbot shim yet\"\nfi"
+    },
+    {
       "id": "auto-renew-timer-status",
       "label": "Auto-renew timer status",
       "steps": [
         {
-          "id": "step-25",
+          "id": "step-55",
           "label": "GET /api/certs/auto-renew-status",
           "target": "host",
           "op": {
@@ -543,7 +991,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-56",
           "label": "Extract AUTORENEW_ACTIVE",
           "target": "local",
           "op": {
@@ -560,7 +1008,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-57",
           "label": "Certbot auto-renew timer is active",
           "target": "local",
           "op": {
@@ -575,7 +1023,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-58",
           "label": "Auto-renew has a next run time",
           "target": "local",
           "continueOnError": true,
@@ -598,7 +1046,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-60",
           "label": "Certbot auto-renew timer is not active (may need certbot.timer enabled)",
           "target": "local",
           "op": {
@@ -613,7 +1061,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-61",
           "label": "Could not determine auto-renew timer status",
           "target": "local",
           "op": {
@@ -632,7 +1080,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 07 — Certificate Renewal\n# ============================================================================\n# Verifies certificate management:\n# - List certificates via GET /api/certs\n# - Force renew a certificate via POST /api/certs/:domain/renew\n# - Check auto-renew timer via GET /api/certs/auto-renew-status\n#\n# NOTE: Certificate renewal requires real Let's Encrypt infrastructure.\n# Tests that call certbot are skipped when SKIP_DNS_TESTS=1.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 07 — Certificate Renewal\n# ============================================================================\n# Verifies certificate management:\n# - List certificates via GET /api/certs\n# - Force renew a certificate via POST /api/certs/:domain/renew\n# - Check auto-renew timer via GET /api/certs/auto-renew-status\n# - The panel reaches certbot and Let's Encrypt certificate reads only through\n#   the root-owned wrappers /usr/local/sbin/lamaste-certbot and\n#   /usr/local/sbin/lamaste-cert-info (sudoers has no certbot or\n#   /etc/letsencrypt openssl rule); the wrappers refuse extra arguments, and a\n#   panel renewal runs `certbot renew --cert-name <lineage> --force-renewal\n#   --no-random-sleep-on-renew --non-interactive` (checked in the E2E certbot\n#   shim's call log)\n#\n# NOTE: Certificate renewal requires real Let's Encrypt infrastructure.\n# Tests that call certbot are skipped when SKIP_DNS_TESTS=1.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"07 — Certificate Renewal\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

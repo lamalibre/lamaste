@@ -58,6 +58,9 @@ host_api_delete() {
 
 TUNNEL_SUBDOMAIN="e2ejourney"
 TUNNEL_PORT=18090
+# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it
+# must own the tunnel for traffic to reach the test's HTTP server.
+TUNNEL_AGENT="test-agent"
 TUNNEL_FQDN="${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}"
 TUNNEL_ID=""
 MARKER="LAMASTE_JOURNEY_OK_$(date +%s)"
@@ -112,11 +115,12 @@ log_section "Step 1: Create tunnel and establish connection"
 # Create tunnel via API — accessMode "authenticated" models the common user
 # journey (any logged-in user can reach). Restricted mode (per-user grants)
 # is a separate opt-in flow covered by the gatekeeper tests.
-CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TUNNEL_SUBDOMAIN}\",\"port\":${TUNNEL_PORT},\"accessMode\":\"authenticated\"}")
+CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TUNNEL_SUBDOMAIN}\",\"port\":${TUNNEL_PORT},\"accessMode\":\"authenticated\",\"agentLabel\":\"${TUNNEL_AGENT}\"}")
 assert_json_field "$CREATE_RESPONSE" '.ok' 'true' "Tunnel creation returned ok: true" || true
 
 TUNNEL_ID=$(echo "$CREATE_RESPONSE" | jq -r '.tunnel.id' 2>/dev/null || echo "")
 assert_json_field_not_empty "$CREATE_RESPONSE" '.tunnel.id' "Tunnel has an ID" || true
+assert_json_field "$CREATE_RESPONSE" '.tunnel.agentLabel' "$TUNNEL_AGENT" "Tunnel is owned by ${TUNNEL_AGENT}" || true
 log_info "Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})"
 
 # Add /etc/hosts entries on agent so chisel client can resolve the domains

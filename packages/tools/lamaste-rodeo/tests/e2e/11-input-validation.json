@@ -10,7 +10,19 @@
   },
   "env": {},
   "constants": {},
-  "cleanup": [],
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE certs/agent/${OWNER_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${OWNER_LABEL}"
+      }
+    }
+  ],
   "sections": [
     {
       "id": "pre-flight-check-onboarding-is-complete",
@@ -41,14 +53,62 @@
         "variable": "ONBOARDING_STATUS",
         "value": "COMPLETED"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping validation tests — onboarding not complete\"\n  end_test\n  exit $?\nfi\n\n# ===========================================================================\n# 1. Invalid UUID for tunnel operations\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping validation tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+    },
+    {
+      "id": "enroll-an-agent-to-own-validation-case-tunnels",
+      "label": "Enroll an agent to own validation-case tunnels",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Owning agent cert created (${OWNER_LABEL})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Owning agent cert created (${OWNER_LABEL})"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enroll an agent to own validation-case tunnels\"\n# ---------------------------------------------------------------------------\n\nOWNER_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${OWNER_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nassert_json_field \"$OWNER_RESPONSE\" '.ok' 'true' \"Owning agent cert created (${OWNER_LABEL})\" || true\n\n# ===========================================================================\n# 1. Invalid UUID for tunnel operations\n# ==========================================================================="
     },
     {
       "id": "invalid-uuid-for-tunnel-operations",
       "label": "Invalid UUID for tunnel operations",
       "steps": [
         {
-          "id": "step-1",
+          "id": "step-3",
           "label": "PATCH /api/tunnels/not-a-uuid",
           "target": "host",
           "op": {
@@ -70,7 +130,7 @@
           ]
         },
         {
-          "id": "step-2",
+          "id": "step-4",
           "label": "PATCH /api/tunnels/not-a-uuid returns 400",
           "target": "local",
           "continueOnError": true,
@@ -91,7 +151,7 @@
           }
         },
         {
-          "id": "step-3",
+          "id": "step-5",
           "label": "DELETE /api/tunnels/not-a-uuid",
           "target": "host",
           "op": {
@@ -110,7 +170,7 @@
           ]
         },
         {
-          "id": "step-4",
+          "id": "step-6",
           "label": "DELETE /api/tunnels/not-a-uuid returns 400",
           "target": "local",
           "continueOnError": true,
@@ -131,7 +191,7 @@
           }
         },
         {
-          "id": "step-5",
+          "id": "step-7",
           "label": "PATCH /api/tunnels/../etc/passwd",
           "target": "host",
           "op": {
@@ -153,7 +213,7 @@
           ]
         },
         {
-          "id": "step-6",
+          "id": "step-8",
           "label": "PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)",
           "target": "local",
           "op": {
@@ -178,7 +238,7 @@
           }
         },
         {
-          "id": "step-7",
+          "id": "step-9",
           "label": "PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)",
           "target": "local",
           "op": {
@@ -203,14 +263,235 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid UUID for tunnel operations\"\n# ---------------------------------------------------------------------------\n\nPATCH_BAD_UUID_STATUS=$(api_patch_status \"tunnels/not-a-uuid\" '{\"enabled\": false}')\nassert_eq \"$PATCH_BAD_UUID_STATUS\" \"400\" \"PATCH /api/tunnels/not-a-uuid returns 400\" || true\n\nDELETE_BAD_UUID_STATUS=$(api_delete_status \"tunnels/not-a-uuid\")\nassert_eq \"$DELETE_BAD_UUID_STATUS\" \"400\" \"DELETE /api/tunnels/not-a-uuid returns 400\" || true\n\n# Path traversal: curl normalizes ../etc/passwd so this becomes /api/etc/passwd → 404\nPATCH_TRAVERSAL_STATUS=$(api_patch_status \"tunnels/../etc/passwd\" '{\"enabled\": false}')\nif [ \"$PATCH_TRAVERSAL_STATUS\" = \"400\" ] || [ \"$PATCH_TRAVERSAL_STATUS\" = \"404\" ]; then\n  log_pass \"PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)\"\nelse\n  log_fail \"PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)\"\nfi\n\n# ===========================================================================\n# 2. Invalid UUID for site operations\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Invalid UUID for tunnel operations\"\n# ---------------------------------------------------------------------------\n\nPATCH_BAD_UUID_STATUS=$(api_patch_status \"tunnels/not-a-uuid\" '{\"enabled\": false}')\nassert_eq \"$PATCH_BAD_UUID_STATUS\" \"400\" \"PATCH /api/tunnels/not-a-uuid returns 400\" || true\n\nDELETE_BAD_UUID_STATUS=$(api_delete_status \"tunnels/not-a-uuid\")\nassert_eq \"$DELETE_BAD_UUID_STATUS\" \"400\" \"DELETE /api/tunnels/not-a-uuid returns 400\" || true\n\n# Path traversal: curl normalizes ../etc/passwd so this becomes /api/etc/passwd → 404\nPATCH_TRAVERSAL_STATUS=$(api_patch_status \"tunnels/../etc/passwd\" '{\"enabled\": false}')\nif [ \"$PATCH_TRAVERSAL_STATUS\" = \"400\" ] || [ \"$PATCH_TRAVERSAL_STATUS\" = \"404\" ]; then\n  log_pass \"PATCH /api/tunnels/../etc/passwd rejected (HTTP $PATCH_TRAVERSAL_STATUS)\"\nelse\n  log_fail \"PATCH /api/tunnels/../etc/passwd should be rejected (got HTTP $PATCH_TRAVERSAL_STATUS)\"\nfi"
+    },
+    {
+      "id": "tunnel-patch-body-validation",
+      "label": "Tunnel PATCH body validation",
+      "steps": [
+        {
+          "id": "step-11",
+          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${FAKE_TUNNEL_ID}",
+            "body": {
+              "enabled": false
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_WELLFORMED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Well-formed PATCH on a nonexistent tunnel returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_WELLFORMED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Well-formed PATCH on a nonexistent tunnel returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${FAKE_TUNNEL_ID}",
+            "body": {},
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_EMPTY_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "PATCH with no fields returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_EMPTY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH with no fields returns 400"
+            }
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${FAKE_TUNNEL_ID}",
+            "body": {
+              "enabled": false,
+              "subdomain": "renamed"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_UNKNOWN_FIELD_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "PATCH with an unknown field returns 400 (strict schema)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_UNKNOWN_FIELD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH with an unknown field returns 400 (strict schema)"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${FAKE_TUNNEL_ID}",
+            "body": {
+              "enabled": "yes"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_ENABLED_TYPE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "PATCH with non-boolean enabled returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_ENABLED_TYPE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH with non-boolean enabled returns 400"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "PATCH /api/tunnels/${FAKE_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${FAKE_TUNNEL_ID}",
+            "body": {
+              "agentLabel": "Bad_Label;rm"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_BAD_LABEL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-20",
+          "label": "PATCH with malformed agentLabel returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_BAD_LABEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "PATCH with malformed agentLabel returns 400"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Tunnel PATCH body validation\"\n# ---------------------------------------------------------------------------\n\n# The body is validated before the tunnel is looked up, so a well-formed body\n# for a nonexistent tunnel is 404 and every 400 below is the body's fault.\nFAKE_TUNNEL_ID=\"00000000-0000-0000-0000-000000000000\"\n\nPATCH_WELLFORMED_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": false}')\nassert_eq \"$PATCH_WELLFORMED_STATUS\" \"404\" \"Well-formed PATCH on a nonexistent tunnel returns 404\" || true\n\nPATCH_EMPTY_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{}')\nassert_eq \"$PATCH_EMPTY_STATUS\" \"400\" \"PATCH with no fields returns 400\" || true\n\nPATCH_UNKNOWN_FIELD_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": false, \"subdomain\": \"renamed\"}')\nassert_eq \"$PATCH_UNKNOWN_FIELD_STATUS\" \"400\" \"PATCH with an unknown field returns 400 (strict schema)\" || true\n\nPATCH_ENABLED_TYPE_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"enabled\": \"yes\"}')\nassert_eq \"$PATCH_ENABLED_TYPE_STATUS\" \"400\" \"PATCH with non-boolean enabled returns 400\" || true\n\nPATCH_BAD_LABEL_STATUS=$(api_patch_status \"tunnels/${FAKE_TUNNEL_ID}\" '{\"agentLabel\": \"Bad_Label;rm\"}')\nassert_eq \"$PATCH_BAD_LABEL_STATUS\" \"400\" \"PATCH with malformed agentLabel returns 400\" || true\n\n# ===========================================================================\n# 2. Invalid UUID for site operations\n# ==========================================================================="
     },
     {
       "id": "invalid-uuid-for-site-operations",
       "label": "Invalid UUID for site operations",
       "steps": [
         {
-          "id": "step-8",
+          "id": "step-21",
           "label": "DELETE /api/sites/not-a-uuid",
           "target": "host",
           "op": {
@@ -229,7 +510,7 @@
           ]
         },
         {
-          "id": "step-9",
+          "id": "step-22",
           "label": "DELETE /api/sites/not-a-uuid returns 400",
           "target": "local",
           "continueOnError": true,
@@ -257,7 +538,7 @@
       "label": "Invalid invite token format",
       "steps": [
         {
-          "id": "step-10",
+          "id": "step-23",
           "label": "Set INVITE_GET_STATUS",
           "target": "local",
           "op": {
@@ -274,7 +555,7 @@
           ]
         },
         {
-          "id": "step-11",
+          "id": "step-24",
           "label": "GET /api/invite/not-a-valid-token returns 400",
           "target": "local",
           "continueOnError": true,
@@ -295,7 +576,7 @@
           }
         },
         {
-          "id": "step-12",
+          "id": "step-25",
           "label": "Set INVITE_POST_STATUS",
           "target": "local",
           "op": {
@@ -312,7 +593,7 @@
           ]
         },
         {
-          "id": "step-13",
+          "id": "step-26",
           "label": "POST /api/invite/not-a-valid-token/accept returns 400",
           "target": "local",
           "continueOnError": true,
@@ -333,7 +614,7 @@
           }
         },
         {
-          "id": "step-14",
+          "id": "step-27",
           "label": "Set INVITE_TRAVERSAL_STATUS",
           "target": "local",
           "op": {
@@ -350,7 +631,7 @@
           ]
         },
         {
-          "id": "step-15",
+          "id": "step-28",
           "label": "Set INVITE_TRAVERSAL_BODY",
           "target": "local",
           "op": {
@@ -387,7 +668,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-29",
           "label": "Path traversal does not expose /etc/passwd",
           "target": "local",
           "continueOnError": true,
@@ -428,7 +709,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-30",
           "label": "GET /api/invite/../../etc/passwd returned unexpected status $INVITE_TRAVERSAL_STATUS",
           "target": "local",
           "op": {
@@ -465,7 +746,7 @@
       "label": "Invalid domain format in certs endpoint",
       "steps": [
         {
-          "id": "step-18",
+          "id": "step-31",
           "label": "POST /api/certs/a..b/renew",
           "target": "host",
           "op": {
@@ -484,7 +765,7 @@
           ]
         },
         {
-          "id": "step-19",
+          "id": "step-32",
           "label": "POST /api/certs/a..b/renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -505,7 +786,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-33",
           "label": "POST /api/certs/.../renew",
           "target": "host",
           "op": {
@@ -524,7 +805,7 @@
           ]
         },
         {
-          "id": "step-21",
+          "id": "step-34",
           "label": "POST /api/certs/.../renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -545,7 +826,7 @@
           }
         },
         {
-          "id": "step-22",
+          "id": "step-35",
           "label": "POST /api/certs/evil.com;inject/renew",
           "target": "host",
           "op": {
@@ -564,7 +845,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-36",
           "label": "POST /api/certs/evil.com;inject/renew returns 400",
           "target": "local",
           "continueOnError": true,
@@ -592,18 +873,14 @@
       "label": "Subdomain injection attempts",
       "steps": [
         {
-          "id": "step-24",
+          "id": "step-37",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "test;inject",
-              "port": 19001,
-              "description": "injection test"
-            },
+            "body": "{\"subdomain\":\"test;inject\",\"port\":19001,\"description\":\"injection test\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -616,7 +893,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-38",
           "label": "Subdomain with semicolon rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -637,18 +914,14 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-39",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "test\nfoo",
-              "port": 19002,
-              "description": "newline test"
-            },
+            "body": "{\"subdomain\":\"test\\nfoo\",\"port\":19002,\"description\":\"newline test\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -661,7 +934,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-40",
           "label": "Subdomain with newline rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -682,18 +955,14 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-41",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "../etc",
-              "port": 19003,
-              "description": "traversal test"
-            },
+            "body": "{\"subdomain\":\"../etc\",\"port\":19003,\"description\":\"traversal test\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -706,7 +975,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-42",
           "label": "Subdomain with path traversal rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -727,18 +996,14 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-43",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "TEST-UPPER",
-              "port": 19004,
-              "description": "uppercase test"
-            },
+            "body": "{\"subdomain\":\"TEST-UPPER\",\"port\":19004,\"description\":\"uppercase test\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -751,7 +1016,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-44",
           "label": "Subdomain with uppercase rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -772,7 +1037,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-45",
           "label": "Set LONG_SUBDOMAIN",
           "target": "local",
           "op": {
@@ -789,7 +1054,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-46",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -809,7 +1074,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-47",
           "label": "Subdomain with 64 chars rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -830,25 +1095,21 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Subdomain injection attempts\"\n# ---------------------------------------------------------------------------\n\nINJECT_SEMICOLON_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"test;inject\",\"port\":19001,\"description\":\"injection test\"}')\nassert_eq \"$INJECT_SEMICOLON_STATUS\" \"400\" \"Subdomain with semicolon rejected (HTTP 400)\" || true\n\nINJECT_NEWLINE_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"test\\nfoo\",\"port\":19002,\"description\":\"newline test\"}')\nassert_eq \"$INJECT_NEWLINE_STATUS\" \"400\" \"Subdomain with newline rejected (HTTP 400)\" || true\n\nINJECT_TRAVERSAL_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"../etc\",\"port\":19003,\"description\":\"traversal test\"}')\nassert_eq \"$INJECT_TRAVERSAL_STATUS\" \"400\" \"Subdomain with path traversal rejected (HTTP 400)\" || true\n\nINJECT_UPPER_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"TEST-UPPER\",\"port\":19004,\"description\":\"uppercase test\"}')\nassert_eq \"$INJECT_UPPER_STATUS\" \"400\" \"Subdomain with uppercase rejected (HTTP 400)\" || true\n\nLONG_SUBDOMAIN=$(printf 'a%.0s' {1..64})\nINJECT_LONG_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"$LONG_SUBDOMAIN\\\",\\\"port\\\":19005,\\\"description\\\":\\\"long subdomain test\\\"}\")\nassert_eq \"$INJECT_LONG_STATUS\" \"400\" \"Subdomain with 64 chars rejected (HTTP 400)\" || true\n\n# ===========================================================================\n# 6. Port boundary validation\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Subdomain injection attempts\"\n# ---------------------------------------------------------------------------\n\nINJECT_SEMICOLON_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"test;inject\",\"port\":19001,\"description\":\"injection test\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$INJECT_SEMICOLON_STATUS\" \"400\" \"Subdomain with semicolon rejected (HTTP 400)\" || true\n\nINJECT_NEWLINE_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"test\\nfoo\",\"port\":19002,\"description\":\"newline test\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$INJECT_NEWLINE_STATUS\" \"400\" \"Subdomain with newline rejected (HTTP 400)\" || true\n\nINJECT_TRAVERSAL_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"../etc\",\"port\":19003,\"description\":\"traversal test\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$INJECT_TRAVERSAL_STATUS\" \"400\" \"Subdomain with path traversal rejected (HTTP 400)\" || true\n\nINJECT_UPPER_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"TEST-UPPER\",\"port\":19004,\"description\":\"uppercase test\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$INJECT_UPPER_STATUS\" \"400\" \"Subdomain with uppercase rejected (HTTP 400)\" || true\n\nLONG_SUBDOMAIN=$(printf 'a%.0s' {1..64})\nINJECT_LONG_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"$LONG_SUBDOMAIN\\\",\\\"port\\\":19005,\\\"description\\\":\\\"long subdomain test\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\nassert_eq \"$INJECT_LONG_STATUS\" \"400\" \"Subdomain with 64 chars rejected (HTTP 400)\" || true\n\n# ===========================================================================\n# 6. Port boundary validation\n# ==========================================================================="
     },
     {
       "id": "port-boundary-validation",
       "label": "Port boundary validation",
       "steps": [
         {
-          "id": "step-35",
+          "id": "step-48",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2eport0",
-              "port": 0,
-              "description": "port zero"
-            },
+            "body": "{\"subdomain\":\"e2eport0\",\"port\":0,\"description\":\"port zero\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -861,7 +1122,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-49",
           "label": "Port 0 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -882,18 +1143,14 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-50",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2eport1023",
-              "port": 1023,
-              "description": "port 1023"
-            },
+            "body": "{\"subdomain\":\"e2eport1023\",\"port\":1023,\"description\":\"port 1023\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -906,7 +1163,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-51",
           "label": "Port 1023 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -927,18 +1184,14 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-52",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2eport65536",
-              "port": 65536,
-              "description": "port 65536"
-            },
+            "body": "{\"subdomain\":\"e2eport65536\",\"port\":65536,\"description\":\"port 65536\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -951,7 +1204,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-53",
           "label": "Port 65536 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -972,18 +1225,14 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-54",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2eportneg",
-              "port": -1,
-              "description": "port negative"
-            },
+            "body": "{\"subdomain\":\"e2eportneg\",\"port\":-1,\"description\":\"port negative\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -996,7 +1245,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-55",
           "label": "Port -1 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1017,18 +1266,14 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-56",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2eportstr",
-              "port": "abc",
-              "description": "port string"
-            },
+            "body": "{\"subdomain\":\"e2eportstr\",\"port\":\"abc\",\"description\":\"port string\",\"agentLabel\":\"",
             "statusOnly": true
           },
           "capture": [
@@ -1041,7 +1286,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-57",
           "label": "Port 'abc' (string) rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1060,16 +1305,218 @@
               "message": "Port 'abc' (string) rejected (HTTP 400)"
             }
           }
+        },
+        {
+          "id": "step-58",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\"subdomain\":\"e2ebody0\",\"port\":19006,\"description\":\"body limit zero\",\"maxBodySizeMb\":0,\"agentLabel\":\"",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BODY_ZERO_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "Request body limit 0 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_ZERO_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Request body limit 0 rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\"subdomain\":\"e2ebodyhigh\",\"port\":19007,\"description\":\"body limit too high\",\"maxBodySizeMb\":10241,\"agentLabel\":\"",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BODY_HIGH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Request body limit 10241 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_HIGH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Request body limit 10241 rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_PORT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Reserved port ${reserved_port} rejected for a tunnel (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_PORT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reserved port ${reserved_port} rejected for a tunnel (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_PORT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Reserved-port rejection explains the ports belong to Lamaste services",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_PORT_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "belong to Lamaste services"
+              },
+              "message": "Reserved-port rejection explains the ports belong to Lamaste services"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Reserved-port creates left no tunnel behind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Reserved-port creates left no tunnel behind"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Port boundary validation\"\n# ---------------------------------------------------------------------------\n\nPORT_ZERO_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport0\",\"port\":0,\"description\":\"port zero\"}')\nassert_eq \"$PORT_ZERO_STATUS\" \"400\" \"Port 0 rejected (HTTP 400)\" || true\n\nPORT_LOW_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport1023\",\"port\":1023,\"description\":\"port 1023\"}')\nassert_eq \"$PORT_LOW_STATUS\" \"400\" \"Port 1023 rejected (HTTP 400)\" || true\n\nPORT_HIGH_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport65536\",\"port\":65536,\"description\":\"port 65536\"}')\nassert_eq \"$PORT_HIGH_STATUS\" \"400\" \"Port 65536 rejected (HTTP 400)\" || true\n\nPORT_NEG_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eportneg\",\"port\":-1,\"description\":\"port negative\"}')\nassert_eq \"$PORT_NEG_STATUS\" \"400\" \"Port -1 rejected (HTTP 400)\" || true\n\nPORT_STR_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eportstr\",\"port\":\"abc\",\"description\":\"port string\"}')\nassert_eq \"$PORT_STR_STATUS\" \"400\" \"Port 'abc' (string) rejected (HTTP 400)\" || true\n\n# ===========================================================================\n# 7. Malformed JSON bodies\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Port boundary validation\"\n# ---------------------------------------------------------------------------\n\nPORT_ZERO_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport0\",\"port\":0,\"description\":\"port zero\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$PORT_ZERO_STATUS\" \"400\" \"Port 0 rejected (HTTP 400)\" || true\n\nPORT_LOW_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport1023\",\"port\":1023,\"description\":\"port 1023\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$PORT_LOW_STATUS\" \"400\" \"Port 1023 rejected (HTTP 400)\" || true\n\nPORT_HIGH_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eport65536\",\"port\":65536,\"description\":\"port 65536\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$PORT_HIGH_STATUS\" \"400\" \"Port 65536 rejected (HTTP 400)\" || true\n\nPORT_NEG_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eportneg\",\"port\":-1,\"description\":\"port negative\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$PORT_NEG_STATUS\" \"400\" \"Port -1 rejected (HTTP 400)\" || true\n\nPORT_STR_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2eportstr\",\"port\":\"abc\",\"description\":\"port string\",\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$PORT_STR_STATUS\" \"400\" \"Port 'abc' (string) rejected (HTTP 400)\" || true\n\nBODY_ZERO_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2ebody0\",\"port\":19006,\"description\":\"body limit zero\",\"maxBodySizeMb\":0,\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$BODY_ZERO_STATUS\" \"400\" \"Request body limit 0 rejected (HTTP 400)\" || true\n\nBODY_HIGH_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2ebodyhigh\",\"port\":19007,\"description\":\"body limit too high\",\"maxBodySizeMb\":10241,\"agentLabel\":\"'\"${OWNER_LABEL}\"'\"}')\nassert_eq \"$BODY_HIGH_STATUS\" \"400\" \"Request body limit 10241 rejected (HTTP 400)\" || true\n\n# Ports of Lamaste's own services on the relay (panel daemon 3100, chisel\n# server 9090, Authelia 9091, panel 9292, gatekeeper 9294): a tunnel there\n# would collide with the service chisel binds on the relay\nfor reserved_port in 3100 9090 9091 9292 9294; do\n  RESERVED_PORT_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2ereserved${reserved_port}\\\",\\\"port\\\":${reserved_port},\\\"description\\\":\\\"reserved port\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\n  assert_eq \"$RESERVED_PORT_STATUS\" \"400\" \"Reserved port ${reserved_port} rejected for a tunnel (HTTP 400)\" || true\ndone\nRESERVED_PORT_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"e2ereserved9090\\\",\\\"port\\\":9090,\\\"description\\\":\\\"reserved port\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\nassert_contains \"$RESERVED_PORT_RESPONSE\" \"belong to Lamaste services\" \"Reserved-port rejection explains the ports belong to Lamaste services\" || true\nRESERVED_LEFT=$(api_get \"tunnels\" | jq '[.tunnels[] | select(.subdomain | startswith(\"e2ereserved\"))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RESERVED_LEFT\" \"0\" \"Reserved-port creates left no tunnel behind\" || true\n\n# ===========================================================================\n# 7. Malformed JSON bodies\n# ==========================================================================="
     },
     {
       "id": "malformed-json-bodies",
       "label": "Malformed JSON bodies",
       "steps": [
         {
-          "id": "step-45",
+          "id": "step-70",
           "label": "Set MALFORMED_STATUS",
           "target": "local",
           "op": {
@@ -1086,7 +1533,7 @@
           ]
         },
         {
-          "id": "step-46",
+          "id": "step-71",
           "label": "Invalid JSON body to /api/tunnels returns 400",
           "target": "local",
           "continueOnError": true,
@@ -1107,7 +1554,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-72",
           "label": "Set EMPTY_BODY_STATUS",
           "target": "local",
           "op": {
@@ -1124,7 +1571,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-73",
           "label": "Empty body to /api/users rejected (HTTP $EMPTY_BODY_STATUS)",
           "target": "local",
           "op": {
@@ -1149,7 +1596,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-74",
           "label": "Empty body to /api/users should be rejected (got HTTP $EMPTY_BODY_STATUS)",
           "target": "local",
           "op": {
@@ -1181,7 +1628,7 @@
       "label": "File permissions",
       "steps": [
         {
-          "id": "step-51",
+          "id": "step-76",
           "label": "Set PERMS",
           "target": "local",
           "op": {
@@ -1198,7 +1645,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-77",
           "label": "$f has correct permissions (600)",
           "target": "local",
           "op": {
@@ -1213,7 +1660,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-78",
           "label": "$f has permissions $PERMS (expected 600)",
           "target": "local",
           "op": {
@@ -1228,7 +1675,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-79",
           "label": "$f not found",
           "target": "local",
           "op": {
@@ -1238,7 +1685,83 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-81",
+          "label": "Set AUTHFILE_STAT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a %U %G' /etc/lamalibre/lamaste/chisel-users 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "AUTHFILE_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "chisel-users is 0640 lamaste:lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHFILE_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "640 lamaste lamaste-chisel"
+              },
+              "message": "chisel-users is 0640 lamaste:lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set CREDS_PERMS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a' /etc/lamalibre/lamaste/chisel-credentials.json 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "CREDS_PERMS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "chisel-credentials.json has permissions 600",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CREDS_PERMS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "chisel-credentials.json has permissions 600"
+            }
+          }
+        },
+        {
+          "id": "step-85",
           "label": "Set PERMS",
           "target": "local",
           "op": {
@@ -1255,7 +1778,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-86",
           "label": "panel.json has correct permissions ($PERMS)",
           "target": "local",
           "op": {
@@ -1280,7 +1803,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-87",
           "label": "panel.json has permissions $PERMS (expected 600 or 640)",
           "target": "local",
           "op": {
@@ -1305,12 +1828,12 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"File permissions\"\n# ---------------------------------------------------------------------------\n\n# Check state files have restrictive permissions\nfor f in /etc/lamalibre/lamaste/tunnels.json /etc/lamalibre/lamaste/sites.json; do\n  if [ -f \"$f\" ]; then\n    PERMS=$(stat -c '%a' \"$f\" 2>/dev/null || stat -f '%Lp' \"$f\" 2>/dev/null || echo \"unknown\")\n    if [ \"$PERMS\" = \"600\" ]; then\n      log_pass \"$f has correct permissions (600)\"\n    else\n      log_fail \"$f has permissions $PERMS (expected 600)\"\n    fi\n  else\n    log_skip \"$f not found\"\n  fi\ndone\n\n# Check panel.json permissions\nif [ -f /etc/lamalibre/lamaste/panel.json ]; then\n  PERMS=$(stat -c '%a' /etc/lamalibre/lamaste/panel.json 2>/dev/null || stat -f '%Lp' /etc/lamalibre/lamaste/panel.json 2>/dev/null || echo \"unknown\")\n  if [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"640\" ]; then\n    log_pass \"panel.json has correct permissions ($PERMS)\"\n  else\n    log_fail \"panel.json has permissions $PERMS (expected 600 or 640)\"\n  fi\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"File permissions\"\n# ---------------------------------------------------------------------------\n\n# Check state files have restrictive permissions\nfor f in /etc/lamalibre/lamaste/tunnels.json /etc/lamalibre/lamaste/sites.json; do\n  if [ -f \"$f\" ]; then\n    PERMS=$(stat -c '%a' \"$f\" 2>/dev/null || stat -f '%Lp' \"$f\" 2>/dev/null || echo \"unknown\")\n    if [ \"$PERMS\" = \"600\" ]; then\n      log_pass \"$f has correct permissions (600)\"\n    else\n      log_fail \"$f has permissions $PERMS (expected 600)\"\n    fi\n  else\n    log_skip \"$f not found\"\n  fi\ndone\n\n# The chisel authfile holds every agent's tunnel password: readable by the\n# chisel group only (chisel runs as nobody:lamaste-chisel), written by the panel\nAUTHFILE_STAT=$(stat -c '%a %U %G' /etc/lamalibre/lamaste/chisel-users 2>/dev/null || echo \"missing\")\nassert_eq \"$AUTHFILE_STAT\" \"640 lamaste lamaste-chisel\" \"chisel-users is 0640 lamaste:lamaste-chisel\" || true\nCREDS_PERMS=$(stat -c '%a' /etc/lamalibre/lamaste/chisel-credentials.json 2>/dev/null || echo \"missing\")\nassert_eq \"$CREDS_PERMS\" \"600\" \"chisel-credentials.json has permissions 600\" || true\n\n# Check panel.json permissions\nif [ -f /etc/lamalibre/lamaste/panel.json ]; then\n  PERMS=$(stat -c '%a' /etc/lamalibre/lamaste/panel.json 2>/dev/null || stat -f '%Lp' /etc/lamalibre/lamaste/panel.json 2>/dev/null || echo \"unknown\")\n  if [ \"$PERMS\" = \"600\" ] || [ \"$PERMS\" = \"640\" ]; then\n    log_pass \"panel.json has correct permissions ($PERMS)\"\n  else\n    log_fail \"panel.json has permissions $PERMS (expected 600 or 640)\"\n  fi\nfi"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 11 — Input Validation & Security Hardening\n# ============================================================================\n# Verifies that API endpoints properly validate and reject malicious input:\n# - Invalid UUID route parameters\n# - Invalid token format\n# - Invalid domain format in certs endpoint\n# - Subdomain injection attempts\n# - Invalid port values\n# - Invalid JSON bodies\n# - Path traversal attempts (where applicable)\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nbegin_test \"11 — Input Validation & Security Hardening\"\n",
+  "headerRaw": "# ============================================================================\n# 11 — Input Validation & Security Hardening\n# ============================================================================\n# Verifies that API endpoints properly validate and reject malicious input:\n# - Invalid UUID route parameters\n# - Invalid token format\n# - Invalid domain format in certs endpoint\n# - Tunnel PATCH body validation (strict schema, owner label format)\n# - Subdomain injection attempts\n# - Invalid port and request body limit values; the relay's own service ports\n#   (3100, 9090, 9091, 9292, 9294) are reserved for tunnels and agent panels\n# - Invalid JSON bodies\n# - Path traversal attempts (where applicable)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\n# Tunnel creates name an enrolled agent as owner, so every rejected create\n# below is rejected for the invalid field it carries — never merely for a\n# missing or unknown agentLabel, which would mask a validation regression.\nOWNER_LABEL=\"validation-e2e-$(date +%s)\"\n\nbegin_test \"11 — Input Validation & Security Hardening\"\n\ncleanup() {\n  api_delete \"certs/agent/${OWNER_LABEL}\" > /dev/null 2>&1 || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

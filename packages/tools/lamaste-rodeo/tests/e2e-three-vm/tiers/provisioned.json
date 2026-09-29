@@ -3,7 +3,7 @@
   "meta": {
     "tier": "provisioned",
     "name": "Three-VM provisioned",
-    "description": "Run setup-host.sh on the host (DNS, certbot shim, onboarding, test user, enrollment token), then in parallel pack and enroll the agent and configure the visitor. HOST_IP and TEST_DOMAIN must be present in the tier-runner var scope (injected from ctx.vmIps[host] and ctx.domain).",
+    "description": "Run setup-host.sh on the host (DNS, certbot shim and its E2E test CA, onboarding, test user, enrollment token), then in parallel pack and enroll the agent and configure the visitor, both of which install the E2E test CA into their trust stores. HOST_IP and TEST_DOMAIN must be present in the tier-runner var scope (injected from ctx.vmIps[host] and ctx.domain).",
     "dependsOn": "installed"
   },
   "env": {
@@ -153,6 +153,20 @@
               "expression": ".agentLabel"
             }
           }
+        },
+        {
+          "id": "extract-e2e-ca-cert",
+          "label": "Extract the E2E test CA certificate (base64 PEM) from credentials",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "E2E_CA_CERT_B64",
+            "from": {
+              "kind": "jq",
+              "input": { "kind": "var", "name": "CREDENTIALS_JSON" },
+              "expression": ".e2eCaCertB64"
+            }
+          }
         }
       ]
     },
@@ -195,7 +209,7 @@
           "target": "agent",
           "op": {
             "type": "exec",
-            "command": "bash /tmp/e2e/setup-agent.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\" \"${ENROLLMENT_TOKEN}\""
+            "command": "bash /tmp/e2e/setup-agent.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\" \"${ENROLLMENT_TOKEN}\" \"${E2E_CA_CERT_B64}\""
           }
         },
         {
@@ -204,7 +218,7 @@
           "target": "visitor",
           "op": {
             "type": "exec",
-            "command": "bash /tmp/e2e/setup-visitor.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\""
+            "command": "bash /tmp/e2e/setup-visitor.sh \"${HOST_IP}\" \"${TEST_DOMAIN}\" \"${E2E_CA_CERT_B64}\""
           }
         }
       ]

@@ -3,7 +3,7 @@
   "meta": {
     "number": 16,
     "name": "Agent JSON Setup Output",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "16 — Agent JSON Setup Output (Three-VM)",
     "deps": [],
     "requires": ["multipass", "jq"]
@@ -225,11 +225,231 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Generate enrollment token on host\"\n# ---------------------------------------------------------------------------\n\nAGENT_LABEL=\"json-test-3vm\"\n\n# Clean up any existing agent cert with this label\nhost_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null || true\n\nTOKEN_RESPONSE=$(host_api_post \"certs/agent/enroll\" \"{\\\"label\\\":\\\"$AGENT_LABEL\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\n\nTOKEN=$(echo \"$TOKEN_RESPONSE\" | jq -r '.token // empty')\nif [ -z \"$TOKEN\" ]; then\n  log_fail \"Failed to generate enrollment token: $TOKEN_RESPONSE\"\n  end_test\n  exit 1\nfi\nlog_pass \"Enrollment token generated for $AGENT_LABEL\""
     },
     {
+      "id": "a-copy-outside-npm-s-global-root-refuses-keeping-the-token",
+      "label": "A copy outside npm's global root refuses, keeping the token",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf /tmp/e2e-16-copy && cp -a \\\"\\$(npm root -g)/@lamalibre/lamaste-agent\\\" /tmp/e2e-16-copy"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='$TOKEN' node /tmp/e2e-16-copy/bin/lamaste-agent.js setup --json --label '$AGENT_LABEL' --panel-url 'https://${HOST_IP}:9292' 2>/dev/null; true"
+          },
+          "capture": [
+            {
+              "variable": "COPY_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Extract COPY_ERROR",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "COPY_ERROR",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COPY_OUTPUT"
+              },
+              "expression": "select(.event==\"error\") | .message"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Setup from a non-global copy emits an error event naming the global install",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "COPY_ERROR"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "must be installed globally"
+              },
+              "message": "Setup from a non-global copy emits an error event naming the global install"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Extract COPY_ENROLLED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "COPY_ENROLLED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COPY_OUTPUT"
+              },
+              "expression": "select(.event==\"step\" and .step==\"enroll_panel\") | .step"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Non-global setup never reached the enrollment step",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "COPY_ENROLLED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Non-global setup never reached the enrollment step"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "test -e /root/.lamalibre/lamaste/agents/${AGENT_LABEL} && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "COPY_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Non-global setup created no agent directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "COPY_DIR"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "Non-global setup created no agent directory"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf /tmp/e2e-16-copy"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-23",
+          "label": "Set LOOKUP_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -cn --arg t \"$TOKEN\" '{token:$t}'"
+          },
+          "capture": [
+            {
+              "variable": "LOOKUP_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/enroll/lookup",
+            "tlsVerify": false,
+            "timeout": 30,
+            "body": "${LOOKUP_BODY}",
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "LOOKUP_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Enrollment token still valid after the refused setup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOKUP_RESPONSE"
+              },
+              "path": ".label",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Enrollment token still valid after the refused setup"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A copy outside npm's global root refuses, keeping the token\"\n# ---------------------------------------------------------------------------\n\n# The sync timer runs the installed program every 30 seconds, so setup refuses\n# to run from anywhere npm does not manage globally (an npx cache copy can\n# vanish). A copy of the global install, with its node_modules, stands in for\n# such a copy.\nagent_exec \"rm -rf /tmp/e2e-16-copy && cp -a \\\"\\$(npm root -g)/@lamalibre/lamaste-agent\\\" /tmp/e2e-16-copy\"\nCOPY_OUTPUT=$(agent_exec \"LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN='$TOKEN' node /tmp/e2e-16-copy/bin/lamaste-agent.js setup --json --label '$AGENT_LABEL' --panel-url 'https://${HOST_IP}:9292' 2>/dev/null; true\")\nCOPY_ERROR=$(echo \"$COPY_OUTPUT\" | jq -r 'select(.event==\"error\") | .message' 2>/dev/null | head -1 || echo \"\")\nassert_contains \"$COPY_ERROR\" \"must be installed globally\" \"Setup from a non-global copy emits an error event naming the global install\" || true\nCOPY_ENROLLED=$(echo \"$COPY_OUTPUT\" | jq -r 'select(.event==\"step\" and .step==\"enroll_panel\") | .step' 2>/dev/null | head -1 || echo \"\")\nassert_eq \"$COPY_ENROLLED\" \"\" \"Non-global setup never reached the enrollment step\" || true\nCOPY_DIR=$(agent_exec \"test -e /root/.lamalibre/lamaste/agents/${AGENT_LABEL} && echo yes || echo no\")\nassert_eq \"$COPY_DIR\" \"no\" \"Non-global setup created no agent directory\" || true\nagent_exec \"rm -rf /tmp/e2e-16-copy\" || true\n\n# The token is still unspent: lookup does not consume it, enrollment would\nLOOKUP_BODY=$(jq -cn --arg t \"$TOKEN\" '{token:$t}')\nLOOKUP_RESPONSE=$(host_exec \"curl -sk --max-time 30 -X POST -H 'Content-Type: application/json' -d '${LOOKUP_BODY}' https://127.0.0.1:9292/api/enroll/lookup\" 2>/dev/null || echo '{}')\nassert_json_field \"$LOOKUP_RESPONSE\" '.label' \"$AGENT_LABEL\" \"Enrollment token still valid after the refused setup\" || true"
+    },
+    {
       "id": "lamaste-agent-setup-json-on-agent-vm",
       "label": "lamaste-agent setup --json on agent VM",
       "steps": [
         {
-          "id": "step-14",
+          "id": "step-26",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -238,7 +458,7 @@
           }
         },
         {
-          "id": "step-15",
+          "id": "step-27",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -255,7 +475,7 @@
           ]
         },
         {
-          "id": "step-16",
+          "id": "step-28",
           "label": "No NDJSON output from lamaste-agent setup --json",
           "target": "local",
           "op": {
@@ -279,7 +499,7 @@
       "label": "NDJSON line validation",
       "steps": [
         {
-          "id": "step-24",
+          "id": "step-36",
           "label": "Set LINE_COUNT",
           "target": "local",
           "op": {
@@ -296,7 +516,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-37",
           "label": "Set VALID_LINES",
           "target": "local",
           "op": {
@@ -313,7 +533,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-38",
           "label": "Line $LINE_COUNT is not valid JSON: $line",
           "target": "local",
           "op": {
@@ -323,7 +543,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-40",
           "label": "Set EVENT",
           "target": "local",
           "op": {
@@ -340,7 +560,7 @@
           ]
         },
         {
-          "id": "step-35",
+          "id": "step-47",
           "label": "All $LINE_COUNT lines are valid JSON",
           "target": "local",
           "op": {
@@ -350,7 +570,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-48",
           "label": "JSON validation: $VALID_LINES/$LINE_COUNT lines valid",
           "target": "local",
           "op": {
@@ -360,7 +580,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-49",
           "label": "Step events emitted: $STEP_EVENTS",
           "target": "local",
           "op": {
@@ -375,7 +595,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-50",
           "label": "Expected at least 5 step events, got: $STEP_EVENTS",
           "target": "local",
           "op": {
@@ -397,7 +617,7 @@
       "label": "Complete event validation",
       "steps": [
         {
-          "id": "step-39",
+          "id": "step-51",
           "label": "Exactly one complete event emitted",
           "target": "local",
           "op": {
@@ -407,7 +627,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-52",
           "label": "Set COMPLETE_LINE",
           "target": "local",
           "op": {
@@ -424,7 +644,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-53",
           "label": "Extract LABEL",
           "target": "local",
           "op": {
@@ -441,7 +661,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-54",
           "label": "Extract PANEL_URL",
           "target": "local",
           "op": {
@@ -458,7 +678,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-55",
           "label": "Extract AUTH_METHOD",
           "target": "local",
           "op": {
@@ -475,7 +695,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-56",
           "label": "Agent label matches: $LABEL",
           "target": "local",
           "op": {
@@ -490,7 +710,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-57",
           "label": "Agent label mismatch: expected $AGENT_LABEL, got $LABEL",
           "target": "local",
           "op": {
@@ -505,7 +725,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-58",
           "label": "Panel URL present and uses HTTPS",
           "target": "local",
           "op": {
@@ -519,7 +739,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-59",
           "label": "Panel URL missing or not HTTPS: $PANEL_URL",
           "target": "local",
           "op": {
@@ -536,7 +756,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-60",
           "label": "Auth method present: $AUTH_METHOD",
           "target": "local",
           "op": {
@@ -550,7 +770,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-61",
           "label": "Auth method missing",
           "target": "local",
           "op": {
@@ -567,7 +787,45 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-62",
+          "label": "Extract BOOT_PERSISTENCE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "BOOT_PERSISTENCE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "COMPLETE_LINE"
+              },
+              "expression": ".agent.bootPersistence // empty"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Complete event reports bootPersistence: enabled (lingering on)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BOOT_PERSISTENCE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Complete event reports bootPersistence: enabled (lingering on)"
+            }
+          }
+        },
+        {
+          "id": "step-65",
           "label": "Extract ERROR_MSG",
           "target": "local",
           "op": {
@@ -584,7 +842,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-66",
           "label": "Agent setup emitted error: $ERROR_MSG",
           "target": "local",
           "op": {
@@ -594,7 +852,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-67",
           "label": "Expected exactly one complete event, got: $COMPLETE_EVENTS",
           "target": "local",
           "op": {
@@ -604,14 +862,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  LABEL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.label // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.panelUrl // empty')\n  AUTH_METHOD=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.authMethod // empty')\n\n  if [ \"$LABEL\" = \"$AGENT_LABEL\" ]; then\n    log_pass \"Agent label matches: $LABEL\"\n  else\n    log_fail \"Agent label mismatch: expected $AGENT_LABEL, got $LABEL\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$AUTH_METHOD\" ]; then\n    log_pass \"Auth method present: $AUTH_METHOD\"\n  else\n    log_fail \"Auth method missing\"\n  fi\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  ERROR_MSG=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"error\") | .message // \"unknown\"' 2>/dev/null | head -1)\n  log_fail \"Agent setup emitted error: $ERROR_MSG\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Complete event validation\"\n# ---------------------------------------------------------------------------\n\nif [ \"$COMPLETE_EVENTS\" -eq 1 ]; then\n  log_pass \"Exactly one complete event emitted\"\n\n  COMPLETE_LINE=$(echo \"$JSON_OUTPUT\" | jq -c 'select(.event==\"complete\")' 2>/dev/null | head -1)\n\n  LABEL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.label // empty')\n  PANEL_URL=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.panelUrl // empty')\n  AUTH_METHOD=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.authMethod // empty')\n\n  if [ \"$LABEL\" = \"$AGENT_LABEL\" ]; then\n    log_pass \"Agent label matches: $LABEL\"\n  else\n    log_fail \"Agent label mismatch: expected $AGENT_LABEL, got $LABEL\"\n  fi\n\n  if [ -n \"$PANEL_URL\" ] && [[ \"$PANEL_URL\" == https://* ]]; then\n    log_pass \"Panel URL present and uses HTTPS\"\n  else\n    log_fail \"Panel URL missing or not HTTPS: $PANEL_URL\"\n  fi\n\n  if [ -n \"$AUTH_METHOD\" ]; then\n    log_pass \"Auth method present: $AUTH_METHOD\"\n  else\n    log_fail \"Auth method missing\"\n  fi\n\n  # setup-agent.sh enables lingering for root (the user this setup runs as),\n  # so the chisel user unit starts at boot without a login\n  BOOT_PERSISTENCE=$(echo \"$COMPLETE_LINE\" | jq -r '.agent.bootPersistence // empty')\n  assert_eq \"$BOOT_PERSISTENCE\" \"enabled\" \"Complete event reports bootPersistence: enabled (lingering on)\" || true\nelif [ \"$ERROR_EVENTS\" -gt 0 ]; then\n  ERROR_MSG=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"error\") | .message // \"unknown\"' 2>/dev/null | head -1)\n  log_fail \"Agent setup emitted error: $ERROR_MSG\"\nelse\n  log_fail \"Expected exactly one complete event, got: $COMPLETE_EVENTS\"\nfi"
     },
     {
       "id": "no-sensitive-data-in-ndjson-output",
       "label": "No sensitive data in NDJSON output",
       "steps": [
         {
-          "id": "step-54",
+          "id": "step-68",
           "label": "Enrollment token found in NDJSON output",
           "target": "local",
           "op": {
@@ -621,7 +879,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-69",
           "label": "Enrollment token not leaked in NDJSON output",
           "target": "local",
           "op": {
@@ -638,7 +896,7 @@
       "label": "Step status validation",
       "steps": [
         {
-          "id": "step-57",
+          "id": "step-71",
           "label": "Set HAS_STEP",
           "target": "local",
           "op": {
@@ -655,7 +913,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-72",
           "label": "$STEP_KEY step present",
           "target": "local",
           "op": {
@@ -669,7 +927,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-73",
           "label": "$STEP_KEY step missing",
           "target": "local",
           "op": {
@@ -686,7 +944,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-75",
           "label": "Extract INVALID_STATUS",
           "target": "local",
           "op": {
@@ -703,7 +961,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-76",
           "label": "All step events have valid status values",
           "target": "local",
           "op": {
@@ -720,7 +978,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-77",
           "label": "Invalid step status found: $INVALID_STATUS",
           "target": "local",
           "op": {
@@ -737,11 +995,447 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step status validation\"\n# ---------------------------------------------------------------------------\n\nfor STEP_KEY in create_directories generate_keypair enroll_panel save_config; do\n  HAS_STEP=$(echo \"$JSON_OUTPUT\" | jq -r \"select(.event==\\\"step\\\" and .step==\\\"$STEP_KEY\\\") | .step\" 2>/dev/null | head -1)\n  if [ -n \"$HAS_STEP\" ]; then\n    log_pass \"$STEP_KEY step present\"\n  else\n    log_fail \"$STEP_KEY step missing\"\n  fi\ndone\n\nINVALID_STATUS=$(echo \"$JSON_OUTPUT\" | jq -r 'select(.event==\"step\") | .status // \"null\"' 2>/dev/null | grep -v -E '^(running|complete|skipped|failed)$' | head -1 || true)\nif [ -z \"$INVALID_STATUS\" ]; then\n  log_pass \"All step events have valid status values\"\nelse\n  log_fail \"Invalid step status found: $INVALID_STATUS\"\nfi"
     },
     {
+      "id": "sync-timer-installed-by-setup",
+      "label": "Sync timer installed by setup",
+      "steps": [
+        {
+          "id": "step-82",
+          "label": "Set SYNC_TIMER_ACTIVE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "SYNC_TIMER_ACTIVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "Sync timer ${SYNC_TIMER} is active after setup",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_TIMER_ACTIVE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer ${SYNC_TIMER} is active after setup"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set SYNC_TIMER_ENABLED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-enabled ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "SYNC_TIMER_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "Sync timer ${SYNC_TIMER} is enabled (survives reboot with lingering)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_TIMER_ENABLED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Sync timer ${SYNC_TIMER} is enabled (survives reboot with lingering)"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${USER_UNIT_DIR}/${SYNC_TIMER}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "TIMER_UNIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "Sync timer first fires 5 seconds after activation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_UNIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "OnActiveSec=5s"
+              },
+              "message": "Sync timer first fires 5 seconds after activation"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Sync timer fires 30 seconds after each run",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_UNIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "OnUnitInactiveSec=30s"
+              },
+              "message": "Sync timer fires 30 seconds after each run"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${USER_UNIT_DIR}/${SYNC_SERVICE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SERVICE_UNIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "Sync service is a oneshot",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SERVICE_UNIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Type=oneshot"
+              },
+              "message": "Sync service is a oneshot"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "realpath \\"
+          },
+          "capture": [
+            {
+              "variable": "GLOBAL_AGENT_SCRIPT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "Sync service logs to the agent's sync.log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SERVICE_UNIT"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "/.lamalibre/lamaste/agents/${AGENT_LABEL}/logs/sync.log"
+              },
+              "message": "Sync service logs to the agent's sync.log"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sync timer installed by setup\"\n# ---------------------------------------------------------------------------\n\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LABEL}.timer\"\nSYNC_SERVICE=\"lamalibre-lamaste-sync-${AGENT_LABEL}.service\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LABEL}.service\"\nUSER_UNIT_DIR=\"/root/.config/systemd/user\"\n\nSYNC_TIMER_ACTIVE=$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\nassert_eq \"$SYNC_TIMER_ACTIVE\" \"active\" \"Sync timer ${SYNC_TIMER} is active after setup\" || true\nSYNC_TIMER_ENABLED=$(user_systemctl \"is-enabled ${SYNC_TIMER} 2>/dev/null || true\")\nassert_eq \"$SYNC_TIMER_ENABLED\" \"enabled\" \"Sync timer ${SYNC_TIMER} is enabled (survives reboot with lingering)\" || true\n\nTIMER_UNIT=$(agent_exec \"cat '${USER_UNIT_DIR}/${SYNC_TIMER}' 2>/dev/null\" || echo \"\")\nassert_contains \"$TIMER_UNIT\" \"OnActiveSec=5s\" \"Sync timer first fires 5 seconds after activation\" || true\nassert_contains \"$TIMER_UNIT\" \"OnUnitInactiveSec=30s\" \"Sync timer fires 30 seconds after each run\" || true\n\nSERVICE_UNIT=$(agent_exec \"cat '${USER_UNIT_DIR}/${SYNC_SERVICE}' 2>/dev/null\" || echo \"\")\nassert_contains \"$SERVICE_UNIT\" \"Type=oneshot\" \"Sync service is a oneshot\" || true\n# It runs the globally installed CLI by its resolved path, never an npx copy\nGLOBAL_AGENT_SCRIPT=$(agent_exec \"realpath \\\"\\$(command -v lamaste-agent)\\\"\" 2>/dev/null || echo \"\")\nassert_contains \"$SERVICE_UNIT\" \"\\\"${GLOBAL_AGENT_SCRIPT}\\\" \\\"sync\\\" \\\"--label\\\" \\\"${AGENT_LABEL}\\\" \\\"--quiet\\\"\" \"Sync service runs '<global lamaste-agent> sync --label ${AGENT_LABEL} --quiet'\" || true\nassert_contains \"$SERVICE_UNIT\" \"/.lamalibre/lamaste/agents/${AGENT_LABEL}/logs/sync.log\" \"Sync service logs to the agent's sync.log\" || true"
+    },
+    {
+      "id": "no-tunnel-assigned-the-chisel-client-stays-stopped",
+      "label": "No tunnel assigned: the chisel client stays stopped",
+      "steps": [
+        {
+          "id": "step-97",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${SYNC_STATE_FILE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "sync-state.json records the agent idle (no tunnel assigned)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC_STATE"
+              },
+              "path": ".lastState",
+              "expected": {
+                "kind": "literal",
+                "value": "idle"
+              },
+              "message": "sync-state.json records the agent idle (no tunnel assigned)"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "sync-state.json records 0 tunnels",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC_STATE"
+              },
+              "path": ".tunnels",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "sync-state.json records 0 tunnels"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "sync-state.json records no sync error",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SYNC_STATE"
+              },
+              "path": ".lastError",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "sync-state.json records no sync error"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "Set CHISEL_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"show -p ActiveState --value ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "Sleep 5s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 5
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "Chisel unit of a tunnel-less agent never started across 45 s of syncs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_EVER_STARTED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "Chisel unit of a tunnel-less agent never started across 45 s of syncs"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Set CHISEL_RESTARTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"show -p NRestarts --value ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_RESTARTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent status --label '$AGENT_LABEL' 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "IDLE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "Set IDLE_SYNC_LINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$IDLE_STATUS\" | grep \"Sync:\" | head -1 || true"
+          },
+          "capture": [
+            {
+              "variable": "IDLE_SYNC_LINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-120",
+          "label": "Status Sync: line reports no tunnels assigned",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "IDLE_SYNC_LINE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "no tunnels assigned"
+              },
+              "message": "Status Sync: line reports no tunnels assigned"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"No tunnel assigned: the chisel client stays stopped\"\n# ---------------------------------------------------------------------------\n\n# The first sync runs 5 seconds after setup; it records its outcome\nSYNC_STATE_FILE=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/sync-state.json\"\nSYNC_STATE=\"\"\nfor _ in $(seq 1 30); do\n  SYNC_STATE=$(agent_exec \"cat '${SYNC_STATE_FILE}' 2>/dev/null\" 2>/dev/null || echo \"\")\n  if [ -n \"$SYNC_STATE\" ] && [ \"$(echo \"$SYNC_STATE\" | jq -r '.lastOkAt // empty' 2>/dev/null)\" != \"\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_json_field \"$SYNC_STATE\" '.lastState' \"idle\" \"sync-state.json records the agent idle (no tunnel assigned)\" || true\nassert_json_field \"$SYNC_STATE\" '.tunnels' \"0\" \"sync-state.json records 0 tunnels\" || true\nassert_json_field \"$SYNC_STATE\" '.lastError' \"null\" \"sync-state.json records no sync error\" || true\n\n# Chisel exits at once without a remote; a unit left running would crash-loop.\n# Watch across more than one sync cycle (45 s): it must never be (re)started.\nCHISEL_EVER_STARTED=no\nfor _ in $(seq 1 9); do\n  CHISEL_STATE=$(user_systemctl \"show -p ActiveState --value ${CHISEL_SERVICE} 2>/dev/null || true\")\n  case \"$CHISEL_STATE\" in\n    active|activating|reloading|deactivating) CHISEL_EVER_STARTED=\"$CHISEL_STATE\" ;;\n  esac\n  sleep 5\ndone\nassert_eq \"$CHISEL_EVER_STARTED\" \"no\" \"Chisel unit of a tunnel-less agent never started across 45 s of syncs\" || true\nCHISEL_RESTARTS=$(user_systemctl \"show -p NRestarts --value ${CHISEL_SERVICE} 2>/dev/null || true\")\ncase \"$CHISEL_RESTARTS\" in\n  \"\"|0) log_pass \"Chisel unit of a tunnel-less agent has not been restarted (NRestarts: ${CHISEL_RESTARTS:-n/a})\" ;;\n  *) log_fail \"Chisel unit of a tunnel-less agent restarted ${CHISEL_RESTARTS} time(s)\" ;;\nesac\n\nIDLE_STATUS=$(agent_exec \"lamaste-agent status --label '$AGENT_LABEL' 2>&1 || true\")\nIDLE_SYNC_LINE=$(echo \"$IDLE_STATUS\" | grep \"Sync:\" | head -1 || true)\nassert_contains \"$IDLE_SYNC_LINE\" \"no tunnels assigned\" \"Status Sync: line reports no tunnels assigned\" || true"
+    },
+    {
       "id": "cleanup-uninstall-test-agent",
       "label": "Cleanup: uninstall test agent",
       "steps": [
         {
-          "id": "step-64",
+          "id": "step-121",
           "label": "Agent uninstalled on agent VM",
           "target": "local",
           "op": {
@@ -751,7 +1445,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-122",
           "label": "Agent uninstall failed on agent VM (exit $?)",
           "target": "local",
           "op": {
@@ -761,7 +1455,83 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-123",
+          "label": "Set TIMER_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "TIMER_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "Sync timer stopped after uninstall (state: ${TIMER_AFTER})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer stopped after uninstall (state: ${TIMER_AFTER})"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "test -e '${USER_UNIT_DIR}/${SYNC_TIMER}' && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "TIMER_FILE_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-126",
+          "label": "Sync timer unit file removed by uninstall",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_FILE_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "Sync timer unit file removed by uninstall"
+            }
+          }
+        },
+        {
+          "id": "step-127",
           "label": "DELETE /api/certs/agent/$AGENT_LABEL",
           "target": "host",
           "op": {
@@ -780,7 +1550,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-67",
+          "id": "step-128",
           "label": "Extract DELETE_STATUS",
           "target": "local",
           "op": {
@@ -797,7 +1567,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-129",
           "label": "Agent cert revoked on host",
           "target": "local",
           "op": {
@@ -812,7 +1582,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-131",
           "label": "Agent cert revocation: $DELETE_STATUS (may already be revoked)",
           "target": "local",
           "op": {
@@ -827,7 +1597,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-132",
           "label": "Agent cert revocation returned: $DELETE_STATUS",
           "target": "local",
           "op": {
@@ -842,7 +1612,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-133",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -852,12 +1622,12 @@
           "continueOnError": true
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: uninstall test agent\"\n# ---------------------------------------------------------------------------\n\nif agent_exec \"lamaste-agent uninstall --label '$AGENT_LABEL' 2>/dev/null; true\"; then\n  log_pass \"Agent uninstalled on agent VM\"\nelse\n  log_fail \"Agent uninstall failed on agent VM (exit $?)\"\nfi\n\nDELETE_RESULT=$(host_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null) || true\nDELETE_STATUS=$(echo \"$DELETE_RESULT\" | jq -r '.ok // .error // \"unknown\"' 2>/dev/null || echo \"unknown\")\nif [ \"$DELETE_STATUS\" = \"true\" ]; then\n  log_pass \"Agent cert revoked on host\"\nelif echo \"$DELETE_RESULT\" | jq -e '.error' &>/dev/null; then\n  log_info \"Agent cert revocation: $DELETE_STATUS (may already be revoked)\"\nelse\n  log_info \"Agent cert revocation returned: $DELETE_STATUS\"\nfi\n\nagent_exec \"rm -f /tmp/agent-json-setup.txt\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup: uninstall test agent\"\n# ---------------------------------------------------------------------------\n\nif agent_exec \"lamaste-agent uninstall --label '$AGENT_LABEL' 2>/dev/null; true\"; then\n  log_pass \"Agent uninstalled on agent VM\"\nelse\n  log_fail \"Agent uninstall failed on agent VM (exit $?)\"\nfi\n\n# Uninstall removes the sync timer — it would otherwise keep running sync\nTIMER_AFTER=$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\nassert_not_eq \"$TIMER_AFTER\" \"active\" \"Sync timer stopped after uninstall (state: ${TIMER_AFTER})\" || true\nTIMER_FILE_AFTER=$(agent_exec \"test -e '${USER_UNIT_DIR}/${SYNC_TIMER}' && echo yes || echo no\")\nassert_eq \"$TIMER_FILE_AFTER\" \"no\" \"Sync timer unit file removed by uninstall\" || true\n\nDELETE_RESULT=$(host_api_delete \"certs/agent/$AGENT_LABEL\" 2>/dev/null) || true\nDELETE_STATUS=$(echo \"$DELETE_RESULT\" | jq -r '.ok // .error // \"unknown\"' 2>/dev/null || echo \"unknown\")\nif [ \"$DELETE_STATUS\" = \"true\" ]; then\n  log_pass \"Agent cert revoked on host\"\nelif echo \"$DELETE_RESULT\" | jq -e '.error' &>/dev/null; then\n  log_info \"Agent cert revocation: $DELETE_STATUS (may already be revoked)\"\nelse\n  log_info \"Agent cert revocation returned: $DELETE_STATUS\"\nfi\n\nagent_exec \"rm -f /tmp/agent-json-setup.txt\" || true"
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 16 — Agent JSON Setup Output (Three-VM)\n# ============================================================================\n# Verifies that lamaste-agent setup --json produces valid NDJSON output on\n# the agent VM when run with a token from the host panel.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \\\"\\$(echo '$b64body' | base64 -d)\\\" https://127.0.0.1:9292/api/$path\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"16 — Agent JSON Setup Output (Three-VM)\"\n",
+  "headerRaw": "# ============================================================================\n# 16 — Agent JSON Setup Output (Three-VM)\n# ============================================================================\n# Verifies that lamaste-agent setup --json produces valid NDJSON output on\n# the agent VM when run with a token from the host panel, and what setup\n# leaves behind:\n# - A copy of the CLI outside npm's global root (what npx runs) refuses to set\n#   up, before the single-use enrollment token is spent\n# - Setup installs the sync timer (a oneshot service every 30 seconds)\n# - An agent with no tunnel keeps its chisel client stopped — not\n#   crash-looping — across several sync runs\n# - Uninstall removes the sync timer\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\n# (lingering is enabled by setup-agent.sh; multipass exec is not a PAM session)\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  local path=\"$1\"\n  local body=\"$2\"\n  local b64body\n  b64body=$(echo -n \"$body\" | base64)\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \\\"\\$(echo '$b64body' | base64 -d)\\\" https://127.0.0.1:9292/api/$path\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"16 — Agent JSON Setup Output (Three-VM)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

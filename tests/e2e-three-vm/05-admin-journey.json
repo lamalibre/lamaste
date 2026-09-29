@@ -23,6 +23,9 @@
     "TEST_TUNNEL_PORT": {
       "value": "18090"
     },
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
+    },
     "TEST_USERNAME": {
       "value": "e2etestuser"
     }
@@ -657,6 +660,28 @@
         },
         {
           "id": "step-28",
+          "label": "Created tunnel is owned by ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Created tunnel is owned by ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-29",
           "label": "Created tunnel ID: $TEST_TUNNEL_ID",
           "target": "local",
           "op": {
@@ -666,7 +691,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -684,7 +709,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "Set TUNNEL_COUNT_AFTER",
           "target": "local",
           "op": {
@@ -701,7 +726,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "Set FOUND_TUNNEL",
           "target": "local",
           "op": {
@@ -718,7 +743,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "New tunnel appears in tunnel list",
           "target": "local",
           "continueOnError": true,
@@ -739,7 +764,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "PATCH /api/tunnels/${TEST_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -760,7 +785,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "PATCH /api/tunnels/:id disable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -782,7 +807,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-36",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -800,7 +825,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "Set DISABLED_STATE",
           "target": "local",
           "op": {
@@ -817,7 +842,7 @@
           ]
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "Tunnel shows as disabled after PATCH",
           "target": "local",
           "continueOnError": true,
@@ -838,7 +863,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "PATCH /api/tunnels/${TEST_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -859,7 +884,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "PATCH /api/tunnels/:id re-enable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -881,7 +906,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -899,7 +924,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "Set ENABLED_STATE",
           "target": "local",
           "op": {
@@ -916,7 +941,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "Tunnel shows as enabled after re-enable PATCH",
           "target": "local",
           "continueOnError": true,
@@ -937,7 +962,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "DELETE /api/tunnels/${TEST_TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -955,7 +980,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "DELETE /api/tunnels/:id returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -977,7 +1002,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -995,7 +1020,7 @@
           ]
         },
         {
-          "id": "step-46",
+          "id": "step-47",
           "label": "Set GONE_TUNNEL",
           "target": "local",
           "op": {
@@ -1012,7 +1037,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Tunnel no longer appears after DELETE",
           "target": "local",
           "continueOnError": true,
@@ -1033,14 +1058,14 @@
           }
         }
       ],
-      "bash": "# ===========================================================================\nlog_section \"5. Tunnel management via panel\"\n# ===========================================================================\n\n# GET /api/tunnels — list existing tunnels\nLIST_BEFORE=$(host_api_get \"tunnels\")\nassert_json_field_not_empty \"$LIST_BEFORE\" '.tunnels' \"GET /api/tunnels returns tunnels array\" || true\n\nTUNNEL_COUNT_BEFORE=$(echo \"$LIST_BEFORE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nlog_info \"Tunnels before create: $TUNNEL_COUNT_BEFORE\"\n\n# POST /api/tunnels — create test tunnel\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TEST_TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TEST_TUNNEL_PORT}}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"POST /api/tunnels create returned ok: true\" || true\n\nTEST_TUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Created tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TEST_TUNNEL_ID\"\n\n# GET /api/tunnels — verify new tunnel appears\nLIST_AFTER_CREATE=$(host_api_get \"tunnels\")\nTUNNEL_COUNT_AFTER=$(echo \"$LIST_AFTER_CREATE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nFOUND_TUNNEL=$(echo \"$LIST_AFTER_CREATE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_TUNNEL\" \"$TEST_TUNNEL_ID\" \"New tunnel appears in tunnel list\" || true\n\n# PATCH /api/tunnels/:id — disable\nDISABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id disable returned ok: true\" || true\n\n# Verify disabled state\nLIST_DISABLED=$(host_api_get \"tunnels\")\nDISABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$DISABLED_STATE\" \"false\" \"Tunnel shows as disabled after PATCH\" || true\n\n# PATCH /api/tunnels/:id — re-enable\nENABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id re-enable returned ok: true\" || true\n\n# Verify re-enabled state\nLIST_ENABLED=$(host_api_get \"tunnels\")\nENABLED_STATE=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE\" \"true\" \"Tunnel shows as enabled after re-enable PATCH\" || true\n\n# DELETE /api/tunnels/:id\nDELETE_TUNNEL_RESPONSE=$(host_api_delete \"tunnels/${TEST_TUNNEL_ID}\")\nassert_json_field \"$DELETE_TUNNEL_RESPONSE\" '.ok' 'true' \"DELETE /api/tunnels/:id returned ok: true\" || true\n\n# Verify tunnel is gone\nLIST_AFTER_DELETE=$(host_api_get \"tunnels\")\nGONE_TUNNEL=$(echo \"$LIST_AFTER_DELETE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$GONE_TUNNEL\" \"\" \"Tunnel no longer appears after DELETE\" || true\n\n# Clear the ID so cleanup does not try to delete again\nTEST_TUNNEL_ID=\"\""
+      "bash": "# ===========================================================================\nlog_section \"5. Tunnel management via panel\"\n# ===========================================================================\n\n# GET /api/tunnels — list existing tunnels\nLIST_BEFORE=$(host_api_get \"tunnels\")\nassert_json_field_not_empty \"$LIST_BEFORE\" '.tunnels' \"GET /api/tunnels returns tunnels array\" || true\n\nTUNNEL_COUNT_BEFORE=$(echo \"$LIST_BEFORE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nlog_info \"Tunnels before create: $TUNNEL_COUNT_BEFORE\"\n\n# POST /api/tunnels — create test tunnel\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TEST_TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TEST_TUNNEL_PORT},\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"POST /api/tunnels create returned ok: true\" || true\n\nTEST_TUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Created tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Created tunnel is owned by ${TUNNEL_AGENT}\" || true\nlog_info \"Created tunnel ID: $TEST_TUNNEL_ID\"\n\n# GET /api/tunnels — verify new tunnel appears\nLIST_AFTER_CREATE=$(host_api_get \"tunnels\")\nTUNNEL_COUNT_AFTER=$(echo \"$LIST_AFTER_CREATE\" | jq '.tunnels | length' 2>/dev/null || echo \"0\")\nFOUND_TUNNEL=$(echo \"$LIST_AFTER_CREATE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_TUNNEL\" \"$TEST_TUNNEL_ID\" \"New tunnel appears in tunnel list\" || true\n\n# PATCH /api/tunnels/:id — disable\nDISABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id disable returned ok: true\" || true\n\n# Verify disabled state\nLIST_DISABLED=$(host_api_get \"tunnels\")\nDISABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$DISABLED_STATE\" \"false\" \"Tunnel shows as disabled after PATCH\" || true\n\n# PATCH /api/tunnels/:id — re-enable\nENABLE_RESPONSE=$(host_api_patch \"tunnels/${TEST_TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"PATCH /api/tunnels/:id re-enable returned ok: true\" || true\n\n# Verify re-enabled state\nLIST_ENABLED=$(host_api_get \"tunnels\")\nENABLED_STATE=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE\" \"true\" \"Tunnel shows as enabled after re-enable PATCH\" || true\n\n# DELETE /api/tunnels/:id\nDELETE_TUNNEL_RESPONSE=$(host_api_delete \"tunnels/${TEST_TUNNEL_ID}\")\nassert_json_field \"$DELETE_TUNNEL_RESPONSE\" '.ok' 'true' \"DELETE /api/tunnels/:id returned ok: true\" || true\n\n# Verify tunnel is gone\nLIST_AFTER_DELETE=$(host_api_get \"tunnels\")\nGONE_TUNNEL=$(echo \"$LIST_AFTER_DELETE\" | jq -r --arg id \"$TEST_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\nassert_eq \"$GONE_TUNNEL\" \"\" \"Tunnel no longer appears after DELETE\" || true\n\n# Clear the ID so cleanup does not try to delete again\nTEST_TUNNEL_ID=\"\""
     },
     {
       "id": "6-user-management-via-panel",
       "label": "6. User management via panel",
       "steps": [
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1058,7 +1083,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "GET /api/users returns users array",
           "target": "local",
           "continueOnError": true,
@@ -1076,7 +1101,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "Set USERS_COUNT",
           "target": "local",
           "op": {
@@ -1093,7 +1118,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "Users list contains at least one user (count: $USERS_COUNT)",
           "target": "local",
           "op": {
@@ -1108,7 +1133,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-54",
           "label": "Users list should contain at least one user (count: $USERS_COUNT)",
           "target": "local",
           "op": {
@@ -1123,7 +1148,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-55",
           "label": "POST /api/users",
           "target": "host",
           "op": {
@@ -1142,7 +1167,7 @@
           ]
         },
         {
-          "id": "step-55",
+          "id": "step-56",
           "label": "POST /api/users create returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1164,7 +1189,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-57",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1182,7 +1207,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "Set FOUND_USER",
           "target": "local",
           "op": {
@@ -1199,7 +1224,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "New user appears in users list",
           "target": "local",
           "continueOnError": true,
@@ -1220,7 +1245,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-60",
           "label": "PUT /api/users/${TEST_USERNAME}",
           "target": "host",
           "op": {
@@ -1241,7 +1266,7 @@
           ]
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "PUT /api/users/:username update returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1263,7 +1288,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "POST /api/users/${TEST_USERNAME}/reset-totp",
           "target": "host",
           "op": {
@@ -1282,7 +1307,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-63",
           "label": "POST /api/users/:username/reset-totp returns otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -1300,7 +1325,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-64",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -1317,7 +1342,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-65",
           "label": "TOTP otpauth URI has correct scheme",
           "target": "local",
           "op": {
@@ -1327,7 +1352,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-66",
           "label": "TOTP otpauth URI should start with otpauth:// (got: $OTPAUTH_URI)",
           "target": "local",
           "op": {
@@ -1337,7 +1362,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-67",
           "label": "DELETE /api/users/${TEST_USERNAME}",
           "target": "host",
           "op": {
@@ -1355,7 +1380,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-68",
           "label": "DELETE /api/users/:username returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1377,7 +1402,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-69",
           "label": "GET /api/users",
           "target": "host",
           "op": {
@@ -1395,7 +1420,7 @@
           ]
         },
         {
-          "id": "step-69",
+          "id": "step-70",
           "label": "Set GONE_USER",
           "target": "local",
           "op": {
@@ -1412,7 +1437,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-71",
           "label": "User no longer appears after DELETE",
           "target": "local",
           "continueOnError": true,
@@ -1440,7 +1465,7 @@
       "label": "7. Service management via panel",
       "steps": [
         {
-          "id": "step-72",
+          "id": "step-73",
           "label": "GET /api/services",
           "target": "host",
           "op": {
@@ -1458,7 +1483,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-74",
           "label": "GET /api/services returns services array",
           "target": "local",
           "continueOnError": true,
@@ -1476,7 +1501,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-77",
           "label": "Set FOUND_SVC",
           "target": "local",
           "op": {
@@ -1493,7 +1518,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-78",
           "label": "Service '$SVC' is listed",
           "target": "local",
           "op": {
@@ -1508,7 +1533,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-79",
           "label": "Service '$SVC' not found in services list",
           "target": "local",
           "op": {
@@ -1530,7 +1555,7 @@
       "label": "8. Certificate management",
       "steps": [
         {
-          "id": "step-80",
+          "id": "step-81",
           "label": "GET /api/certs",
           "target": "host",
           "op": {
@@ -1548,7 +1573,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-82",
           "label": "GET /api/certs returns certificate info",
           "target": "local",
           "continueOnError": true,
@@ -1566,7 +1591,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-83",
           "label": "Certs response keys: $(echo \"$CERTS_RESPONSE\" | jq -r 'keys | join(\", \")' 2>/dev/null || echo 'unable to parse')",
           "target": "local",
           "op": {
@@ -1583,7 +1608,7 @@
       "label": "9. Cleanup",
       "steps": [
         {
-          "id": "step-83",
+          "id": "step-84",
           "label": "All test sections completed. EXIT trap will handle resource cleanup.",
           "target": "local",
           "op": {
@@ -1604,7 +1629,7 @@
     "host_api_delete"
   ],
   "headerRaw": "# ============================================================================\n# 05 — Admin Journey (Three-VM)\n# ============================================================================\n# Tests the admin's experience using the panel — verifying that the panel UI\n# is accessible, APIs return correct data, and CRUD operations on tunnels,\n# users, services, and certificates work as expected.\n#\n# Runs from the developer's Mac and uses `multipass exec` to interact with VMs.\n#\n# Required environment variables:\n#   HOST_IP      — IP address of the host VM\n#   TEST_DOMAIN  — Domain configured for testing\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_put() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PUT -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTEST_TUNNEL_SUBDOMAIN=\"e2eadmin\"\nTEST_TUNNEL_PORT=18090\nTEST_TUNNEL_ID=\"\"\nTEST_USERNAME=\"e2etestuser\"\n\nbegin_test \"05 — Admin Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Delete test tunnel if created\n  if [ -n \"$TEST_TUNNEL_ID\" ] && [ \"$TEST_TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TEST_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n\n  # Delete test user if created\n  host_api_delete \"users/${TEST_USERNAME}\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_put() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PUT -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTEST_TUNNEL_SUBDOMAIN=\"e2eadmin\"\nTEST_TUNNEL_PORT=18090\n# Every tunnel is owned by an enrolled agent — the one setup-host.sh enrolled\nTUNNEL_AGENT=\"test-agent\"\nTEST_TUNNEL_ID=\"\"\nTEST_USERNAME=\"e2etestuser\"\n\nbegin_test \"05 — Admin Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Delete test tunnel if created\n  if [ -n \"$TEST_TUNNEL_ID\" ] && [ \"$TEST_TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TEST_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n\n  # Delete test user if created\n  host_api_delete \"users/${TEST_USERNAME}\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

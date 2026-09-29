@@ -3,7 +3,7 @@
   "meta": {
     "number": 20,
     "name": "Agent-Side User Plugin Access",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "20 — Agent-Side User Plugin Access (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq"]
@@ -59,7 +59,7 @@
               "variable": "AGENT_LABEL",
               "from": {
                 "kind": "jq",
-                "expression": ".agents[0].label // empty"
+                "expression": "[.agents[]? | select(.revoked != true)][0].label // empty"
               }
             }
           ]
@@ -79,7 +79,7 @@
         "kind": "var_not_empty",
         "variable": "AGENT_LABEL"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check VMs and onboarding\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" 2>/dev/null | jq -r '.status' || echo \"unknown\")\nif [ \"$ONBOARDING\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding complete\"\n\n# Find agent label\nAGENT_LABEL=$(host_api_get \"certs/agent\" 2>/dev/null | jq -r '.agents[0].label // empty' || echo \"\")\nif [ -z \"$AGENT_LABEL\" ]; then\n  log_skip \"No enrolled agent found — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check VMs and onboarding\"\n# ---------------------------------------------------------------------------\n\nONBOARDING=$(host_api_get \"onboarding/status\" 2>/dev/null | jq -r '.status' || echo \"unknown\")\nif [ \"$ONBOARDING\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding complete\"\n\n# Find an enrolled, non-revoked agent. The registry keeps revoked entries\n# (setup-host.sh revokes a stale test-agent on re-runs), and plugin tunnels\n# name this agent as their owner — a revoked one would make the plugin tunnel\n# validation cases below fail for the owner instead of for the field under test.\nAGENT_LABEL=$(host_api_get \"certs/agent\" 2>/dev/null | jq -r '[.agents[]? | select(.revoked != true)][0].label // empty' || echo \"\")\nif [ -z \"$AGENT_LABEL\" ]; then\n  log_skip \"No enrolled agent found — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\""
     },
     {
       "id": "1-create-agent-side-grant",

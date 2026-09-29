@@ -3,7 +3,7 @@
   "meta": {
     "number": 2,
     "name": "Tunnel Traffic",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "02 — Tunnel Traffic (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq"]
@@ -29,12 +29,43 @@
     "TUNNEL_PORT": {
       "value": "18080"
     },
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
+    },
+    "AGENT_LOCAL_LABEL": {
+      "value": "e2e-agent"
+    },
+    "CHISEL_UNIT_PATH": {
+      "value": "/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service",
+      "expression": true
+    },
+    "CHISEL_ENV_PATH": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/chisel.env",
+      "expression": true
+    },
+    "GRANT_PATTERN": {
+      "value": "^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$",
+      "expression": true
+    },
     "TUNNEL_FQDN": {
       "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
       "expression": true
     },
     "MARKER": {
       "value": "LAMALIBRE_LAMASTE_TUNNEL_OK_$timestamp()",
+      "expression": true
+    },
+    "AGENT_CHISEL_BIN": {
+      "value": "/root/.lamalibre/lamaste/bin/chisel"
+    },
+    "HEADERS_SUBDOMAIN": {
+      "value": "e2eheaders"
+    },
+    "HEADERS_PORT": {
+      "value": "18090"
+    },
+    "HEADERS_FQDN": {
+      "value": "${HEADERS_SUBDOMAIN}.${TEST_DOMAIN}",
       "expression": true
     }
   },
@@ -75,6 +106,39 @@
     },
     {
       "id": "cleanup-3",
+      "label": "Delete /tmp/e2e-echo-headers.py",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-echo-headers.py"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "Delete /tmp/e2e-body-small.bin",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-body-small.bin"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "DELETE tunnels/${HEADERS_TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${HEADERS_TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-6",
       "label": "DELETE tunnels/${TUNNEL_ID}",
       "target": "host",
       "continueOnError": true,
@@ -85,7 +149,7 @@
       }
     },
     {
-      "id": "cleanup-4",
+      "id": "cleanup-7",
       "label": "Cleanup exec on agent",
       "target": "agent",
       "continueOnError": true,
@@ -210,6 +274,28 @@
         },
         {
           "id": "step-5",
+          "label": "Tunnel is owned by ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Tunnel is owned by ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-6",
           "label": "Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})",
           "target": "local",
           "op": {
@@ -219,14 +305,115 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel via API\"\n# ---------------------------------------------------------------------------\n\n# accessMode: \"authenticated\" — this test exercises the 1FA+2FA happy path,\n# where any signed-in Authelia user can reach the tunnel. The server-side\n# default (\"restricted\") intentionally requires per-user grants that nobody\n# creates here, so we opt in explicitly rather than weakening the default.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel via API\"\n# ---------------------------------------------------------------------------\n\n# accessMode: \"authenticated\" — this test exercises the 1FA+2FA happy path,\n# where any signed-in Authelia user can reach the tunnel. The server-side\n# default (\"restricted\") intentionally requires per-user grants that nobody\n# creates here, so we opt in explicitly rather than weakening the default.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Tunnel is owned by ${TUNNEL_AGENT}\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})\""
+    },
+    {
+      "id": "verify-the-owner-s-chisel-config-and-grant",
+      "label": "Verify the owner's chisel config and grant",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "GET /api/tunnels/agent-config?agent=${TUNNEL_AGENT}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${TUNNEL_AGENT}"
+          },
+          "capture": [
+            {
+              "variable": "OWNER_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Set OWNER_CONFIG_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OWNER_CONFIG\" | jq -r --arg sd \"$TUNNEL_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "agent-config?agent=${TUNNEL_AGENT} lists the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_PORT"
+              },
+              "message": "agent-config?agent=${TUNNEL_AGENT} lists the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/lamalibre/lamaste/chisel-users"
+          },
+          "capture": [
+            {
+              "variable": "OWNER_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Host chisel authfile grants ${TUNNEL_AGENT} ${GRANT_PATTERN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Host chisel authfile grants ${TUNNEL_AGENT} ${GRANT_PATTERN}"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify the owner's chisel config and grant\"\n# ---------------------------------------------------------------------------\n\n# The owner's config is what 'lamaste-agent update' renders into its client\nOWNER_CONFIG=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null || echo '{}')\nOWNER_CONFIG_PORT=$(echo \"$OWNER_CONFIG\" | jq -r --arg sd \"$TUNNEL_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\nassert_eq \"$OWNER_CONFIG_PORT\" \"$TUNNEL_PORT\" \"agent-config?agent=${TUNNEL_AGENT} lists the tunnel\" || true\n\n# Only the user half of each \"<user>:<password>\" key is matched and only the\n# grants are kept, so no chisel password reaches the test output\nOWNER_GRANTS=$(host_exec \"cat /etc/lamalibre/lamaste/chisel-users\" 2>/dev/null \\\n  | jq -r --arg u \"agent-${TUNNEL_AGENT}:\" 'to_entries[] | select(.key | startswith($u)) | .value[]' 2>/dev/null || echo \"\")\nassert_contains \"$OWNER_GRANTS\" \"$GRANT_PATTERN\" \"Host chisel authfile grants ${TUNNEL_AGENT} ${GRANT_PATTERN}\" || true"
     },
     {
       "id": "configure-agent-vm-for-tunnel",
       "label": "Configure agent VM for tunnel",
       "steps": [
         {
-          "id": "step-6",
+          "id": "step-12",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -235,7 +422,7 @@
           }
         },
         {
-          "id": "step-7",
+          "id": "step-13",
           "label": "Added tunnel.${TEST_DOMAIN} to agent /etc/hosts",
           "target": "local",
           "op": {
@@ -245,7 +432,7 @@
           }
         },
         {
-          "id": "step-8",
+          "id": "step-14",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -254,7 +441,7 @@
           }
         },
         {
-          "id": "step-9",
+          "id": "step-15",
           "label": "Added ${TUNNEL_FQDN} to agent /etc/hosts",
           "target": "local",
           "op": {
@@ -271,7 +458,7 @@
       "label": "Start HTTP server on agent VM",
       "steps": [
         {
-          "id": "step-10",
+          "id": "step-16",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -280,7 +467,7 @@
           }
         },
         {
-          "id": "step-11",
+          "id": "step-17",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -289,7 +476,7 @@
           }
         },
         {
-          "id": "step-12",
+          "id": "step-18",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -298,7 +485,7 @@
           }
         },
         {
-          "id": "step-13",
+          "id": "step-19",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -318,7 +505,7 @@
           ]
         },
         {
-          "id": "step-14",
+          "id": "step-20",
           "label": "HTTP server running on agent at port ${TUNNEL_PORT}",
           "target": "local",
           "continueOnError": true,
@@ -346,7 +533,7 @@
       "label": "Refresh agent config to pick up new tunnel",
       "steps": [
         {
-          "id": "step-15",
+          "id": "step-21",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -355,7 +542,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-22",
           "label": "Waiting for Chisel tunnel to establish...",
           "target": "local",
           "op": {
@@ -365,7 +552,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-25",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -385,7 +572,7 @@
           ]
         },
         {
-          "id": "step-22",
+          "id": "step-28",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -394,7 +581,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-30",
           "label": "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)",
           "target": "local",
           "op": {
@@ -409,7 +596,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-31",
           "label": "Chisel tunnel failed to establish within 15 seconds",
           "target": "local",
           "op": {
@@ -424,7 +611,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-32",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -446,7 +633,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-33",
           "label": "Chisel agent log: $AGENT_LOG",
           "target": "local",
           "op": {
@@ -468,7 +655,7 @@
       "label": "Verify traffic through tunnel (direct, bypassing Authelia)",
       "steps": [
         {
-          "id": "step-28",
+          "id": "step-34",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -487,7 +674,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-35",
           "label": "Direct tunnel traffic returns expected content",
           "target": "local",
           "continueOnError": true,
@@ -511,11 +698,375 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic through tunnel (direct, bypassing Authelia)\"\n# ---------------------------------------------------------------------------\n\n# Verify the content is correct by fetching through the chisel tunnel from the host\nDIRECT_CONTENT=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/e2e-tunnel-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$DIRECT_CONTENT\" \"$MARKER\" \"Direct tunnel traffic returns expected content\" || true"
     },
     {
+      "id": "verify-the-agent-s-chisel-client-verified-tls-credential-off-argv",
+      "label": "Verify the agent's chisel client: verified TLS, credential off argv",
+      "steps": [
+        {
+          "id": "step-36",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${CHISEL_UNIT_PATH}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_UNIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Chisel unit reads its credential from EnvironmentFile=",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "EnvironmentFile=${CHISEL_ENV_PATH}"
+              },
+              "message": "Chisel unit reads its credential from EnvironmentFile="
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Chisel unit connects to https://tunnel.${TEST_DOMAIN}:443",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "https://tunnel.${TEST_DOMAIN}:443"
+              },
+              "message": "Chisel unit connects to https://tunnel.${TEST_DOMAIN}:443"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Chisel unit carries no --auth argument",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "--auth"
+              },
+              "message": "Chisel unit carries no --auth argument"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Chisel unit does not skip TLS verification",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "tls-skip-verify"
+              },
+              "message": "Chisel unit does not skip TLS verification"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a' '${CHISEL_ENV_PATH}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_ENV_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "chisel.env is mode 600",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ENV_MODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "chisel.env is mode 600"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -c '^AUTH=agent-${TUNNEL_AGENT}:[0-9a-f]\\\\{32,\\\\}\\$' '${CHISEL_ENV_PATH}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_ENV_AUTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "chisel.env holds AUTH=agent-${TUNNEL_AGENT}:<password>",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ENV_AUTH"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "chisel.env holds AUTH=agent-${TUNNEL_AGENT}:<password>"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "pw=\\$(sed -n 's/^AUTH=[^:]*://p' '${CHISEL_ENV_PATH}'); args=\\$(ps -eo args | grep '[c]hisel client' || true); if [ -z \\"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_PROC_CHECK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Running chisel client argv has no password, --auth or --tls-skip-verify",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_PROC_CHECK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "running"
+              },
+              "message": "Running chisel client argv has no password, --auth or --tls-skip-verify"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify the agent's chisel client: verified TLS, credential off argv\"\n# ---------------------------------------------------------------------------\n\n# The traffic above crossed a chisel session that verified tunnel.<domain>\n# against the agent's system trust store and authenticated from the\n# environment file. The checks below pin down how.\nCHISEL_UNIT=$(agent_exec \"cat '${CHISEL_UNIT_PATH}' 2>/dev/null\" || echo \"\")\nassert_contains \"$CHISEL_UNIT\" \"EnvironmentFile=${CHISEL_ENV_PATH}\" \"Chisel unit reads its credential from EnvironmentFile=\" || true\nassert_contains \"$CHISEL_UNIT\" \"https://tunnel.${TEST_DOMAIN}:443\" \"Chisel unit connects to https://tunnel.${TEST_DOMAIN}:443\" || true\nassert_not_contains \"$CHISEL_UNIT\" \"--auth\" \"Chisel unit carries no --auth argument\" || true\nassert_not_contains \"$CHISEL_UNIT\" \"tls-skip-verify\" \"Chisel unit does not skip TLS verification\" || true\n\nCHISEL_ENV_MODE=$(agent_exec \"stat -c '%a' '${CHISEL_ENV_PATH}' 2>/dev/null\" || echo \"missing\")\nassert_eq \"$CHISEL_ENV_MODE\" \"600\" \"chisel.env is mode 600\" || true\n\n# Count the well-formed AUTH line without printing the password\nCHISEL_ENV_AUTH=$(agent_exec \"grep -c '^AUTH=agent-${TUNNEL_AGENT}:[0-9a-f]\\\\{32,\\\\}\\$' '${CHISEL_ENV_PATH}' 2>/dev/null\" || echo \"0\")\nassert_eq \"$CHISEL_ENV_AUTH\" \"1\" \"chisel.env holds AUTH=agent-${TUNNEL_AGENT}:<password>\" || true\n\n# Inspect the running chisel client's argv on the agent itself, so the\n# password is compared there and never reaches this test's output. Prints\n# \"running\" alone when the process exists and its argv is clean.\nCHISEL_PROC_CHECK=$(agent_exec \"pw=\\$(sed -n 's/^AUTH=[^:]*://p' '${CHISEL_ENV_PATH}'); args=\\$(ps -eo args | grep '[c]hisel client' || true); if [ -z \\\"\\$args\\\" ]; then echo no-process; exit 0; fi; out=running; case \\\"\\$args\\\" in *\\\"\\$pw\\\"*) out=\\\"\\$out password-in-argv\\\";; esac; case \\\"\\$args\\\" in *--auth*) out=\\\"\\$out auth-flag\\\";; esac; case \\\"\\$args\\\" in *tls-skip-verify*) out=\\\"\\$out skip-verify\\\";; esac; echo \\\"\\$out\\\"\" 2>/dev/null || echo \"error\")\nassert_eq \"$CHISEL_PROC_CHECK\" \"running\" \"Running chisel client argv has no password, --auth or --tls-skip-verify\" || true"
+    },
+    {
+      "id": "pinned-chisel-release-on-both-ends-client-argv-shape",
+      "label": "Pinned chisel release on both ends; client argv shape",
+      "steps": [
+        {
+          "id": "step-47",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "'${AGENT_CHISEL_BIN}' --version 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_CHISEL_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Agent chisel (${AGENT_CHISEL_BIN}) reports version 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_CHISEL_VERSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Agent chisel (${AGENT_CHISEL_BIN}) reports version 1.12.0"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "/usr/local/bin/chisel --version 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SERVER_CHISEL_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Server chisel (/usr/local/bin/chisel) reports version 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVER_CHISEL_VERSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Server chisel (/usr/local/bin/chisel) reports version 1.12.0"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "ps -eo args | grep '[c]hisel client' | head -1"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_ARGV",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Chisel client argv is 'client --max-retry-interval 30s https://tunnel.${TEST_DOMAIN}:443 R:...'",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ARGV"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "client --max-retry-interval 30s https://tunnel.${TEST_DOMAIN}:443 R:127.0.0.1:"
+              },
+              "message": "Chisel client argv is 'client --max-retry-interval 30s https://tunnel.${TEST_DOMAIN}:443 R:...'"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Chisel client argv carries the tunnel's reverse remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ARGV"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}"
+              },
+              "message": "Chisel client argv carries the tunnel's reverse remote"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pinned chisel release on both ends; client argv shape\"\n# ---------------------------------------------------------------------------\n\n# Both binaries are the pinned, SHA-256-verified release\nAGENT_CHISEL_VERSION=$(agent_exec \"'${AGENT_CHISEL_BIN}' --version 2>/dev/null\" 2>/dev/null | sed 's/^v//' || echo \"\")\nassert_eq \"$AGENT_CHISEL_VERSION\" \"1.12.0\" \"Agent chisel (${AGENT_CHISEL_BIN}) reports version 1.12.0\" || true\nSERVER_CHISEL_VERSION=$(host_exec \"/usr/local/bin/chisel --version 2>/dev/null\" 2>/dev/null | sed 's/^v//' || echo \"\")\nassert_eq \"$SERVER_CHISEL_VERSION\" \"1.12.0\" \"Server chisel (/usr/local/bin/chisel) reports version 1.12.0\" || true\n\n# The client reconnects with a bounded backoff and names only the enrolled relay\nCHISEL_ARGV=$(agent_exec \"ps -eo args | grep '[c]hisel client' | head -1\" 2>/dev/null || echo \"\")\nassert_contains \"$CHISEL_ARGV\" \"client --max-retry-interval 30s https://tunnel.${TEST_DOMAIN}:443 R:127.0.0.1:\" \"Chisel client argv is 'client --max-retry-interval 30s https://tunnel.${TEST_DOMAIN}:443 R:...'\" || true\nassert_contains \"$CHISEL_ARGV\" \"R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}\" \"Chisel client argv carries the tunnel's reverse remote\" || true"
+    },
+    {
       "id": "reset-totp-before-authentication",
       "label": "Reset TOTP before authentication",
       "steps": [
         {
-          "id": "step-30",
+          "id": "step-54",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -536,7 +1087,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-55",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -555,7 +1106,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-56",
           "label": "TOTP reset returned otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -573,7 +1124,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-57",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -590,7 +1141,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-58",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -607,7 +1158,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-59",
           "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -624,7 +1175,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-60",
           "label": "Extracted TOTP secret from otpauth URI",
           "target": "local",
           "op": {
@@ -646,7 +1197,7 @@
       "label": "Authenticate with Authelia (first factor)",
       "steps": [
         {
-          "id": "step-38",
+          "id": "step-62",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -672,7 +1223,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-63",
           "label": "Extract AUTH_STATUS",
           "target": "local",
           "op": {
@@ -689,7 +1240,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-64",
           "label": "Authelia first factor authentication succeeded",
           "target": "local",
           "op": {
@@ -704,7 +1255,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-65",
           "label": "Authelia first factor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -726,7 +1277,7 @@
       "label": "Second factor authentication (TOTP)",
       "steps": [
         {
-          "id": "step-42",
+          "id": "step-66",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -747,7 +1298,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-67",
           "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')",
           "target": "local",
           "op": {
@@ -764,7 +1315,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-68",
           "label": "Generated TOTP code: ${TOTP_CODE}",
           "target": "local",
           "op": {
@@ -774,7 +1325,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-69",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -801,7 +1352,7 @@
           ]
         },
         {
-          "id": "step-46",
+          "id": "step-70",
           "label": "Extract TOTP_AUTH_STATUS",
           "target": "local",
           "op": {
@@ -818,7 +1369,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-71",
           "label": "Second factor authentication succeeded (TOTP accepted)",
           "target": "local",
           "op": {
@@ -833,7 +1384,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-72",
           "label": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -855,7 +1406,7 @@
       "label": "Verify traffic through nginx with Authelia (full path)",
       "steps": [
         {
-          "id": "step-49",
+          "id": "step-73",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -878,7 +1429,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-74",
           "label": "Full-path tunnel traffic (nginx + Authelia) returns expected content",
           "target": "local",
           "continueOnError": true,
@@ -899,12 +1450,428 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic through nginx with Authelia (full path)\"\n# ---------------------------------------------------------------------------\n\n# Fetch the tunnel URL through nginx with Authelia session cookie\nFULL_PATH_CONTENT=$(host_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies.txt https://${TUNNEL_FQDN}/e2e-tunnel-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$FULL_PATH_CONTENT\" \"$MARKER\" \"Full-path tunnel traffic (nginx + Authelia) returns expected content\" || true\n\n# Clean up the cookie jar\nhost_exec \"rm -f /tmp/authelia-cookies.txt 2>/dev/null || true\" 2>/dev/null || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic through nginx with Authelia (full path)\"\n# ---------------------------------------------------------------------------\n\n# Fetch the tunnel URL through nginx with Authelia session cookie\nFULL_PATH_CONTENT=$(host_exec \"curl -sk --max-time 15 -b /tmp/authelia-cookies.txt https://${TUNNEL_FQDN}/e2e-tunnel-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$FULL_PATH_CONTENT\" \"$MARKER\" \"Full-path tunnel traffic (nginx + Authelia) returns expected content\" || true"
+    },
+    {
+      "id": "verify-the-request-body-limit-at-the-tunnel-vhost",
+      "label": "Verify the request body limit at the tunnel vhost",
+      "steps": [
+        {
+          "id": "step-75",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "head -c 2097152 /dev/zero > /tmp/e2e-body-small.bin && head -c 11534336 /dev/zero > /tmp/e2e-body-large.bin"
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://${TUNNEL_FQDN}/e2e-tunnel-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "cookies": {
+              "load": "authelia-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/octet-stream"
+            }
+          },
+          "capture": [
+            {
+              "variable": "SMALL_POST_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "2 MB POST through the tunnel passes the body limit (above nginx's 1 MB default; HTTP ${SMALL_POST_STATUS})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SMALL_POST_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "2 MB POST through the tunnel passes the body limit (above nginx's 1 MB default; HTTP ${SMALL_POST_STATUS})"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://${TUNNEL_FQDN}/e2e-tunnel-index.html",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "cookies": {
+              "load": "authelia-cookies"
+            },
+            "headers": {
+              "Content-Type": "application/octet-stream"
+            }
+          },
+          "capture": [
+            {
+              "variable": "LARGE_POST_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "11 MB POST through the tunnel rejected with 413 (limit 10 MB)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LARGE_POST_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "11 MB POST through the tunnel rejected with 413 (limit 10 MB)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify the request body limit at the tunnel vhost\"\n# ---------------------------------------------------------------------------\n\n# A new tunnel allows 10 MB request bodies (client_max_body_size 10m). nginx\n# rejects a larger body with 413 before proxying. A 2 MB body — over nginx's\n# built-in 1 MB default, under the tunnel's limit — is proxied to the agent\n# (python's http.server answers POST with 501).\nhost_exec \"head -c 2097152 /dev/zero > /tmp/e2e-body-small.bin && head -c 11534336 /dev/zero > /tmp/e2e-body-large.bin\"\n\nSMALL_POST_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -b /tmp/authelia-cookies.txt -X POST -H 'Content-Type: application/octet-stream' --data-binary @/tmp/e2e-body-small.bin https://${TUNNEL_FQDN}/e2e-tunnel-index.html 2>/dev/null\" || echo \"000\")\nassert_not_eq \"$SMALL_POST_STATUS\" \"413\" \"2 MB POST through the tunnel passes the body limit (above nginx's 1 MB default; HTTP ${SMALL_POST_STATUS})\" || true\n\nLARGE_POST_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 -b /tmp/authelia-cookies.txt -X POST -H 'Content-Type: application/octet-stream' --data-binary @/tmp/e2e-body-large.bin https://${TUNNEL_FQDN}/e2e-tunnel-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$LARGE_POST_STATUS\" \"413\" \"11 MB POST through the tunnel rejected with 413 (limit 10 MB)\" || true\n\nhost_exec \"rm -f /tmp/e2e-body-small.bin /tmp/e2e-body-large.bin 2>/dev/null || true\" 2>/dev/null || true\n\n# Clean up the cookie jar\nhost_exec \"rm -f /tmp/authelia-cookies.txt 2>/dev/null || true\" 2>/dev/null || true"
+    },
+    {
+      "id": "public-tunnel-spoofed-identity-headers-never-reach-the-app",
+      "label": "Public tunnel: spoofed identity headers never reach the app",
+      "steps": [
+        {
+          "id": "step-83",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${ECHO_APP_B64}' | base64 -d > /tmp/e2e-echo-headers.py"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 /tmp/e2e-echo-headers.py ${HEADERS_PORT} &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${HEADERS_PORT}/",
+            "timeout": 5,
+            "headers": {
+              "Host": "probe.local"
+            }
+          },
+          "capture": [
+            {
+              "variable": "ECHO_LOCAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "Header-echo app running on agent at port ${HEADERS_PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO_LOCAL"
+              },
+              "path": ".host",
+              "expected": {
+                "kind": "literal",
+                "value": "probe.local"
+              },
+              "message": "Header-echo app running on agent at port ${HEADERS_PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HEADERS_CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Public tunnel ${HEADERS_FQDN} created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HEADERS_CREATE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Public tunnel ${HEADERS_FQDN} created"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Extract HEADERS_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HEADERS_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HEADERS_CREATE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Public tunnel serves within 60 seconds with no lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Public tunnel serves within 60 seconds with no lamaste-agent update"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "HEADERS_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Public tunnel did not serve within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Public tunnel did not serve within 60 seconds"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "HEADERS_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://${HEADERS_FQDN}/probe",
+            "timeout": 15,
+            "headers": {
+              "X-SSL-Client-Verify": "SUCCESS",
+              "X-SSL-Client-DN": "CN=admin",
+              "X-SSL-Client-Serial": "01",
+              "Remote-User": "admin",
+              "Remote-Groups": "admins",
+              "Remote-Name": "Admin",
+              "Remote-Email": "admin@example.com",
+              "X-Forwarded-Proto": "http"
+            }
+          },
+          "capture": [
+            {
+              "variable": "SEEN_HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "App sees Host = ${HEADERS_FQDN} (not 127.0.0.1:${HEADERS_PORT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SEEN_HEADERS"
+              },
+              "path": ".host",
+              "expected": {
+                "kind": "var",
+                "name": "HEADERS_FQDN"
+              },
+              "message": "App sees Host = ${HEADERS_FQDN} (not 127.0.0.1:${HEADERS_PORT})"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "App sees X-Forwarded-Proto: https (the client's value is replaced)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SEEN_HEADERS"
+              },
+              "path": ".\"x-forwarded-proto\"",
+              "expected": {
+                "kind": "literal",
+                "value": "https"
+              },
+              "message": "App sees X-Forwarded-Proto: https (the client's value is replaced)"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "App sees X-Forwarded-For",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "SEEN_HEADERS"
+              },
+              "path": ".\"x-forwarded-for\"",
+              "message": "App sees X-Forwarded-For"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Set FORGED_PRESENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SEEN_HEADERS\" | jq -r --arg h \"$forged\" 'has($h)' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "FORGED_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-105",
+          "label": "Client-supplied ${forged} header does not reach the app",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FORGED_PRESENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Client-supplied ${forged} header does not reach the app"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Public tunnel: spoofed identity headers never reach the app\"\n# ---------------------------------------------------------------------------\n\n# A tiny app that answers every GET with the request headers it received, as\n# JSON with lower-cased names (python3 http.server; base64 keeps the quoting\n# simple)\nECHO_APP_B64=\"aW1wb3J0IGh0dHAuc2VydmVyCmltcG9ydCBqc29uCmltcG9ydCBzeXMKCgpjbGFzcyBFY2hvKGh0dHAuc2VydmVyLkJhc2VIVFRQUmVxdWVzdEhhbmRsZXIpOgogICAgZGVmIGRvX0dFVChzZWxmKToKICAgICAgICBib2R5ID0ganNvbi5kdW1wcyh7ay5sb3dlcigpOiB2IGZvciBrLCB2IGluIHNlbGYuaGVhZGVycy5pdGVtcygpfSkuZW5jb2RlKCkKICAgICAgICBzZWxmLnNlbmRfcmVzcG9uc2UoMjAwKQogICAgICAgIHNlbGYuc2VuZF9oZWFkZXIoIkNvbnRlbnQtVHlwZSIsICJhcHBsaWNhdGlvbi9qc29uIikKICAgICAgICBzZWxmLnNlbmRfaGVhZGVyKCJDb250ZW50LUxlbmd0aCIsIHN0cihsZW4oYm9keSkpKQogICAgICAgIHNlbGYuZW5kX2hlYWRlcnMoKQogICAgICAgIHNlbGYud2ZpbGUud3JpdGUoYm9keSkKCiAgICBkZWYgbG9nX21lc3NhZ2Uoc2VsZiwgKmFyZ3MpOgogICAgICAgIHBhc3MKCgpodHRwLnNlcnZlci5UaHJlYWRpbmdIVFRQU2VydmVyKCgiMTI3LjAuMC4xIiwgaW50KHN5cy5hcmd2WzFdKSksIEVjaG8pLnNlcnZlX2ZvcmV2ZXIoKQo=\"\nagent_exec \"echo '${ECHO_APP_B64}' | base64 -d > /tmp/e2e-echo-headers.py\"\nagent_exec \"nohup python3 /tmp/e2e-echo-headers.py ${HEADERS_PORT} &>/dev/null & exit\"\nsleep 2\nECHO_LOCAL=$(agent_exec \"curl -sf --max-time 5 -H 'Host: probe.local' http://127.0.0.1:${HEADERS_PORT}/ 2>/dev/null\" || echo \"{}\")\nassert_json_field \"$ECHO_LOCAL\" '.host' \"probe.local\" \"Header-echo app running on agent at port ${HEADERS_PORT}\" || true\n\nHEADERS_CREATE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${HEADERS_SUBDOMAIN}\\\",\\\"port\\\":${HEADERS_PORT},\\\"accessMode\\\":\\\"public\\\",\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$HEADERS_CREATE\" '.ok' 'true' \"Public tunnel ${HEADERS_FQDN} created\" || true\nHEADERS_TUNNEL_ID=$(echo \"$HEADERS_CREATE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\n\n# No `lamaste-agent update`: the agent's sync timer adds the new remote\nHEADERS_READY=false\nfor _ in $(seq 1 30); do\n  if [ \"$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${HEADERS_PORT}/ 2>/dev/null\" || echo \"000\")\" = \"200\" ]; then\n    HEADERS_READY=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$HEADERS_READY\" = \"true\" ]; then\n  log_pass \"Public tunnel serves within 60 seconds with no lamaste-agent update\"\nelse\n  log_fail \"Public tunnel did not serve within 60 seconds\"\nfi\n\n# From the visitor, over verified TLS (it trusts the E2E test CA): forge every\n# header the panel or an Authelia-protected app would trust\nSEEN_HEADERS=$(visitor_exec \"curl -sS --max-time 15 --resolve '${HEADERS_FQDN}:443:${HOST_IP}' \\\n  -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' -H 'X-SSL-Client-Serial: 01' \\\n  -H 'Remote-User: admin' -H 'Remote-Groups: admins' -H 'Remote-Name: Admin' -H 'Remote-Email: admin@example.com' \\\n  -H 'X-Forwarded-Proto: http' \\\n  https://${HEADERS_FQDN}/probe 2>/dev/null\" || echo \"{}\")\nassert_json_field \"$SEEN_HEADERS\" '.host' \"$HEADERS_FQDN\" \"App sees Host = ${HEADERS_FQDN} (not 127.0.0.1:${HEADERS_PORT})\" || true\nassert_json_field \"$SEEN_HEADERS\" '.\"x-forwarded-proto\"' \"https\" \"App sees X-Forwarded-Proto: https (the client's value is replaced)\" || true\nassert_json_field_not_empty \"$SEEN_HEADERS\" '.\"x-forwarded-for\"' \"App sees X-Forwarded-For\" || true\nfor forged in x-ssl-client-verify x-ssl-client-dn x-ssl-client-serial remote-user remote-groups remote-name remote-email; do\n  FORGED_PRESENT=$(echo \"$SEEN_HEADERS\" | jq -r --arg h \"$forged\" 'has($h)' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$FORGED_PRESENT\" \"false\" \"Client-supplied ${forged} header does not reach the app\" || true\ndone"
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 02 — Tunnel Traffic (Three-VM)\n# ============================================================================\n# The crown jewel — tests actual traffic flowing through a tunnel:\n#\n# 1. Create a tunnel via API on the host VM\n# 2. Add /etc/hosts entry on the agent VM for the tunnel subdomain\n# 3. Start a simple HTTP server on the agent VM\n# 4. Start the Chisel client on the agent VM to establish the tunnel\n# 5. Authenticate with Authelia to get a session cookie\n# 6. Curl the tunnel URL from the host VM with the auth cookie\n# 7. Verify the response contains the expected content\n# 8. Clean up: stop chisel client, HTTP server, remove tunnel\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etraffic\"\nTUNNEL_PORT=18080\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMALIBRE_LAMASTE_TUNNEL_OK_$(date +%s)\"\n\nbegin_test \"02 — Tunnel Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entry on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-tunnel-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 02 — Tunnel Traffic (Three-VM)\n# ============================================================================\n# The crown jewel — tests actual traffic flowing through a tunnel:\n#\n# 1. Create a tunnel via API on the host VM, owned by the enrolled agent\n#    (test-agent) whose VM runs the Chisel client; verify the owner's chisel\n#    config and the host's chisel authfile grant for the tunnel's port\n# 2. Add /etc/hosts entry on the agent VM for the tunnel subdomain\n# 3. Start a simple HTTP server on the agent VM\n# 4. Start the Chisel client on the agent VM to establish the tunnel\n# 5. Authenticate with Authelia to get a session cookie\n# 6. Curl the tunnel URL from the host VM with the auth cookie\n# 7. Verify the response contains the expected content\n# 8. Verify the agent's chisel client verifies TLS and keeps its credential\n#    out of argv: the systemd unit uses EnvironmentFile= (0600 chisel.env),\n#    and neither the unit nor the running process carries --auth, the\n#    password or --tls-skip-verify — traffic flowing proves both work\n# 9. Verify the tunnel vhost enforces the request body limit (413 above it)\n# 10. Verify both chisel binaries are the pinned release (1.12.0) and the\n#     client argv is `client --max-retry-interval 30s https://tunnel.<domain>:443 R:...`\n# 11. Public tunnel to a header-echo app, created with no `lamaste-agent\n#     update` (the sync timer picks it up): from the visitor, spoofed\n#     X-SSL-Client-* and Remote-* headers never reach the app, and the app\n#     sees Host = the tunnel FQDN and X-Forwarded-Proto = https\n# 12. Clean up: stop the HTTP servers, remove the tunnels\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etraffic\"\nTUNNEL_PORT=18080\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own every tunnel whose traffic this test drives.\nTUNNEL_AGENT=\"test-agent\"\n# The agent VM's local label (setup-agent.sh) names its unit and data dir\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nCHISEL_UNIT_PATH=\"/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service\"\nCHISEL_ENV_PATH=\"/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/chisel.env\"\n# The anchored reverse remote the host's chisel authfile must grant the owner\nGRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMALIBRE_LAMASTE_TUNNEL_OK_$(date +%s)\"\nAGENT_CHISEL_BIN=\"/root/.lamalibre/lamaste/bin/chisel\"\n# Public tunnel whose app echoes the request headers it receives as JSON\nHEADERS_SUBDOMAIN=\"e2eheaders\"\nHEADERS_PORT=18090\nHEADERS_FQDN=\"${HEADERS_SUBDOMAIN}.${TEST_DOMAIN}\"\nHEADERS_TUNNEL_ID=\"\"\n\nbegin_test \"02 — Tunnel Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entry on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-tunnel-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Stop the header-echo app on agent\n  agent_exec \"pkill -f 'e2e-echo-headers.py' 2>/dev/null || true; rm -f /tmp/e2e-echo-headers.py\" 2>/dev/null || true\n\n  # Remove request body files on host\n  host_exec \"rm -f /tmp/e2e-body-small.bin /tmp/e2e-body-large.bin 2>/dev/null || true\" 2>/dev/null || true\n\n  if [ -n \"$HEADERS_TUNNEL_ID\" ] && [ \"$HEADERS_TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${HEADERS_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

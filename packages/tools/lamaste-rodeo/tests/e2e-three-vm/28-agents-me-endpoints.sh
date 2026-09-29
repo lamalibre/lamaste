@@ -3,6 +3,12 @@
 # 28 — Agents Me Endpoints (Three-VM)
 # ============================================================================
 # 28 — Agents /me/* self-service and chisel credential rotation (Three-VM)
+#
+# Covers the admin rotation, the credential's createdAt (also reported by
+# agent-config as chiselCredentialIssuedAt, which is how an agent notices a
+# replaced credential), and an agent rotating its own credential: refused with
+# 429 while the current one is under 10 minutes old, accepted once it is older,
+# and refused again right after.
 # ============================================================================
 
 set -euo pipefail
@@ -46,6 +52,19 @@ cleanup() {
   log_info "Cleaning up test resources..."
   host_api_delete "certs/agent/${AGENT_LABEL}" 2>/dev/null || true
   host_exec "shred -u /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem 2>/dev/null || rm -f /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem" 2>/dev/null || true
+}
+
+# agent_curl <curl args...> — call the panel with the test agent's certificate
+agent_curl() {
+  host_exec "curl -sk --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' $*"
+}
+
+# backdate_credential <minutes> — make the test agent's chisel credential look
+# <minutes> old in the panel's credential store, so the self-rotation rate
+# limit can be exercised without waiting. Rewritten in place (cat >) so the
+# file keeps its owner and 0600 mode; the temp copy is private (umask 077).
+backdate_credential() {
+  host_exec "umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\$(date -u -d '$1 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${AGENT_LABEL}' --arg t \"\$t\" '.[\$l].createdAt = \$t' \"\$f\" > /tmp/e2e-28-creds.json && cat /tmp/e2e-28-creds.json > \"\$f\"; rm -f /tmp/e2e-28-creds.json"
 }
 trap cleanup EXIT
 
@@ -117,5 +136,68 @@ ME_CHISEL_AFTER=$(host_exec "curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} -
 PW_AFTER=$(echo "$ME_CHISEL_AFTER" | jq -r '.password' 2>/dev/null || echo "")
 assert_eq "$PW_AFTER" "$PW_ROTATED" "Agent's /me/chisel-credential returns the rotated password" || true
 assert_not_eq "$PW_AFTER" "$PW_BEFORE" "Post-rotate /me/chisel-credential differs from the pre-rotation value" || true
+
+# ---------------------------------------------------------------------------
+log_section "7. Credential issue time: /me/chisel-credential and agent-config"
+# ---------------------------------------------------------------------------
+
+ISSUED_AT=$(echo "$ME_CHISEL_AFTER" | jq -r '.createdAt // empty' 2>/dev/null || echo "")
+assert_json_field_not_empty "$ME_CHISEL_AFTER" '.createdAt' "/me/chisel-credential returns createdAt" || true
+assert_json_field "$ROTATE_RESPONSE" '.createdAt' "$ISSUED_AT" "Admin rotation's createdAt matches /me/chisel-credential" || true
+
+AGENT_CONFIG=$(agent_curl "https://127.0.0.1:9292/api/tunnels/agent-config" 2>/dev/null || echo '{}')
+assert_json_field "$AGENT_CONFIG" '.chiselCredentialIssuedAt' "$ISSUED_AT" "agent-config reports chiselCredentialIssuedAt = the credential's createdAt" || true
+assert_not_contains "$AGENT_CONFIG" "$PW_AFTER" "agent-config never carries the chisel password" || true
+
+# ---------------------------------------------------------------------------
+log_section "8. Self-rotation is refused while the credential is fresh (429)"
+# ---------------------------------------------------------------------------
+
+# The admin rotation above issued the credential seconds ago
+FRESH_ROTATE_STATUS=$(agent_curl "-o /tmp/e2e-28-rotate.json -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate" 2>/dev/null || echo "000")
+FRESH_ROTATE_BODY=$(host_exec "cat /tmp/e2e-28-rotate.json 2>/dev/null; rm -f /tmp/e2e-28-rotate.json" 2>/dev/null || echo '{}')
+assert_eq "$FRESH_ROTATE_STATUS" "429" "Agent self-rotation within 10 minutes of issue returns 429" || true
+assert_json_field "$FRESH_ROTATE_BODY" '.issuedAt' "$ISSUED_AT" "429 response names when the current credential was issued" || true
+PW_AFTER_429=$(agent_curl "https://127.0.0.1:9292/api/agents/me/chisel-credential" 2>/dev/null | jq -r '.password' 2>/dev/null || echo "")
+assert_eq "$PW_AFTER_429" "$PW_AFTER" "Refused self-rotation left the credential unchanged" || true
+
+# ---------------------------------------------------------------------------
+log_section "9. Self-rotation of a credential older than 10 minutes"
+# ---------------------------------------------------------------------------
+
+backdate_credential 11
+BACKDATED_AT=$(agent_curl "https://127.0.0.1:9292/api/agents/me/chisel-credential" 2>/dev/null | jq -r '.createdAt' 2>/dev/null || echo "")
+assert_not_eq "$BACKDATED_AT" "$ISSUED_AT" "Credential backdated by 11 minutes in the panel's store" || true
+
+SELF_ROTATE=$(agent_curl "-X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate" 2>/dev/null || echo '{}')
+assert_json_field_not_empty "$SELF_ROTATE" '.password' "Self-rotation returns a new password" || true
+assert_contains "$(echo "$SELF_ROTATE" | jq -r '.user // empty' 2>/dev/null || echo "")" "$AGENT_LABEL" "Self-rotation returns the agent's chisel user" || true
+assert_json_field_not_empty "$SELF_ROTATE" '.createdAt' "Self-rotation returns the new createdAt" || true
+PW_SELF=$(echo "$SELF_ROTATE" | jq -r '.password' 2>/dev/null || echo "")
+SELF_ISSUED_AT=$(echo "$SELF_ROTATE" | jq -r '.createdAt' 2>/dev/null || echo "")
+assert_not_eq "$PW_SELF" "$PW_AFTER" "Self-rotated password differs from the previous one" || true
+
+ME_AFTER_SELF=$(agent_curl "https://127.0.0.1:9292/api/agents/me/chisel-credential" 2>/dev/null || echo '{}')
+assert_json_field "$ME_AFTER_SELF" '.password' "$PW_SELF" "/me/chisel-credential returns the self-rotated password" || true
+CONFIG_AFTER_SELF=$(agent_curl "https://127.0.0.1:9292/api/tunnels/agent-config" 2>/dev/null || echo '{}')
+assert_json_field "$CONFIG_AFTER_SELF" '.chiselCredentialIssuedAt' "$SELF_ISSUED_AT" "agent-config reports the new credential's issue time" || true
+
+# The authfile carries the new password and no longer the old one (compared on
+# the host; only counts come back)
+AUTHFILE_KEYS=$(host_exec "jq -r --arg n 'agent-${AGENT_LABEL}:${PW_SELF}' --arg o 'agent-${AGENT_LABEL}:${PW_AFTER}' '[(keys[] | select(. == \$n)) | \"new\"] + [(keys[] | select(. == \$o)) | \"old\"] | join(\",\")' /etc/lamalibre/lamaste/chisel-users" 2>/dev/null || echo "error")
+assert_eq "$AUTHFILE_KEYS" "new" "Chisel authfile holds the self-rotated password and not the replaced one" || true
+
+# ---------------------------------------------------------------------------
+log_section "10. An immediate second self-rotation is refused"
+# ---------------------------------------------------------------------------
+
+REPEAT_ROTATE_STATUS=$(agent_curl "-o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate" 2>/dev/null || echo "000")
+assert_eq "$REPEAT_ROTATE_STATUS" "429" "Repeating the self-rotation right away returns 429" || true
+PW_FINAL=$(agent_curl "https://127.0.0.1:9292/api/agents/me/chisel-credential" 2>/dev/null | jq -r '.password' 2>/dev/null || echo "")
+assert_eq "$PW_FINAL" "$PW_SELF" "Refused repeat left the self-rotated credential in place" || true
+
+# The admin endpoint is not an agent's: an agent cert cannot rotate by label
+ADMIN_ROUTE_STATUS=$(agent_curl "-o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' https://127.0.0.1:9292/api/agents/${AGENT_LABEL}/chisel-credential/rotate" 2>/dev/null || echo "000")
+assert_eq "$ADMIN_ROUTE_STATUS" "403" "Agent cert cannot use the admin rotation route (403)" || true
 
 end_test

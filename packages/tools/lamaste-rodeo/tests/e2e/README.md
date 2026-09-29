@@ -11,7 +11,7 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 | 01  | `01-fresh-install.sh`     | Node.js, panel service, health endpoint, static files                          |      No       |
 | 02  | `02-mtls-enforcement.sh`  | mTLS enforcement: no-cert rejected, valid cert accepted, invalid cert rejected |      No       |
 | 03  | `03-onboarding-flow.sh`   | Domain setup, DNS verification, provisioning, post-completion 410 behavior     | Yes (partial) |
-| 04  | `04-tunnel-lifecycle.sh`  | Tunnel CRUD: create, list, nginx vhost, validation, delete, cleanup            |      No       |
+| 04  | `04-tunnel-lifecycle.sh`  | Tunnel CRUD + ownership: agent owner, chisel grants, reassign, body limit      |      No       |
 | 05  | `05-user-lifecycle.sh`    | User CRUD: create, list, TOTP reset, update, delete, last-user protection      |      No       |
 | 06  | `06-service-control.sh`   | Service list, restart, reload, panel stop protection, invalid service/action   |      No       |
 | 07  | `07-cert-renewal.sh`      | Certificate list, force renewal, auto-renew timer status                       |      Yes      |
@@ -20,7 +20,7 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 | 10  | `10-resilience.sh`        | Service failure detection and recovery via API                                 |      No       |
 | 11  | `11-input-validation.sh`  | Input validation across all API endpoints                                      |      No       |
 | 12  | `12-user-invitations.sh`  | User invitation flow: create, accept, token validation                         |      No       |
-| 13  | `13-site-lifecycle.sh`    | Static site CRUD, file upload/delete, settings, input validation               |      No       |
+| 13  | `13-site-lifecycle.sh`    | Static site CRUD, files, settings, custom-domain aliases, validation           |      No       |
 | 15  | `15-plugin-lifecycle.sh`  | Plugin management, push-install endpoints, enable/disable, policy CRUD         |      No       |
 | 16  | `16-enrollment-tokens.sh` | Hardware-bound cert enrollment: token creation, public enrollment, registry    |      No       |
 | 17  | `17-panel-2fa.sh`         | Built-in TOTP 2FA: setup, verify, session cookies, IP vhost toggle, reset      |      No       |

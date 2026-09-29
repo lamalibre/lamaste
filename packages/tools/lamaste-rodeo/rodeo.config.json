@@ -105,7 +105,8 @@
         "26": [1],
         "27": [1],
         "28": [1],
-        "29": [1]
+        "29": [1],
+        "30": [1]
       }
     },
     "single-vm": {
@@ -154,11 +155,11 @@
     "errorFileMap": {
       "plugin": [
         "packages/server/daemon/src/routes/management/plugins.js",
-        "packages/core/lib/src/server/plugins.js"
+        "packages/core/lib/src/server/plugins.ts"
       ],
       "tunnel": [
         "packages/server/daemon/src/routes/management/tunnels.js",
-        "packages/core/lib/src/server/tunnels.js"
+        "packages/core/lib/src/server/tunnels.ts"
       ],
       "onboarding": ["packages/server/daemon/src/routes/onboarding.js"],
       "enrollment": ["packages/server/daemon/src/routes/management/enrollment.js"],
@@ -169,11 +170,11 @@
       ],
       "site": [
         "packages/server/daemon/src/routes/management/sites.js",
-        "packages/core/lib/src/server/sites.js"
+        "packages/core/lib/src/server/sites.ts"
       ],
       "cert": [
         "packages/server/daemon/src/routes/management/certs.js",
-        "packages/core/lib/src/server/mtls.js"
+        "packages/core/lib/src/server/mtls.ts"
       ],
       "user": ["packages/server/daemon/src/routes/management/users.js"],
       "invitation": ["packages/server/daemon/src/routes/management/invitations.js"],

@@ -1948,21 +1948,40 @@
       "label": "8. Tunnel Access Modes (agent-only)",
       "steps": [
         {
-          "id": "step-100",
-          "label": "Set AGENT_LABEL",
-          "target": "local",
+          "id": "step-99",
+          "label": "POST /api/certs/agent",
+          "target": "host",
           "op": {
-            "type": "exec",
-            "command": "ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\""
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
           },
           "capture": [
             {
-              "variable": "AGENT_LABEL",
+              "variable": "GK_AGENT_RESPONSE",
               "from": {
                 "kind": "body"
               }
             }
           ]
+        },
+        {
+          "id": "step-100",
+          "label": "Extract GK_AGENT_OK",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "GK_AGENT_OK",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "GK_AGENT_RESPONSE"
+              },
+              "expression": ".ok // empty"
+            }
+          }
         },
         {
           "id": "step-101",
@@ -1972,11 +1991,7 @@
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2e-gk-test",
-              "port": 19294,
-              "description": "gatekeeper e2e test"
-            }
+            "body": "{\\"
           },
           "capture": [
             {
@@ -1987,8 +2002,9 @@
             }
           ],
           "when": {
-            "kind": "var_not_empty",
-            "variable": "AGENT_LABEL"
+            "kind": "var_eq",
+            "variable": "GK_AGENT_OK",
+            "value": "true"
           }
         },
         {
@@ -2008,8 +2024,9 @@
             }
           },
           "when": {
-            "kind": "var_not_empty",
-            "variable": "AGENT_LABEL"
+            "kind": "var_eq",
+            "variable": "GK_AGENT_OK",
+            "value": "true"
           }
         },
         {
@@ -2086,23 +2103,34 @@
         },
         {
           "id": "step-109",
-          "label": "No enrolled agent — skipping tunnel access mode tests",
+          "label": "DELETE /api/certs/agent/${GK_AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/${GK_AGENT_LABEL}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-110",
+          "label": "Failed to enroll agent ${GK_AGENT_LABEL} for tunnel access mode tests",
           "target": "local",
           "op": {
             "type": "log",
-            "level": "skip",
-            "message": "No enrolled agent — skipping tunnel access mode tests"
+            "level": "fail",
+            "message": "Failed to enroll agent ${GK_AGENT_LABEL} for tunnel access mode tests"
           }
         }
       ],
-      "bash": "# ===========================================================================\nlog_section \"8. Tunnel Access Modes (agent-only)\"\n# ===========================================================================\n\n# Detect agent label for tunnel creation\nAGENTS_DIR=\"/etc/lamalibre/lamaste/pki/agents\"\nAGENT_LABEL=\"\"\nif [ -d \"$AGENTS_DIR\" ]; then\n  AGENT_LABEL=$(ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\")\nfi\n\nif [ -n \"$AGENT_LABEL\" ]; then\n  # Create tunnel with default access mode (should be restricted)\n  # Note: tunnel creation needs a valid port and subdomain — this may fail\n  # if ports/subdomains are in use, which is acceptable in single-VM\n  TUNNEL_RESULT=$(api_post \"tunnels\" '{\"subdomain\":\"e2e-gk-test\",\"port\":19294,\"description\":\"gatekeeper e2e test\"}' 2>/dev/null || echo '{}')\n  TUNNEL_MODE=$(echo \"$TUNNEL_RESULT\" | jq -r '.tunnel.accessMode // empty')\n  if [ \"$TUNNEL_MODE\" = \"restricted\" ]; then\n    log_pass \"Default tunnel access mode is 'restricted'\"\n    # Clean up\n    TUNNEL_ID=$(echo \"$TUNNEL_RESULT\" | jq -r '.tunnel.id // empty')\n    if [ -n \"$TUNNEL_ID\" ]; then\n      api_delete \"tunnels/${TUNNEL_ID}\" > /dev/null 2>&1 || true\n    fi\n  elif [ -n \"$TUNNEL_MODE\" ]; then\n    log_fail \"Expected default accessMode 'restricted', got '${TUNNEL_MODE}'\"\n  else\n    log_skip \"Tunnel creation failed (port/subdomain conflict or cert issue) — skipping accessMode test\"\n  fi\nelse\n  log_skip \"No enrolled agent — skipping tunnel access mode tests\"\nfi"
+      "bash": "# ===========================================================================\nlog_section \"8. Tunnel Access Modes (agent-only)\"\n# ===========================================================================\n\n# Every tunnel is owned by an enrolled agent — enroll one for this section\nGK_AGENT_LABEL=\"gatekeeper-e2e-$(date +%s)\"\nGK_AGENT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${GK_AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}' 2>/dev/null || echo '{}')\nGK_AGENT_OK=$(echo \"$GK_AGENT_RESPONSE\" | jq -r '.ok // empty' 2>/dev/null || echo \"\")\n\nif [ \"$GK_AGENT_OK\" = \"true\" ]; then\n  # Create tunnel with default access mode (should be restricted)\n  # Note: tunnel creation needs a valid port and subdomain — this may fail\n  # if ports/subdomains are in use, which is acceptable in single-VM\n  TUNNEL_RESULT=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"e2e-gk-test\\\",\\\"port\\\":19294,\\\"description\\\":\\\"gatekeeper e2e test\\\",\\\"agentLabel\\\":\\\"${GK_AGENT_LABEL}\\\"}\" 2>/dev/null || echo '{}')\n  TUNNEL_MODE=$(echo \"$TUNNEL_RESULT\" | jq -r '.tunnel.accessMode // empty')\n  if [ \"$TUNNEL_MODE\" = \"restricted\" ]; then\n    log_pass \"Default tunnel access mode is 'restricted'\"\n    # Clean up\n    TUNNEL_ID=$(echo \"$TUNNEL_RESULT\" | jq -r '.tunnel.id // empty')\n    if [ -n \"$TUNNEL_ID\" ]; then\n      api_delete \"tunnels/${TUNNEL_ID}\" > /dev/null 2>&1 || true\n    fi\n  elif [ -n \"$TUNNEL_MODE\" ]; then\n    log_fail \"Expected default accessMode 'restricted', got '${TUNNEL_MODE}'\"\n  else\n    log_skip \"Tunnel creation failed (port/subdomain conflict or cert issue) — skipping accessMode test\"\n  fi\n  # Revoke the agent only after its tunnel is gone\n  api_delete \"certs/agent/${GK_AGENT_LABEL}\" > /dev/null 2>&1 || true\nelse\n  log_fail \"Failed to enroll agent ${GK_AGENT_LABEL} for tunnel access mode tests\"\nfi"
     },
     {
       "id": "9-cleanup",
       "label": "9. Cleanup",
       "steps": [
         {
-          "id": "step-110",
+          "id": "step-111",
           "label": "DELETE /api/gatekeeper/grants/${GRANT_ID}",
           "target": "host",
           "op": {
@@ -2117,7 +2145,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-112",
           "label": "Cleaned up user grant",
           "target": "local",
           "op": {
@@ -2131,7 +2159,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-113",
           "label": "DELETE /api/gatekeeper/groups/e2e-viewers",
           "target": "host",
           "op": {
@@ -2142,7 +2170,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-113",
+          "id": "step-114",
           "label": "Cleaned up e2e-viewers group",
           "target": "local",
           "op": {
@@ -2152,7 +2180,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-115",
           "label": "PATCH /api/gatekeeper/settings",
           "target": "host",
           "op": {
@@ -2168,7 +2196,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-115",
+          "id": "step-116",
           "label": "Reset settings",
           "target": "local",
           "op": {

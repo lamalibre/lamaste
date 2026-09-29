@@ -3,7 +3,7 @@
   "meta": {
     "number": 1,
     "name": "Onboarding Complete Verification",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "01 — Onboarding Complete Verification (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "dig"]
@@ -575,10 +575,802 @@
         }
       ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Visitor VM connectivity\"\n# ---------------------------------------------------------------------------\n\n# Verify visitor VM can reach the host VM (no mTLS certs — should get rejected but reachable)\nVISITOR_PING=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${HOST_IP}:9292 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_PING\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach host VM at ${HOST_IP}:9292 (HTTP $VISITOR_PING)\"\nelse\n  log_fail \"Visitor VM cannot reach host VM at ${HOST_IP}:9292\"\nfi\n\n# Verify visitor can reach Authelia portal (no mTLS required for auth vhost)\nVISITOR_AUTH=$(visitor_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://auth.${TEST_DOMAIN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$VISITOR_AUTH\" != \"000\" ]; then\n  log_pass \"Visitor VM can reach Authelia at auth.${TEST_DOMAIN} (HTTP $VISITOR_AUTH)\"\nelse\n  log_fail \"Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}\"\nfi"
+    },
+    {
+      "id": "chisel-server-hardening",
+      "label": "Chisel server hardening",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "/usr/local/bin/chisel --version 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SERVER_CHISEL_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Server chisel (/usr/local/bin/chisel) is the pinned release 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVER_CHISEL_VERSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Server chisel (/usr/local/bin/chisel) is the pinned release 1.12.0"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a %U %G' /etc/lamalibre/lamaste/chisel-users 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "AUTHFILE_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Chisel authfile is 0640 lamaste:lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHFILE_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "640 lamaste lamaste-chisel"
+              },
+              "message": "Chisel authfile is 0640 lamaste:lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p User --value chisel 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_UNIT_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "chisel.service runs as User=nobody",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT_USER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "nobody"
+              },
+              "message": "chisel.service runs as User=nobody"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p Group --value chisel 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_UNIT_GROUP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "chisel.service runs as Group=lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_UNIT_GROUP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-chisel"
+              },
+              "message": "chisel.service runs as Group=lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "id -nG lamaste 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "LAMASTE_GROUPS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "The lamaste user is a member of lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": " ${LAMASTE_GROUPS} "
+              },
+              "substring": {
+                "kind": "literal",
+                "value": " lamaste-chisel "
+              },
+              "message": "The lamaste user is a member of lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p SupplementaryGroups --value lamalibre-lamaste-serverd 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SERVERD_SUPP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "lamalibre-lamaste-serverd has SupplementaryGroups=lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SERVERD_SUPP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "lamaste-chisel"
+              },
+              "message": "lamalibre-lamaste-serverd has SupplementaryGroups=lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "FAILED_CLOSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "No chisel fail-closed marker (startup reconciliation succeeded)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FAILED_CLOSED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "No chisel fail-closed marker (startup reconciliation succeeded)"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-enabled chisel 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "chisel.service is enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ENABLED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "chisel.service is enabled"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Chisel server hardening\"\n# ---------------------------------------------------------------------------\n\nSERVER_CHISEL_VERSION=$(host_exec \"/usr/local/bin/chisel --version 2>/dev/null\" 2>/dev/null | sed 's/^v//' || echo \"\")\nassert_eq \"$SERVER_CHISEL_VERSION\" \"1.12.0\" \"Server chisel (/usr/local/bin/chisel) is the pinned release 1.12.0\" || true\n\nAUTHFILE_STAT=$(host_exec \"stat -c '%a %U %G' /etc/lamalibre/lamaste/chisel-users 2>/dev/null\" || echo \"missing\")\nassert_eq \"$AUTHFILE_STAT\" \"640 lamaste lamaste-chisel\" \"Chisel authfile is 0640 lamaste:lamaste-chisel\" || true\n\nCHISEL_UNIT_USER=$(host_exec \"systemctl show -p User --value chisel 2>/dev/null\" || echo \"\")\nassert_eq \"$CHISEL_UNIT_USER\" \"nobody\" \"chisel.service runs as User=nobody\" || true\nCHISEL_UNIT_GROUP=$(host_exec \"systemctl show -p Group --value chisel 2>/dev/null\" || echo \"\")\nassert_eq \"$CHISEL_UNIT_GROUP\" \"lamaste-chisel\" \"chisel.service runs as Group=lamaste-chisel\" || true\n\nLAMASTE_GROUPS=$(host_exec \"id -nG lamaste 2>/dev/null\" || echo \"\")\nassert_contains \" ${LAMASTE_GROUPS} \" \" lamaste-chisel \" \"The lamaste user is a member of lamaste-chisel\" || true\nSERVERD_SUPP=$(host_exec \"systemctl show -p SupplementaryGroups --value lamalibre-lamaste-serverd 2>/dev/null\" || echo \"\")\nassert_contains \"$SERVERD_SUPP\" \"lamaste-chisel\" \"lamalibre-lamaste-serverd has SupplementaryGroups=lamaste-chisel\" || true\n\nFAILED_CLOSED=$(host_exec \"test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no\")\nassert_eq \"$FAILED_CLOSED\" \"no\" \"No chisel fail-closed marker (startup reconciliation succeeded)\" || true\nCHISEL_ENABLED=$(host_exec \"systemctl is-enabled chisel 2>/dev/null || true\")\nassert_eq \"$CHISEL_ENABLED\" \"enabled\" \"chisel.service is enabled\" || true"
+    },
+    {
+      "id": "sudoers-certbot-and-certificate-reads-via-root-owned-wrappers",
+      "label": "Sudoers: certbot and certificate reads via root-owned wrappers",
+      "steps": [
+        {
+          "id": "step-56",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste"
+          },
+          "capture": [
+            {
+              "variable": "SUDOERS_RULES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "sudoers allows the lamaste-certbot wrapper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "NOPASSWD: /usr/local/sbin/lamaste-certbot"
+              },
+              "message": "sudoers allows the lamaste-certbot wrapper"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "sudoers allows the lamaste-cert-info wrapper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "NOPASSWD: /usr/local/sbin/lamaste-cert-info"
+              },
+              "message": "sudoers allows the lamaste-cert-info wrapper"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "sudoers has no direct certbot rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "/usr/bin/certbot"
+              },
+              "message": "sudoers has no direct certbot rule"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "sudoers has no rule reaching into /etc/letsencrypt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "/etc/letsencrypt"
+              },
+              "message": "sudoers has no rule reaching into /etc/letsencrypt"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' /usr/local/sbin/${wrapper} 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "WRAPPER_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "/usr/local/sbin/${wrapper} is root-owned 0755",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WRAPPER_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root root 755"
+              },
+              "message": "/usr/local/sbin/${wrapper} is root-owned 0755"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied"
+          },
+          "capture": [
+            {
+              "variable": "DIRECT_CERTBOT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "lamaste cannot run /usr/bin/certbot through sudo",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DIRECT_CERTBOT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "denied"
+              },
+              "message": "lamaste cannot run /usr/bin/certbot through sudo"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew tunnel.${TEST_DOMAIN} --deploy-hook /bin/true >/dev/null 2>&1; echo \\$?"
+          },
+          "capture": [
+            {
+              "variable": "EXTRA_ARG_RC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "lamaste-certbot rejects extra arguments (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EXTRA_ARG_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-certbot rejects extra arguments (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1; echo \\$?"
+          },
+          "capture": [
+            {
+              "variable": "TRAVERSAL_RC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "lamaste-cert-info rejects a traversing lineage name (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TRAVERSAL_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-cert-info rejects a traversing lineage name (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info tunnel.${TEST_DOMAIN} enddate 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_ENDDATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "lamaste-cert-info reads the tunnel certificate's expiry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "TUNNEL_ENDDATE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "notAfter="
+              },
+              "message": "lamaste-cert-info reads the tunnel certificate's expiry"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sudoers: certbot and certificate reads via root-owned wrappers\"\n# ---------------------------------------------------------------------------\n\nSUDOERS_RULES=$(host_exec \"grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste\" 2>/dev/null || echo \"\")\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-certbot\" \"sudoers allows the lamaste-certbot wrapper\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-cert-info\" \"sudoers allows the lamaste-cert-info wrapper\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/usr/bin/certbot\" \"sudoers has no direct certbot rule\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/etc/letsencrypt\" \"sudoers has no rule reaching into /etc/letsencrypt\" || true\n\nfor wrapper in lamaste-certbot lamaste-cert-info; do\n  WRAPPER_STAT=$(host_exec \"stat -c '%U %G %a' /usr/local/sbin/${wrapper} 2>/dev/null\" || echo \"missing\")\n  assert_eq \"$WRAPPER_STAT\" \"root root 755\" \"/usr/local/sbin/${wrapper} is root-owned 0755\" || true\ndone\n\n# The service user cannot reach certbot directly, and the wrappers refuse any\n# argument beyond their fixed shapes (a trailing --deploy-hook would run code\n# as root)\nDIRECT_CERTBOT=$(host_exec \"sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied\")\nassert_eq \"$DIRECT_CERTBOT\" \"denied\" \"lamaste cannot run /usr/bin/certbot through sudo\" || true\nEXTRA_ARG_RC=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew tunnel.${TEST_DOMAIN} --deploy-hook /bin/true >/dev/null 2>&1; echo \\$?\")\nassert_eq \"$EXTRA_ARG_RC\" \"2\" \"lamaste-certbot rejects extra arguments (exit 2)\" || true\nTRAVERSAL_RC=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1; echo \\$?\")\nassert_eq \"$TRAVERSAL_RC\" \"2\" \"lamaste-cert-info rejects a traversing lineage name (exit 2)\" || true\nTUNNEL_ENDDATE=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info tunnel.${TEST_DOMAIN} enddate 2>/dev/null\" || echo \"\")\nassert_contains \"$TUNNEL_ENDDATE\" \"notAfter=\" \"lamaste-cert-info reads the tunnel certificate's expiry\" || true"
+    },
+    {
+      "id": "port-80-redirects-every-host-to-https",
+      "label": "Port 80 redirects every host to HTTPS",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://${HOST_IP}/a?b=1",
+            "timeout": 10,
+            "headers": {
+              "Host": "foo.example"
+            }
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_HEAD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Set REDIRECT_CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$REDIRECT_HEAD\" | head -1 | awk '{print $2}'"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "http://${HOST_IP}/a?b=1 with Host foo.example answers 301",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "301"
+              },
+              "message": "http://${HOST_IP}/a?b=1 with Host foo.example answers 301"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Set REDIRECT_LOCATION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$REDIRECT_HEAD\" | tr -d '\\r' | awk 'tolower($1) == \"location:\" {print $2}'"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "301 Location is https://foo.example/a?b=1",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_LOCATION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "https://foo.example/a?b=1"
+              },
+              "message": "301 Location is https://foo.example/a?b=1"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "HTTP request on visitor",
+          "target": "visitor",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://panel.${TEST_DOMAIN}/x",
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "PANEL_REDIRECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "http://panel.${TEST_DOMAIN}/x answers 301 to HTTPS",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_REDIRECT"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "301 https://panel.${TEST_DOMAIN}/x"
+              },
+              "message": "http://panel.${TEST_DOMAIN}/x answers 301 to HTTPS"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "nginx site lamalibre-lamaste-http-redirect is enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_SITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "nginx site lamalibre-lamaste-http-redirect is enabled"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Port 80 redirects every host to HTTPS\"\n# ---------------------------------------------------------------------------\n\n# From the visitor: plain HTTP for any Host (the catch-all\n# lamalibre-lamaste-http-redirect site) answers 301 to the same host and URI\nREDIRECT_HEAD=$(visitor_exec \"curl -sI --max-time 10 -H 'Host: foo.example' 'http://${HOST_IP}/a?b=1' 2>/dev/null\" || echo \"\")\nREDIRECT_CODE=$(echo \"$REDIRECT_HEAD\" | head -1 | awk '{print $2}')\nassert_eq \"$REDIRECT_CODE\" \"301\" \"http://${HOST_IP}/a?b=1 with Host foo.example answers 301\" || true\nREDIRECT_LOCATION=$(echo \"$REDIRECT_HEAD\" | tr -d '\\r' | awk 'tolower($1) == \"location:\" {print $2}')\nassert_eq \"$REDIRECT_LOCATION\" \"https://foo.example/a?b=1\" \"301 Location is https://foo.example/a?b=1\" || true\n\nPANEL_REDIRECT=$(visitor_exec \"curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 'http://panel.${TEST_DOMAIN}/x' 2>/dev/null\" || echo \"000\")\nassert_eq \"$PANEL_REDIRECT\" \"301 https://panel.${TEST_DOMAIN}/x\" \"http://panel.${TEST_DOMAIN}/x answers 301 to HTTPS\" || true\n\nREDIRECT_SITE=$(host_exec \"test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no\")\nassert_eq \"$REDIRECT_SITE\" \"yes\" \"nginx site lamalibre-lamaste-http-redirect is enabled\" || true"
     }
   ],
   "apiHelpers": ["host_api_get"],
-  "headerRaw": "# ============================================================================\n# 01 — Onboarding Complete Verification (Three-VM)\n# ============================================================================\n# Verifies that setup-host.sh completed successfully:\n# - Onboarding status is COMPLETED\n# - All core services are running (nginx, chisel, authelia, lamalibre-lamaste-serverd)\n# - Self-signed certificates exist at expected paths\n# - Panel is accessible via domain with mTLS\n# - DNS resolves TEST_DOMAIN to HOST_IP\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 01 — Onboarding Complete Verification (Three-VM)\n# ============================================================================\n# Verifies that setup-host.sh completed successfully:\n# - Onboarding status is COMPLETED\n# - All core services are running (nginx, chisel, authelia, lamalibre-lamaste-serverd)\n# - Self-signed certificates exist at expected paths\n# - Panel is accessible via domain with mTLS\n# - DNS resolves TEST_DOMAIN to HOST_IP\n# - Chisel server hardening: pinned release 1.12.0; the authfile (every\n#   agent's tunnel password) is 0640 lamaste:lamaste-chisel; chisel runs as\n#   User=nobody Group=lamaste-chisel; the panel reaches the authfile through\n#   SupplementaryGroups=lamaste-chisel; no fail-closed marker\n# - Sudoers: certbot and Let's Encrypt openssl reads go only through the\n#   root-owned wrappers lamaste-certbot and lamaste-cert-info, which refuse\n#   extra arguments\n# - Port 80: any Host is answered with a 301 to https://<same host><same URI>\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq dig\n\n# ---------------------------------------------------------------------------\n# VM exec helpers — run commands on host/agent VMs via multipass\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\n# mTLS API helpers — execute curl on the host VM using its local certs\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nbegin_test \"01 — Onboarding Complete Verification (Three-VM)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

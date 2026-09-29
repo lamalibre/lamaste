@@ -45,6 +45,9 @@ host_api_delete() {
 # ---------------------------------------------------------------------------
 TUNNEL_SUBDOMAIN="e2erestricted"
 TUNNEL_PORT=18090
+# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it
+# must own the tunnel for traffic to reach the test's HTTP server.
+TUNNEL_AGENT="test-agent"
 TUNNEL_FQDN="${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}"
 TUNNEL_ID=""
 GRANT_ID=""
@@ -134,11 +137,12 @@ fi
 
 # Intentionally omit accessMode — the route handler's Zod schema defaults to
 # "restricted", which is what this test is verifying the behavior of.
-CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TUNNEL_SUBDOMAIN}\",\"port\":${TUNNEL_PORT}}")
+CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TUNNEL_SUBDOMAIN}\",\"port\":${TUNNEL_PORT},\"agentLabel\":\"${TUNNEL_AGENT}\"}")
 assert_json_field "$CREATE_RESPONSE" '.ok' 'true' "Tunnel creation returned ok: true" || true
 
 TUNNEL_ID=$(echo "$CREATE_RESPONSE" | jq -r '.tunnel.id' 2>/dev/null || echo "")
 assert_json_field_not_empty "$CREATE_RESPONSE" '.tunnel.id' "Tunnel has an ID" || true
+assert_json_field "$CREATE_RESPONSE" '.tunnel.agentLabel' "$TUNNEL_AGENT" "Tunnel is owned by ${TUNNEL_AGENT}" || true
 assert_json_field "$CREATE_RESPONSE" '.tunnel.accessMode' 'restricted' \
   "Default accessMode is 'restricted' (security posture)" || true
 

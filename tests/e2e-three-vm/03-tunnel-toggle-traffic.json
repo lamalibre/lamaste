@@ -29,6 +29,42 @@
     "TUNNEL_PORT": {
       "value": "18081"
     },
+    "SECOND_SUBDOMAIN": {
+      "value": "e2etoggle2"
+    },
+    "SECOND_PORT": {
+      "value": "18082"
+    },
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
+    },
+    "AGENT_LOCAL_LABEL": {
+      "value": "e2e-agent"
+    },
+    "CHISEL_UNIT_PATH": {
+      "value": "/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service",
+      "expression": true
+    },
+    "OTHER_AGENT": {
+      "value": "e2e-other-$timestamp()",
+      "expression": true
+    },
+    "GRANT_PATTERN": {
+      "value": "^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$",
+      "expression": true
+    },
+    "SECOND_GRANT_PATTERN": {
+      "value": "^R:127\\\\.0\\\\.0\\\\.1:${SECOND_PORT}\\$",
+      "expression": true
+    },
+    "TUNNEL_REMOTE": {
+      "value": "R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}",
+      "expression": true
+    },
+    "SECOND_REMOTE": {
+      "value": "R:127.0.0.1:${SECOND_PORT}:127.0.0.1:${SECOND_PORT}",
+      "expression": true
+    },
     "TUNNEL_FQDN": {
       "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
       "expression": true
@@ -36,6 +72,16 @@
     "MARKER": {
       "value": "LAMASTE_TOGGLE_OK_$timestamp()",
       "expression": true
+    },
+    "SECOND_MARKER": {
+      "value": "LAMASTE_TOGGLE_SECOND_OK_$timestamp()",
+      "expression": true
+    },
+    "PAGE": {
+      "value": "e2e-toggle-index.html"
+    },
+    "SECOND_PAGE": {
+      "value": "e2e-toggle2-index.html"
     }
   },
   "cleanup": [
@@ -52,6 +98,17 @@
     },
     {
       "id": "cleanup-1",
+      "label": "Kill process",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "pkill -f 'python3 -m http.server ${SECOND_PORT}'|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-2",
       "label": "Remove /etc/hosts entry",
       "target": "agent",
       "continueOnError": true,
@@ -63,18 +120,18 @@
       }
     },
     {
-      "id": "cleanup-2",
-      "label": "Delete /tmp/e2e-toggle-index.html||",
+      "id": "cleanup-3",
+      "label": "Delete /tmp/${PAGE}",
       "target": "agent",
       "continueOnError": true,
       "op": {
         "type": "file",
         "action": "delete",
-        "path": "/tmp/e2e-toggle-index.html||"
+        "path": "/tmp/${PAGE}"
       }
     },
     {
-      "id": "cleanup-3",
+      "id": "cleanup-4",
       "label": "Delete /tmp/authelia-cookies-toggle.txt||",
       "target": "host",
       "continueOnError": true,
@@ -85,7 +142,7 @@
       }
     },
     {
-      "id": "cleanup-4",
+      "id": "cleanup-5",
       "label": "DELETE tunnels/${TUNNEL_ID}",
       "target": "host",
       "continueOnError": true,
@@ -96,13 +153,35 @@
       }
     },
     {
-      "id": "cleanup-5",
+      "id": "cleanup-6",
+      "label": "DELETE tunnels/${SECOND_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${SECOND_ID}"
+      }
+    },
+    {
+      "id": "cleanup-7",
+      "label": "DELETE certs/agent/${OTHER_AGENT}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${OTHER_AGENT}"
+      }
+    },
+    {
+      "id": "cleanup-8",
       "label": "Cleanup exec on agent",
       "target": "agent",
       "continueOnError": true,
       "op": {
         "type": "exec",
-        "command": "lamaste-agent update|| true",
+        "command": "lamaste-agent sync --label ${AGENT_LOCAL_LABEL}|| true",
         "ignoreExit": true
       }
     }
@@ -130,6 +209,44 @@
               }
             }
           ]
+        },
+        {
+          "id": "step-1",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "/usr/local/bin/chisel --version 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SERVER_CHISEL_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Host chisel server is the pinned release 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVER_CHISEL_VERSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Host chisel server is the pinned release 1.12.0"
+            }
+          }
         }
       ],
       "when": {
@@ -137,14 +254,183 @@
         "variable": "ONBOARDING_STATUS",
         "value": "COMPLETED"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping toggle traffic tests.\"\n  end_test\n  exit $?\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping toggle traffic tests.\"\n  end_test\n  exit $?\nfi\n\n# The chisel restart-vs-reload checks below assume the host runs the pinned\n# chisel release, which reloads its authfile for new grants without a restart\nSERVER_CHISEL_VERSION=$(host_exec \"/usr/local/bin/chisel --version 2>/dev/null\" 2>/dev/null | sed 's/^v//' || echo \"\")\nassert_eq \"$SERVER_CHISEL_VERSION\" \"1.12.0\" \"Host chisel server is the pinned release 1.12.0\" || true\nPINNED_SERVER=false\nif [ \"$SERVER_CHISEL_VERSION\" = \"1.12.0\" ]; then\n  PINNED_SERVER=true\nfi"
     },
     {
-      "id": "create-tunnel-and-establish-connection",
-      "label": "Create tunnel and establish connection",
+      "id": "start-http-servers-on-the-agent",
+      "label": "Start HTTP servers on the agent",
       "steps": [
         {
-          "id": "step-1",
+          "id": "step-5",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${MARKER}' > /tmp/${PAGE}"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${SECOND_MARKER}' > /tmp/${SECOND_PAGE}"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${SECOND_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/${PAGE}",
+            "statusOnly": true,
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_FIRST",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "HTTP server running on agent at port ${TUNNEL_PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LOCAL_FIRST"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "HTTP server running on agent at port ${TUNNEL_PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${SECOND_PORT}/${SECOND_PAGE}",
+            "statusOnly": true,
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_SECOND",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "HTTP server running on agent at port ${SECOND_PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LOCAL_SECOND"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "HTTP server running on agent at port ${SECOND_PORT}"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Start HTTP servers on the agent\"\n# ---------------------------------------------------------------------------\n\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\n\nagent_exec \"echo '${MARKER}' > /tmp/${PAGE}\"\nagent_exec \"echo '${SECOND_MARKER}' > /tmp/${SECOND_PAGE}\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nagent_exec \"nohup python3 -m http.server ${SECOND_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\nLOCAL_FIRST=$(agent_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/${PAGE} 2>/dev/null\" || echo \"000\")\nassert_eq \"$LOCAL_FIRST\" \"200\" \"HTTP server running on agent at port ${TUNNEL_PORT}\" || true\nLOCAL_SECOND=$(agent_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${SECOND_PORT}/${SECOND_PAGE} 2>/dev/null\" || echo \"000\")\nassert_eq \"$LOCAL_SECOND\" \"200\" \"HTTP server running on agent at port ${SECOND_PORT}\" || true"
+    },
+    {
+      "id": "create-the-first-tunnel-it-serves-with-no-manual-update",
+      "label": "Create the first tunnel — it serves with no manual update",
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "Set PID_BEFORE_CREATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -163,7 +449,7 @@
           ]
         },
         {
-          "id": "step-2",
+          "id": "step-18",
           "label": "Tunnel creation returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -185,7 +471,7 @@
           }
         },
         {
-          "id": "step-3",
+          "id": "step-19",
           "label": "Extract TUNNEL_ID",
           "target": "local",
           "op": {
@@ -202,7 +488,7 @@
           }
         },
         {
-          "id": "step-4",
+          "id": "step-20",
           "label": "Tunnel has an ID",
           "target": "local",
           "continueOnError": true,
@@ -220,7 +506,29 @@
           }
         },
         {
-          "id": "step-5",
+          "id": "step-21",
+          "label": "Tunnel is owned by ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Tunnel is owned by ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-22",
           "label": "Created tunnel ID: $TUNNEL_ID",
           "target": "local",
           "op": {
@@ -230,143 +538,123 @@
           }
         },
         {
-          "id": "step-6",
-          "label": "Exec on agent",
-          "target": "agent",
-          "op": {
-            "type": "exec",
-            "command": "grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts"
-          }
-        },
-        {
-          "id": "step-7",
-          "label": "Exec on agent",
-          "target": "agent",
-          "op": {
-            "type": "exec",
-            "command": "grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts"
-          }
-        },
-        {
-          "id": "step-8",
-          "label": "Exec on agent",
-          "target": "agent",
-          "op": {
-            "type": "exec",
-            "command": "echo '${MARKER}' > /tmp/e2e-toggle-index.html"
-          }
-        },
-        {
-          "id": "step-9",
-          "label": "Exec on agent",
-          "target": "agent",
-          "op": {
-            "type": "exec",
-            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
-          }
-        },
-        {
-          "id": "step-10",
-          "label": "Sleep 2s",
+          "id": "step-23",
+          "label": "Set PID_AFTER_CREATE",
           "target": "local",
           "op": {
-            "type": "sleep",
-            "seconds": 2
-          }
-        },
-        {
-          "id": "step-11",
-          "label": "Exec on agent",
-          "target": "agent",
-          "op": {
             "type": "exec",
-            "command": "lamaste-agent update"
-          }
-        },
-        {
-          "id": "step-12",
-          "label": "Waiting for Chisel tunnel to establish...",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Waiting for Chisel tunnel to establish..."
-          }
-        },
-        {
-          "id": "step-15",
-          "label": "HTTP request on host",
-          "target": "host",
-          "op": {
-            "type": "http",
-            "method": "GET",
-            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html",
-            "statusOnly": true,
-            "timeout": 3
+            "command": "chisel_server_pid"
           },
           "capture": [
             {
-              "variable": "CHECK",
+              "variable": "PID_AFTER_CREATE",
               "from": {
-                "kind": "status"
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "New grant hot-reloaded: chisel server not restarted by the tunnel creation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PID_AFTER_CREATE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_CREATE"
+              },
+              "message": "New grant hot-reloaded: chisel server not restarted by the tunnel creation"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Host chisel is not the pinned release — skipping the no-restart-on-grant check",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Host chisel is not the pinned release — skipping the no-restart-on-grant check"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "New tunnel serves within 60 seconds with no lamaste-agent update (sync timer)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "New tunnel serves within 60 seconds with no lamaste-agent update (sync timer)"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "New tunnel did not serve within 60 seconds without lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "New tunnel did not serve within 60 seconds without lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -20 ~/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/logs/sync.log 2>/dev/null || echo 'no sync log'"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LOG",
+              "from": {
+                "kind": "body"
               }
             }
           ]
         },
         {
-          "id": "step-18",
-          "label": "Sleep 1s",
-          "target": "local",
-          "op": {
-            "type": "sleep",
-            "seconds": 1
-          }
-        },
-        {
-          "id": "step-20",
-          "label": "Chisel tunnel established",
+          "id": "step-29",
+          "label": "Agent sync log: $AGENT_LOG",
           "target": "local",
           "op": {
             "type": "log",
-            "level": "pass",
-            "message": "Chisel tunnel established"
-          },
-          "when": {
-            "kind": "var_eq",
-            "variable": "TUNNEL_READY",
-            "value": "true"
+            "level": "info",
+            "message": "Agent sync log: $AGENT_LOG"
           }
         },
         {
-          "id": "step-21",
-          "label": "Chisel tunnel failed to establish within 15 seconds",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Chisel tunnel failed to establish within 15 seconds"
-          },
-          "when": {
-            "kind": "var_not_eq",
-            "variable": "TUNNEL_READY",
-            "value": "true"
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel and establish connection\"\n# ---------------------------------------------------------------------------\n\n# Create tunnel via API\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT}}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID\"\n\n# Add /etc/hosts entries on agent\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\n\n# Start HTTP server on agent\nagent_exec \"echo '${MARKER}' > /tmp/e2e-toggle-index.html\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\n# Refresh agent config to pick up the new tunnel\nagent_exec \"lamaste-agent update\"\n\n# Wait for tunnel to establish\nlog_info \"Waiting for Chisel tunnel to establish...\"\nTUNNEL_READY=false\nfor i in $(seq 1 15); do\n  CHECK=$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html 2>/dev/null\" || echo \"000\")\n  if [ \"$CHECK\" = \"200\" ]; then\n    TUNNEL_READY=true\n    break\n  fi\n  sleep 1\ndone\n\nif [ \"$TUNNEL_READY\" = \"true\" ]; then\n  log_pass \"Chisel tunnel established\"\nelse\n  log_fail \"Chisel tunnel failed to establish within 15 seconds\"\nfi"
-    },
-    {
-      "id": "verify-traffic-flows-tunnel-enabled",
-      "label": "Verify traffic flows (tunnel enabled)",
-      "steps": [
-        {
-          "id": "step-22",
+          "id": "step-30",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
             "type": "http",
             "method": "GET",
-            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/${PAGE}",
             "timeout": 10
           },
           "capture": [
@@ -379,8 +667,8 @@
           ]
         },
         {
-          "id": "step-23",
-          "label": "Traffic flows through enabled tunnel",
+          "id": "step-31",
+          "label": "Traffic flows through the first tunnel",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -395,19 +683,265 @@
                 "kind": "var",
                 "name": "MARKER"
               },
-              "message": "Traffic flows through enabled tunnel"
+              "message": "Traffic flows through the first tunnel"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic flows (tunnel enabled)\"\n# ---------------------------------------------------------------------------\n\nCONTENT_BEFORE=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$CONTENT_BEFORE\" \"$MARKER\" \"Traffic flows through enabled tunnel\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create the first tunnel — it serves with no manual update\"\n# ---------------------------------------------------------------------------\n\nPID_BEFORE_CREATE=$(chisel_server_pid)\n\n# accessMode \"authenticated\" so the 2FA'd test user can reach it after login.\n# The server-side default is \"restricted\" (per-user grants) which is correct\n# for sensitive internal tunnels but would strand this flow.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Tunnel is owned by ${TUNNEL_AGENT}\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID\"\n\nif [ \"$PINNED_SERVER\" = \"true\" ]; then\n  PID_AFTER_CREATE=$(chisel_server_pid)\n  assert_eq \"$PID_AFTER_CREATE\" \"$PID_BEFORE_CREATE\" \"New grant hot-reloaded: chisel server not restarted by the tunnel creation\" || true\nelse\n  log_skip \"Host chisel is not the pinned release — skipping the no-restart-on-grant check\"\nfi\n\n# No `lamaste-agent update`: the sync timer converges the agent on its own\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"New tunnel serves within 60 seconds with no lamaste-agent update (sync timer)\"\nelse\n  log_fail \"New tunnel did not serve within 60 seconds without lamaste-agent update\"\n  AGENT_LOG=$(agent_exec \"tail -20 ~/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/logs/sync.log 2>/dev/null || echo 'no sync log'\")\n  log_info \"Agent sync log: $AGENT_LOG\"\nfi\n\nCONTENT_BEFORE=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/${PAGE} 2>/dev/null\" || echo \"\")\nassert_contains \"$CONTENT_BEFORE\" \"$MARKER\" \"Traffic flows through the first tunnel\" || true"
     },
     {
-      "id": "disable-tunnel",
-      "label": "Disable tunnel",
+      "id": "create-a-second-tunnel-on-the-same-agent",
+      "label": "Create a second tunnel on the same agent",
       "steps": [
         {
-          "id": "step-24",
+          "id": "step-32",
+          "label": "Set PID_BEFORE_SECOND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_SECOND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-33",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "SECOND_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Second tunnel creation returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SECOND_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Second tunnel creation returned ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Extract SECOND_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SECOND_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SECOND_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Set PID_AFTER_SECOND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_AFTER_SECOND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Second grant hot-reloaded: chisel server not restarted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PID_AFTER_SECOND"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_SECOND"
+              },
+              "message": "Second grant hot-reloaded: chisel server not restarted"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Second tunnel serves within 60 seconds with no lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Second tunnel serves within 60 seconds with no lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Second tunnel did not serve within 60 seconds without lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Second tunnel did not serve within 60 seconds without lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "First tunnel still serves alongside the second",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "First tunnel still serves alongside the second"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "First tunnel stopped serving after the second was added",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "First tunnel stopped serving after the second was added"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set BOTH_EXECSTART",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_unit_execstart"
+          },
+          "capture": [
+            {
+              "variable": "BOTH_EXECSTART",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Agent chisel unit asks for the first tunnel's remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BOTH_EXECSTART"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "TUNNEL_REMOTE"
+              },
+              "message": "Agent chisel unit asks for the first tunnel's remote"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Agent chisel unit asks for the second tunnel's remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BOTH_EXECSTART"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SECOND_REMOTE"
+              },
+              "message": "Agent chisel unit asks for the second tunnel's remote"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create a second tunnel on the same agent\"\n# ---------------------------------------------------------------------------\n\nPID_BEFORE_SECOND=$(chisel_server_pid)\nSECOND_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${SECOND_SUBDOMAIN}\\\",\\\"port\\\":${SECOND_PORT},\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$SECOND_RESPONSE\" '.ok' 'true' \"Second tunnel creation returned ok: true\" || true\nSECOND_ID=$(echo \"$SECOND_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\n\nif [ \"$PINNED_SERVER\" = \"true\" ]; then\n  PID_AFTER_SECOND=$(chisel_server_pid)\n  assert_eq \"$PID_AFTER_SECOND\" \"$PID_BEFORE_SECOND\" \"Second grant hot-reloaded: chisel server not restarted\" || true\nfi\n\nif port_opens_within \"$SECOND_PORT\" \"$SECOND_PAGE\" 60; then\n  log_pass \"Second tunnel serves within 60 seconds with no lamaste-agent update\"\nelse\n  log_fail \"Second tunnel did not serve within 60 seconds without lamaste-agent update\"\nfi\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 30; then\n  log_pass \"First tunnel still serves alongside the second\"\nelse\n  log_fail \"First tunnel stopped serving after the second was added\"\nfi\n\nBOTH_EXECSTART=$(agent_unit_execstart)\nassert_contains \"$BOTH_EXECSTART\" \"$TUNNEL_REMOTE\" \"Agent chisel unit asks for the first tunnel's remote\" || true\nassert_contains \"$BOTH_EXECSTART\" \"$SECOND_REMOTE\" \"Agent chisel unit asks for the second tunnel's remote\" || true"
+    },
+    {
+      "id": "disable-the-first-tunnel-the-second-keeps-serving",
+      "label": "Disable the first tunnel — the second keeps serving",
+      "steps": [
+        {
+          "id": "step-45",
+          "label": "Set PID_BEFORE_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
           "label": "PATCH /api/tunnels/${TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -428,7 +962,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-47",
           "label": "Tunnel disable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -450,7 +984,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-48",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -468,7 +1002,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-49",
           "label": "Set ENABLED_STATE",
           "target": "local",
           "op": {
@@ -485,7 +1019,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-50",
           "label": "Tunnel shows as disabled in list",
           "target": "local",
           "continueOnError": true,
@@ -506,29 +1040,153 @@
           }
         },
         {
-          "id": "step-29",
-          "label": "Sleep 2s",
+          "id": "step-51",
+          "label": "Set DISABLED_GRANTS",
           "target": "local",
           "op": {
-            "type": "sleep",
-            "seconds": 2
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable tunnel\"\n# ---------------------------------------------------------------------------\n\nDISABLE_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"Tunnel disable returned ok: true\" || true\n\n# Verify tunnel shows as disabled in the list\nLIST_DISABLED=$(host_api_get \"tunnels\")\nENABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE\" \"false\" \"Tunnel shows as disabled in list\" || true\n\n# Wait briefly for nginx reload to take effect\nsleep 2"
-    },
-    {
-      "id": "verify-traffic-blocked-tunnel-disabled",
-      "label": "Verify traffic blocked (tunnel disabled)",
-      "steps": [
+            "type": "exec",
+            "command": "chisel_grants \"$TUNNEL_AGENT\""
+          },
+          "capture": [
+            {
+              "variable": "DISABLED_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
         {
-          "id": "step-30",
+          "id": "step-52",
+          "label": "Chisel grant removed while the tunnel is disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLED_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant removed while the tunnel is disabled"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Second tunnel's grant untouched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLED_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SECOND_GRANT_PATTERN"
+              },
+              "message": "Second tunnel's grant untouched"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Revoked grant restarts the chisel server",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked grant restarts the chisel server"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Chisel server was not restarted after a grant was revoked",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel server was not restarted after a grant was revoked"
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Second tunnel serves again within 60 seconds of disabling the first (no update)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Second tunnel serves again within 60 seconds of disabling the first (no update)"
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Second tunnel stayed dark after the first was disabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Second tunnel stayed dark after the first was disabled"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Agent chisel unit dropped the disabled tunnel's remote",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent chisel unit dropped the disabled tunnel's remote"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Agent chisel unit still asks for the disabled tunnel's remote after 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent chisel unit still asks for the disabled tunnel's remote after 60 seconds"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Agent chisel unit still asks for the second tunnel's remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_unit_execstart)"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SECOND_REMOTE"
+              },
+              "message": "Agent chisel unit still asks for the second tunnel's remote"
+            }
+          }
+        },
+        {
+          "id": "step-61",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
             "type": "http",
             "method": "GET",
-            "url": "https://${TUNNEL_FQDN}/e2e-toggle-index.html",
+            "url": "https://${TUNNEL_FQDN}/${PAGE}",
             "tlsVerify": false,
             "timeout": 10
           },
@@ -542,7 +1200,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-62",
           "label": "Tunnel content not accessible after disable (vhost removed)",
           "target": "local",
           "op": {
@@ -552,7 +1210,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-63",
           "label": "Tunnel content still accessible after tunnel disable",
           "target": "local",
           "op": {
@@ -562,7 +1220,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-64",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -579,7 +1237,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-65",
           "label": "Nginx vhost symlink removed after disable",
           "target": "local",
           "continueOnError": true,
@@ -598,16 +1256,53 @@
               "message": "Nginx vhost symlink removed after disable"
             }
           }
+        },
+        {
+          "id": "step-66",
+          "label": "Disabled tunnel's port stays closed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Disabled tunnel's port stays closed"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Disabled tunnel's port was bound again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Disabled tunnel's port was bound again"
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic blocked (tunnel disabled)\"\n# ---------------------------------------------------------------------------\n\n# When the tunnel is disabled, the nginx vhost for the subdomain is removed.\n# Without a matching server_name, nginx may fall through to another server block\n# on port 443 (e.g., the chisel tunnel vhost), so the HTTP status may still be\n# 200. The definitive check is that the tunnel CONTENT is not accessible.\nDISABLED_CONTENT=$(host_exec \"curl -sk --max-time 10 https://${TUNNEL_FQDN}/e2e-toggle-index.html 2>/dev/null\" || echo \"\")\n\nif ! echo \"$DISABLED_CONTENT\" | grep -qF \"$MARKER\"; then\n  log_pass \"Tunnel content not accessible after disable (vhost removed)\"\nelse\n  log_fail \"Tunnel content still accessible after tunnel disable\"\nfi\n\n# Also verify the vhost symlink is actually gone\nVHOST_EXISTS=$(host_exec \"test -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${TUNNEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"no\" \"Nginx vhost symlink removed after disable\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable the first tunnel — the second keeps serving\"\n# ---------------------------------------------------------------------------\n\nPID_BEFORE_DISABLE=$(chisel_server_pid)\nDISABLE_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_RESPONSE\" '.ok' 'true' \"Tunnel disable returned ok: true\" || true\n\nLIST_DISABLED=$(host_api_get \"tunnels\")\nENABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE\" \"false\" \"Tunnel shows as disabled in list\" || true\n\n# A disabled tunnel's port is granted to no agent\nDISABLED_GRANTS=$(chisel_grants \"$TUNNEL_AGENT\")\nassert_not_contains \"$DISABLED_GRANTS\" \"$GRANT_PATTERN\" \"Chisel grant removed while the tunnel is disabled\" || true\nassert_contains \"$DISABLED_GRANTS\" \"$SECOND_GRANT_PATTERN\" \"Second tunnel's grant untouched\" || true\n\n# Withdrawing a grant must end the live session that holds it: chisel restarts\nif [ \"$PINNED_SERVER\" = \"true\" ]; then\n  if chisel_pid_changes_from \"$PID_BEFORE_DISABLE\" 15; then\n    log_pass \"Revoked grant restarts the chisel server\"\n  else\n    log_fail \"Chisel server was not restarted after a grant was revoked\"\n  fi\nfi\n\n# The regression this guards: chisel refuses a client's whole session when one\n# remote it asks for is not granted. The agent's sync timer must drop the\n# disabled remote so its other tunnel comes back — without any manual update.\nif port_opens_within \"$SECOND_PORT\" \"$SECOND_PAGE\" 60; then\n  log_pass \"Second tunnel serves again within 60 seconds of disabling the first (no update)\"\nelse\n  log_fail \"Second tunnel stayed dark after the first was disabled\"\nfi\n\nif unit_drops_remote_within \"$TUNNEL_REMOTE\" 60; then\n  log_pass \"Agent chisel unit dropped the disabled tunnel's remote\"\nelse\n  log_fail \"Agent chisel unit still asks for the disabled tunnel's remote after 60 seconds\"\nfi\nassert_contains \"$(agent_unit_execstart)\" \"$SECOND_REMOTE\" \"Agent chisel unit still asks for the second tunnel's remote\" || true\n\n# When the tunnel is disabled, the nginx vhost for the subdomain is removed.\n# Without a matching server_name, nginx may fall through to another server block\n# on port 443 (e.g., the chisel tunnel vhost), so the HTTP status may still be\n# 200. The definitive check is that the tunnel CONTENT is not accessible.\nDISABLED_CONTENT=$(host_exec \"curl -sk --max-time 10 https://${TUNNEL_FQDN}/${PAGE} 2>/dev/null\" || echo \"\")\nif ! echo \"$DISABLED_CONTENT\" | grep -qF \"$MARKER\"; then\n  log_pass \"Tunnel content not accessible after disable (vhost removed)\"\nelse\n  log_fail \"Tunnel content still accessible after tunnel disable\"\nfi\n\nVHOST_EXISTS=$(host_exec \"test -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${TUNNEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"no\" \"Nginx vhost symlink removed after disable\" || true\n\nif port_stays_closed \"$TUNNEL_PORT\" \"$PAGE\" 10; then\n  log_pass \"Disabled tunnel's port stays closed\"\nelse\n  log_fail \"Disabled tunnel's port was bound again\"\nfi"
     },
     {
-      "id": "re-enable-tunnel",
-      "label": "Re-enable tunnel",
+      "id": "re-enable-the-first-tunnel",
+      "label": "Re-enable the first tunnel",
       "steps": [
         {
-          "id": "step-35",
+          "id": "step-68",
+          "label": "Set PID_BEFORE_ENABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
           "label": "PATCH /api/tunnels/${TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -628,7 +1323,7 @@
           ]
         },
         {
-          "id": "step-36",
+          "id": "step-70",
           "label": "Tunnel re-enable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -650,7 +1345,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-71",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -668,7 +1363,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-72",
           "label": "Set ENABLED_STATE2",
           "target": "local",
           "op": {
@@ -685,7 +1380,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-73",
           "label": "Tunnel shows as enabled in list",
           "target": "local",
           "continueOnError": true,
@@ -706,29 +1401,139 @@
           }
         },
         {
-          "id": "step-40",
-          "label": "Sleep 2s",
+          "id": "step-74",
+          "label": "Set ENABLED_GRANTS",
           "target": "local",
           "op": {
-            "type": "sleep",
-            "seconds": 2
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable tunnel\"\n# ---------------------------------------------------------------------------\n\nENABLE_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"Tunnel re-enable returned ok: true\" || true\n\n# Verify tunnel shows as enabled in the list\nLIST_ENABLED=$(host_api_get \"tunnels\")\nENABLED_STATE2=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE2\" \"true\" \"Tunnel shows as enabled in list\" || true\n\n# Wait for nginx reload\nsleep 2"
-    },
-    {
-      "id": "verify-traffic-restored-tunnel-re-enabled",
-      "label": "Verify traffic restored (tunnel re-enabled)",
-      "steps": [
+            "type": "exec",
+            "command": "chisel_grants \"$TUNNEL_AGENT\""
+          },
+          "capture": [
+            {
+              "variable": "ENABLED_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
         {
-          "id": "step-41",
+          "id": "step-75",
+          "label": "Chisel grant restored for the re-enabled tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ENABLED_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant restored for the re-enabled tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Set PID_AFTER_ENABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_AFTER_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Restored grant hot-reloaded: chisel server not restarted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PID_AFTER_ENABLE"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_ENABLE"
+              },
+              "message": "Restored grant hot-reloaded: chisel server not restarted"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_SERVER",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Re-enabled tunnel serves within 60 seconds with no lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Re-enabled tunnel serves within 60 seconds with no lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Re-enabled tunnel did not serve within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Re-enabled tunnel did not serve within 60 seconds"
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Second tunnel serves alongside the re-enabled one",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Second tunnel serves alongside the re-enabled one"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "Second tunnel stopped serving after the first was re-enabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Second tunnel stopped serving after the first was re-enabled"
+          }
+        },
+        {
+          "id": "step-82",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
             "type": "http",
             "method": "GET",
-            "url": "http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/${PAGE}",
             "timeout": 10
           },
           "capture": [
@@ -741,7 +1546,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-83",
           "label": "Traffic flows through re-enabled tunnel",
           "target": "local",
           "continueOnError": true,
@@ -762,7 +1567,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-84",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -783,7 +1588,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-85",
           "label": "Nginx vhost restored after re-enable (HTTP $REENABLED_STATUS)",
           "target": "local",
           "op": {
@@ -813,7 +1618,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-86",
           "label": "Nginx vhost not restored after re-enable (HTTP $REENABLED_STATUS)",
           "target": "local",
           "op": {
@@ -843,14 +1648,568 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify traffic restored (tunnel re-enabled)\"\n# ---------------------------------------------------------------------------\n\n# Direct access through chisel should still work since chisel was never stopped\nCONTENT_AFTER=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/e2e-toggle-index.html 2>/dev/null\" || echo \"\")\nassert_contains \"$CONTENT_AFTER\" \"$MARKER\" \"Traffic flows through re-enabled tunnel\" || true\n\n# Verify nginx vhost is back by checking the FQDN via HTTPS\n# This needs auth, but we can check for a redirect to Authelia (302) which proves the vhost exists\nREENABLED_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${TUNNEL_FQDN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$REENABLED_STATUS\" = \"200\" ] || [ \"$REENABLED_STATUS\" = \"302\" ] || [ \"$REENABLED_STATUS\" = \"401\" ]; then\n  log_pass \"Nginx vhost restored after re-enable (HTTP $REENABLED_STATUS)\"\nelse\n  log_fail \"Nginx vhost not restored after re-enable (HTTP $REENABLED_STATUS)\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable the first tunnel\"\n# ---------------------------------------------------------------------------\n\nPID_BEFORE_ENABLE=$(chisel_server_pid)\nENABLE_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" '{\"enabled\":true}')\nassert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"Tunnel re-enable returned ok: true\" || true\n\nLIST_ENABLED=$(host_api_get \"tunnels\")\nENABLED_STATE2=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$ENABLED_STATE2\" \"true\" \"Tunnel shows as enabled in list\" || true\n\nENABLED_GRANTS=$(chisel_grants \"$TUNNEL_AGENT\")\nassert_contains \"$ENABLED_GRANTS\" \"$GRANT_PATTERN\" \"Chisel grant restored for the re-enabled tunnel\" || true\n\nif [ \"$PINNED_SERVER\" = \"true\" ]; then\n  PID_AFTER_ENABLE=$(chisel_server_pid)\n  assert_eq \"$PID_AFTER_ENABLE\" \"$PID_BEFORE_ENABLE\" \"Restored grant hot-reloaded: chisel server not restarted\" || true\nfi\n\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"Re-enabled tunnel serves within 60 seconds with no lamaste-agent update\"\nelse\n  log_fail \"Re-enabled tunnel did not serve within 60 seconds\"\nfi\nif port_opens_within \"$SECOND_PORT\" \"$SECOND_PAGE\" 30; then\n  log_pass \"Second tunnel serves alongside the re-enabled one\"\nelse\n  log_fail \"Second tunnel stopped serving after the first was re-enabled\"\nfi\n\nCONTENT_AFTER=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/${PAGE} 2>/dev/null\" || echo \"\")\nassert_contains \"$CONTENT_AFTER\" \"$MARKER\" \"Traffic flows through re-enabled tunnel\" || true\n\n# The vhost is back: without a session nginx answers with an Authelia redirect\nREENABLED_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://${TUNNEL_FQDN}/ 2>/dev/null\" || echo \"000\")\nif [ \"$REENABLED_STATUS\" = \"200\" ] || [ \"$REENABLED_STATUS\" = \"302\" ] || [ \"$REENABLED_STATUS\" = \"401\" ]; then\n  log_pass \"Nginx vhost restored after re-enable (HTTP $REENABLED_STATUS)\"\nelse\n  log_fail \"Nginx vhost not restored after re-enable (HTTP $REENABLED_STATUS)\"\nfi"
+    },
+    {
+      "id": "reassign-the-first-tunnel-to-another-agent",
+      "label": "Reassign the first tunnel to another agent",
+      "steps": [
+        {
+          "id": "step-87",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "OTHER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "Second agent cert created (${OTHER_AGENT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OTHER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Second agent cert created (${OTHER_AGENT})"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Set PID_BEFORE_REASSIGN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_server_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_REASSIGN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "PATCH /api/tunnels/${TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TUNNEL_ID}",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "REASSIGN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "Tunnel reassigned to ${OTHER_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REASSIGN_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "OTHER_AGENT"
+              },
+              "message": "Tunnel reassigned to ${OTHER_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set MOVED_TO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OTHER_AGENT\""
+          },
+          "capture": [
+            {
+              "variable": "MOVED_TO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "Chisel grant moved to the new owner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "MOVED_TO"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant moved to the new owner"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Set MOVED_FROM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$TUNNEL_AGENT\""
+          },
+          "capture": [
+            {
+              "variable": "MOVED_FROM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "Chisel grant removed from ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "MOVED_FROM"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant removed from ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "GET /api/tunnels/agent-config?agent=${TUNNEL_AGENT}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${TUNNEL_AGENT}"
+          },
+          "capture": [
+            {
+              "variable": "OLD_OWNER_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "${TUNNEL_AGENT}'s agent-config no longer lists the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OLD_OWNER_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "${TUNNEL_AGENT}'s agent-config no longer lists the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Reassignment (a revocation for the previous owner) restarts the chisel server",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Reassignment (a revocation for the previous owner) restarts the chisel server"
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "Chisel server was not restarted after the tunnel moved away from ${TUNNEL_AGENT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel server was not restarted after the tunnel moved away from ${TUNNEL_AGENT}"
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "${TUNNEL_AGENT} keeps serving its other tunnel after the reassignment",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${TUNNEL_AGENT} keeps serving its other tunnel after the reassignment"
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "${TUNNEL_AGENT}'s other tunnel stayed dark after the reassignment",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${TUNNEL_AGENT}'s other tunnel stayed dark after the reassignment"
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "${TUNNEL_AGENT}'s chisel unit dropped the reassigned tunnel's remote",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${TUNNEL_AGENT}'s chisel unit dropped the reassigned tunnel's remote"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "${TUNNEL_AGENT}'s chisel unit still asks for the reassigned tunnel's remote",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${TUNNEL_AGENT}'s chisel unit still asks for the reassigned tunnel's remote"
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Reassigned tunnel's port stays closed (its new owner runs no client)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Reassigned tunnel's port stays closed (its new owner runs no client)"
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Reassigned tunnel's port is still bound by ${TUNNEL_AGENT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Reassigned tunnel's port is still bound by ${TUNNEL_AGENT}"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reassign the first tunnel to another agent\"\n# ---------------------------------------------------------------------------\n\nOTHER_RESPONSE=$(host_api_post \"certs/agent\" \"{\\\"label\\\":\\\"${OTHER_AGENT}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\" 2>/dev/null || echo '{}')\nassert_json_field \"$OTHER_RESPONSE\" '.ok' 'true' \"Second agent cert created (${OTHER_AGENT})\" || true\n\nPID_BEFORE_REASSIGN=$(chisel_server_pid)\nREASSIGN_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" \"{\\\"agentLabel\\\":\\\"${OTHER_AGENT}\\\"}\" 2>/dev/null || echo '{}')\nassert_json_field \"$REASSIGN_RESPONSE\" '.tunnel.agentLabel' \"$OTHER_AGENT\" \"Tunnel reassigned to ${OTHER_AGENT}\" || true\n\nMOVED_TO=$(chisel_grants \"$OTHER_AGENT\")\nassert_contains \"$MOVED_TO\" \"$GRANT_PATTERN\" \"Chisel grant moved to the new owner\" || true\nMOVED_FROM=$(chisel_grants \"$TUNNEL_AGENT\")\nassert_not_contains \"$MOVED_FROM\" \"$GRANT_PATTERN\" \"Chisel grant removed from ${TUNNEL_AGENT}\" || true\n\nOLD_OWNER_CONFIG_PORT=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null \\\n  | jq -r --arg sd \"$TUNNEL_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\nassert_eq \"$OLD_OWNER_CONFIG_PORT\" \"\" \"${TUNNEL_AGENT}'s agent-config no longer lists the tunnel\" || true\n\nif [ \"$PINNED_SERVER\" = \"true\" ]; then\n  if chisel_pid_changes_from \"$PID_BEFORE_REASSIGN\" 15; then\n    log_pass \"Reassignment (a revocation for the previous owner) restarts the chisel server\"\n  else\n    log_fail \"Chisel server was not restarted after the tunnel moved away from ${TUNNEL_AGENT}\"\n  fi\nfi\n\n# test-agent drops the remote on its next sync and keeps its other tunnel up;\n# the new owner runs no client, so nobody binds the reassigned port\nif port_opens_within \"$SECOND_PORT\" \"$SECOND_PAGE\" 60; then\n  log_pass \"${TUNNEL_AGENT} keeps serving its other tunnel after the reassignment\"\nelse\n  log_fail \"${TUNNEL_AGENT}'s other tunnel stayed dark after the reassignment\"\nfi\nif unit_drops_remote_within \"$TUNNEL_REMOTE\" 60; then\n  log_pass \"${TUNNEL_AGENT}'s chisel unit dropped the reassigned tunnel's remote\"\nelse\n  log_fail \"${TUNNEL_AGENT}'s chisel unit still asks for the reassigned tunnel's remote\"\nfi\nif port_stays_closed \"$TUNNEL_PORT\" \"$PAGE\" 10; then\n  log_pass \"Reassigned tunnel's port stays closed (its new owner runs no client)\"\nelse\n  log_fail \"Reassigned tunnel's port is still bound by ${TUNNEL_AGENT}\"\nfi"
+    },
+    {
+      "id": "hand-the-first-tunnel-back",
+      "label": "Hand the first tunnel back",
+      "steps": [
+        {
+          "id": "step-106",
+          "label": "PATCH /api/tunnels/${TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TUNNEL_ID}",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RETURN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "Tunnel handed back to ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RETURN_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Tunnel handed back to ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "Set RETURNED_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$TUNNEL_AGENT\""
+          },
+          "capture": [
+            {
+              "variable": "RETURNED_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "Chisel grant back with ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RETURNED_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant back with ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Handed-back tunnel serves within 60 seconds with no lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Handed-back tunnel serves within 60 seconds with no lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "Handed-back tunnel did not serve within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Handed-back tunnel did not serve within 60 seconds"
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${TUNNEL_PORT}/${PAGE}",
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "RETURNED_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "Traffic flows through the tunnel after it was handed back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RETURNED_CONTENT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "MARKER"
+              },
+              "message": "Traffic flows through the tunnel after it was handed back"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Hand the first tunnel back\"\n# ---------------------------------------------------------------------------\n\nRETURN_RESPONSE=$(host_api_patch \"tunnels/${TUNNEL_ID}\" \"{\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\" 2>/dev/null || echo '{}')\nassert_json_field \"$RETURN_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Tunnel handed back to ${TUNNEL_AGENT}\" || true\n\nRETURNED_GRANTS=$(chisel_grants \"$TUNNEL_AGENT\")\nassert_contains \"$RETURNED_GRANTS\" \"$GRANT_PATTERN\" \"Chisel grant back with ${TUNNEL_AGENT}\" || true\n\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"Handed-back tunnel serves within 60 seconds with no lamaste-agent update\"\nelse\n  log_fail \"Handed-back tunnel did not serve within 60 seconds\"\nfi\n\nRETURNED_CONTENT=$(host_exec \"curl -sf --max-time 10 http://127.0.0.1:${TUNNEL_PORT}/${PAGE} 2>/dev/null\" || echo \"\")\nassert_contains \"$RETURNED_CONTENT\" \"$MARKER\" \"Traffic flows through the tunnel after it was handed back\" || true"
+    },
+    {
+      "id": "delete-the-second-tunnel-the-first-keeps-serving",
+      "label": "Delete the second tunnel — the first keeps serving",
+      "steps": [
+        {
+          "id": "step-114",
+          "label": "DELETE /api/tunnels/${SECOND_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/${SECOND_ID}"
+          },
+          "capture": [
+            {
+              "variable": "DELETE_SECOND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "Second tunnel deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELETE_SECOND"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Second tunnel deleted"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "Agent chisel unit dropped the deleted tunnel's remote",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent chisel unit dropped the deleted tunnel's remote"
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Agent chisel unit still asks for the deleted tunnel's remote after 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent chisel unit still asks for the deleted tunnel's remote after 60 seconds"
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "First tunnel serves after the second was deleted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "First tunnel serves after the second was deleted"
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "First tunnel stayed dark after the second was deleted",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "First tunnel stayed dark after the second was deleted"
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "Deleted tunnel's port stays closed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Deleted tunnel's port stays closed"
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Deleted tunnel's port is still bound",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Deleted tunnel's port is still bound"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete the second tunnel — the first keeps serving\"\n# ---------------------------------------------------------------------------\n\nDELETE_SECOND=$(host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || echo '{}')\nassert_json_field \"$DELETE_SECOND\" '.ok' 'true' \"Second tunnel deleted\" || true\nSECOND_ID=\"\"\n\nif unit_drops_remote_within \"$SECOND_REMOTE\" 60; then\n  log_pass \"Agent chisel unit dropped the deleted tunnel's remote\"\nelse\n  log_fail \"Agent chisel unit still asks for the deleted tunnel's remote after 60 seconds\"\nfi\nif port_opens_within \"$TUNNEL_PORT\" \"$PAGE\" 60; then\n  log_pass \"First tunnel serves after the second was deleted\"\nelse\n  log_fail \"First tunnel stayed dark after the second was deleted\"\nfi\nif port_stays_closed \"$SECOND_PORT\" \"$SECOND_PAGE\" 10; then\n  log_pass \"Deleted tunnel's port stays closed\"\nelse\n  log_fail \"Deleted tunnel's port is still bound\"\nfi\n\n# ${OTHER_AGENT} is revoked in cleanup: revoking restarts chisel, which would\n# drop the tunnel again right before the full-path checks below."
     },
     {
       "id": "reset-totp-before-authentication",
       "label": "Reset TOTP before authentication",
       "steps": [
         {
-          "id": "step-46",
+          "id": "step-123",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -871,7 +2230,7 @@
           ]
         },
         {
-          "id": "step-47",
+          "id": "step-124",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -890,7 +2249,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-125",
           "label": "TOTP reset returned otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -908,7 +2267,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-126",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -925,7 +2284,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-127",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -942,7 +2301,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-128",
           "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -959,7 +2318,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-129",
           "label": "Extracted TOTP secret from otpauth URI",
           "target": "local",
           "op": {
@@ -969,7 +2328,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-130",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -990,7 +2349,7 @@
       "label": "Authenticate with Authelia (first factor)",
       "steps": [
         {
-          "id": "step-54",
+          "id": "step-131",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1016,7 +2375,7 @@
           ]
         },
         {
-          "id": "step-55",
+          "id": "step-132",
           "label": "Extract AUTH_STATUS",
           "target": "local",
           "op": {
@@ -1033,7 +2392,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-133",
           "label": "Authelia first factor authentication succeeded",
           "target": "local",
           "op": {
@@ -1048,7 +2407,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-134",
           "label": "Authelia first factor authentication failed (status: $AUTH_STATUS, response: $AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -1070,7 +2429,7 @@
       "label": "Second factor authentication (TOTP)",
       "steps": [
         {
-          "id": "step-58",
+          "id": "step-135",
           "label": "Generate TOTP on host",
           "target": "host",
           "op": {
@@ -1091,7 +2450,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-136",
           "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_CODE}')",
           "target": "local",
           "op": {
@@ -1108,7 +2467,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-137",
           "label": "Generated TOTP code: ${TOTP_CODE}",
           "target": "local",
           "op": {
@@ -1118,7 +2477,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-138",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1145,7 +2504,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-139",
           "label": "Extract TOTP_AUTH_STATUS",
           "target": "local",
           "op": {
@@ -1162,7 +2521,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-140",
           "label": "Second factor authentication succeeded (TOTP accepted)",
           "target": "local",
           "op": {
@@ -1177,7 +2536,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-141",
           "label": "Second factor authentication failed (status: $TOTP_AUTH_STATUS, response: $TOTP_AUTH_RESPONSE)",
           "target": "local",
           "op": {
@@ -1199,7 +2558,7 @@
       "label": "Verify traffic through nginx with full 2FA (re-enabled tunnel)",
       "steps": [
         {
-          "id": "step-65",
+          "id": "step-142",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1222,7 +2581,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-143",
           "label": "Full-path tunnel traffic (nginx + Authelia 2FA) returns expected content",
           "target": "local",
           "continueOnError": true,
@@ -1247,8 +2606,8 @@
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 03 — Tunnel Toggle Traffic (Three-VM)\n# ============================================================================\n# Tests that disabling a tunnel stops traffic and re-enabling restores it:\n#\n# 1. Create a tunnel and establish chisel + HTTP server\n# 2. Verify traffic flows through the tunnel\n# 3. Disable the tunnel via PATCH /api/tunnels/:id\n# 4. Verify traffic no longer flows (nginx vhost removed)\n# 5. Re-enable the tunnel via PATCH /api/tunnels/:id\n# 6. Verify traffic flows again\n# 7. Clean up\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etoggle\"\nTUNNEL_PORT=18081\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMASTE_TOGGLE_OK_$(date +%s)\"\n\nbegin_test \"03 — Tunnel Toggle Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/e2e-toggle-index.html 2>/dev/null || true\" 2>/dev/null || true\n  host_exec \"rm -f /tmp/authelia-cookies-toggle.txt 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 03 — Tunnel Toggle Traffic (Three-VM)\n# ============================================================================\n# Tests that tunnel changes on the panel reach the agent through its sync\n# timer alone — no `lamaste-agent update` anywhere — and that disabling,\n# reassigning or deleting one tunnel never takes the agent's other tunnels\n# down with it:\n#\n# 1. Create two tunnels owned by test-agent (the agent VM's chisel client)\n#    and start an HTTP server for each. Each serves within 60 seconds with no\n#    manual update: the 30-second sync timer picks up the new tunnel. Adding a\n#    grant hot-reloads the chisel server's authfile (no chisel restart).\n# 2. Disable the first tunnel: nginx vhost removed, chisel grant removed, and\n#    the chisel server restarts (a revocation). The agent's client, which\n#    still asked for the disabled port, would have its whole session refused;\n#    the sync timer drops that remote so the second tunnel serves again\n#    within 60 seconds while the disabled port stays closed.\n# 3. Re-enable it: it serves again within 60 seconds, no update.\n# 4. Reassign it to a second agent (no chisel client): the grant moves, the\n#    port stays closed, and test-agent keeps serving its other tunnel.\n# 5. Hand it back: it serves again within 60 seconds, no update.\n# 6. Delete the second tunnel: its port closes and the first keeps serving.\n# 7. Authenticate through Authelia (1FA + TOTP) and fetch the first tunnel\n#    through nginx.\n# 8. Clean up\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# chisel_grants <label> — the reverse remotes the host's chisel authfile grants\n# the chisel user agent-<label>, one per line. Only the user half of each\n# \"<user>:<password>\" key is matched and only the grants are printed, so no\n# chisel password reaches the test output.\nchisel_grants() {\n  host_exec \"cat /etc/lamalibre/lamaste/chisel-users\" 2>/dev/null \\\n    | jq -r --arg u \"agent-$1:\" 'to_entries[] | select(.key | startswith($u)) | .value[]' 2>/dev/null \\\n    || true\n}\n\n# direct_status <port> <file> — HTTP status of a marker page through the\n# host's chisel listener for a tunnel port (bypassing nginx); \"200\" only while\n# the agent's chisel client holds that reverse remote\ndirect_status() {\n  host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:$1/$2 2>/dev/null\" || echo \"000\"\n}\n\n# port_opens_within <port> <file> <seconds> — succeed once the port serves the\n# marker page, polling every 2 seconds. The agent's sync timer runs 5 seconds\n# after activation and then 30 seconds after each run, and the client then\n# reconnects, so 60 seconds covers a full cycle with margin.\nport_opens_within() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# port_stays_closed <port> <file> <seconds> — succeed if the port never serves\n# the marker page during the window (probing every 2 seconds)\nport_stays_closed() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status \"$1\" \"$2\")\" = \"200\" ]; then\n      return 1\n    fi\n    sleep 2\n  done\n  return 0\n}\n\n# chisel_server_pid — MainPID of the host's chisel server\nchisel_server_pid() {\n  host_exec \"systemctl show -p MainPID --value chisel 2>/dev/null\" 2>/dev/null || echo \"0\"\n}\n\n# chisel_pid_changes_from <pid> <seconds> — succeed once the chisel server's\n# MainPID differs from <pid> (it was restarted)\nchisel_pid_changes_from() {\n  local deadline=$((SECONDS + $2)) now\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    now=$(chisel_server_pid)\n    if [ -n \"$now\" ] && [ \"$now\" != \"0\" ] && [ \"$now\" != \"$1\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# agent_unit_execstart — the ExecStart= line of the agent's chisel unit\nagent_unit_execstart() {\n  agent_exec \"grep '^ExecStart=' '${CHISEL_UNIT_PATH}' 2>/dev/null\" 2>/dev/null || echo \"\"\n}\n\n# unit_drops_remote_within <remote> <seconds> — succeed once the agent's chisel\n# unit no longer asks for <remote>\nunit_drops_remote_within() {\n  local deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if ! agent_unit_execstart | grep -qF \"$1\"; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2etoggle\"\nTUNNEL_PORT=18081\nSECOND_SUBDOMAIN=\"e2etoggle2\"\nSECOND_PORT=18082\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own the tunnels for traffic to flow.\nTUNNEL_AGENT=\"test-agent\"\n# The agent VM's local label (setup-agent.sh) names its units and data dir\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nCHISEL_UNIT_PATH=\"/root/.config/systemd/user/lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service\"\n# A second enrolled agent with no chisel client, to reassign the tunnel to\nOTHER_AGENT=\"e2e-other-$(date +%s)\"\n# The anchored reverse remote the host's chisel authfile grants the owner\nGRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${TUNNEL_PORT}\\$\"\nSECOND_GRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${SECOND_PORT}\\$\"\n# The remotes as the agent's chisel unit asks for them\nTUNNEL_REMOTE=\"R:127.0.0.1:${TUNNEL_PORT}:127.0.0.1:${TUNNEL_PORT}\"\nSECOND_REMOTE=\"R:127.0.0.1:${SECOND_PORT}:127.0.0.1:${SECOND_PORT}\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nSECOND_ID=\"\"\nMARKER=\"LAMASTE_TOGGLE_OK_$(date +%s)\"\nSECOND_MARKER=\"LAMASTE_TOGGLE_SECOND_OK_$(date +%s)\"\nPAGE=\"e2e-toggle-index.html\"\nSECOND_PAGE=\"e2e-toggle2-index.html\"\n\nbegin_test \"03 — Tunnel Toggle Traffic (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"pkill -f 'python3 -m http.server ${SECOND_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/${PAGE} /tmp/${SECOND_PAGE} 2>/dev/null || true\" 2>/dev/null || true\n  host_exec \"rm -f /tmp/authelia-cookies-toggle.txt 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$SECOND_ID\" ] && [ \"$SECOND_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${SECOND_ID}\" 2>/dev/null || true\n  fi\n  host_api_delete \"certs/agent/${OTHER_AGENT}\" > /dev/null 2>&1 || true\n  # Converge now rather than on the next timer tick, so the next test starts\n  # from an idle agent\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

@@ -3,9 +3,9 @@
   "meta": {
     "number": 23,
     "name": "Tickets Lifecycle",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "23 — Tickets Lifecycle (Three-VM)",
-    "deps": [1],
+    "deps": [],
     "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
@@ -21,19 +21,21 @@
     },
     "TARGET_LABEL": {
       "value": "rodeo-tickets-target"
+    },
+    "PLUGIN_AGENT_NAME": {
+      "value": "rodeo-tickets-pa"
+    },
+    "PLUGIN_AGENT_CN": {
+      "value": "plugin-agent:${SOURCE_LABEL}:${PLUGIN_AGENT_NAME}",
+      "expression": true
     }
   },
-  "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
   "cleanup": [
     {
-      "id": "cleanup-instance",
-      "label": "DELETE /api/tickets/instances/${INSTANCE_ID}",
+      "id": "cleanup-0",
+      "label": "DELETE tickets/instances/${INSTANCE_ID}",
       "target": "host",
       "continueOnError": true,
-      "when": {
-        "kind": "var_not_empty",
-        "variable": "INSTANCE_ID"
-      },
       "op": {
         "type": "api",
         "method": "DELETE",
@@ -41,8 +43,8 @@
       }
     },
     {
-      "id": "cleanup-scope",
-      "label": "DELETE /api/tickets/scopes/${TICKET_SCOPE_NAME}",
+      "id": "cleanup-1",
+      "label": "DELETE tickets/scopes/${TICKET_SCOPE_NAME}",
       "target": "host",
       "continueOnError": true,
       "op": {
@@ -52,8 +54,8 @@
       }
     },
     {
-      "id": "cleanup-source-cert",
-      "label": "DELETE /api/certs/agent/${SOURCE_LABEL}",
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${SOURCE_LABEL}",
       "target": "host",
       "continueOnError": true,
       "op": {
@@ -63,8 +65,8 @@
       }
     },
     {
-      "id": "cleanup-target-cert",
-      "label": "DELETE /api/certs/agent/${TARGET_LABEL}",
+      "id": "cleanup-3",
+      "label": "DELETE certs/agent/${TARGET_LABEL}",
       "target": "host",
       "continueOnError": true,
       "op": {
@@ -74,27 +76,85 @@
       }
     },
     {
-      "id": "cleanup-pems",
+      "id": "cleanup-4",
       "label": "Delete /tmp/e2e-tickets-*.pem",
       "target": "host",
       "continueOnError": true,
       "op": {
-        "type": "exec",
-        "command": "rm -f /tmp/e2e-tickets-*.pem 2>/dev/null || true"
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-tickets-*.pem"
       }
     }
   ],
   "sections": [
     {
-      "id": "0-init-vars",
-      "label": "0. Initialize cleanup variables",
-      "steps": [],
-      "bash": "# Initialize cleanup variables to avoid 'unbound variable' errors if early failures trigger EXIT trap.\nINSTANCE_ID=\"\"\nINSTANCE_SCOPE=\"\"\nTICKET_ID=\"\"\nSESSION_ID=\"\""
-    },
-    {
       "id": "1-register-ticket-scope",
       "label": "1. Register ticket scope",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "POST /api/tickets/scopes",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tickets/scopes",
+            "body": "{\"name\":\""
+          },
+          "capture": [
+            {
+              "variable": "SCOPE_CREATE_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "POST /api/tickets/scopes response has ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SCOPE_CREATE_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "POST /api/tickets/scopes response has ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Scope create response lists the registered sub-scope name",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SCOPE_CREATE_RESP"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SUB_SCOPE"
+              },
+              "message": "Scope create response lists the registered sub-scope name"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Register ticket scope\"\n# ---------------------------------------------------------------------------\n\nSCOPE_CREATE_RESP=$(host_api_post \"tickets/scopes\" '{\"name\":\"'\"${TICKET_SCOPE_NAME}\"'\",\"version\":\"1.0.0\",\"description\":\"Rodeo e2e ticket lifecycle test scope\",\"scopes\":[{\"name\":\"'\"${SUB_SCOPE}\"'\",\"description\":\"Connect sub-scope for rodeo test\",\"instanceScoped\":true}],\"transport\":{\"strategies\":[\"tunnel\"],\"preferred\":\"tunnel\",\"port\":0,\"protocol\":\"wss\"}}')\nassert_json_field \"$SCOPE_CREATE_RESP\" '.ok' 'true' \"POST /api/tickets/scopes response has ok: true\" || true\nassert_contains \"$SCOPE_CREATE_RESP\" \"$SUB_SCOPE\" \"Scope create response lists the registered sub-scope name\" || true"
     },
     {
@@ -102,7 +162,7 @@
       "label": "2. List ticket scopes",
       "steps": [
         {
-          "id": "s2-1",
+          "id": "step-3",
           "label": "GET /api/tickets/scopes",
           "target": "host",
           "op": {
@@ -120,8 +180,8 @@
           ]
         },
         {
-          "id": "s2-2",
-          "label": "Scopes list contains our scope",
+          "id": "step-4",
+          "label": "GET /api/tickets/scopes response contains registered scope name",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -140,69 +200,1361 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"2. List ticket scopes\"\n# ---------------------------------------------------------------------------\n\nSCOPES_LIST=$(host_api_get \"tickets/scopes\")\nassert_contains \"$SCOPES_LIST\" \"$TICKET_SCOPE_NAME\" \"GET /api/tickets/scopes response contains registered scope name\" || true"
     },
     {
-      "id": "3-create-agent-certs",
+      "id": "3-create-source-and-target-agent-certs-with-sub-scope-capability",
       "label": "3. Create source and target agent certs with sub-scope capability",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-5",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "SOURCE_CERT_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Source agent cert creation returns ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SOURCE_CERT_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Source agent cert creation returns ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Extract SOURCE_P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SOURCE_P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SOURCE_CERT_RESP"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "TARGET_CERT_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Target agent cert creation returns ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TARGET_CERT_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Target agent cert creation returns ok: true"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Extract TARGET_P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TARGET_P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TARGET_CERT_RESP"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}'"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}'"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}'"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}'"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "Extracted PEM cert/key pairs for source and target agents",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted PEM cert/key pairs for source and target agents"
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. Create source and target agent certs with sub-scope capability\"\n# ---------------------------------------------------------------------------\n\nSOURCE_CERT_RESP=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${SOURCE_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"'\"${SUB_SCOPE}\"'\"]}')\nassert_json_field \"$SOURCE_CERT_RESP\" '.ok' 'true' \"Source agent cert creation returns ok: true\" || true\nSOURCE_P12_PASS=$(echo \"$SOURCE_CERT_RESP\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\n\nTARGET_CERT_RESP=$(host_api_post \"certs/agent\" '{\"label\":\"'\"${TARGET_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"'\"${SUB_SCOPE}\"'\"]}')\nassert_json_field \"$TARGET_CERT_RESP\" '.ok' 'true' \"Target agent cert creation returns ok: true\" || true\nTARGET_P12_PASS=$(echo \"$TARGET_CERT_RESP\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\n\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-src-cert.pem -passin 'pass:${SOURCE_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${SOURCE_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-src-key.pem -passin 'pass:${SOURCE_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -clcerts -nokeys -out /tmp/e2e-tickets-tgt-cert.pem -passin 'pass:${TARGET_P12_PASS}'\"\nhost_exec \"openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}' -legacy 2>/dev/null || openssl pkcs12 -in '/etc/lamalibre/lamaste/pki/agents/${TARGET_LABEL}/client.p12' -nocerts -nodes -out /tmp/e2e-tickets-tgt-key.pem -passin 'pass:${TARGET_P12_PASS}'\"\nlog_pass \"Extracted PEM cert/key pairs for source and target agents\""
     },
     {
-      "id": "4-register-instance",
+      "id": "4-register-instance-via-source-agent-cert",
       "label": "4. Register instance via source agent cert",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-16",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INST_RAW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Set INST_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s' \"$INST_RAW\" | tail -n1"
+          },
+          "capture": [
+            {
+              "variable": "INST_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Set INST_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "printf '%s' \"$INST_RAW\" | sed '$d'"
+          },
+          "capture": [
+            {
+              "variable": "INST_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "POST /api/tickets/instances returns 201 for new instance",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INST_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "201"
+              },
+              "message": "POST /api/tickets/instances returns 201 for new instance"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Extract INSTANCE_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INSTANCE_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INST_BODY"
+              },
+              "expression": ".instanceId"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Extract INSTANCE_SCOPE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "INSTANCE_SCOPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INST_BODY"
+              },
+              "expression": ".instanceScope"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Instance registration returned a non-empty instanceId",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "INSTANCE_ID"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Instance registration returned a non-empty instanceId"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Instance registration returned a non-empty instanceScope",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "INSTANCE_SCOPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Instance registration returned a non-empty instanceScope"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Instance scope embeds the registered sub-scope prefix",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "INSTANCE_SCOPE"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SUB_SCOPE"
+              },
+              "message": "Instance scope embeds the registered sub-scope prefix"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"4. Register instance via source agent cert\"\n# ---------------------------------------------------------------------------\n\nINST_RAW=$(host_exec \"curl -sk --max-time 30 -w '\\n%{http_code}' --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"transport\\\":{\\\"strategies\\\":[\\\"tunnel\\\"],\\\"preferred\\\":\\\"tunnel\\\"}}' https://127.0.0.1:9292/api/tickets/instances\")\nINST_STATUS=$(printf '%s' \"$INST_RAW\" | tail -n1)\nINST_BODY=$(printf '%s' \"$INST_RAW\" | sed '$d')\nassert_eq \"$INST_STATUS\" \"201\" \"POST /api/tickets/instances returns 201 for new instance\" || true\nINSTANCE_ID=$(echo \"$INST_BODY\" | jq -r '.instanceId' 2>/dev/null || echo \"\")\nINSTANCE_SCOPE=$(echo \"$INST_BODY\" | jq -r '.instanceScope' 2>/dev/null || echo \"\")\nassert_not_eq \"$INSTANCE_ID\" \"\" \"Instance registration returned a non-empty instanceId\" || true\nassert_not_eq \"$INSTANCE_SCOPE\" \"\" \"Instance registration returned a non-empty instanceScope\" || true\nassert_contains \"$INSTANCE_SCOPE\" \"$SUB_SCOPE\" \"Instance scope embeds the registered sub-scope prefix\" || true"
     },
     {
-      "id": "5-instance-reregister",
+      "id": "5-re-registering-same-instance-returns-200-idempotent",
       "label": "5. Re-registering same instance returns 200 (idempotent)",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "INST2_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Re-registering same (scope, agent) returns 200 (idempotent path)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INST2_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Re-registering same (scope, agent) returns 200 (idempotent path)"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. Re-registering same instance returns 200 (idempotent)\"\n# ---------------------------------------------------------------------------\n\nINST2_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"transport\\\":{\\\"strategies\\\":[\\\"tunnel\\\"],\\\"preferred\\\":\\\"tunnel\\\"}}' https://127.0.0.1:9292/api/tickets/instances\" 2>/dev/null || echo \"000\")\nassert_eq \"$INST2_STATUS\" \"200\" \"Re-registering same (scope, agent) returns 200 (idempotent path)\" || true"
     },
     {
       "id": "6-instance-heartbeat",
       "label": "6. Instance heartbeat",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-27",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/tickets/instances/${INSTANCE_ID}/heartbeat",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "HB_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "POST /api/tickets/instances/:id/heartbeat returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HB_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST /api/tickets/instances/:id/heartbeat returns 200"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/tickets/instances/deadbeefdeadbeefdeadbeefdeadbeef/heartbeat",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "HB_404",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Heartbeat on non-existent instance returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HB_404"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Heartbeat on non-existent instance returns 404"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"6. Instance heartbeat\"\n# ---------------------------------------------------------------------------\n\nHB_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/instances/${INSTANCE_ID}/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$HB_STATUS\" \"200\" \"POST /api/tickets/instances/:id/heartbeat returns 200\" || true\n\n# Heartbeat on non-existent instance returns 404 (defense-in-depth check path)\nHB_404=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/instances/deadbeefdeadbeefdeadbeefdeadbeef/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$HB_404\" \"404\" \"Heartbeat on non-existent instance returns 404\" || true"
     },
     {
-      "id": "7-list-assignments-empty",
-      "label": "7. Admin lists assignments (initially empty for our scope)",
-      "steps": [],
+      "id": "7-admin-lists-assignments-filtered-by-our-agent",
+      "label": "7. Admin lists assignments (filtered by our agent)",
+      "steps": [
+        {
+          "id": "step-31",
+          "label": "GET /api/tickets/assignments?agentLabel=${TARGET_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tickets/assignments?agentLabel=${TARGET_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "ASSIGN_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "GET /api/tickets/assignments filtered by our target label is initially empty",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ASSIGN_LIST"
+              },
+              "path": ".assignments",
+              "expected": {
+                "kind": "literal",
+                "value": "[]"
+              },
+              "message": "GET /api/tickets/assignments filtered by our target label is initially empty"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"7. Admin lists assignments (filtered by our agent)\"\n# ---------------------------------------------------------------------------\n\nASSIGN_LIST=$(host_api_get \"tickets/assignments?agentLabel=${TARGET_LABEL}\")\nassert_json_field \"$ASSIGN_LIST\" '.assignments' '[]' \"GET /api/tickets/assignments filtered by our target label is initially empty\" || true"
     },
     {
-      "id": "8-assignment-validation",
+      "id": "8-assignment-validation-malformed-instancescope-is-rejected",
       "label": "8. Assignment validation — malformed instanceScope is rejected",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-33",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "BAD_ASSIGN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "POST /api/tickets/assignments with malformed instanceScope returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_ASSIGN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST /api/tickets/assignments with malformed instanceScope returns 400"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "DELETE",
+            "url": "https://127.0.0.1:9292/api/tickets/assignments/no-such-agent/plugin:rodeo-tickets:connect:deadbeef",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "DEL_404",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "DELETE /api/tickets/assignments/:agent/:scope for non-existent row returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DEL_404"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "DELETE /api/tickets/assignments/:agent/:scope for non-existent row returns 404"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"8. Assignment validation — malformed instanceScope is rejected\"\n# ---------------------------------------------------------------------------\n\n# Submit an assignment with a syntactically-invalid instanceScope: expect Zod 400.\nBAD_ASSIGN_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"agentLabel\\\":\\\"${TARGET_LABEL}\\\",\\\"instanceScope\\\":\\\"not-a-valid-scope\\\"}' https://127.0.0.1:9292/api/tickets/assignments\" 2>/dev/null || echo \"000\")\nassert_eq \"$BAD_ASSIGN_STATUS\" \"400\" \"POST /api/tickets/assignments with malformed instanceScope returns 400\" || true\n\n# DELETE with a non-existent agentLabel/instanceScope pair that matches the regex returns 404.\nDEL_404=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/assignments/no-such-agent/plugin:rodeo-tickets:connect:deadbeef\" 2>/dev/null || echo \"000\")\nassert_eq \"$DEL_404\" \"404\" \"DELETE /api/tickets/assignments/:agent/:scope for non-existent row returns 404\" || true"
     },
     {
-      "id": "9-ticket-request-without-assignment",
+      "id": "9-ticket-request-without-assignment-returns-404",
       "label": "9. Ticket request without assignment returns 404",
-      "steps": [],
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "TK_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "POST /api/tickets without a matching assignment returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TK_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "POST /api/tickets without a matching assignment returns 404"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"9. Ticket request without assignment returns 404\"\n# ---------------------------------------------------------------------------\n\n# Source agent requesting a ticket for target that has no assignment must fail with 404\n# (the panel collapses 'not assigned', 'not found', and 'self-ticket' to the same 404 on purpose).\nTK_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"scope\\\":\\\"${SUB_SCOPE}\\\",\\\"instanceId\\\":\\\"${INSTANCE_ID}\\\",\\\"target\\\":\\\"${TARGET_LABEL}\\\"}' https://127.0.0.1:9292/api/tickets\" 2>/dev/null || echo \"000\")\nassert_eq \"$TK_STATUS\" \"404\" \"POST /api/tickets without a matching assignment returns 404\" || true"
     },
     {
-      "id": "10-admin-lists",
-      "label": "10. Admin reads tickets/sessions lists and inbox",
-      "steps": [],
+      "id": "10-admin-lists-tickets-and-sessions-agent-reads-own-inbox",
+      "label": "10. Admin lists tickets and sessions; agent reads own inbox",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "GET /api/tickets",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tickets"
+          },
+          "capture": [
+            {
+              "variable": "TICKETS_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "GET /api/tickets (admin) returns a tickets field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "TICKETS_LIST"
+              },
+              "path": ".tickets",
+              "message": "GET /api/tickets (admin) returns a tickets field"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "GET /api/tickets/sessions",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tickets/sessions"
+          },
+          "capture": [
+            {
+              "variable": "SESS_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "GET /api/tickets/sessions (admin) returns a sessions field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "SESS_LIST"
+              },
+              "path": ".sessions",
+              "message": "GET /api/tickets/sessions (admin) returns a sessions field"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/tickets/inbox",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "INBOX_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Target agent inbox is empty when no assignment exists",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INBOX_BODY"
+              },
+              "path": ".tickets",
+              "expected": {
+                "kind": "literal",
+                "value": "[]"
+              },
+              "message": "Target agent inbox is empty when no assignment exists"
+            }
+          }
+        }
+      ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"10. Admin lists tickets and sessions; agent reads own inbox\"\n# ---------------------------------------------------------------------------\n\nTICKETS_LIST=$(host_api_get \"tickets\")\nassert_json_field_not_empty \"$TICKETS_LIST\" '.tickets' \"GET /api/tickets (admin) returns a tickets field\" || true\n\nSESS_LIST=$(host_api_get \"tickets/sessions\")\nassert_json_field_not_empty \"$SESS_LIST\" '.sessions' \"GET /api/tickets/sessions (admin) returns a sessions field\" || true\n\n# Target agent reads own inbox — must return empty tickets array (no ticket was issued)\nINBOX_BODY=$(host_exec \"curl -skf --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/inbox\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$INBOX_BODY\" '.tickets' '[]' \"Target agent inbox is empty when no assignment exists\" || true"
     },
     {
-      "id": "11-ticket-validate-revoke-negative",
+      "id": "11-ticket-validate-revoke-negative-paths",
       "label": "11. Ticket validate/revoke negative paths",
-      "steps": [],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"11. Ticket validate/revoke negative paths\"\n# ---------------------------------------------------------------------------\n\n# Validate a syntactically valid but unknown ticketId — must be rejected with the generic error code (401).\nVAL_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/validate\" 2>/dev/null || echo \"000\")\nassert_eq \"$VAL_STATUS\" \"401\" \"POST /api/tickets/validate on unknown ticket returns 401 (generic denial)\" || true\n\n# Session creation with an unused-but-unknown ticket returns 400.\nSESS_CREATE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/sessions\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_CREATE_STATUS\" \"400\" \"POST /api/tickets/sessions on unknown ticket returns 400\" || true\n\n# Session heartbeat on unknown sessionId returns 404.\nSESS_HB_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_HB_STATUS\" \"404\" \"POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404\" || true\n\n# PATCH session on unknown sessionId returns 404.\nSESS_PATCH_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"status\\\":\\\"grace\\\"}' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_PATCH_STATUS\" \"404\" \"PATCH /api/tickets/sessions/:id on unknown session returns 404\" || true\n\n# Revoke an unknown ticketId returns 404.\nREVOKE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" 2>/dev/null || echo \"000\")\nassert_eq \"$REVOKE_STATUS\" \"404\" \"DELETE /api/tickets/:id on unknown ticket returns 404\" || true"
-    },
-    {
-      "id": "12-complete",
-      "label": "12. Lifecycle coverage complete",
       "steps": [
         {
-          "id": "s12-1",
-          "label": "Tickets lifecycle coverage complete",
+          "id": "step-45",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "VAL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "POST /api/tickets/validate on unknown ticket returns 401 (generic denial)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VAL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "POST /api/tickets/validate on unknown ticket returns 401 (generic denial)"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "SESS_CREATE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "POST /api/tickets/sessions on unknown ticket returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESS_CREATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "POST /api/tickets/sessions on unknown ticket returns 400"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id/heartbeat",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "SESS_HB_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESS_HB_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "SESS_PATCH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "PATCH /api/tickets/sessions/:id on unknown session returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SESS_PATCH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "PATCH /api/tickets/sessions/:id on unknown session returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "DELETE",
+            "url": "https://127.0.0.1:9292/api/tickets/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "REVOKE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "DELETE /api/tickets/:id on unknown ticket returns 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REVOKE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "DELETE /api/tickets/:id on unknown ticket returns 404"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"11. Ticket validate/revoke negative paths\"\n# ---------------------------------------------------------------------------\n\n# Validate a syntactically valid but unknown ticketId — must be rejected with the generic error code (401).\nVAL_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/validate\" 2>/dev/null || echo \"000\")\nassert_eq \"$VAL_STATUS\" \"401\" \"POST /api/tickets/validate on unknown ticket returns 401 (generic denial)\" || true\n\n# Session creation with an unused-but-unknown ticket returns 400.\nSESS_CREATE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"ticketId\\\":\\\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\\"}' https://127.0.0.1:9292/api/tickets/sessions\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_CREATE_STATUS\" \"400\" \"POST /api/tickets/sessions on unknown ticket returns 400\" || true\n\n# Session heartbeat on unknown sessionId returns 404.\nSESS_HB_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id/heartbeat\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_HB_STATUS\" \"404\" \"POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404\" || true\n\n# PATCH session on unknown sessionId returns 404.\nSESS_PATCH_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt --request PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"status\\\":\\\"grace\\\"}' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id\" 2>/dev/null || echo \"000\")\nassert_eq \"$SESS_PATCH_STATUS\" \"404\" \"PATCH /api/tickets/sessions/:id on unknown session returns 404\" || true\n\n# Revoke an unknown ticketId returns 404.\nREVOKE_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/tickets/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\" 2>/dev/null || echo \"000\")\nassert_eq \"$REVOKE_STATUS\" \"404\" \"DELETE /api/tickets/:id on unknown ticket returns 404\" || true"
+    },
+    {
+      "id": "12-a-plugin-agent-certificate-cannot-create-tunnels",
+      "label": "12. A plugin-agent certificate cannot create tunnels",
+      "steps": [
+        {
+          "id": "step-55",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "DELEGATE_RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Source agent obtained a delegated enrollment token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DELEGATE_RESP"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Source agent obtained a delegated enrollment token"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Extract PA_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PA_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DELEGATE_RESP"
+              },
+              "expression": ".enrollmentToken // empty"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "umask 077; openssl genrsa -out /tmp/e2e-tickets-pa-key.pem 2048 2>/dev/null && openssl req -new -key /tmp/e2e-tickets-pa-key.pem -out /tmp/e2e-tickets-pa.csr -subj '/CN=${PLUGIN_AGENT_CN}' 2>/dev/null && jq -n --arg token '${PA_TOKEN}' --rawfile csr /tmp/e2e-tickets-pa.csr '{token: \\$token, csr: \\$csr}' > /tmp/e2e-tickets-pa-enroll.json"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "https://127.0.0.1:9292/api/enroll",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 60,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "PA_ENROLL",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Plugin-agent enrolled with the delegated token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PA_ENROLL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Plugin-agent enrolled with the delegated token"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "jq -r '.cert // empty' /tmp/e2e-tickets-pa-enrolled.json > /tmp/e2e-tickets-pa-cert.pem"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl x509 -noout -subject -in /tmp/e2e-tickets-pa-cert.pem 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "PA_SUBJECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Plugin-agent certificate carries CN=${PLUGIN_AGENT_CN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PA_SUBJECT"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "PLUGIN_AGENT_CN"
+              },
+              "message": "Plugin-agent certificate carries CN=${PLUGIN_AGENT_CN}"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "POST",
+            "url": "",
+            "tlsVerify": false,
+            "statusOnly": true,
+            "timeout": 30,
+            "headers": {
+              "Content-Type": "application/json"
+            }
+          },
+          "capture": [
+            {
+              "variable": "PA_TUNNEL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "POST /api/tunnels with a plugin-agent certificate returns 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PA_TUNNEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "POST /api/tunnels with a plugin-agent certificate returns 403"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "PA_TUNNEL_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "No tunnel was created for the plugin-agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PA_TUNNEL_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No tunnel was created for the plugin-agent"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "PA_TOKEN"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "No delegated enrollment token — cannot check plugin-agent tunnel creation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No delegated enrollment token — cannot check plugin-agent tunnel creation"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "PA_TOKEN"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"12. A plugin-agent certificate cannot create tunnels\"\n# ---------------------------------------------------------------------------\n\n# A plugin-agent certificate belongs to a plugin running on an agent, not to a\n# machine that runs a chisel client: it holds no chisel credential and can\n# carry nothing, so POST /api/tunnels refuses it. The source agent owns an\n# instance for SUB_SCOPE, so it may delegate a plugin-agent enrollment.\nDELEGATE_RESP=$(host_exec \"curl -sk --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"pluginAgentLabel\\\":\\\"${PLUGIN_AGENT_NAME}\\\",\\\"scope\\\":\\\"${SUB_SCOPE}\\\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated\" 2>/dev/null || echo '{}')\nassert_json_field \"$DELEGATE_RESP\" '.ok' 'true' \"Source agent obtained a delegated enrollment token\" || true\nPA_TOKEN=$(echo \"$DELEGATE_RESP\" | jq -r '.enrollmentToken // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$PA_TOKEN\" ]; then\n  # Enroll the plugin-agent with a CSR whose CN is its full registry label\n  host_exec \"umask 077; openssl genrsa -out /tmp/e2e-tickets-pa-key.pem 2048 2>/dev/null && openssl req -new -key /tmp/e2e-tickets-pa-key.pem -out /tmp/e2e-tickets-pa.csr -subj '/CN=${PLUGIN_AGENT_CN}' 2>/dev/null && jq -n --arg token '${PA_TOKEN}' --rawfile csr /tmp/e2e-tickets-pa.csr '{token: \\$token, csr: \\$csr}' > /tmp/e2e-tickets-pa-enroll.json\"\n  PA_ENROLL=$(host_exec \"curl -sk --max-time 60 -X POST -H 'Content-Type: application/json' -d @/tmp/e2e-tickets-pa-enroll.json -o /tmp/e2e-tickets-pa-enrolled.json -w '%{http_code}' https://127.0.0.1:9292/api/enroll\" 2>/dev/null || echo \"000\")\n  assert_eq \"$PA_ENROLL\" \"200\" \"Plugin-agent enrolled with the delegated token\" || true\n  host_exec \"jq -r '.cert // empty' /tmp/e2e-tickets-pa-enrolled.json > /tmp/e2e-tickets-pa-cert.pem\"\n  PA_SUBJECT=$(host_exec \"openssl x509 -noout -subject -in /tmp/e2e-tickets-pa-cert.pem 2>/dev/null\" 2>/dev/null || echo \"\")\n  assert_contains \"$PA_SUBJECT\" \"$PLUGIN_AGENT_CN\" \"Plugin-agent certificate carries CN=${PLUGIN_AGENT_CN}\" || true\n\n  PA_TUNNEL_STATUS=$(host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-pa-cert.pem --key /tmp/e2e-tickets-pa-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\\\"subdomain\\\":\\\"e2epluginagent23\\\",\\\"port\\\":19923}' https://127.0.0.1:9292/api/tunnels\" 2>/dev/null || echo \"000\")\n  assert_eq \"$PA_TUNNEL_STATUS\" \"403\" \"POST /api/tunnels with a plugin-agent certificate returns 403\" || true\n  PA_TUNNEL_LEFT=$(host_api_get \"tunnels\" | jq '[.tunnels[] | select(.subdomain == \"e2epluginagent23\")] | length' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$PA_TUNNEL_LEFT\" \"0\" \"No tunnel was created for the plugin-agent\" || true\nelse\n  log_fail \"No delegated enrollment token — cannot check plugin-agent tunnel creation\"\nfi"
+    },
+    {
+      "id": "13-lifecycle-coverage-complete",
+      "label": "13. Lifecycle coverage complete",
+      "steps": [
+        {
+          "id": "step-69",
+          "label": "Tickets lifecycle coverage complete; cleanup handled by EXIT trap",
           "target": "local",
           "op": {
             "type": "log",
@@ -210,7 +1562,13 @@
             "message": "Tickets lifecycle coverage complete; cleanup handled by EXIT trap"
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"13. Lifecycle coverage complete\"\n# ---------------------------------------------------------------------------\n\nlog_info \"Tickets lifecycle coverage complete; cleanup handled by EXIT trap\""
     }
-  ]
+  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_patch", "host_api_delete"],
+  "headerRaw": "# ============================================================================\n# 23 — Tickets Lifecycle (Three-VM)\n# ============================================================================\n# 23 — Tickets Lifecycle (Three-VM)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"/Users/onurdevrimvatan/lama/repositories/lamalibre/lamaste/packages/tools/lamaste-rodeo/tests/e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTICKET_SCOPE_NAME=\"rodeo-tickets\"\nSUB_SCOPE=\"plugin:rodeo-tickets:connect\"\nSOURCE_LABEL=\"rodeo-tickets-source\"\nTARGET_LABEL=\"rodeo-tickets-target\"\n# A plugin-agent the source agent delegates enrollment to (section 12); it is\n# cascade-revoked with the source agent in cleanup\nPLUGIN_AGENT_NAME=\"rodeo-tickets-pa\"\nPLUGIN_AGENT_CN=\"plugin-agent:${SOURCE_LABEL}:${PLUGIN_AGENT_NAME}\"\n\nbegin_test \"23 — Tickets Lifecycle (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  if [ -n \"$INSTANCE_ID\" ] && [ \"$INSTANCE_ID\" != \"null\" ]; then\n    host_api_delete \"tickets/instances/${INSTANCE_ID}\" 2>/dev/null || true\n  fi\n  host_api_delete \"tickets/scopes/${TICKET_SCOPE_NAME}\" 2>/dev/null || true\n  host_api_delete \"certs/agent/${SOURCE_LABEL}\" 2>/dev/null || true\n  host_api_delete \"certs/agent/${TARGET_LABEL}\" 2>/dev/null || true\n  host_exec \"rm -f /tmp/e2e-tickets-*.pem /tmp/e2e-tickets-pa.csr /tmp/e2e-tickets-pa-enroll.json /tmp/e2e-tickets-pa-enrolled.json 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n\n# Initialize cleanup variables to avoid 'unbound variable' errors if early failures trigger EXIT trap.\nINSTANCE_ID=\"\"\nINSTANCE_SCOPE=\"\"\nTICKET_ID=\"\"\nSESSION_ID=\"\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
 }

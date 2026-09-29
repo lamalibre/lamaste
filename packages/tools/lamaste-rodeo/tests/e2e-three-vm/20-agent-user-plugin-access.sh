@@ -58,8 +58,11 @@ if [ "$ONBOARDING" != "COMPLETED" ]; then
 fi
 log_pass "Onboarding complete"
 
-# Find agent label
-AGENT_LABEL=$(host_api_get "certs/agent" 2>/dev/null | jq -r '.agents[0].label // empty' || echo "")
+# Find an enrolled, non-revoked agent. The registry keeps revoked entries
+# (setup-host.sh revokes a stale test-agent on re-runs), and plugin tunnels
+# name this agent as their owner — a revoked one would make the plugin tunnel
+# validation cases below fail for the owner instead of for the field under test.
+AGENT_LABEL=$(host_api_get "certs/agent" 2>/dev/null | jq -r '[.agents[]? | select(.revoked != true)][0].label // empty' || echo "")
 if [ -z "$AGENT_LABEL" ]; then
   log_skip "No enrolled agent found — skipping"
   end_test

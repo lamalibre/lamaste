@@ -1,0 +1,1712 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 30,
+    "name": "Agent Sync Timer",
+    "suite": "e2e",
+    "description": "30 — Agent Sync Timer (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq"]
+  },
+  "env": {},
+  "constants": {
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
+    },
+    "AGENT_LOCAL_LABEL": {
+      "value": "e2e-agent"
+    },
+    "AGENT_DIR": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}",
+      "expression": true
+    },
+    "AGENT_CONFIG": {
+      "value": "${AGENT_DIR}/config.json",
+      "expression": true
+    },
+    "CHISEL_ENV": {
+      "value": "${AGENT_DIR}/chisel.env",
+      "expression": true
+    },
+    "SYNC_STATE": {
+      "value": "${AGENT_DIR}/sync-state.json",
+      "expression": true
+    },
+    "SYNC_LOG": {
+      "value": "${AGENT_DIR}/logs/sync.log",
+      "expression": true
+    },
+    "CHISEL_SERVICE": {
+      "value": "lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service",
+      "expression": true
+    },
+    "SYNC_TIMER": {
+      "value": "lamalibre-lamaste-sync-${AGENT_LOCAL_LABEL}.timer",
+      "expression": true
+    },
+    "AGENTD_PORT": {
+      "value": "9393"
+    },
+    "TUNNEL_SUBDOMAIN": {
+      "value": "e2esync30"
+    },
+    "TUNNEL_PORT": {
+      "value": "18095"
+    },
+    "PAGE": {
+      "value": "e2e-sync30-index.html"
+    },
+    "MARKER": {
+      "value": "LAMASTE_SYNC30_OK_$timestamp()",
+      "expression": true
+    },
+    "PANEL_STARTED_HERE": {
+      "value": "false"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));if(c.tunnelsStopped){delete c.tunnelsStopped;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});}\\\"|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "lamaste-agent panel --disable|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "Kill process",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "pkill -f 'python3 -m http.server ${TUNNEL_PORT}'|| true",
+        "ignoreExit": true
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "Delete /tmp/${PAGE}",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/${PAGE}"
+      }
+    },
+    {
+      "id": "cleanup-4",
+      "label": "DELETE tunnels/${TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-5",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "lamaste-agent sync --label ${AGENT_LOCAL_LABEL}|| true",
+        "ignoreExit": true
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-onboarding-complete-sync-timer-running",
+      "label": "Pre-flight: onboarding complete, sync timer running",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Set TIMER_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "TIMER_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Sync timer ${SYNC_TIMER} is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer ${SYNC_TIMER} is active"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "Set SEALED_AT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"chiselCredentialSealedAt\""
+          },
+          "capture": [
+            {
+              "variable": "SEALED_AT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "Fresh setup recorded chiselCredentialSealedAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SEALED_AT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Fresh setup recorded chiselCredentialSealedAt"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "ROTATED_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "A sealed credential has never been rotated by sync",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${ROTATED_BEFORE:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "A sealed credential has never been rotated by sync"
+            }
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding complete, sync timer running\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS). Skipping sync timer tests.\"\n  end_test\n  exit $?\nfi\n\nTIMER_STATE=$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\nassert_eq \"$TIMER_STATE\" \"active\" \"Sync timer ${SYNC_TIMER} is active\" || true\n\n# A fresh setup marks its credential sealed and never rotates it\nSEALED_AT=$(agent_config_field \"chiselCredentialSealedAt\")\nassert_not_eq \"$SEALED_AT\" \"\" \"Fresh setup recorded chiselCredentialSealedAt\" || true\nROTATED_BEFORE=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"${ROTATED_BEFORE:-0}\" \"0\" \"A sealed credential has never been rotated by sync\" || true"
+    },
+    {
+      "id": "a-tunnel-assigned-on-the-panel-is-carried-by-the-timer",
+      "label": "A tunnel assigned on the panel is carried by the timer",
+      "steps": [
+        {
+          "id": "step-7",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "echo '${MARKER}' > /tmp/${PAGE}"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CREATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Tunnel ${TUNNEL_SUBDOMAIN} created for ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel ${TUNNEL_SUBDOMAIN} created for ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "expression": ".tunnel.id"
+            }
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Tunnel carried within 60 seconds with no lamaste-agent update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Tunnel carried within 60 seconds with no lamaste-agent update"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Tunnel not carried within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Tunnel not carried within 60 seconds"
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${SYNC_STATE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "STATE_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "sync-state.json records the tunnel client running",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATE_JSON"
+              },
+              "path": ".lastState",
+              "expected": {
+                "kind": "literal",
+                "value": "running"
+              },
+              "message": "sync-state.json records the tunnel client running"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "sync-state.json records no error",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATE_JSON"
+              },
+              "path": ".lastError",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "sync-state.json records no error"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Extract CARRIED",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "CARRIED",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "STATE_JSON"
+              },
+              "expression": ".tunnels // 0"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "sync-state.json records ${CARRIED} carried tunnel(s)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "sync-state.json records ${CARRIED} carried tunnel(s)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CARRIED",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "sync-state.json records ${CARRIED} carried tunnels (expected at least 1)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "sync-state.json records ${CARRIED} carried tunnels (expected at least 1)"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "CARRIED",
+            "value": ">=1"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -20 '${SYNC_LOG}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_LOG_TAIL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "sync.log records the change it applied",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LOG_TAIL"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "${AGENT_LOCAL_LABEL}: carrying"
+              },
+              "message": "sync.log records the change it applied"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "sync.log records no failure",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LOG_TAIL"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "sync failed"
+              },
+              "message": "sync.log records no failure"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent status --label ${AGENT_LOCAL_LABEL} 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Set STATUS_SYNC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$STATUS_OUTPUT\" | grep \"Sync:\" | head -1 || true"
+          },
+          "capture": [
+            {
+              "variable": "STATUS_SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "lamaste-agent status reports the timer's last successful run",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_SYNC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "every 30s, last ok"
+              },
+              "message": "lamaste-agent status reports the timer's last successful run"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "lamaste-agent status reports the carried tunnel count",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STATUS_SYNC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "tunnel(s)"
+              },
+              "message": "lamaste-agent status reports the carried tunnel count"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set PID_BEFORE_SYNC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"show -p MainPID --value ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>&1; echo \\"
+          },
+          "capture": [
+            {
+              "variable": "MANUAL_SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Manual lamaste-agent sync exits 0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "MANUAL_SYNC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "exit=0"
+              },
+              "message": "Manual lamaste-agent sync exits 0"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "Manual lamaste-agent sync reports the carried tunnels",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "MANUAL_SYNC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "carrying"
+              },
+              "message": "Manual lamaste-agent sync reports the carried tunnels"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Manual sync with nothing to change did not restart the client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "MANUAL_SYNC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "(re)started"
+              },
+              "message": "Manual sync with nothing to change did not restart the client"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set PID_AFTER_SYNC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"show -p MainPID --value ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "PID_AFTER_SYNC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "Chisel client PID unchanged by a no-op sync",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PID_AFTER_SYNC"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_SYNC"
+              },
+              "message": "Chisel client PID unchanged by a no-op sync"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"A tunnel assigned on the panel is carried by the timer\"\n# ---------------------------------------------------------------------------\n\nagent_exec \"echo '${MARKER}' > /tmp/${PAGE}\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel ${TUNNEL_SUBDOMAIN} created for ${TUNNEL_AGENT}\" || true\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\n\nif port_opens_within 60; then\n  log_pass \"Tunnel carried within 60 seconds with no lamaste-agent update\"\nelse\n  log_fail \"Tunnel not carried within 60 seconds\"\nfi\n\n# The timer's run is recorded; `quiet` runs log only when something changed\nSTATE_JSON=\"\"\nfor _ in $(seq 1 20); do\n  STATE_JSON=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null || echo \"\")\n  if [ \"$(echo \"$STATE_JSON\" | jq -r '.lastState // empty' 2>/dev/null)\" = \"running\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_json_field \"$STATE_JSON\" '.lastState' \"running\" \"sync-state.json records the tunnel client running\" || true\nassert_json_field \"$STATE_JSON\" '.lastError' \"null\" \"sync-state.json records no error\" || true\nCARRIED=$(echo \"$STATE_JSON\" | jq -r '.tunnels // 0' 2>/dev/null || echo \"0\")\nif [ \"$CARRIED\" -ge 1 ] 2>/dev/null; then\n  log_pass \"sync-state.json records ${CARRIED} carried tunnel(s)\"\nelse\n  log_fail \"sync-state.json records ${CARRIED} carried tunnels (expected at least 1)\"\nfi\n\nSYNC_LOG_TAIL=$(agent_exec \"tail -20 '${SYNC_LOG}' 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_LOG_TAIL\" \"${AGENT_LOCAL_LABEL}: carrying\" \"sync.log records the change it applied\" || true\nassert_not_contains \"$SYNC_LOG_TAIL\" \"sync failed\" \"sync.log records no failure\" || true\n\nSTATUS_OUTPUT=$(agent_exec \"lamaste-agent status --label ${AGENT_LOCAL_LABEL} 2>&1 || true\")\nSTATUS_SYNC=$(echo \"$STATUS_OUTPUT\" | grep \"Sync:\" | head -1 || true)\nassert_contains \"$STATUS_SYNC\" \"every 30s, last ok\" \"lamaste-agent status reports the timer's last successful run\" || true\nassert_contains \"$STATUS_SYNC\" \"tunnel(s)\" \"lamaste-agent status reports the carried tunnel count\" || true\n\n# A manual sync with nothing to change converges to the same state and leaves\n# the running client alone\nPID_BEFORE_SYNC=$(user_systemctl \"show -p MainPID --value ${CHISEL_SERVICE} 2>/dev/null || true\")\nMANUAL_SYNC=$(agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>&1; echo \\\"exit=\\$?\\\"\" 2>/dev/null || echo \"\")\nassert_contains \"$MANUAL_SYNC\" \"exit=0\" \"Manual lamaste-agent sync exits 0\" || true\nassert_contains \"$MANUAL_SYNC\" \"carrying\" \"Manual lamaste-agent sync reports the carried tunnels\" || true\nassert_not_contains \"$MANUAL_SYNC\" \"(re)started\" \"Manual sync with nothing to change did not restart the client\" || true\nPID_AFTER_SYNC=$(user_systemctl \"show -p MainPID --value ${CHISEL_SERVICE} 2>/dev/null || true\")\nassert_eq \"$PID_AFTER_SYNC\" \"$PID_BEFORE_SYNC\" \"Chisel client PID unchanged by a no-op sync\" || true"
+    },
+    {
+      "id": "agent-daemon-stop-is-respected-by-the-timer",
+      "label": "Agent daemon: stop is respected by the timer",
+      "steps": [
+        {
+          "id": "step-41",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "npm install -g @lamalibre/lamaste-agentd >/dev/null 2>&1 || true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-42",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENTD_PORT}/api/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent panel --enable --local-only --port ${AGENTD_PORT} 2>/dev/null || true"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-46",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENTD_PORT}/api/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Agent daemon (lamaste-agentd) not reachable on port ${AGENTD_PORT} — cannot check stop/start",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent daemon (lamaste-agentd) not reachable on port ${AGENTD_PORT} — cannot check stop/start"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Agent daemon is running on port ${AGENTD_PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent daemon is running on port ${AGENTD_PORT}"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Set STOP_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agentd_post \"stop\""
+          },
+          "capture": [
+            {
+              "variable": "STOP_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "POST /api/stop on the agent daemon returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STOP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST /api/stop on the agent daemon returns 200"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set STOPPED_FLAG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"tunnelsStopped\""
+          },
+          "capture": [
+            {
+              "variable": "STOPPED_FLAG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Stop is persisted in the agent config (tunnelsStopped: true)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STOPPED_FLAG"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Stop is persisted in the agent config (tunnelsStopped: true)"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set STOP_DEADLINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(SECONDS + 45)"
+          },
+          "capture": [
+            {
+              "variable": "STOP_DEADLINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set CHISEL_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENTD_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Tunnel client stayed stopped for 45 seconds of sync runs after agentd /stop",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Tunnel client stayed stopped for 45 seconds of sync runs after agentd /stop"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "STOP_HELD",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "The sync timer started the tunnel client again after agentd /stop",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The sync timer started the tunnel client again after agentd /stop"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "STOP_HELD",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${SYNC_STATE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "STOPPED_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "sync-state.json records the tunnels stopped by the operator",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STOPPED_STATE"
+              },
+              "path": ".lastState",
+              "expected": {
+                "kind": "literal",
+                "value": "stopped"
+              },
+              "message": "sync-state.json records the tunnels stopped by the operator"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent status --label ${AGENT_LOCAL_LABEL} 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "STOPPED_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "lamaste-agent status reports the tunnels stopped by the operator",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "STOPPED_STATUS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "tunnels stopped by the operator"
+              },
+              "message": "lamaste-agent status reports the tunnels stopped by the operator"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Set START_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agentd_post \"start\""
+          },
+          "capture": [
+            {
+              "variable": "START_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "POST /api/start on the agent daemon returns 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "START_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "POST /api/start on the agent daemon returns 200"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/e2e-30-agentd.json 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "START_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Start converges the client back to running",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "START_BODY"
+              },
+              "path": ".state",
+              "expected": {
+                "kind": "literal",
+                "value": "running"
+              },
+              "message": "Start converges the client back to running"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set STOPPED_AFTER_START",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"tunnelsStopped\""
+          },
+          "capture": [
+            {
+              "variable": "STOPPED_AFTER_START",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Start clears tunnelsStopped from the agent config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STOPPED_AFTER_START"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Start clears tunnelsStopped from the agent config"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Tunnel serves again after agentd /start",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Tunnel serves again after agentd /start"
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Tunnel did not serve within 30 seconds of agentd /start",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Tunnel did not serve within 30 seconds of agentd /start"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Agent daemon: stop is respected by the timer\"\n# ---------------------------------------------------------------------------\n\nAGENTD_READY=false\nif [ -z \"$(agent_exec \"command -v lamaste-agentd 2>/dev/null || true\")\" ]; then\n  # The documented install (the Feria registry serves @lamalibre/* to VMs)\n  agent_exec \"npm install -g @lamalibre/lamaste-agentd >/dev/null 2>&1 || true\" || true\nfi\nif [ -n \"$(agent_exec \"command -v lamaste-agentd 2>/dev/null || true\")\" ]; then\n  HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENTD_PORT}/api/health 2>/dev/null || true\")\n  if ! echo \"$HEALTH\" | jq -e '.status == \"ok\"' > /dev/null 2>&1; then\n    agent_exec \"lamaste-agent panel --enable --local-only --port ${AGENTD_PORT} 2>/dev/null || true\" || true\n    PANEL_STARTED_HERE=true\n  fi\n  for _ in $(seq 1 15); do\n    HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENTD_PORT}/api/health 2>/dev/null || true\")\n    if echo \"$HEALTH\" | jq -e '.status == \"ok\"' > /dev/null 2>&1; then\n      AGENTD_READY=true\n      break\n    fi\n    sleep 2\n  done\nfi\n\nif [ \"$AGENTD_READY\" != \"true\" ]; then\n  log_fail \"Agent daemon (lamaste-agentd) not reachable on port ${AGENTD_PORT} — cannot check stop/start\"\nelse\n  log_pass \"Agent daemon is running on port ${AGENTD_PORT}\"\n\n  STOP_STATUS=$(agentd_post \"stop\")\n  assert_eq \"$STOP_STATUS\" \"200\" \"POST /api/stop on the agent daemon returns 200\" || true\n  STOPPED_FLAG=$(agent_config_field \"tunnelsStopped\")\n  assert_eq \"$STOPPED_FLAG\" \"true\" \"Stop is persisted in the agent config (tunnelsStopped: true)\" || true\n\n  # Longer than a full sync cycle: the timer must not start the client again\n  STOP_HELD=true\n  STOP_DEADLINE=$((SECONDS + 45))\n  while [ \"$SECONDS\" -lt \"$STOP_DEADLINE\" ]; do\n    CHISEL_STATE=$(user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\")\n    if [ \"$CHISEL_STATE\" = \"active\" ] || [ \"$CHISEL_STATE\" = \"activating\" ] || [ \"$(direct_status)\" = \"200\" ]; then\n      STOP_HELD=false\n      break\n    fi\n    sleep 3\n  done\n  if [ \"$STOP_HELD\" = \"true\" ]; then\n    log_pass \"Tunnel client stayed stopped for 45 seconds of sync runs after agentd /stop\"\n  else\n    log_fail \"The sync timer started the tunnel client again after agentd /stop\"\n  fi\n\n  STOPPED_STATE=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null || echo \"{}\")\n  assert_json_field \"$STOPPED_STATE\" '.lastState' \"stopped\" \"sync-state.json records the tunnels stopped by the operator\" || true\n  STOPPED_STATUS=$(agent_exec \"lamaste-agent status --label ${AGENT_LOCAL_LABEL} 2>&1 || true\" | grep \"Sync:\" | head -1 || true)\n  assert_contains \"$STOPPED_STATUS\" \"tunnels stopped by the operator\" \"lamaste-agent status reports the tunnels stopped by the operator\" || true\n\n  START_STATUS=$(agentd_post \"start\")\n  assert_eq \"$START_STATUS\" \"200\" \"POST /api/start on the agent daemon returns 200\" || true\n  START_BODY=$(agent_exec \"cat /tmp/e2e-30-agentd.json 2>/dev/null\" 2>/dev/null || echo \"{}\")\n  assert_json_field \"$START_BODY\" '.state' \"running\" \"Start converges the client back to running\" || true\n  STOPPED_AFTER_START=$(agent_config_field \"tunnelsStopped\")\n  assert_eq \"$STOPPED_AFTER_START\" \"\" \"Start clears tunnelsStopped from the agent config\" || true\n  if port_opens_within 30; then\n    log_pass \"Tunnel serves again after agentd /start\"\n  else\n    log_fail \"Tunnel did not serve within 30 seconds of agentd /start\"\n  fi\nfi"
+    },
+    {
+      "id": "an-upgraded-agent-rotates-its-chisel-credential-once",
+      "label": "An upgraded agent rotates its chisel credential once",
+      "steps": [
+        {
+          "id": "step-79",
+          "label": "Set ENV_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_env_digest"
+          },
+          "capture": [
+            {
+              "variable": "ENV_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "GET /api/tunnels/agent-config?agent=${TUNNEL_AGENT}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${TUNNEL_AGENT}"
+          },
+          "capture": [
+            {
+              "variable": "ISSUED_BEFORE",
+              "from": {
+                "kind": "jq",
+                "expression": ".chiselCredentialIssuedAt // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\\$(date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${TUNNEL_AGENT}' --arg t \\\"\\$t\\\" '.[\\$l].createdAt = \\$t' \\\"\\$f\\\" > /tmp/e2e-30-creds.json && cat /tmp/e2e-30-creds.json > \\\"\\$f\\\"; rm -f /tmp/e2e-30-creds.json"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));delete c.chiselCredentialSealedAt;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});\\\""
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set UNSEALED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"chiselCredentialSealedAt\""
+          },
+          "capture": [
+            {
+              "variable": "UNSEALED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "Agent config no longer marks the credential sealed (simulated upgrade)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNSEALED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Agent config no longer marks the credential sealed (simulated upgrade)"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Set RESEALED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"chiselCredentialSealedAt\""
+          },
+          "capture": [
+            {
+              "variable": "RESEALED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "The next sync rotated the credential and sealed it (within 60 seconds)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESEALED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "The next sync rotated the credential and sealed it (within 60 seconds)"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "ROTATED_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "sync.log records exactly one credential rotation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${ROTATED_LOG:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "sync.log records exactly one credential rotation"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "GET /api/tunnels/agent-config?agent=${TUNNEL_AGENT}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${TUNNEL_AGENT}"
+          },
+          "capture": [
+            {
+              "variable": "ISSUED_AFTER",
+              "from": {
+                "kind": "jq",
+                "expression": ".chiselCredentialIssuedAt // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "The panel issued a new credential (chiselCredentialIssuedAt changed)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ISSUED_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_BEFORE"
+              },
+              "message": "The panel issued a new credential (chiselCredentialIssuedAt changed)"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Set ENV_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_env_digest"
+          },
+          "capture": [
+            {
+              "variable": "ENV_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "chisel.env now holds the rotated credential",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENV_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ENV_BEFORE"
+              },
+              "message": "chisel.env now holds the rotated credential"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a' '${CHISEL_ENV}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "ENV_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "chisel.env is still mode 600",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ENV_MODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "chisel.env is still mode 600"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Tunnel serves with the rotated credential",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Tunnel serves with the rotated credential"
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "Tunnel did not serve within 60 seconds of the credential rotation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Tunnel did not serve within 60 seconds of the credential rotation"
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${SYNC_STATE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "LAST_RUN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-105",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat '${SYNC_STATE}' 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "RUN_NOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "The sync timer ran again after the rotation (lastRunAt advanced)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The sync timer ran again after the rotation (lastRunAt advanced)"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "NEXT_RUN_SEEN",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "The sync timer did not run again within 60 seconds of the rotation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The sync timer did not run again within 60 seconds of the rotation"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "NEXT_RUN_SEEN",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "ROTATED_LATER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "No further rotation after the credential was sealed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${ROTATED_LATER:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "No further rotation after the credential was sealed"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"An upgraded agent rotates its chisel credential once\"\n# ---------------------------------------------------------------------------\n\n# Make the agent look set up by an older version: no chiselCredentialSealedAt.\n# The panel only lets an agent rotate a credential older than 10 minutes, so\n# the current one is backdated in the panel's store (in place, keeping owner\n# and mode; the temp copy is private).\nENV_BEFORE=$(chisel_env_digest)\nISSUED_BEFORE=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nhost_exec \"umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\\$(date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${TUNNEL_AGENT}' --arg t \\\"\\$t\\\" '.[\\$l].createdAt = \\$t' \\\"\\$f\\\" > /tmp/e2e-30-creds.json && cat /tmp/e2e-30-creds.json > \\\"\\$f\\\"; rm -f /tmp/e2e-30-creds.json\"\nagent_exec \"node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));delete c.chiselCredentialSealedAt;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});\\\"\"\nUNSEALED=$(agent_config_field \"chiselCredentialSealedAt\")\nassert_eq \"$UNSEALED\" \"\" \"Agent config no longer marks the credential sealed (simulated upgrade)\" || true\n\nRESEALED=\"\"\nfor _ in $(seq 1 30); do\n  RESEALED=$(agent_config_field \"chiselCredentialSealedAt\")\n  if [ -n \"$RESEALED\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_not_eq \"$RESEALED\" \"\" \"The next sync rotated the credential and sealed it (within 60 seconds)\" || true\n\nROTATED_LOG=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"${ROTATED_LOG:-0}\" \"1\" \"sync.log records exactly one credential rotation\" || true\nISSUED_AFTER=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nassert_not_eq \"$ISSUED_AFTER\" \"$ISSUED_BEFORE\" \"The panel issued a new credential (chiselCredentialIssuedAt changed)\" || true\nENV_AFTER=$(chisel_env_digest)\nassert_not_eq \"$ENV_AFTER\" \"$ENV_BEFORE\" \"chisel.env now holds the rotated credential\" || true\nENV_MODE=$(agent_exec \"stat -c '%a' '${CHISEL_ENV}' 2>/dev/null\" || echo \"missing\")\nassert_eq \"$ENV_MODE\" \"600\" \"chisel.env is still mode 600\" || true\n\nif port_opens_within 60; then\n  log_pass \"Tunnel serves with the rotated credential\"\nelse\n  log_fail \"Tunnel did not serve within 60 seconds of the credential rotation\"\nfi\n\n# Sealed again: the next timer run rotates nothing more. Wait for sync-state's\n# lastRunAt to move past the run that rotated (bounded poll).\nLAST_RUN=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\nNEXT_RUN_SEEN=false\nfor _ in $(seq 1 30); do\n  RUN_NOW=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\n  if [ -n \"$RUN_NOW\" ] && [ \"$RUN_NOW\" != \"$LAST_RUN\" ]; then\n    NEXT_RUN_SEEN=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$NEXT_RUN_SEEN\" = \"true\" ]; then\n  log_pass \"The sync timer ran again after the rotation (lastRunAt advanced)\"\nelse\n  log_fail \"The sync timer did not run again within 60 seconds of the rotation\"\nfi\nROTATED_LATER=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"${ROTATED_LATER:-0}\" \"1\" \"No further rotation after the credential was sealed\" || true"
+    }
+  ],
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
+  "headerRaw": "# ============================================================================\n# 30 — Agent Sync Timer (Three-VM)\n# ============================================================================\n# The agent VM's sync timer (lamalibre-lamaste-sync-e2e-agent.timer) runs\n# `lamaste-agent sync` every 30 seconds and converges the chisel client with\n# the panel. This test covers what the timer must and must not do:\n#\n# 1. A tunnel assigned on the panel is carried within 60 seconds; the run is\n#    recorded in sync-state.json and sync.log, and `lamaste-agent status`\n#    reports it. A manual `lamaste-agent sync` with nothing to change leaves\n#    the running client alone.\n# 2. The agent daemon's POST /api/stop is remembered (tunnelsStopped): for\n#    more than 40 seconds — over a full sync cycle — the timer keeps the\n#    client stopped and the tunnel dark. POST /api/start resumes it.\n# 3. An agent set up by an older version (no chiselCredentialSealedAt — its\n#    credential once sat in process arguments and a 0644 unit) rotates its\n#    chisel credential once on its own, then keeps serving. A fresh setup is\n#    sealed and never rotates.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\n# agentd_post <path> — POST to the local agent daemon with the owner's Bearer\n# token (~/.lamalibre/lamaste/agentd.token, 0600); prints the HTTP status\nagentd_post() {\n  agent_exec \"curl -s -o /tmp/e2e-30-agentd.json -w '%{http_code}' --max-time 60 -X POST -H \\\"Authorization: Bearer \\$(cat /root/.lamalibre/lamaste/agentd.token)\\\" http://127.0.0.1:${AGENTD_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\n# direct_status — HTTP status of the marker page through the host's chisel\n# listener for the tunnel port (bypassing nginx)\ndirect_status() {\n  host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/${PAGE} 2>/dev/null\" || echo \"000\"\n}\n\n# port_opens_within <seconds> — succeed once the tunnel serves (every 2 s)\nport_opens_within() {\n  local deadline=$((SECONDS + $1))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(direct_status)\" = \"200\" ]; then\n      return 0\n    fi\n    sleep 2\n  done\n  return 1\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# chisel_env_digest — SHA-256 of the agent's chisel.env, so a credential\n# change is visible without printing the credential\nchisel_env_digest() {\n  agent_exec \"sha256sum '${CHISEL_ENV}' 2>/dev/null | cut -d' ' -f1\" 2>/dev/null || echo \"\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_AGENT=\"test-agent\"\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nAGENT_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}\"\nAGENT_CONFIG=\"${AGENT_DIR}/config.json\"\nCHISEL_ENV=\"${AGENT_DIR}/chisel.env\"\nSYNC_STATE=\"${AGENT_DIR}/sync-state.json\"\nSYNC_LOG=\"${AGENT_DIR}/logs/sync.log\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service\"\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LOCAL_LABEL}.timer\"\nAGENTD_PORT=9393\nTUNNEL_SUBDOMAIN=\"e2esync30\"\nTUNNEL_PORT=18095\nTUNNEL_ID=\"\"\nPAGE=\"e2e-sync30-index.html\"\nMARKER=\"LAMASTE_SYNC30_OK_$(date +%s)\"\nPANEL_STARTED_HERE=false\n\nbegin_test \"30 — Agent Sync Timer (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Never leave the agent's tunnels stopped for the next test\n  agentd_post \"start\" > /dev/null 2>&1 || true\n  agent_exec \"node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));if(c.tunnelsStopped){delete c.tunnelsStopped;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});}\\\" 2>/dev/null || true\" 2>/dev/null || true\n  if [ \"$PANEL_STARTED_HERE\" = \"true\" ]; then\n    agent_exec \"lamaste-agent panel --disable 2>/dev/null || true\" 2>/dev/null || true\n  fi\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/${PAGE} /tmp/e2e-30-agentd.json 2>/dev/null || true\" 2>/dev/null || true\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

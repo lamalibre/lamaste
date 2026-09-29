@@ -42,6 +42,10 @@ TICKET_SCOPE_NAME="rodeo-tickets"
 SUB_SCOPE="plugin:rodeo-tickets:connect"
 SOURCE_LABEL="rodeo-tickets-source"
 TARGET_LABEL="rodeo-tickets-target"
+# A plugin-agent the source agent delegates enrollment to (section 12); it is
+# cascade-revoked with the source agent in cleanup
+PLUGIN_AGENT_NAME="rodeo-tickets-pa"
+PLUGIN_AGENT_CN="plugin-agent:${SOURCE_LABEL}:${PLUGIN_AGENT_NAME}"
 
 begin_test "23 — Tickets Lifecycle (Three-VM)"
 
@@ -57,7 +61,7 @@ cleanup() {
   host_api_delete "tickets/scopes/${TICKET_SCOPE_NAME}" 2>/dev/null || true
   host_api_delete "certs/agent/${SOURCE_LABEL}" 2>/dev/null || true
   host_api_delete "certs/agent/${TARGET_LABEL}" 2>/dev/null || true
-  host_exec "rm -f /tmp/e2e-tickets-*.pem 2>/dev/null || true" 2>/dev/null || true
+  host_exec "rm -f /tmp/e2e-tickets-*.pem /tmp/e2e-tickets-pa.csr /tmp/e2e-tickets-pa-enroll.json /tmp/e2e-tickets-pa-enrolled.json 2>/dev/null || true" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -191,7 +195,7 @@ SESS_HB_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 3
 assert_eq "$SESS_HB_STATUS" "404" "POST /api/tickets/sessions/:id/heartbeat on unknown session returns 404" || true
 
 # PATCH session on unknown sessionId returns 404.
-SESS_PATCH_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"status\":\"grace\"}' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id" 2>/dev/null || echo "000")
+SESS_PATCH_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-tgt-cert.pem --key /tmp/e2e-tickets-tgt-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt --request PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"status\":\"grace\"}' https://127.0.0.1:9292/api/tickets/sessions/unknown-session-id" 2>/dev/null || echo "000")
 assert_eq "$SESS_PATCH_STATUS" "404" "PATCH /api/tickets/sessions/:id on unknown session returns 404" || true
 
 # Revoke an unknown ticketId returns 404.
@@ -199,7 +203,36 @@ REVOKE_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30
 assert_eq "$REVOKE_STATUS" "404" "DELETE /api/tickets/:id on unknown ticket returns 404" || true
 
 # ---------------------------------------------------------------------------
-log_section "12. Lifecycle coverage complete"
+log_section "12. A plugin-agent certificate cannot create tunnels"
+# ---------------------------------------------------------------------------
+
+# A plugin-agent certificate belongs to a plugin running on an agent, not to a
+# machine that runs a chisel client: it holds no chisel credential and can
+# carry nothing, so POST /api/tunnels refuses it. The source agent owns an
+# instance for SUB_SCOPE, so it may delegate a plugin-agent enrollment.
+DELEGATE_RESP=$(host_exec "curl -sk --max-time 30 --cert /tmp/e2e-tickets-src-cert.pem --key /tmp/e2e-tickets-src-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"${PLUGIN_AGENT_NAME}\",\"scope\":\"${SUB_SCOPE}\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated" 2>/dev/null || echo '{}')
+assert_json_field "$DELEGATE_RESP" '.ok' 'true' "Source agent obtained a delegated enrollment token" || true
+PA_TOKEN=$(echo "$DELEGATE_RESP" | jq -r '.enrollmentToken // empty' 2>/dev/null || echo "")
+
+if [ -n "$PA_TOKEN" ]; then
+  # Enroll the plugin-agent with a CSR whose CN is its full registry label
+  host_exec "umask 077; openssl genrsa -out /tmp/e2e-tickets-pa-key.pem 2048 2>/dev/null && openssl req -new -key /tmp/e2e-tickets-pa-key.pem -out /tmp/e2e-tickets-pa.csr -subj '/CN=${PLUGIN_AGENT_CN}' 2>/dev/null && jq -n --arg token '${PA_TOKEN}' --rawfile csr /tmp/e2e-tickets-pa.csr '{token: \$token, csr: \$csr}' > /tmp/e2e-tickets-pa-enroll.json"
+  PA_ENROLL=$(host_exec "curl -sk --max-time 60 -X POST -H 'Content-Type: application/json' -d @/tmp/e2e-tickets-pa-enroll.json -o /tmp/e2e-tickets-pa-enrolled.json -w '%{http_code}' https://127.0.0.1:9292/api/enroll" 2>/dev/null || echo "000")
+  assert_eq "$PA_ENROLL" "200" "Plugin-agent enrolled with the delegated token" || true
+  host_exec "jq -r '.cert // empty' /tmp/e2e-tickets-pa-enrolled.json > /tmp/e2e-tickets-pa-cert.pem"
+  PA_SUBJECT=$(host_exec "openssl x509 -noout -subject -in /tmp/e2e-tickets-pa-cert.pem 2>/dev/null" 2>/dev/null || echo "")
+  assert_contains "$PA_SUBJECT" "$PLUGIN_AGENT_CN" "Plugin-agent certificate carries CN=${PLUGIN_AGENT_CN}" || true
+
+  PA_TUNNEL_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-tickets-pa-cert.pem --key /tmp/e2e-tickets-pa-key.pem --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"subdomain\":\"e2epluginagent23\",\"port\":19923}' https://127.0.0.1:9292/api/tunnels" 2>/dev/null || echo "000")
+  assert_eq "$PA_TUNNEL_STATUS" "403" "POST /api/tunnels with a plugin-agent certificate returns 403" || true
+  PA_TUNNEL_LEFT=$(host_api_get "tunnels" | jq '[.tunnels[] | select(.subdomain == "e2epluginagent23")] | length' 2>/dev/null || echo "unknown")
+  assert_eq "$PA_TUNNEL_LEFT" "0" "No tunnel was created for the plugin-agent" || true
+else
+  log_fail "No delegated enrollment token — cannot check plugin-agent tunnel creation"
+fi
+
+# ---------------------------------------------------------------------------
+log_section "13. Lifecycle coverage complete"
 # ---------------------------------------------------------------------------
 
 log_info "Tickets lifecycle coverage complete; cleanup handled by EXIT trap"

@@ -35,6 +35,28 @@
     },
     {
       "id": "cleanup-2",
+      "label": "DELETE tunnels/${OWN_TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${OWN_TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE tunnels/${RELEASE_TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${RELEASE_TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-4",
       "label": "DELETE certs/agent/${AGENT_LABEL}",
       "target": "host",
       "continueOnError": true,
@@ -45,7 +67,7 @@
       }
     },
     {
-      "id": "cleanup-3",
+      "id": "cleanup-5",
       "label": "DELETE certs/agent/nopanel-e2e",
       "target": "host",
       "continueOnError": true,
@@ -189,7 +211,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify panel:expose is a valid capability\"\n# ---------------------------------------------------------------------------\n\n# Create an agent cert with panel:expose — if the capability is invalid the\n# server will reject it with a validation error.\nAGENT_LABEL=\"panel-e2e-$(date +%s)\"\nCERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"panel:expose\"]}')\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent cert with panel:expose created successfully\" || true\n\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Agent cert has a p12 password\" || true\n\nlog_info \"Created agent cert: ${AGENT_LABEL}\"\n\n# Extract PEM cert and key from .p12 for use with curl\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-panel-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-panel-key.pem\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\"\n\nlog_pass \"Extracted PEM cert and key from .p12\"\n\n# Agent cert curl helper\n_agent_curl() {\n  curl -s \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    --insecure \\\n    --cert \"$AGENT_CERT_PATH\" \\\n    --key \"$AGENT_KEY_PATH\" \\\n    --cacert \"$CA_PATH\" \\\n    -H \"Accept: application/json\" \\\n    \"$@\"\n}\n\nagent_api_get() {\n  _agent_curl \"${BASE_URL}/api/$1\"\n}\n\nagent_api_post() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\"\n}\n\nagent_api_post_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_delete() {\n  _agent_curl -X DELETE \"${BASE_URL}/api/$1\"\n}\n\nagent_api_delete_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' -X DELETE \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_get_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_patch_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\n# Cleanup function — always runs on exit\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Retract panel tunnel if it exists\n  agent_api_delete \"tunnels/retract-panel\" 2>/dev/null || true\n  # Also try admin delete in case agent delete fails\n  if [ -n \"$PANEL_TUNNEL_ID\" ] && [ \"$PANEL_TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  # Revoke agent certs\n  api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  api_delete \"certs/agent/nopanel-e2e\" 2>/dev/null || true\n  # Clean up PEM files\n  sudo rm -f \"${AGENT_CERT_PATH}\" \"${AGENT_KEY_PATH}\" /tmp/e2e-nopanel-*.pem 2>/dev/null || true\n}\ntrap cleanup EXIT"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify panel:expose is a valid capability\"\n# ---------------------------------------------------------------------------\n\n# Create an agent cert with panel:expose — if the capability is invalid the\n# server will reject it with a validation error. It also holds tunnels:write,\n# so its generic POST /api/tunnels in the spoofing check below clears the\n# capability gate and reaches the panel-label check it is meant to test.\nAGENT_LABEL=\"panel-e2e-$(date +%s)\"\nCERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\",\"tunnels:write\",\"panel:expose\"]}')\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent cert with panel:expose created successfully\" || true\n\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Agent cert has a p12 password\" || true\n\nlog_info \"Created agent cert: ${AGENT_LABEL}\"\n\n# Extract PEM cert and key from .p12 for use with curl\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-panel-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-panel-key.pem\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -clcerts -nokeys -out \"${AGENT_CERT_PATH}\" -passin \"pass:${P12_PASSWORD}\"\nsudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${P12_PATH}\" -nocerts -nodes -out \"${AGENT_KEY_PATH}\" -passin \"pass:${P12_PASSWORD}\"\n\nlog_pass \"Extracted PEM cert and key from .p12\"\n\n# Agent cert curl helper\n_agent_curl() {\n  curl -s \\\n    --max-time \"$CURL_TIMEOUT\" \\\n    --insecure \\\n    --cert \"$AGENT_CERT_PATH\" \\\n    --key \"$AGENT_KEY_PATH\" \\\n    --cacert \"$CA_PATH\" \\\n    -H \"Accept: application/json\" \\\n    \"$@\"\n}\n\nagent_api_get() {\n  _agent_curl \"${BASE_URL}/api/$1\"\n}\n\nagent_api_post() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\"\n}\n\nagent_api_post_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X POST \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_delete() {\n  _agent_curl -X DELETE \"${BASE_URL}/api/$1\"\n}\n\nagent_api_delete_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' -X DELETE \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_get_status() {\n  _agent_curl -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_api_patch_status() {\n  local api_path=\"$1\"\n  local _default='{}'; local body=\"${2:-$_default}\"\n  _agent_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH \\\n    -H \"Content-Type: application/json\" \\\n    -d \"$body\" \\\n    \"${BASE_URL}/api/${api_path}\" 2>/dev/null || echo \"000\"\n}\n\n# Cleanup function — always runs on exit\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Retract panel tunnel if it exists\n  agent_api_delete \"tunnels/retract-panel\" 2>/dev/null || true\n  # Also try admin delete in case agent delete fails\n  if [ -n \"$PANEL_TUNNEL_ID\" ] && [ \"$PANEL_TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  # Delete the agent-owned tunnels before their owners are revoked\n  if [ -n \"$OWN_TUNNEL_ID\" ] && [ \"$OWN_TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  if [ -n \"$RELEASE_TUNNEL_ID\" ] && [ \"$RELEASE_TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${RELEASE_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  # Revoke agent certs\n  api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  api_delete \"certs/agent/nopanel-e2e\" 2>/dev/null || true\n  # Clean up PEM files\n  sudo rm -f \"${AGENT_CERT_PATH}\" \"${AGENT_KEY_PATH}\" /tmp/e2e-nopanel-*.pem 2>/dev/null || true\n}\ntrap cleanup EXIT"
     },
     {
       "id": "expose-panel-check-agent-panel-status-before-expose",
@@ -892,7 +914,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: agent- prefix reserved for non-panel tunnels\"\n# ---------------------------------------------------------------------------\n\nRESERVED_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-test\\\",\\\"port\\\":19999,\\\"description\\\":\\\"reserved test\\\"}\")\nassert_eq \"$RESERVED_STATUS\" \"400\" \"agent- prefix rejected for non-panel tunnel (HTTP 400)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: agent- prefix reserved for non-panel tunnels\"\n# ---------------------------------------------------------------------------\n\n# Owned by a real agent so the rejection is for the prefix, not the owner\nRESERVED_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-test\\\",\\\"port\\\":19999,\\\"description\\\":\\\"reserved test\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$RESERVED_STATUS\" \"400\" \"agent- prefix rejected for non-panel tunnel (HTTP 400)\" || true"
     },
     {
       "id": "capability-check-agent-without-panel-expose-gets-403",
@@ -1077,11 +1099,66 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: agent without panel:expose gets 403\"\n# ---------------------------------------------------------------------------\n\n# Create agent cert WITHOUT panel:expose\nNOPANEL_CERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"nopanel-e2e\",\"capabilities\":[\"tunnels:read\",\"tunnels:write\"]}')\nassert_json_field \"$NOPANEL_CERT_RESPONSE\" '.ok' 'true' \"Agent cert without panel:expose created\" || true\n\nNOPANEL_P12_PW=$(echo \"$NOPANEL_CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nNOPANEL_P12=\"/etc/lamalibre/lamaste/pki/agents/nopanel-e2e/client.p12\"\nNOPANEL_CERT=\"/tmp/e2e-nopanel-cert.pem\"\nNOPANEL_KEY=\"/tmp/e2e-nopanel-key.pem\"\nsudo openssl pkcs12 -in \"${NOPANEL_P12}\" -clcerts -nokeys -out \"${NOPANEL_CERT}\" -passin \"pass:${NOPANEL_P12_PW}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${NOPANEL_P12}\" -clcerts -nokeys -out \"${NOPANEL_CERT}\" -passin \"pass:${NOPANEL_P12_PW}\"\nsudo openssl pkcs12 -in \"${NOPANEL_P12}\" -nocerts -nodes -out \"${NOPANEL_KEY}\" -passin \"pass:${NOPANEL_P12_PW}\" -legacy 2>/dev/null \\\n  || sudo openssl pkcs12 -in \"${NOPANEL_P12}\" -nocerts -nodes -out \"${NOPANEL_KEY}\" -passin \"pass:${NOPANEL_P12_PW}\"\n\n# Expose-panel should return 403\nNOPANEL_EXPOSE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X POST -H \"Content-Type: application/json\" -d \"{\\\"port\\\":${PANEL_PORT}}\" \\\n  \"${BASE_URL}/api/tunnels/expose-panel\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_EXPOSE_STATUS\" \"403\" \"Expose panel returns 403 without panel:expose capability\" || true\n\n# Agent-panel-status should return 403\nNOPANEL_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  \"${BASE_URL}/api/tunnels/agent-panel-status\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_STATUS\" \"403\" \"Agent panel status returns 403 without panel:expose capability\" || true\n\n# Retract-panel should return 403\nNOPANEL_RETRACT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/retract-panel\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_RETRACT_STATUS\" \"403\" \"Retract panel returns 403 without panel:expose capability\" || true"
     },
     {
-      "id": "capability-check-patch-panel-tunnel-requires-panel-expose",
-      "label": "Capability check: PATCH panel tunnel requires panel:expose",
+      "id": "ownership-another-agent-cannot-see-or-change-a-panel-tunnel",
+      "label": "Ownership: another agent cannot see or change a panel tunnel",
       "steps": [
         {
           "id": "step-97",
+          "label": "Set NOPANEL_LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" -H \"Accept: application/json\" \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-98",
+          "label": "Set NOPANEL_SEES_PANEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$NOPANEL_LIST\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "NOPANEL_SEES_PANEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "Another agent's GET /api/tunnels omits the panel tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NOPANEL_SEES_PANEL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Another agent's GET /api/tunnels omits the panel tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-100",
           "label": "Set NOPANEL_TOGGLE_STATUS",
           "target": "local",
           "op": {
@@ -1098,8 +1175,8 @@
           ]
         },
         {
-          "id": "step-98",
-          "label": "PATCH panel tunnel returns 403 without panel:expose",
+          "id": "step-101",
+          "label": "Another agent's PATCH of the panel tunnel returns 404",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1112,21 +1189,14 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "404"
               },
-              "message": "PATCH panel tunnel returns 403 without panel:expose"
+              "message": "Another agent's PATCH of the panel tunnel returns 404"
             }
           }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: PATCH panel tunnel requires panel:expose\"\n# ---------------------------------------------------------------------------\n\n# Agent without panel:expose cannot toggle a panel tunnel\nNOPANEL_TOGGLE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X PATCH -H \"Content-Type: application/json\" -d '{\"enabled\":false}' \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_TOGGLE_STATUS\" \"403\" \"PATCH panel tunnel returns 403 without panel:expose\" || true"
-    },
-    {
-      "id": "capability-check-delete-panel-tunnel-requires-panel-expose",
-      "label": "Capability check: DELETE panel tunnel requires panel:expose",
-      "steps": [
+        },
         {
-          "id": "step-99",
+          "id": "step-102",
           "label": "Set NOPANEL_DELETE_STATUS",
           "target": "local",
           "op": {
@@ -1143,8 +1213,8 @@
           ]
         },
         {
-          "id": "step-100",
-          "label": "DELETE panel tunnel returns 403 without panel:expose",
+          "id": "step-103",
+          "label": "Another agent's DELETE of the panel tunnel returns 404",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1157,21 +1227,1325 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "404"
               },
-              "message": "DELETE panel tunnel returns 403 without panel:expose"
+              "message": "Another agent's DELETE of the panel tunnel returns 404"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "PANEL_STILL_THERE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-105",
+          "label": "Panel tunnel untouched by the other agent's attempts",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_STILL_THERE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Panel tunnel untouched by the other agent's attempts"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${PANEL_TUNNEL_ID}",
+            "body": {
+              "agentLabel": "nopanel-e2e"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PANEL_REASSIGN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "Admin cannot reassign a panel tunnel (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_REASSIGN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Admin cannot reassign a panel tunnel (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${PANEL_TUNNEL_ID}",
+            "body": {
+              "maxBodySizeMb": 50
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PANEL_RECONFIGURE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "Admin cannot reconfigure a panel tunnel (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_RECONFIGURE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Admin cannot reconfigure a panel tunnel (HTTP 400)"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: DELETE panel tunnel requires panel:expose\"\n# ---------------------------------------------------------------------------\n\nNOPANEL_DELETE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_DELETE_STATUS\" \"403\" \"DELETE panel tunnel returns 403 without panel:expose\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Ownership: another agent cannot see or change a panel tunnel\"\n# ---------------------------------------------------------------------------\n\n# nopanel-e2e holds tunnels:write, so it passes the capability gate and the\n# request reaches the ownership check. Another agent's tunnel does not exist\n# as far as it is concerned.\nNOPANEL_LIST=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -H \"Accept: application/json\" \\\n  \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}')\nNOPANEL_SEES_PANEL=$(echo \"$NOPANEL_LIST\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$NOPANEL_SEES_PANEL\" \"0\" \"Another agent's GET /api/tunnels omits the panel tunnel\" || true\n\nNOPANEL_TOGGLE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X PATCH -H \"Content-Type: application/json\" -d '{\"enabled\":false}' \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_TOGGLE_STATUS\" \"404\" \"Another agent's PATCH of the panel tunnel returns 404\" || true\n\nNOPANEL_DELETE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" --insecure \\\n  --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n  -X DELETE \\\n  \"${BASE_URL}/api/tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\nassert_eq \"$NOPANEL_DELETE_STATUS\" \"404\" \"Another agent's DELETE of the panel tunnel returns 404\" || true\n\nPANEL_STILL_THERE=$(api_get \"tunnels\" | jq -r --arg id \"$PANEL_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\nassert_eq \"$PANEL_STILL_THERE\" \"true\" \"Panel tunnel untouched by the other agent's attempts\" || true\n\n# A panel tunnel exposes one agent's own panel: it cannot move to another\n# agent, and its vhost settings are fixed\nPANEL_REASSIGN_STATUS=$(api_patch_status \"tunnels/${PANEL_TUNNEL_ID}\" '{\"agentLabel\":\"nopanel-e2e\"}')\nassert_eq \"$PANEL_REASSIGN_STATUS\" \"400\" \"Admin cannot reassign a panel tunnel (HTTP 400)\" || true\n\nPANEL_RECONFIGURE_STATUS=$(api_patch_status \"tunnels/${PANEL_TUNNEL_ID}\" '{\"maxBodySizeMb\":50}')\nassert_eq \"$PANEL_RECONFIGURE_STATUS\" \"400\" \"Admin cannot reconfigure a panel tunnel (HTTP 400)\" || true"
+    },
+    {
+      "id": "capability-check-owner-without-panel-expose-cannot-patch-or-delete-its-panel-tunnel",
+      "label": "Capability check: owner without panel:expose cannot PATCH or DELETE its panel tunnel",
+      "steps": [
+        {
+          "id": "step-110",
+          "label": "PATCH /api/certs/agent/${AGENT_LABEL}/capabilities",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/${AGENT_LABEL}/capabilities",
+            "body": {
+              "capabilities": ["tunnels:read", "tunnels:write"]
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "CAPS_DROP_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "Owner's panel:expose capability removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS_DROP_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Owner's panel:expose capability removed"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "PATCH /api/tunnels/${PANEL_TUNNEL_ID}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${PANEL_TUNNEL_ID}",
+            "body": {
+              "enabled": false
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "OWNER_NOCAP_TOGGLE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-113",
+          "label": "PATCH own panel tunnel returns 403 without panel:expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_NOCAP_TOGGLE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "PATCH own panel tunnel returns 403 without panel:expose"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "DELETE /api/tunnels/${PANEL_TUNNEL_ID}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/${PANEL_TUNNEL_ID}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "OWNER_NOCAP_DELETE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "DELETE own panel tunnel returns 403 without panel:expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_NOCAP_DELETE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "DELETE own panel tunnel returns 403 without panel:expose"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "PATCH /api/certs/agent/${AGENT_LABEL}/capabilities",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/${AGENT_LABEL}/capabilities",
+            "body": {
+              "capabilities": ["tunnels:read", "tunnels:write", "panel:expose"]
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "CAPS_RESTORE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-117",
+          "label": "Owner's panel:expose capability restored",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS_RESTORE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Owner's panel:expose capability restored"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Capability check: owner without panel:expose cannot PATCH or DELETE its panel tunnel\"\n# ---------------------------------------------------------------------------\n\n# Only the owning agent reaches the panel:expose gate on PATCH/DELETE. Drop the\n# owner's panel:expose (it keeps tunnels:write, which the generic routes\n# require), probe, then restore it for the retract steps below.\nCAPS_DROP_STATUS=$(api_patch_status \"certs/agent/${AGENT_LABEL}/capabilities\" '{\"capabilities\":[\"tunnels:read\",\"tunnels:write\"]}')\nassert_eq \"$CAPS_DROP_STATUS\" \"200\" \"Owner's panel:expose capability removed\" || true\n\nOWNER_NOCAP_TOGGLE_STATUS=$(agent_api_patch_status \"tunnels/${PANEL_TUNNEL_ID}\" '{\"enabled\":false}')\nassert_eq \"$OWNER_NOCAP_TOGGLE_STATUS\" \"403\" \"PATCH own panel tunnel returns 403 without panel:expose\" || true\n\nOWNER_NOCAP_DELETE_STATUS=$(agent_api_delete_status \"tunnels/${PANEL_TUNNEL_ID}\")\nassert_eq \"$OWNER_NOCAP_DELETE_STATUS\" \"403\" \"DELETE own panel tunnel returns 403 without panel:expose\" || true\n\nCAPS_RESTORE_STATUS=$(api_patch_status \"certs/agent/${AGENT_LABEL}/capabilities\" '{\"capabilities\":[\"tunnels:read\",\"tunnels:write\",\"panel:expose\"]}')\nassert_eq \"$CAPS_RESTORE_STATUS\" \"200\" \"Owner's panel:expose capability restored\" || true"
+    },
+    {
+      "id": "ownership-agent-scoped-tunnels",
+      "label": "Ownership: agent-scoped tunnels",
+      "steps": [
+        {
+          "id": "step-121",
+          "label": "Set OWN_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -X POST -H \"Content-Type: application/json\" -d \"{\\\"subdomain\\\":\\\"${OWN_SUBDOMAIN}\\\",\\\"port\\\":${OWN_PORT},\\\"description\\\":\\\"agent-owned e2e tunnel\\\"}\" \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-122",
+          "label": "Agent created a tunnel without naming an owner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent created a tunnel without naming an owner"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "Agent-created tunnel is owned by the creating agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "literal",
+                "value": "nopanel-e2e"
+              },
+              "message": "Agent-created tunnel is owned by the creating agent"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "Extract OWN_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OWN_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWN_RESPONSE"
+              },
+              "expression": ".tunnel.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "Set FOREIGN_CREATE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" -d \"{\\\"subdomain\\\":\\\"e2eforeign\\\",\\\"port\\\":19982,\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\" \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "FOREIGN_CREATE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-126",
+          "label": "Agent POST naming another agent as owner returns 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOREIGN_CREATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent POST naming another agent as owner returns 403"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Set OWN_LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "Set OWN_LISTED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OWN_LIST\" | jq -r --arg id \"$OWN_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "Agent's GET /api/tunnels lists its own tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_LISTED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Agent's GET /api/tunnels lists its own tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "Extract OWN_FOREIGN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OWN_FOREIGN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWN_LIST"
+              },
+              "expression": "[.tunnels[]? | select(.agentLabel != \"nopanel-e2e\")] | length"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "Agent's GET /api/tunnels holds no other agent's tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_FOREIGN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Agent's GET /api/tunnels holds no other agent's tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "GET /api/tunnels",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "PANEL_AGENT_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "Set PANEL_AGENT_SEES_OWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$PANEL_AGENT_LIST\" | jq -r --arg id \"$OWN_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "PANEL_AGENT_SEES_OWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "Other agent's GET /api/tunnels omits this agent's tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_AGENT_SEES_OWN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Other agent's GET /api/tunnels omits this agent's tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "Set OWN_CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl \"${BASE_URL}/api/tunnels/agent-config\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "Agent's agent-config is its own",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_CONFIG"
+              },
+              "path": ".agentLabel",
+              "expected": {
+                "kind": "literal",
+                "value": "nopanel-e2e"
+              },
+              "message": "Agent's agent-config is its own"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "Set OWN_CONFIG_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OWN_CONFIG\" | jq -r --arg sd \"$OWN_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "Agent's agent-config lists its own tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OWN_PORT"
+              },
+              "message": "Agent's agent-config lists its own tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "Extract OWN_CONFIG_ARGS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OWN_CONFIG_ARGS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWN_CONFIG"
+              },
+              "expression": ".chiselArgs[]?"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "Agent's chiselArgs omit another agent's panel port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_CONFIG_ARGS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": ":${PANEL_PORT}:"
+              },
+              "message": "Agent's chiselArgs omit another agent's panel port"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "Set WIDEN_CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl \"${BASE_URL}/api/tunnels/agent-config?agent=${AGENT_LABEL}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "WIDEN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "agent-config?agent=<other> still returns the caller's own config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "WIDEN_CONFIG"
+              },
+              "path": ".agentLabel",
+              "expected": {
+                "kind": "literal",
+                "value": "nopanel-e2e"
+              },
+              "message": "agent-config?agent=<other> still returns the caller's own config"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Set OWN_REASSIGN_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -o /dev/null -w '%{http_code}' -X PATCH -H \"Content-Type: application/json\" -d \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\" \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_REASSIGN_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "Agent cannot reassign its own tunnel (HTTP 403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_REASSIGN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent cannot reassign its own tunnel (HTTP 403)"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "Set OWN_PUBLIC_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -o /dev/null -w '%{http_code}' -X PATCH -H \"Content-Type: application/json\" -d '{\"accessMode\":\"public\"}' \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_PUBLIC_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "Agent cannot set its own tunnel's access mode to public (HTTP 403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_PUBLIC_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent cannot set its own tunnel's access mode to public (HTTP 403)"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "Set OWN_BODY_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -X PATCH -H \"Content-Type: application/json\" -d '{\"maxBodySizeMb\":20}' \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_BODY_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-148",
+          "label": "Agent can change its own tunnel's request body limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_BODY_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "20"
+              },
+              "message": "Agent can change its own tunnel's request body limit"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "Agent's tunnel stays restricted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_BODY_RESPONSE"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "restricted"
+              },
+              "message": "Agent's tunnel stays restricted"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-150",
+          "label": "Set OWN_BODY_MAX",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -X PATCH -H \"Content-Type: application/json\" -d '{\"maxBodySizeMb\":100}' \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_BODY_MAX",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "Agent can set its tunnel's body limit to 100 MiB",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_BODY_MAX"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "100"
+              },
+              "message": "Agent can set its tunnel's body limit to 100 MiB"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "Set OWN_BODY_OVER_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -o /dev/null -w '%{http_code}' -X PATCH -H \"Content-Type: application/json\" -d '{\"maxBodySizeMb\":101}' \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_BODY_OVER_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Agent cannot set a body limit above 100 MiB (HTTP 403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_BODY_OVER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent cannot set a body limit above 100 MiB (HTTP 403)"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "OWN_BODY_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "Refused body limit left the tunnel at 100 MiB",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_BODY_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "100"
+              },
+              "message": "Refused body limit left the tunnel at 100 MiB"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "PATCH /api/tunnels/${OWN_TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${OWN_TUNNEL_ID}",
+            "body": {
+              "maxBodySizeMb": 500
+            }
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_BODY_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "An administrator can set a body limit above 100 MiB",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ADMIN_BODY_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "500"
+              },
+              "message": "An administrator can set a body limit above 100 MiB"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "Set OWN_CREATE_OVER_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -o /dev/null -w '%{http_code}' -X POST -H \"Content-Type: application/json\" -d '{\"subdomain\":\"e2ebigbody\",\"port\":19984,\"maxBodySizeMb\":200}' \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OWN_CREATE_OVER_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "Agent cannot create a tunnel with a body limit above 100 MiB (HTTP 403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWN_CREATE_OVER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent cannot create a tunnel with a body limit above 100 MiB (HTTP 403)"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "BIG_BODY_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-161",
+          "label": "Refused create left no tunnel behind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BIG_BODY_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Refused create left no tunnel behind"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "Set OWN_DELETE_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_nopanel_curl -X DELETE \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "OWN_DELETE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "Agent deleted its own tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWN_DELETE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent deleted its own tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "OWN_TUNNEL_ID"
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "Agent-owned tunnel was not created — skipping agent-scoped ownership checks",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Agent-owned tunnel was not created — skipping agent-scoped ownership checks"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "OWN_TUNNEL_ID"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Ownership: agent-scoped tunnels\"\n# ---------------------------------------------------------------------------\n\n_nopanel_curl() {\n  curl -s \\\n    --max-time \"$CURL_TIMEOUT\" --insecure \\\n    --cert \"$NOPANEL_CERT\" --key \"$NOPANEL_KEY\" --cacert \"$CA_PATH\" \\\n    -H \"Accept: application/json\" \\\n    \"$@\"\n}\n\n# An agent creates a tunnel without naming an owner — it carries it itself\nOWN_RESPONSE=$(_nopanel_curl -X POST -H \"Content-Type: application/json\" \\\n  -d \"{\\\"subdomain\\\":\\\"${OWN_SUBDOMAIN}\\\",\\\"port\\\":${OWN_PORT},\\\"description\\\":\\\"agent-owned e2e tunnel\\\"}\" \\\n  \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}')\nassert_json_field \"$OWN_RESPONSE\" '.ok' 'true' \"Agent created a tunnel without naming an owner\" || true\nassert_json_field \"$OWN_RESPONSE\" '.tunnel.agentLabel' \"nopanel-e2e\" \"Agent-created tunnel is owned by the creating agent\" || true\nOWN_TUNNEL_ID=$(echo \"$OWN_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\n# An agent cannot create a tunnel for another agent\nFOREIGN_CREATE_STATUS=$(_nopanel_curl -o /dev/null -w '%{http_code}' \\\n  -X POST -H \"Content-Type: application/json\" \\\n  -d \"{\\\"subdomain\\\":\\\"e2eforeign\\\",\\\"port\\\":19982,\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\" \\\n  \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\")\nassert_eq \"$FOREIGN_CREATE_STATUS\" \"403\" \"Agent POST naming another agent as owner returns 403\" || true\n\nif [ -n \"$OWN_TUNNEL_ID\" ]; then\n  # Each agent's listing holds its own tunnels only\n  OWN_LIST=$(_nopanel_curl \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo '{}')\n  OWN_LISTED=$(echo \"$OWN_LIST\" | jq -r --arg id \"$OWN_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$OWN_LISTED\" \"1\" \"Agent's GET /api/tunnels lists its own tunnel\" || true\n  OWN_FOREIGN=$(echo \"$OWN_LIST\" | jq -r '[.tunnels[]? | select(.agentLabel != \"nopanel-e2e\")] | length' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$OWN_FOREIGN\" \"0\" \"Agent's GET /api/tunnels holds no other agent's tunnel\" || true\n\n  PANEL_AGENT_LIST=$(agent_api_get \"tunnels\")\n  PANEL_AGENT_SEES_OWN=$(echo \"$PANEL_AGENT_LIST\" | jq -r --arg id \"$OWN_TUNNEL_ID\" '[.tunnels[]? | select(.id == $id)] | length' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$PANEL_AGENT_SEES_OWN\" \"0\" \"Other agent's GET /api/tunnels omits this agent's tunnel\" || true\n\n  # agent-config is always the calling agent's own config; ?agent= cannot widen it\n  OWN_CONFIG=$(_nopanel_curl \"${BASE_URL}/api/tunnels/agent-config\" 2>/dev/null || echo '{}')\n  assert_json_field \"$OWN_CONFIG\" '.agentLabel' \"nopanel-e2e\" \"Agent's agent-config is its own\" || true\n  OWN_CONFIG_PORT=$(echo \"$OWN_CONFIG\" | jq -r --arg sd \"$OWN_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\n  assert_eq \"$OWN_CONFIG_PORT\" \"$OWN_PORT\" \"Agent's agent-config lists its own tunnel\" || true\n  OWN_CONFIG_ARGS=$(echo \"$OWN_CONFIG\" | jq -r '.chiselArgs[]?' 2>/dev/null || echo \"\")\n  assert_not_contains \"$OWN_CONFIG_ARGS\" \":${PANEL_PORT}:\" \"Agent's chiselArgs omit another agent's panel port\" || true\n\n  WIDEN_CONFIG=$(_nopanel_curl \"${BASE_URL}/api/tunnels/agent-config?agent=${AGENT_LABEL}\" 2>/dev/null || echo '{}')\n  assert_json_field \"$WIDEN_CONFIG\" '.agentLabel' \"nopanel-e2e\" \"agent-config?agent=<other> still returns the caller's own config\" || true\n\n  # Ownership and access mode are admin decisions\n  OWN_REASSIGN_STATUS=$(_nopanel_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH -H \"Content-Type: application/json\" \\\n    -d \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\" \\\n    \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\n  assert_eq \"$OWN_REASSIGN_STATUS\" \"403\" \"Agent cannot reassign its own tunnel (HTTP 403)\" || true\n\n  OWN_PUBLIC_STATUS=$(_nopanel_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH -H \"Content-Type: application/json\" \\\n    -d '{\"accessMode\":\"public\"}' \\\n    \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\n  assert_eq \"$OWN_PUBLIC_STATUS\" \"403\" \"Agent cannot set its own tunnel's access mode to public (HTTP 403)\" || true\n\n  # The request body limit is the agent's own to set\n  OWN_BODY_RESPONSE=$(_nopanel_curl -X PATCH -H \"Content-Type: application/json\" \\\n    -d '{\"maxBodySizeMb\":20}' \\\n    \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}')\n  assert_json_field \"$OWN_BODY_RESPONSE\" '.tunnel.maxBodySizeMb' \"20\" \"Agent can change its own tunnel's request body limit\" || true\n  assert_json_field \"$OWN_BODY_RESPONSE\" '.tunnel.accessMode' \"restricted\" \"Agent's tunnel stays restricted\" || true\n\n  # Up to 100 MiB is the agent's call; above that only an administrator's\n  OWN_BODY_MAX=$(_nopanel_curl -X PATCH -H \"Content-Type: application/json\" \\\n    -d '{\"maxBodySizeMb\":100}' \\\n    \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}')\n  assert_json_field \"$OWN_BODY_MAX\" '.tunnel.maxBodySizeMb' \"100\" \"Agent can set its tunnel's body limit to 100 MiB\" || true\n  OWN_BODY_OVER_STATUS=$(_nopanel_curl -o /dev/null -w '%{http_code}' \\\n    -X PATCH -H \"Content-Type: application/json\" \\\n    -d '{\"maxBodySizeMb\":101}' \\\n    \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo \"000\")\n  assert_eq \"$OWN_BODY_OVER_STATUS\" \"403\" \"Agent cannot set a body limit above 100 MiB (HTTP 403)\" || true\n  OWN_BODY_AFTER=$(api_get \"tunnels\" | jq -r --arg id \"$OWN_TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .maxBodySizeMb' 2>/dev/null || echo \"\")\n  assert_eq \"$OWN_BODY_AFTER\" \"100\" \"Refused body limit left the tunnel at 100 MiB\" || true\n  ADMIN_BODY_RESPONSE=$(api_patch \"tunnels/${OWN_TUNNEL_ID}\" '{\"maxBodySizeMb\":500}')\n  assert_json_field \"$ADMIN_BODY_RESPONSE\" '.tunnel.maxBodySizeMb' \"500\" \"An administrator can set a body limit above 100 MiB\" || true\n  OWN_CREATE_OVER_STATUS=$(_nopanel_curl -o /dev/null -w '%{http_code}' \\\n    -X POST -H \"Content-Type: application/json\" \\\n    -d '{\"subdomain\":\"e2ebigbody\",\"port\":19984,\"maxBodySizeMb\":200}' \\\n    \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\")\n  assert_eq \"$OWN_CREATE_OVER_STATUS\" \"403\" \"Agent cannot create a tunnel with a body limit above 100 MiB (HTTP 403)\" || true\n  BIG_BODY_LEFT=$(api_get \"tunnels\" | jq '[.tunnels[] | select(.subdomain == \"e2ebigbody\")] | length' 2>/dev/null || echo \"unknown\")\n  assert_eq \"$BIG_BODY_LEFT\" \"0\" \"Refused create left no tunnel behind\" || true\n\n  OWN_DELETE_RESPONSE=$(_nopanel_curl -X DELETE \"${BASE_URL}/api/tunnels/${OWN_TUNNEL_ID}\" 2>/dev/null || echo '{}')\n  assert_json_field \"$OWN_DELETE_RESPONSE\" '.ok' 'true' \"Agent deleted its own tunnel\" || true\n  OWN_TUNNEL_ID=\"\"\nelse\n  log_skip \"Agent-owned tunnel was not created — skipping agent-scoped ownership checks\"\nfi"
     },
     {
       "id": "cross-agent-spoofing-generic-post-api-tunnels-with-type-panel",
       "label": "Cross-agent spoofing: generic POST /api/tunnels with type=panel",
       "steps": [
         {
-          "id": "step-101",
+          "id": "step-166",
           "label": "POST /api/tunnels",
           "target": "agent",
           "op": {
@@ -1191,7 +2565,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-167",
           "label": "Cross-agent panel tunnel spoofing rejected (HTTP 403)",
           "target": "local",
           "continueOnError": true,
@@ -1210,16 +2584,95 @@
               "message": "Cross-agent panel tunnel spoofing rejected (HTTP 403)"
             }
           }
+        },
+        {
+          "id": "step-168",
+          "label": "POST /api/tunnels",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "SPOOF_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-169",
+          "label": "Spoofing rejected by the panel-label check",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$SPOOF_RESPONSE\" | jq -r '.error // empty' 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "only create panel tunnels for their own label"
+              },
+              "message": "Spoofing rejected by the panel-label check"
+            }
+          }
+        },
+        {
+          "id": "step-170",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "SPOOF_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-171",
+          "label": "No spoofed panel tunnel was created",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SPOOF_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No spoofed panel tunnel was created"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cross-agent spoofing: generic POST /api/tunnels with type=panel\"\n# ---------------------------------------------------------------------------\n\n# Agent with panel:expose can only create panel tunnels matching their own label.\n# Attempt to create a panel tunnel for a different agent (wrong subdomain).\nSPOOF_STATUS=$(agent_api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-evil-agent\\\",\\\"port\\\":19998,\\\"type\\\":\\\"panel\\\"}\")\nassert_eq \"$SPOOF_STATUS\" \"403\" \"Cross-agent panel tunnel spoofing rejected (HTTP 403)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cross-agent spoofing: generic POST /api/tunnels with type=panel\"\n# ---------------------------------------------------------------------------\n\n# Agent with panel:expose can only create panel tunnels matching their own label.\n# Attempt to create a panel tunnel for a different agent (wrong subdomain).\n# The agent holds tunnels:write and panel:expose, so the 403 must come from\n# the label check — asserted by its error message.\nSPOOF_STATUS=$(agent_api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-evil-agent\\\",\\\"port\\\":19998,\\\"type\\\":\\\"panel\\\"}\")\nassert_eq \"$SPOOF_STATUS\" \"403\" \"Cross-agent panel tunnel spoofing rejected (HTTP 403)\" || true\n\nSPOOF_RESPONSE=$(agent_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"agent-evil-agent\\\",\\\"port\\\":19998,\\\"type\\\":\\\"panel\\\"}\")\nassert_contains \"$(echo \"$SPOOF_RESPONSE\" | jq -r '.error // empty' 2>/dev/null || echo \"\")\" \"only create panel tunnels for their own label\" \"Spoofing rejected by the panel-label check\" || true\n\nSPOOF_LEFT=$(api_get \"tunnels\" | jq '[.tunnels[] | select(.subdomain == \"agent-evil-agent\")] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$SPOOF_LEFT\" \"0\" \"No spoofed panel tunnel was created\" || true"
     },
     {
       "id": "retract-panel-delete-api-tunnels-retract-panel",
       "label": "Retract panel: DELETE /api/tunnels/retract-panel",
       "steps": [
         {
-          "id": "step-103",
+          "id": "step-172",
           "label": "DELETE /api/tunnels/retract-panel",
           "target": "agent",
           "op": {
@@ -1237,7 +2690,7 @@
           ]
         },
         {
-          "id": "step-104",
+          "id": "step-173",
           "label": "Retract panel returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1259,7 +2712,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-174",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -1277,7 +2730,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-175",
           "label": "Set FOUND_AFTER",
           "target": "local",
           "op": {
@@ -1294,7 +2747,7 @@
           ]
         },
         {
-          "id": "step-107",
+          "id": "step-176",
           "label": "Panel tunnel no longer in list after retract",
           "target": "local",
           "continueOnError": true,
@@ -1315,7 +2768,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-177",
           "label": "mTLS panel vhost removed after retract",
           "target": "local",
           "op": {
@@ -1325,7 +2778,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-178",
           "label": "mTLS panel vhost still exists after retract",
           "target": "local",
           "op": {
@@ -1335,7 +2788,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-179",
           "label": "Set NGINX_TEST_AFTER",
           "target": "local",
           "op": {
@@ -1352,7 +2805,7 @@
           ]
         },
         {
-          "id": "step-111",
+          "id": "step-180",
           "label": "nginx -t passes after panel retract",
           "target": "local",
           "continueOnError": true,
@@ -1380,7 +2833,7 @@
       "label": "Verify agent-panel-status after retract",
       "steps": [
         {
-          "id": "step-113",
+          "id": "step-182",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -1398,7 +2851,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-183",
           "label": "Panel shows as disabled after retract",
           "target": "local",
           "continueOnError": true,
@@ -1427,7 +2880,7 @@
       "label": "Retract nonexistent panel returns 404",
       "steps": [
         {
-          "id": "step-115",
+          "id": "step-184",
           "label": "DELETE /api/tunnels/retract-panel",
           "target": "agent",
           "op": {
@@ -1446,7 +2899,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-185",
           "label": "Retract nonexistent panel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1474,7 +2927,7 @@
       "label": "Validation: expose-panel with invalid port",
       "steps": [
         {
-          "id": "step-117",
+          "id": "step-186",
           "label": "POST /api/tunnels/expose-panel",
           "target": "agent",
           "op": {
@@ -1496,7 +2949,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-187",
           "label": "Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -1521,7 +2974,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-188",
           "label": "Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -1544,9 +2997,494 @@
               }
             ]
           }
+        },
+        {
+          "id": "step-190",
+          "label": "POST /api/tunnels/expose-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels/expose-panel",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_EXPOSE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-191",
+          "label": "expose-panel on reserved port ${reserved_port} rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_EXPOSE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "expose-panel on reserved port ${reserved_port} rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-193",
+          "label": "GET /api/tunnels/agent-panel-status",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-panel-status"
+          },
+          "capture": [
+            {
+              "variable": "RESERVED_EXPOSED",
+              "from": {
+                "kind": "jq",
+                "expression": ".enabled"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-194",
+          "label": "Rejected expose-panel calls exposed nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RESERVED_EXPOSED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Rejected expose-panel calls exposed nothing"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: expose-panel with invalid port\"\n# ---------------------------------------------------------------------------\n\nINVALID_PORT_STATUS=$(agent_api_post_status \"tunnels/expose-panel\" '{\"port\":80}')\nif [ \"$INVALID_PORT_STATUS\" = \"400\" ] || [ \"$INVALID_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: expose-panel with invalid port\"\n# ---------------------------------------------------------------------------\n\nINVALID_PORT_STATUS=$(agent_api_post_status \"tunnels/expose-panel\" '{\"port\":80}')\nif [ \"$INVALID_PORT_STATUS\" = \"400\" ] || [ \"$INVALID_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $INVALID_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $INVALID_PORT_STATUS)\"\nfi\n\n# The relay's own service ports cannot carry an agent panel either\nfor reserved_port in 3100 9090 9091 9292 9294; do\n  RESERVED_EXPOSE_STATUS=$(agent_api_post_status \"tunnels/expose-panel\" \"{\\\"port\\\":${reserved_port}}\")\n  assert_eq \"$RESERVED_EXPOSE_STATUS\" \"400\" \"expose-panel on reserved port ${reserved_port} rejected (HTTP 400)\" || true\ndone\nRESERVED_EXPOSED=$(agent_api_get \"tunnels/agent-panel-status\" | jq -r '.enabled' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RESERVED_EXPOSED\" \"false\" \"Rejected expose-panel calls exposed nothing\" || true"
+    },
+    {
+      "id": "revoking-an-agent-releases-its-tunnels",
+      "label": "Revoking an agent releases its tunnels",
+      "steps": [
+        {
+          "id": "step-195",
+          "label": "POST /api/tunnels/expose-panel",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels/expose-panel",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "REEXPOSE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "Panel exposed again before revocation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REEXPOSE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Panel exposed again before revocation"
+            }
+          }
+        },
+        {
+          "id": "step-197",
+          "label": "Extract REEXPOSED_SUBDOMAIN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "REEXPOSED_SUBDOMAIN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REEXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.subdomain // empty"
+            }
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "Extract PANEL_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PANEL_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "REEXPOSE_RESPONSE"
+              },
+              "expression": ".tunnel.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-199",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "RELEASE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-200",
+          "label": "App tunnel created for ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELEASE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "App tunnel created for ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-201",
+          "label": "Extract RELEASE_TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "RELEASE_TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "RELEASE_RESPONSE"
+              },
+              "expression": ".tunnel.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-202",
+          "label": "DELETE /api/certs/agent/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/${AGENT_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "REVOKE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-203",
+          "label": "Agent ${AGENT_LABEL} revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REVOKE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent ${AGENT_LABEL} revoked"
+            }
+          }
+        },
+        {
+          "id": "step-204",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "TUNNELS_AFTER_REVOKE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-205",
+          "label": "Set PANEL_LEFT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "PANEL_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-206",
+          "label": "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted"
+            }
+          }
+        },
+        {
+          "id": "step-208",
+          "label": "Revoked agent's panel vhost removed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked agent's panel vhost removed"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "REEXPOSED_SUBDOMAIN"
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "Revoked agent's panel vhost still present",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Revoked agent's panel vhost still present"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "REEXPOSED_SUBDOMAIN"
+            }
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "Set RELEASED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "RELEASED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-212",
+          "label": "Revoked agent's app tunnel keeps its hostname",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELEASED"
+              },
+              "path": ".subdomain",
+              "expected": {
+                "kind": "var",
+                "name": "RELEASE_SUBDOMAIN"
+              },
+              "message": "Revoked agent's app tunnel keeps its hostname"
+            }
+          }
+        },
+        {
+          "id": "step-213",
+          "label": "Revoked agent's app tunnel has no owner (dark until reassigned)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELEASED"
+              },
+              "path": ".agentLabel // \"none\"",
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "Revoked agent's app tunnel has no owner (dark until reassigned)"
+            }
+          }
+        },
+        {
+          "id": "step-214",
+          "label": "Set RELEASED_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "RELEASED_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-215",
+          "label": "Released tunnel's port is granted to no chisel user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RELEASED_GRANTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Released tunnel's port is granted to no chisel user"
+            }
+          }
+        },
+        {
+          "id": "step-216",
+          "label": "Set NGINX_TEST_REVOKE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_REVOKE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-217",
+          "label": "nginx -t passes after the revocation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_REVOKE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after the revocation"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking an agent releases its tunnels\"\n# ---------------------------------------------------------------------------\n\n# The panel agent exposes its panel again and is given an app tunnel\nREEXPOSE_RESPONSE=$(agent_api_post \"tunnels/expose-panel\" \"{\\\"port\\\":${PANEL_PORT}}\")\nassert_json_field \"$REEXPOSE_RESPONSE\" '.ok' 'true' \"Panel exposed again before revocation\" || true\nREEXPOSED_SUBDOMAIN=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.subdomain // empty' 2>/dev/null || echo \"\")\nPANEL_TUNNEL_ID=$(echo \"$REEXPOSE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nRELEASE_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${RELEASE_SUBDOMAIN}\\\",\\\"port\\\":${RELEASE_PORT},\\\"description\\\":\\\"released on revoke\\\",\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$RELEASE_RESPONSE\" '.tunnel.agentLabel' \"$AGENT_LABEL\" \"App tunnel created for ${AGENT_LABEL}\" || true\nRELEASE_TUNNEL_ID=$(echo \"$RELEASE_RESPONSE\" | jq -r '.tunnel.id // empty' 2>/dev/null || echo \"\")\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${AGENT_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} revoked\" || true\n\nTUNNELS_AFTER_REVOKE=$(api_get \"tunnels\")\nPANEL_LEFT=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq --arg sd \"$REEXPOSED_SUBDOMAIN\" '[.tunnels[] | select(.subdomain == $sd)] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$PANEL_LEFT\" \"0\" \"Revoked agent's panel tunnel (${REEXPOSED_SUBDOMAIN}) deleted\" || true\nif [ -n \"$REEXPOSED_SUBDOMAIN\" ] && [ ! -e \"/etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}\" ] \\\n  && [ ! -e \"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${REEXPOSED_SUBDOMAIN}\" ]; then\n  log_pass \"Revoked agent's panel vhost removed\"\nelse\n  log_fail \"Revoked agent's panel vhost still present\"\nfi\nPANEL_TUNNEL_ID=\"\"\n\nRELEASED=$(echo \"$TUNNELS_AFTER_REVOKE\" | jq -c --arg id \"$RELEASE_TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\nassert_json_field \"$RELEASED\" '.subdomain' \"$RELEASE_SUBDOMAIN\" \"Revoked agent's app tunnel keeps its hostname\" || true\nassert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Revoked agent's app tunnel has no owner (dark until reassigned)\" || true\nRELEASED_GRANTS=$(sudo cat /etc/lamalibre/lamaste/chisel-users 2>/dev/null \\\n  | jq -r --arg g \"^R:127\\\\.0\\\\.0\\\\.1:${RELEASE_PORT}\\$\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$RELEASED_GRANTS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n\nNGINX_TEST_REVOKE=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST_REVOKE\" \"syntax is ok\" \"nginx -t passes after the revocation\" || true"
     }
   ],
   "apiHelpers": [
@@ -1558,8 +3496,8 @@
     "agent_api_get_status",
     "agent_api_patch_status"
   ],
-  "headerRaw": "# ============================================================================\n# 19 — Panel Expose Lifecycle\n# ============================================================================\n# Verifies the agent panel expose feature (server-side):\n# - panel:expose capability exists in BASE_CAPABILITIES\n# - POST /api/tunnels/expose-panel creates a panel tunnel with mTLS vhost\n# - GET /api/tunnels/agent-panel-status returns panel tunnel status\n# - DELETE /api/tunnels/retract-panel removes the panel tunnel\n# - agent- subdomain prefix reserved for panel tunnels only\n# - Panel tunnel type appears correctly in tunnel listing\n# - Capability checks: 403 without panel:expose\n# - Cross-agent spoofing prevention via generic POST /api/tunnels\n# - PATCH panel tunnel requires panel:expose capability\n# - DELETE panel tunnel requires panel:expose capability\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nPANEL_PORT=19393\nPANEL_TUNNEL_ID=\"\"\n\nbegin_test \"19 — Panel Expose Lifecycle\"\n",
+  "headerRaw": "# ============================================================================\n# 19 — Panel Expose Lifecycle\n# ============================================================================\n# Verifies the agent panel expose feature (server-side):\n# - panel:expose capability exists in BASE_CAPABILITIES\n# - POST /api/tunnels/expose-panel creates a panel tunnel with mTLS vhost\n# - GET /api/tunnels/agent-panel-status returns panel tunnel status\n# - DELETE /api/tunnels/retract-panel removes the panel tunnel\n# - agent- subdomain prefix reserved for panel tunnels only\n# - Panel tunnel type appears correctly in tunnel listing\n# - Capability checks: 403 without panel:expose\n# - Cross-agent spoofing prevention via generic POST /api/tunnels\n# - Ownership: another agent cannot see, PATCH or DELETE a panel tunnel it\n#   does not carry (404), and a panel tunnel cannot be reassigned or\n#   reconfigured\n# - PATCH/DELETE of a panel tunnel by its owner requires panel:expose\n# - Agent-scoped tunnels: an agent creates tunnels it carries itself, sees\n#   only its own tunnels and chisel config, cannot create a tunnel for\n#   another agent, reassign a tunnel, or open its access mode; an agent may\n#   set a body limit up to 100 MiB (above that is admin-only, 403)\n# - expose-panel refuses the relay's reserved service ports (400)\n# - Revoking an agent's certificate releases its tunnels: its panel tunnel\n#   (agent-<label>) is deleted with its vhost, its app tunnels lose their\n#   owner and chisel grant but keep their hostname\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nPANEL_PORT=19393\nPANEL_TUNNEL_ID=\"\"\nOWN_SUBDOMAIN=\"e2eown-$(date +%s)\"\nOWN_PORT=19981\nOWN_TUNNEL_ID=\"\"\n# App tunnel owned by the panel agent, released when that agent is revoked\nRELEASE_SUBDOMAIN=\"e2erelease-$(date +%s)\"\nRELEASE_PORT=19983\nRELEASE_TUNNEL_ID=\"\"\n\nbegin_test \"19 — Panel Expose Lifecycle\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

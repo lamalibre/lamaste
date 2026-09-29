@@ -336,6 +336,10 @@ if [ "$SKIP_SETUP" = "false" ]; then
   # setup-host.sh now generates an enrollment token (not P12 password)
   ENROLLMENT_TOKEN=$(echo "$CREDS_JSON" | jq -r '.enrollmentToken // empty')
   [ -n "$ENROLLMENT_TOKEN" ] || log_fatal "Could not extract enrollmentToken from credentials"
+  # The certbot shim's E2E test CA — the agent and visitor trust it so they
+  # verify the host's certificates (chisel never skips TLS verification)
+  E2E_CA_CERT_B64=$(echo "$CREDS_JSON" | jq -r '.e2eCaCertB64 // empty')
+  [ -n "$E2E_CA_CERT_B64" ] || log_fatal "Could not extract e2eCaCertB64 from credentials"
   # AGENT_P12_PASSWORD is still required by run-all.sh env validation — use a placeholder
   AGENT_P12_PASSWORD="not-used-enrollment-flow"
   log_ok "Credentials extracted (enrollment token obtained)"
@@ -352,7 +356,7 @@ if [ "$SKIP_SETUP" = "false" ]; then
   set +e
   multipass exec "${VM_AGENT}" -- sudo \
     env "LOG_LEVEL=${LOG_LEVEL}" \
-    bash /tmp/e2e/setup-agent.sh "${HOST_IP}" "${TEST_DOMAIN}" "${ENROLLMENT_TOKEN}"
+    bash /tmp/e2e/setup-agent.sh "${HOST_IP}" "${TEST_DOMAIN}" "${ENROLLMENT_TOKEN}" "${E2E_CA_CERT_B64}"
   SETUP_AGENT_RC=$?
   set -e
   multipass exec "${VM_AGENT}" -- sudo chmod 644 /tmp/setup-agent.md 2>/dev/null || true
@@ -369,7 +373,7 @@ if [ "$SKIP_SETUP" = "false" ]; then
   set +e
   multipass exec "${VM_VISITOR}" -- sudo \
     env "LOG_LEVEL=${LOG_LEVEL}" \
-    bash /tmp/e2e/setup-visitor.sh "${HOST_IP}" "${TEST_DOMAIN}"
+    bash /tmp/e2e/setup-visitor.sh "${HOST_IP}" "${TEST_DOMAIN}" "${E2E_CA_CERT_B64}"
   SETUP_VISITOR_RC=$?
   set -e
   multipass exec "${VM_VISITOR}" -- sudo chmod 644 /tmp/setup-visitor.md 2>/dev/null || true

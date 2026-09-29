@@ -182,6 +182,16 @@ chmod +x /usr/bin/certbot
 
 log_ok "certbot shim installed at /usr/bin/certbot"
 
+# The shim signs every certificate with a persistent E2E test CA. Create it
+# now so the agent and visitor VMs can be handed the CA before anything else
+# needs it; they install it into their trust stores and verify the host's
+# certificates (chisel on the agent verifies tunnel.<domain> — no skip-verify).
+E2E_CA_CERT_PATH=$(/usr/bin/certbot e2e-ca-init)
+if ! openssl x509 -noout -in "${E2E_CA_CERT_PATH}" 2>/dev/null; then
+  log_fatal "E2E test CA was not created at ${E2E_CA_CERT_PATH}"
+fi
+log_ok "E2E test CA ready at ${E2E_CA_CERT_PATH}"
+
 # ---------------------------------------------------------------------------
 # Step 4: Create dummy certbot.timer systemd unit
 # ---------------------------------------------------------------------------
@@ -383,7 +393,8 @@ cat > /tmp/lamalibre-lamaste-test-credentials.json <<CREDS
   "enrollmentToken": "${ENROLLMENT_TOKEN}",
   "testUser": "testuser",
   "testUserPassword": "TestPassword-E2E-123",
-  "agentLabel": "test-agent"
+  "agentLabel": "test-agent",
+  "e2eCaCertB64": "$(base64 -w0 "${E2E_CA_CERT_PATH}")"
 }
 CREDS
 
@@ -405,6 +416,7 @@ log_kv "Auth URL" "https://auth.${TEST_DOMAIN}"
 log_kv "Tunnel URL" "https://tunnel.${TEST_DOMAIN}"
 log_kv "Test User" "testuser / TestPassword-E2E-123"
 log_kv "Agent Label" "test-agent"
+log_kv "E2E test CA" "${E2E_CA_CERT_PATH} (in credentials as e2eCaCertB64)"
 log_kv "Enrollment Token" "(generated, one-time use)"
 log_kv "Credentials file" "/tmp/lamalibre-lamaste-test-credentials.json"
 log_kv "Log file" "$(log_file_path)"

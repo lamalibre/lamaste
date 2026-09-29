@@ -3,7 +3,7 @@
   "meta": {
     "number": 6,
     "name": "Tunnel User Journey",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "06 — Tunnel User Journey (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq"]
@@ -28,6 +28,9 @@
     },
     "TUNNEL_PORT": {
       "value": "18090"
+    },
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
     },
     "TUNNEL_FQDN": {
       "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
@@ -236,6 +239,28 @@
         },
         {
           "id": "step-5",
+          "label": "Tunnel is owned by ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Tunnel is owned by ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-6",
           "label": "Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})",
           "target": "local",
           "op": {
@@ -245,7 +270,7 @@
           }
         },
         {
-          "id": "step-6",
+          "id": "step-7",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -254,7 +279,7 @@
           }
         },
         {
-          "id": "step-7",
+          "id": "step-8",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -263,7 +288,7 @@
           }
         },
         {
-          "id": "step-8",
+          "id": "step-9",
           "label": "Added DNS entries to agent /etc/hosts",
           "target": "local",
           "op": {
@@ -273,7 +298,7 @@
           }
         },
         {
-          "id": "step-9",
+          "id": "step-10",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -282,7 +307,7 @@
           }
         },
         {
-          "id": "step-10",
+          "id": "step-11",
           "label": "Added ${TUNNEL_FQDN} to visitor /etc/hosts",
           "target": "local",
           "op": {
@@ -292,7 +317,7 @@
           }
         },
         {
-          "id": "step-11",
+          "id": "step-12",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -301,7 +326,7 @@
           }
         },
         {
-          "id": "step-12",
+          "id": "step-13",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -310,7 +335,7 @@
           }
         },
         {
-          "id": "step-13",
+          "id": "step-14",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -319,7 +344,7 @@
           }
         },
         {
-          "id": "step-14",
+          "id": "step-15",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -339,7 +364,7 @@
           ]
         },
         {
-          "id": "step-15",
+          "id": "step-16",
           "label": "HTTP server running on agent at port ${TUNNEL_PORT}",
           "target": "local",
           "continueOnError": true,
@@ -360,7 +385,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-17",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -369,7 +394,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-18",
           "label": "Waiting for Chisel tunnel to establish...",
           "target": "local",
           "op": {
@@ -379,7 +404,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-21",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -399,7 +424,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-24",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -408,7 +433,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-26",
           "label": "Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)",
           "target": "local",
           "op": {
@@ -423,7 +448,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-27",
           "label": "Chisel tunnel failed to establish within 15 seconds",
           "target": "local",
           "op": {
@@ -438,7 +463,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-28",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -460,7 +485,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-29",
           "label": "Agent chisel log: $AGENT_LOG",
           "target": "local",
           "op": {
@@ -475,14 +500,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel and establish connection\"\n# ---------------------------------------------------------------------------\n\n# Create tunnel via API — accessMode \"authenticated\" models the common user\n# journey (any logged-in user can reach). Restricted mode (per-user grants)\n# is a separate opt-in flow covered by the gatekeeper tests.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})\"\n\n# Add /etc/hosts entries on agent so chisel client can resolve the domains\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added DNS entries to agent /etc/hosts\"\n\n# Add /etc/hosts entry on visitor for the tunnel subdomain\nvisitor_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added ${TUNNEL_FQDN} to visitor /etc/hosts\"\n\n# Start HTTP server on agent serving a unique marker\nagent_exec \"echo '${MARKER}' > /tmp/e2e-journey-index.html\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\nAGENT_HTTP_STATUS=$(agent_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$AGENT_HTTP_STATUS\" \"200\" \"HTTP server running on agent at port ${TUNNEL_PORT}\" || true\n\n# Refresh agent config to pick up the new tunnel\nagent_exec \"lamaste-agent update\"\n\n# Wait for tunnel to establish\nlog_info \"Waiting for Chisel tunnel to establish...\"\nCHISEL_READY=false\nfor i in $(seq 1 15); do\n  CHECK=$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\n  if [ \"$CHECK\" = \"200\" ]; then\n    CHISEL_READY=true\n    break\n  fi\n  sleep 1\ndone\n\nif [ \"$CHISEL_READY\" = \"true\" ]; then\n  log_pass \"Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)\"\nelse\n  log_fail \"Chisel tunnel failed to establish within 15 seconds\"\n  AGENT_LOG=$(agent_exec \"tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'\")\n  log_info \"Agent chisel log: $AGENT_LOG\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel and establish connection\"\n# ---------------------------------------------------------------------------\n\n# Create tunnel via API — accessMode \"authenticated\" models the common user\n# journey (any logged-in user can reach). Restricted mode (per-user grants)\n# is a separate opt-in flow covered by the gatekeeper tests.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"accessMode\\\":\\\"authenticated\\\",\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Tunnel is owned by ${TUNNEL_AGENT}\" || true\nlog_info \"Created tunnel ID: $TUNNEL_ID (${TUNNEL_FQDN})\"\n\n# Add /etc/hosts entries on agent so chisel client can resolve the domains\nagent_exec \"grep -q 'tunnel.${TEST_DOMAIN}' /etc/hosts || echo '${HOST_IP} tunnel.${TEST_DOMAIN}' >> /etc/hosts\"\nagent_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added DNS entries to agent /etc/hosts\"\n\n# Add /etc/hosts entry on visitor for the tunnel subdomain\nvisitor_exec \"grep -q '${TUNNEL_FQDN}' /etc/hosts || echo '${HOST_IP} ${TUNNEL_FQDN}' >> /etc/hosts\"\nlog_pass \"Added ${TUNNEL_FQDN} to visitor /etc/hosts\"\n\n# Start HTTP server on agent serving a unique marker\nagent_exec \"echo '${MARKER}' > /tmp/e2e-journey-index.html\"\nagent_exec \"nohup python3 -m http.server ${TUNNEL_PORT} --bind 127.0.0.1 -d /tmp &>/dev/null & exit\"\nsleep 2\n\nAGENT_HTTP_STATUS=$(agent_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\nassert_eq \"$AGENT_HTTP_STATUS\" \"200\" \"HTTP server running on agent at port ${TUNNEL_PORT}\" || true\n\n# Refresh agent config to pick up the new tunnel\nagent_exec \"lamaste-agent update\"\n\n# Wait for tunnel to establish\nlog_info \"Waiting for Chisel tunnel to establish...\"\nCHISEL_READY=false\nfor i in $(seq 1 15); do\n  CHECK=$(host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${TUNNEL_PORT}/e2e-journey-index.html 2>/dev/null\" || echo \"000\")\n  if [ \"$CHECK\" = \"200\" ]; then\n    CHISEL_READY=true\n    break\n  fi\n  sleep 1\ndone\n\nif [ \"$CHISEL_READY\" = \"true\" ]; then\n  log_pass \"Chisel tunnel established (port ${TUNNEL_PORT} accessible on host)\"\nelse\n  log_fail \"Chisel tunnel failed to establish within 15 seconds\"\n  AGENT_LOG=$(agent_exec \"tail -20 ~/.lamalibre/lamaste/agents/e2e-agent/logs/chisel.log 2>/dev/null || echo 'no log'\")\n  log_info \"Agent chisel log: $AGENT_LOG\"\nfi"
     },
     {
       "id": "step-2-prepare-totp-for-test-user",
       "label": "Step 2: Prepare TOTP for test user",
       "steps": [
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -503,7 +528,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "oathtool is available on visitor VM",
           "target": "local",
           "op": {
@@ -513,7 +538,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -532,7 +557,7 @@
           ]
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "TOTP reset returned otpauth URI",
           "target": "local",
           "continueOnError": true,
@@ -550,7 +575,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -567,7 +592,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "Extract TOTP_SECRET",
           "target": "local",
           "op": {
@@ -584,7 +609,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-36",
           "label": "Failed to extract TOTP secret from otpauth URI: $OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -601,7 +626,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "Extracted TOTP secret from otpauth URI",
           "target": "local",
           "op": {
@@ -611,7 +636,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -632,7 +657,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "oathtool failed to generate a valid 6-digit TOTP code (got: '${TOTP_VERIFY}')",
           "target": "local",
           "op": {
@@ -649,7 +674,7 @@
           }
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "oathtool generates valid TOTP codes for this secret",
           "target": "local",
           "op": {
@@ -671,7 +696,7 @@
       "label": "Step 3: Unauthenticated access redirects to Authelia (from visitor VM)",
       "steps": [
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -692,7 +717,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)",
           "target": "local",
           "op": {
@@ -717,7 +742,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "Unauthenticated request should be 302 or 401, got HTTP $UNAUTH_STATUS",
           "target": "local",
           "op": {
@@ -742,7 +767,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -762,7 +787,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "Redirect URL contains auth.${TEST_DOMAIN}",
           "target": "local",
           "op": {
@@ -772,7 +797,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Request returned 401 (Authelia enforcement confirmed)",
           "target": "local",
           "op": {
@@ -782,7 +807,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "Redirect does not point to Authelia portal (redirect_url: $UNAUTH_REDIRECT)",
           "target": "local",
           "op": {
@@ -792,7 +817,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -812,7 +837,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "Tunnel content is NOT visible without authentication",
           "target": "local",
           "continueOnError": true,
@@ -840,7 +865,7 @@
       "label": "Step 4: First factor authentication from visitor VM (username/password)",
       "steps": [
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -866,7 +891,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "Extract FIRSTFACTOR_STATUS",
           "target": "local",
           "op": {
@@ -883,7 +908,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-54",
           "label": "First factor authentication succeeded (username/password accepted)",
           "target": "local",
           "op": {
@@ -898,7 +923,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-55",
           "label": "First factor authentication failed (status: $FIRSTFACTOR_STATUS, response: $FIRSTFACTOR_RESPONSE)",
           "target": "local",
           "op": {
@@ -920,7 +945,7 @@
       "label": "Step 5: Second factor authentication from visitor VM (TOTP)",
       "steps": [
         {
-          "id": "step-55",
+          "id": "step-56",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -941,7 +966,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-57",
           "label": "Generated TOTP code: ${TOTP_CODE}",
           "target": "local",
           "op": {
@@ -951,7 +976,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -978,7 +1003,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "Extract SECONDFACTOR_STATUS",
           "target": "local",
           "op": {
@@ -995,7 +1020,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-60",
           "label": "Second factor authentication succeeded (TOTP accepted)",
           "target": "local",
           "op": {
@@ -1010,7 +1035,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "Second factor authentication failed (status: $SECONDFACTOR_STATUS, response: $SECONDFACTOR_RESPONSE)",
           "target": "local",
           "op": {
@@ -1032,7 +1057,7 @@
       "label": "Step 6: Authenticated access from visitor VM shows tunnel content",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1055,7 +1080,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-63",
           "label": "Authenticated request returns tunnel content (full 2FA path verified)",
           "target": "local",
           "continueOnError": true,
@@ -1076,7 +1101,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-64",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1100,7 +1125,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-65",
           "label": "Authenticated request returns HTTP 200",
           "target": "local",
           "continueOnError": true,
@@ -1128,7 +1153,7 @@
       "label": "Step 7: Session persistence (no re-auth needed, from visitor VM)",
       "steps": [
         {
-          "id": "step-65",
+          "id": "step-66",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1151,7 +1176,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-67",
           "label": "Session persists — second request returns tunnel content without re-auth",
           "target": "local",
           "continueOnError": true,
@@ -1172,7 +1197,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-68",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1196,7 +1221,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-69",
           "label": "Session persists — HTTP 200 on second request",
           "target": "local",
           "continueOnError": true,
@@ -1224,7 +1249,7 @@
       "label": "Step 8: Invalid session redirects to Authelia again (from visitor VM)",
       "steps": [
         {
-          "id": "step-70",
+          "id": "step-71",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -1233,7 +1258,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-72",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1257,7 +1282,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-73",
           "label": "Invalid/expired session rejected (HTTP $INVALID_STATUS)",
           "target": "local",
           "op": {
@@ -1282,7 +1307,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-74",
           "label": "Invalid session should be rejected (302 or 401), got HTTP $INVALID_STATUS",
           "target": "local",
           "op": {
@@ -1307,7 +1332,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-75",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1330,7 +1355,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-76",
           "label": "Invalid session does not expose tunnel content",
           "target": "local",
           "continueOnError": true,
@@ -1356,7 +1381,7 @@
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 06 — Tunnel User Journey (Three-VM)\n# ============================================================================\n# Tests the complete end-user experience when accessing a tunneled application\n# through Authelia with two-factor authentication (TOTP) from an external\n# visitor VM.\n#\n# This is the most important user journey test. It simulates what a real user\n# experiences from an external machine:\n#\n#   Visitor VM -> nginx (host) -> Authelia auth_request -> chisel tunnel -> agent -> content\n#\n# Flow:\n#   1. Create tunnel + HTTP server + chisel connection\n#   2. Prepare TOTP for the test user via panel API\n#   3. Unauthenticated access from visitor -> redirect to Authelia\n#   4. First factor authentication from visitor (username/password)\n#   5. Second factor authentication from visitor (TOTP)\n#   6. Authenticated access from visitor -> see tunnel content\n#   7. Session persistence -> no re-auth needed\n#   8. Invalid session from visitor -> redirect again\n#   9. Cleanup\n#\n# Required env vars: HOST_IP, AGENT_IP, VISITOR_IP, TEST_DOMAIN, TEST_USER, TEST_USER_PASSWORD\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2ejourney\"\nTUNNEL_PORT=18090\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMASTE_JOURNEY_OK_$(date +%s)\"\nCOOKIE_FILE=\"/tmp/e2e-journey-cookies.txt\"\nTOTP_SECRET=\"\"\n\nbegin_test \"06 — Tunnel User Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entries on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-journey-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove cookie files and /etc/hosts entries on visitor\n  visitor_exec \"rm -f ${COOKIE_FILE} /tmp/e2e-journey-fake-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nTUNNEL_SUBDOMAIN=\"e2ejourney\"\nTUNNEL_PORT=18090\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own the tunnel for traffic to reach the test's HTTP server.\nTUNNEL_AGENT=\"test-agent\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nMARKER=\"LAMASTE_JOURNEY_OK_$(date +%s)\"\nCOOKIE_FILE=\"/tmp/e2e-journey-cookies.txt\"\nTOTP_SECRET=\"\"\n\nbegin_test \"06 — Tunnel User Journey (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove /etc/hosts entries on agent\n  agent_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove test HTML file on agent\n  agent_exec \"rm -f /tmp/e2e-journey-index.html 2>/dev/null || true\" 2>/dev/null || true\n\n  # Remove cookie files and /etc/hosts entries on visitor\n  visitor_exec \"rm -f ${COOKIE_FILE} /tmp/e2e-journey-fake-cookies.txt 2>/dev/null || true\" 2>/dev/null || true\n  visitor_exec \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n\n  # Delete tunnel via API (if we have an ID), then refresh agent\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${TUNNEL_ID}\" 2>/dev/null || true\n  fi\n  agent_exec \"lamaste-agent update 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

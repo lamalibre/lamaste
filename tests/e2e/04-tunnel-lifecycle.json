@@ -10,7 +10,41 @@
   },
   "env": {},
   "constants": {},
-  "cleanup": [],
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE tunnels/${TUNNEL_ID}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "tunnels/${TUNNEL_ID}"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE certs/agent/${OWNER_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${OWNER_LABEL}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${OTHER_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${OTHER_LABEL}"
+      }
+    }
+  ],
   "sections": [
     {
       "id": "pre-flight-check-onboarding-is-complete",
@@ -34,6 +68,59 @@
               }
             }
           ]
+        },
+        {
+          "id": "step-1",
+          "label": "Set SERVER_CHISEL_VERSION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "/usr/local/bin/chisel --version 2>/dev/null | sed 's/^v//' || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "SERVER_CHISEL_VERSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-2",
+          "label": "Chisel server (/usr/local/bin/chisel) is the pinned release 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVER_CHISEL_VERSION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Chisel server (/usr/local/bin/chisel) is the pinned release 1.12.0"
+            }
+          }
+        },
+        {
+          "id": "step-5",
+          "label": "Chisel is not the running pinned release — restart-vs-reload checks are skipped",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Chisel is not the running pinned release — restart-vs-reload checks are skipped"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "SERVER_CHISEL_VERSION",
+            "value": "1.12.0"
+          }
         }
       ],
       "when": {
@@ -41,19 +128,522 @@
         "variable": "ONBOARDING_STATUS",
         "value": "COMPLETED"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_info \"Onboarding not completed (status: $ONBOARDING_STATUS). Tunnel creation requires onboarding.\"\n  log_skip \"Skipping tunnel lifecycle tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_info \"Onboarding not completed (status: $ONBOARDING_STATUS). Tunnel creation requires onboarding.\"\n  log_skip \"Skipping tunnel lifecycle tests — onboarding not complete\"\n  end_test\n  exit $?\nfi\n\n# The restart-vs-reload checks assume the pinned chisel release, which reloads\n# its authfile for new grants without a restart\nSERVER_CHISEL_VERSION=$(/usr/local/bin/chisel --version 2>/dev/null | sed 's/^v//' || echo \"\")\nassert_eq \"$SERVER_CHISEL_VERSION\" \"1.12.0\" \"Chisel server (/usr/local/bin/chisel) is the pinned release 1.12.0\" || true\nPINNED_CHISEL=false\nif [ \"$SERVER_CHISEL_VERSION\" = \"1.12.0\" ] && [ \"$(systemctl is-active chisel 2>/dev/null || true)\" = \"active\" ]; then\n  PINNED_CHISEL=true\nelse\n  log_skip \"Chisel is not the running pinned release — restart-vs-reload checks are skipped\"\nfi"
+    },
+    {
+      "id": "enroll-owning-agents",
+      "label": "Enroll owning agents",
+      "steps": [
+        {
+          "id": "step-6",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Owning agent cert created (${OWNER_LABEL})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Owning agent cert created (${OWNER_LABEL})"
+            }
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
+          },
+          "capture": [
+            {
+              "variable": "OTHER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Second agent cert created (${OTHER_LABEL})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OTHER_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Second agent cert created (${OTHER_LABEL})"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Set OWNER_USERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_user_count \"agent-${OWNER_LABEL}:\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Chisel authfile has a user for the owning agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_USERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Chisel authfile has a user for the owning agent"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Set OWNER_GRANTS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_GRANTS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "Agent with no tunnels is granted no reverse remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_GRANTS_BEFORE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Agent with no tunnels is granted no reverse remote"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Set SENTINEL_USERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_user_count \"lamaste-no-grants:\""
+          },
+          "capture": [
+            {
+              "variable": "SENTINEL_USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Chisel authfile carries the lamaste-no-grants sentinel user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SENTINEL_USERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Chisel authfile carries the lamaste-no-grants sentinel user"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set SENTINEL_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$CHISEL_USERS\" 2>/dev/null | jq -r '[to_entries[] | select(.key | startswith(\"lamaste-no-grants:\")) | .value[]] | length' 2>/dev/null || echo \"unknown\""
+          },
+          "capture": [
+            {
+              "variable": "SENTINEL_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Sentinel user is granted no reverse remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SENTINEL_GRANTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Sentinel user is granted no reverse remote"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enroll owning agents\"\n# ---------------------------------------------------------------------------\n\n# Two agents: the tunnel is created for the first and later reassigned to the\n# second. Neither runs a chisel client — this test checks what the server\n# grants, not traffic (traffic is covered by the three-VM suite).\nOWNER_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${OWNER_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nassert_json_field \"$OWNER_RESPONSE\" '.ok' 'true' \"Owning agent cert created (${OWNER_LABEL})\" || true\n\nOTHER_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${OTHER_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nassert_json_field \"$OTHER_RESPONSE\" '.ok' 'true' \"Second agent cert created (${OTHER_LABEL})\" || true\n\nOWNER_USERS=$(chisel_user_count \"agent-${OWNER_LABEL}:\")\nassert_eq \"$OWNER_USERS\" \"1\" \"Chisel authfile has a user for the owning agent\" || true\n\nOWNER_GRANTS_BEFORE=$(chisel_grants \"$OWNER_LABEL\")\nassert_eq \"$OWNER_GRANTS_BEFORE\" \"\" \"Agent with no tunnels is granted no reverse remote\" || true\n\nSENTINEL_USERS=$(chisel_user_count \"lamaste-no-grants:\")\nassert_eq \"$SENTINEL_USERS\" \"1\" \"Chisel authfile carries the lamaste-no-grants sentinel user\" || true\n\nSENTINEL_GRANTS=$(sudo cat \"$CHISEL_USERS\" 2>/dev/null | jq -r '[to_entries[] | select(.key | startswith(\"lamaste-no-grants:\")) | .value[]] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$SENTINEL_GRANTS\" \"0\" \"Sentinel user is granted no reverse remote\" || true"
+    },
+    {
+      "id": "validation-tunnel-owner",
+      "label": "Validation: tunnel owner",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "e2enoowner",
+              "port": 19997,
+              "description": "no owner"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "NO_OWNER_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "Admin POST without agentLabel rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NO_OWNER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Admin POST without agentLabel rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "e2enoowner",
+              "port": 19997,
+              "description": "no owner"
+            }
+          },
+          "capture": [
+            {
+              "variable": "NO_OWNER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Missing agentLabel error names the field",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$NO_OWNER_RESPONSE\" | jq -r '.error' 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "agentLabel is required"
+              },
+              "message": "Missing agentLabel error names the field"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "UNKNOWN_OWNER_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Admin POST naming an unknown agent rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNKNOWN_OWNER_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Admin POST naming an unknown agent rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "UNKNOWN_OWNER_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Unknown agent error explains the owner is not enrolled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$UNKNOWN_OWNER_RESPONSE\" | jq -r '.details' 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "is not enrolled or has been revoked"
+              },
+              "message": "Unknown agent error explains the owner is not enrolled"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": {
+              "subdomain": "e2enoowner",
+              "port": 19997,
+              "description": "bad owner",
+              "agentLabel": "Not_A_Label"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BAD_LABEL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Admin POST with malformed agentLabel rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_LABEL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Admin POST with malformed agentLabel rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "NO_OWNER_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Rejected creates left no tunnel behind",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NO_OWNER_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Rejected creates left no tunnel behind"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: tunnel owner\"\n# ---------------------------------------------------------------------------\n\nNO_OWNER_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2enoowner\",\"port\":19997,\"description\":\"no owner\"}')\nassert_eq \"$NO_OWNER_STATUS\" \"400\" \"Admin POST without agentLabel rejected (HTTP 400)\" || true\n\nNO_OWNER_RESPONSE=$(api_post \"tunnels\" '{\"subdomain\":\"e2enoowner\",\"port\":19997,\"description\":\"no owner\"}')\nassert_contains \"$(echo \"$NO_OWNER_RESPONSE\" | jq -r '.error' 2>/dev/null || echo \"\")\" \"agentLabel is required\" \"Missing agentLabel error names the field\" || true\n\nUNKNOWN_OWNER_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2enoowner\\\",\\\"port\\\":19997,\\\"description\\\":\\\"unknown owner\\\",\\\"agentLabel\\\":\\\"${UNKNOWN_LABEL}\\\"}\")\nassert_eq \"$UNKNOWN_OWNER_STATUS\" \"400\" \"Admin POST naming an unknown agent rejected (HTTP 400)\" || true\n\nUNKNOWN_OWNER_RESPONSE=$(api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"e2enoowner\\\",\\\"port\\\":19997,\\\"description\\\":\\\"unknown owner\\\",\\\"agentLabel\\\":\\\"${UNKNOWN_LABEL}\\\"}\")\nassert_contains \"$(echo \"$UNKNOWN_OWNER_RESPONSE\" | jq -r '.details' 2>/dev/null || echo \"\")\" \"is not enrolled or has been revoked\" \"Unknown agent error explains the owner is not enrolled\" || true\n\nBAD_LABEL_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2enoowner\",\"port\":19997,\"description\":\"bad owner\",\"agentLabel\":\"Not_A_Label\"}')\nassert_eq \"$BAD_LABEL_STATUS\" \"400\" \"Admin POST with malformed agentLabel rejected (HTTP 400)\" || true\n\nNO_OWNER_LEFT=$(api_get \"tunnels\" | jq '[.tunnels[] | select(.subdomain == \"e2enoowner\")] | length' 2>/dev/null || echo \"unknown\")\nassert_eq \"$NO_OWNER_LEFT\" \"0\" \"Rejected creates left no tunnel behind\" || true"
     },
     {
       "id": "create-tunnel",
       "label": "Create tunnel",
       "steps": [
         {
-          "id": "step-1",
+          "id": "step-30",
           "label": "Set CREATE_BODY",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "cat <<EOF { \"subdomain\": \"$TEST_SUBDOMAIN\", \"port\": $TEST_PORT, \"description\": \"$TEST_DESCRIPTION\" } EOF "
+            "command": "cat <<EOF { \"subdomain\": \"$TEST_SUBDOMAIN\", \"port\": $TEST_PORT, \"description\": \"$TEST_DESCRIPTION\", \"agentLabel\": \"$OWNER_LABEL\" } EOF "
           },
           "capture": [
             {
@@ -65,7 +655,24 @@
           ]
         },
         {
-          "id": "step-2",
+          "id": "step-31",
+          "label": "Set PID_BEFORE_CREATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_CREATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -84,7 +691,7 @@
           ]
         },
         {
-          "id": "step-3",
+          "id": "step-33",
           "label": "Tunnel creation returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -106,7 +713,33 @@
           }
         },
         {
-          "id": "step-4",
+          "id": "step-34",
+          "label": "New grant hot-reloaded: chisel not restarted by the tunnel creation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(chisel_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_CREATE"
+              },
+              "message": "New grant hot-reloaded: chisel not restarted by the tunnel creation"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_CHISEL",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-35",
           "label": "Extract TUNNEL_ID",
           "target": "local",
           "op": {
@@ -123,7 +756,7 @@
           }
         },
         {
-          "id": "step-5",
+          "id": "step-36",
           "label": "Tunnel subdomain matches",
           "target": "local",
           "continueOnError": true,
@@ -145,7 +778,7 @@
           }
         },
         {
-          "id": "step-6",
+          "id": "step-37",
           "label": "Tunnel port matches",
           "target": "local",
           "continueOnError": true,
@@ -167,7 +800,51 @@
           }
         },
         {
-          "id": "step-7",
+          "id": "step-38",
+          "label": "Tunnel agentLabel echoes the owning agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "OWNER_LABEL"
+              },
+              "message": "Tunnel agentLabel echoes the owning agent"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Tunnel request body limit defaults to 10 MB",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "10"
+              },
+              "message": "Tunnel request body limit defaults to 10 MB"
+            }
+          }
+        },
+        {
+          "id": "step-40",
           "label": "Tunnel has an ID",
           "target": "local",
           "continueOnError": true,
@@ -185,7 +862,7 @@
           }
         },
         {
-          "id": "step-8",
+          "id": "step-41",
           "label": "Tunnel has an FQDN",
           "target": "local",
           "continueOnError": true,
@@ -203,7 +880,7 @@
           }
         },
         {
-          "id": "step-9",
+          "id": "step-42",
           "label": "Tunnel has a createdAt timestamp",
           "target": "local",
           "continueOnError": true,
@@ -221,7 +898,7 @@
           }
         },
         {
-          "id": "step-10",
+          "id": "step-43",
           "label": "Created tunnel ID: $TUNNEL_ID",
           "target": "local",
           "op": {
@@ -231,14 +908,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel\"\n# ---------------------------------------------------------------------------\n\nCREATE_BODY=$(cat <<EOF\n{\n  \"subdomain\": \"$TEST_SUBDOMAIN\",\n  \"port\": $TEST_PORT,\n  \"description\": \"$TEST_DESCRIPTION\"\n}\nEOF\n)\n\nCREATE_RESPONSE=$(api_post \"tunnels\" \"$CREATE_BODY\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.subdomain' \"$TEST_SUBDOMAIN\" \"Tunnel subdomain matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.port' \"$TEST_PORT\" \"Tunnel port matches\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.fqdn' \"Tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.createdAt' \"Tunnel has a createdAt timestamp\" || true\n\nlog_info \"Created tunnel ID: $TUNNEL_ID\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Create tunnel\"\n# ---------------------------------------------------------------------------\n\nCREATE_BODY=$(cat <<EOF\n{\n  \"subdomain\": \"$TEST_SUBDOMAIN\",\n  \"port\": $TEST_PORT,\n  \"description\": \"$TEST_DESCRIPTION\",\n  \"agentLabel\": \"$OWNER_LABEL\"\n}\nEOF\n)\n\nPID_BEFORE_CREATE=$(chisel_pid)\nCREATE_RESPONSE=$(api_post \"tunnels\" \"$CREATE_BODY\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\nif [ \"$PINNED_CHISEL\" = \"true\" ]; then\n  assert_eq \"$(chisel_pid)\" \"$PID_BEFORE_CREATE\" \"New grant hot-reloaded: chisel not restarted by the tunnel creation\" || true\nfi\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.subdomain' \"$TEST_SUBDOMAIN\" \"Tunnel subdomain matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.port' \"$TEST_PORT\" \"Tunnel port matches\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$OWNER_LABEL\" \"Tunnel agentLabel echoes the owning agent\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.maxBodySizeMb' \"10\" \"Tunnel request body limit defaults to 10 MB\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.fqdn' \"Tunnel has an FQDN\" || true\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.createdAt' \"Tunnel has a createdAt timestamp\" || true\n\nlog_info \"Created tunnel ID: $TUNNEL_ID\""
     },
     {
       "id": "verify-tunnel-in-list",
       "label": "Verify tunnel in list",
       "steps": [
         {
-          "id": "step-11",
+          "id": "step-44",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -256,7 +933,7 @@
           ]
         },
         {
-          "id": "step-12",
+          "id": "step-45",
           "label": "Set FOUND",
           "target": "local",
           "op": {
@@ -273,7 +950,7 @@
           ]
         },
         {
-          "id": "step-13",
+          "id": "step-46",
           "label": "Tunnel appears in GET /api/tunnels",
           "target": "local",
           "continueOnError": true,
@@ -292,16 +969,54 @@
               "message": "Tunnel appears in GET /api/tunnels"
             }
           }
+        },
+        {
+          "id": "step-47",
+          "label": "Set FOUND_OWNER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .agentLabel' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "FOUND_OWNER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Tunnel listing shows the owning agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FOUND_OWNER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OWNER_LABEL"
+              },
+              "message": "Tunnel listing shows the owning agent"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify tunnel in list\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(api_get \"tunnels\")\nFOUND=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .subdomain' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND\" \"$TEST_SUBDOMAIN\" \"Tunnel appears in GET /api/tunnels\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify tunnel in list\"\n# ---------------------------------------------------------------------------\n\nLIST_RESPONSE=$(api_get \"tunnels\")\nFOUND=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .subdomain' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND\" \"$TEST_SUBDOMAIN\" \"Tunnel appears in GET /api/tunnels\" || true\n\nFOUND_OWNER=$(echo \"$LIST_RESPONSE\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .agentLabel' 2>/dev/null || echo \"\")\nassert_eq \"$FOUND_OWNER\" \"$OWNER_LABEL\" \"Tunnel listing shows the owning agent\" || true"
     },
     {
       "id": "verify-nginx-configuration",
       "label": "Verify nginx configuration",
       "steps": [
         {
-          "id": "step-14",
+          "id": "step-49",
           "label": "GET /api/onboarding/status",
           "target": "host",
           "op": {
@@ -320,7 +1035,7 @@
           ]
         },
         {
-          "id": "step-17",
+          "id": "step-53",
           "label": "Nginx vhost exists at $VHOST_PATH",
           "target": "local",
           "op": {
@@ -330,7 +1045,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-55",
           "label": "Nginx vhost exists at $VHOST_ALT",
           "target": "local",
           "op": {
@@ -340,7 +1055,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-56",
           "label": "Nginx vhost not found at $VHOST_PATH",
           "target": "local",
           "op": {
@@ -350,7 +1065,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-57",
           "label": "Set NGINX_TEST",
           "target": "local",
           "op": {
@@ -367,7 +1082,7 @@
           ]
         },
         {
-          "id": "step-22",
+          "id": "step-58",
           "label": "nginx -t passes after tunnel creation",
           "target": "local",
           "continueOnError": true,
@@ -386,27 +1101,573 @@
               "message": "nginx -t passes after tunnel creation"
             }
           }
+        },
+        {
+          "id": "step-59",
+          "label": "Set VHOST_CONTENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST_CONTENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "Vhost sets client_max_body_size 10m",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_CONTENT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 10m;"
+              },
+              "message": "Vhost sets client_max_body_size 10m"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Restricted tunnel vhost has an auth_request gate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_CONTENT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "auth_request"
+              },
+              "message": "Restricted tunnel vhost has an auth_request gate"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx configuration\"\n# ---------------------------------------------------------------------------\n\n# Check vhost file exists\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"unknown\")\nVHOST_NAME=\"lamalibre-lamaste-app-${TEST_SUBDOMAIN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"Nginx vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"Nginx vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"Nginx vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify nginx config is still valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after tunnel creation\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify nginx configuration\"\n# ---------------------------------------------------------------------------\n\n# Check vhost file exists\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"unknown\")\nVHOST_NAME=\"lamalibre-lamaste-app-${TEST_SUBDOMAIN}\"\nVHOST_PATH=\"/etc/nginx/sites-enabled/${VHOST_NAME}\"\nVHOST_AVAILABLE=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n\nif [ -f \"$VHOST_PATH\" ] || [ -L \"$VHOST_PATH\" ]; then\n  log_pass \"Nginx vhost exists at $VHOST_PATH\"\nelse\n  VHOST_ALT=\"/etc/nginx/sites-available/${VHOST_NAME}\"\n  if [ -f \"$VHOST_ALT\" ]; then\n    log_pass \"Nginx vhost exists at $VHOST_ALT\"\n  else\n    log_fail \"Nginx vhost not found at $VHOST_PATH\"\n  fi\nfi\n\n# Verify nginx config is still valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after tunnel creation\" || true\n\n# The vhost carries the tunnel's request body limit (nginx would otherwise\n# apply its built-in 1 MB default) and, in the default restricted mode, an\n# auth_request gate\nVHOST_CONTENT=$(sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\")\nassert_contains \"$VHOST_CONTENT\" \"client_max_body_size 10m;\" \"Vhost sets client_max_body_size 10m\" || true\nassert_contains \"$VHOST_CONTENT\" \"auth_request\" \"Restricted tunnel vhost has an auth_request gate\" || true"
+    },
+    {
+      "id": "agent-config-follows-ownership",
+      "label": "Agent config follows ownership",
+      "steps": [
+        {
+          "id": "step-62",
+          "label": "GET /api/tunnels/agent-config?agent=${OWNER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${OWNER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "OWNER_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "agent-config?agent=<owner> is the owner's config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNER_CONFIG"
+              },
+              "path": ".agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "OWNER_LABEL"
+              },
+              "message": "agent-config?agent=<owner> is the owner's config"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set OWNER_CONFIG_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OWNER_CONFIG\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "agent-config?agent=<owner> lists the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_PORT"
+              },
+              "message": "agent-config?agent=<owner> lists the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Extract OWNER_CHISEL_ARGS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OWNER_CHISEL_ARGS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWNER_CONFIG"
+              },
+              "expression": ".chiselArgs[]?"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Owner's chiselArgs carry the tunnel's reverse remote",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_CHISEL_ARGS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "R:127.0.0.1:${TEST_PORT}:127.0.0.1:${TEST_PORT}"
+              },
+              "message": "Owner's chiselArgs carry the tunnel's reverse remote"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Owner's chiselArgs do not skip TLS verification",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_CHISEL_ARGS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "tls-skip-verify"
+              },
+              "message": "Owner's chiselArgs do not skip TLS verification"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Extract OWNER_CHISEL_SERVER",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "OWNER_CHISEL_SERVER",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWNER_CONFIG"
+              },
+              "expression": ".chiselArgs[1] // empty"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "chiselArgs[1] is the chisel server URL",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_CHISEL_SERVER"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "https://tunnel.${DOMAIN}:443"
+              },
+              "message": "chiselArgs[1] is the chisel server URL"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/tunnels/agent-config?agent=${OTHER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${OTHER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "OTHER_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Set OTHER_CONFIG_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$OTHER_CONFIG\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "OTHER_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "agent-config for another agent does not list the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OTHER_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "agent-config for another agent does not list the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "GET /api/tunnels/agent-config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config"
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Admin agent-config without ?agent= returns the domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ADMIN_CONFIG"
+              },
+              "path": ".domain",
+              "message": "Admin agent-config without ?agent= returns the domain"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Admin agent-config without ?agent= returns the chisel server URL",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ADMIN_CONFIG"
+              },
+              "path": ".chiselServerUrl",
+              "message": "Admin agent-config without ?agent= returns the chisel server URL"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Extract ADMIN_HAS_ARGS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ADMIN_HAS_ARGS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ADMIN_CONFIG"
+              },
+              "expression": "has(\"chiselArgs\") or has(\"tunnels\")"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Admin agent-config without ?agent= carries no chiselArgs or tunnels",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_HAS_ARGS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Admin agent-config without ?agent= carries no chiselArgs or tunnels"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "GET /api/tunnels/agent-config?agent=Not_A_Label",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=Not_A_Label",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BAD_AGENT_QUERY_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "agent-config with a malformed ?agent= returns 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_AGENT_QUERY_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "agent-config with a malformed ?agent= returns 400"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Agent config follows ownership\"\n# ---------------------------------------------------------------------------\n\nOWNER_CONFIG=$(api_get \"tunnels/agent-config?agent=${OWNER_LABEL}\")\nassert_json_field \"$OWNER_CONFIG\" '.agentLabel' \"$OWNER_LABEL\" \"agent-config?agent=<owner> is the owner's config\" || true\nOWNER_CONFIG_PORT=$(echo \"$OWNER_CONFIG\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\nassert_eq \"$OWNER_CONFIG_PORT\" \"$TEST_PORT\" \"agent-config?agent=<owner> lists the tunnel\" || true\nOWNER_CHISEL_ARGS=$(echo \"$OWNER_CONFIG\" | jq -r '.chiselArgs[]?' 2>/dev/null || echo \"\")\nassert_contains \"$OWNER_CHISEL_ARGS\" \"R:127.0.0.1:${TEST_PORT}:127.0.0.1:${TEST_PORT}\" \"Owner's chiselArgs carry the tunnel's reverse remote\" || true\n# Agents verify the chisel server's certificate: the args are\n# [\"client\", \"https://tunnel.<domain>:443\", ...remotes] with no skip-verify flag\nassert_not_contains \"$OWNER_CHISEL_ARGS\" \"tls-skip-verify\" \"Owner's chiselArgs do not skip TLS verification\" || true\nOWNER_CHISEL_SERVER=$(echo \"$OWNER_CONFIG\" | jq -r '.chiselArgs[1] // empty' 2>/dev/null || echo \"\")\nassert_eq \"$OWNER_CHISEL_SERVER\" \"https://tunnel.${DOMAIN}:443\" \"chiselArgs[1] is the chisel server URL\" || true\n\nOTHER_CONFIG=$(api_get \"tunnels/agent-config?agent=${OTHER_LABEL}\")\nOTHER_CONFIG_PORT=$(echo \"$OTHER_CONFIG\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\nassert_eq \"$OTHER_CONFIG_PORT\" \"\" \"agent-config for another agent does not list the tunnel\" || true\n\nADMIN_CONFIG=$(api_get \"tunnels/agent-config\")\nassert_json_field_not_empty \"$ADMIN_CONFIG\" '.domain' \"Admin agent-config without ?agent= returns the domain\" || true\nassert_json_field_not_empty \"$ADMIN_CONFIG\" '.chiselServerUrl' \"Admin agent-config without ?agent= returns the chisel server URL\" || true\nADMIN_HAS_ARGS=$(echo \"$ADMIN_CONFIG\" | jq -r 'has(\"chiselArgs\") or has(\"tunnels\")' 2>/dev/null || echo \"unknown\")\nassert_eq \"$ADMIN_HAS_ARGS\" \"false\" \"Admin agent-config without ?agent= carries no chiselArgs or tunnels\" || true\n\nBAD_AGENT_QUERY_STATUS=$(api_get_status \"tunnels/agent-config?agent=Not_A_Label\")\nassert_eq \"$BAD_AGENT_QUERY_STATUS\" \"400\" \"agent-config with a malformed ?agent= returns 400\" || true"
+    },
+    {
+      "id": "chisel-grant-for-the-owner",
+      "label": "Chisel grant for the owner",
+      "steps": [
+        {
+          "id": "step-81",
+          "label": "Set OWNER_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "OWNER_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "Chisel authfile grants the owner ${GRANT_PATTERN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel authfile grants the owner ${GRANT_PATTERN}"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set OTHER_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OTHER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "OTHER_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "Chisel authfile does not grant the port to another agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "OTHER_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel authfile does not grant the port to another agent"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Set GRANT_HOLDERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grant_holders \"$GRANT_PATTERN\""
+          },
+          "capture": [
+            {
+              "variable": "GRANT_HOLDERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "Exactly one chisel user holds the grant for the port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GRANT_HOLDERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Exactly one chisel user holds the grant for the port"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Chisel grant for the owner\"\n# ---------------------------------------------------------------------------\n\nOWNER_GRANTS=$(chisel_grants \"$OWNER_LABEL\")\nassert_contains \"$OWNER_GRANTS\" \"$GRANT_PATTERN\" \"Chisel authfile grants the owner ${GRANT_PATTERN}\" || true\n\nOTHER_GRANTS=$(chisel_grants \"$OTHER_LABEL\")\nassert_not_contains \"$OTHER_GRANTS\" \"$GRANT_PATTERN\" \"Chisel authfile does not grant the port to another agent\" || true\n\nGRANT_HOLDERS=$(chisel_grant_holders \"$GRANT_PATTERN\")\nassert_eq \"$GRANT_HOLDERS\" \"1\" \"Exactly one chisel user holds the grant for the port\" || true"
     },
     {
       "id": "validation-reserved-subdomain",
       "label": "Validation: reserved subdomain",
       "steps": [
         {
-          "id": "step-23",
+          "id": "step-87",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "panel",
-              "port": 19999,
-              "description": "reserved test"
-            },
+            "body": "{\\",
             "statusOnly": true
           },
           "capture": [
@@ -419,7 +1680,7 @@
           ]
         },
         {
-          "id": "step-24",
+          "id": "step-88",
           "label": "Reserved subdomain 'panel' rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -440,14 +1701,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: reserved subdomain\"\n# ---------------------------------------------------------------------------\n\nRESERVED_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"panel\",\"port\":19999,\"description\":\"reserved test\"}')\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved subdomain 'panel' rejected (HTTP 400)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: reserved subdomain\"\n# ---------------------------------------------------------------------------\n\nRESERVED_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"panel\\\",\\\"port\\\":19999,\\\"description\\\":\\\"reserved test\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved subdomain 'panel' rejected (HTTP 400)\" || true"
     },
     {
       "id": "validation-duplicate-subdomain",
       "label": "Validation: duplicate subdomain",
       "steps": [
         {
-          "id": "step-25",
+          "id": "step-89",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -467,7 +1728,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-90",
           "label": "Duplicate subdomain rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -488,14 +1749,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate subdomain\"\n# ---------------------------------------------------------------------------\n\nDUP_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"$TEST_SUBDOMAIN\\\",\\\"port\\\":19998,\\\"description\\\":\\\"dup test\\\"}\")\nassert_eq \"$DUP_STATUS\" \"400\" \"Duplicate subdomain rejected (HTTP 400)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate subdomain\"\n# ---------------------------------------------------------------------------\n\nDUP_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"$TEST_SUBDOMAIN\\\",\\\"port\\\":19998,\\\"description\\\":\\\"dup test\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\nassert_eq \"$DUP_STATUS\" \"400\" \"Duplicate subdomain rejected (HTTP 400)\" || true"
     },
     {
       "id": "validation-duplicate-port",
       "label": "Validation: duplicate port",
       "steps": [
         {
-          "id": "step-27",
+          "id": "step-91",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -515,7 +1776,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-92",
           "label": "Duplicate port rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -536,25 +1797,21 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate port\"\n# ---------------------------------------------------------------------------\n\nDUP_PORT_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2edup-port\\\",\\\"port\\\":$TEST_PORT,\\\"description\\\":\\\"dup port test\\\"}\")\nassert_eq \"$DUP_PORT_STATUS\" \"400\" \"Duplicate port rejected (HTTP 400)\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: duplicate port\"\n# ---------------------------------------------------------------------------\n\nDUP_PORT_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2edup-port\\\",\\\"port\\\":$TEST_PORT,\\\"description\\\":\\\"dup port test\\\",\\\"agentLabel\\\":\\\"${OTHER_LABEL}\\\"}\")\nassert_eq \"$DUP_PORT_STATUS\" \"400\" \"Duplicate port rejected (HTTP 400)\" || true"
     },
     {
       "id": "validation-invalid-port",
       "label": "Validation: invalid port",
       "steps": [
         {
-          "id": "step-29",
+          "id": "step-93",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "tunnels",
-            "body": {
-              "subdomain": "e2elow",
-              "port": 80,
-              "description": "low port"
-            },
+            "body": "{\\",
             "statusOnly": true
           },
           "capture": [
@@ -567,7 +1824,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-94",
           "label": "Port below 1024 rejected (HTTP $LOW_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -592,7 +1849,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-95",
           "label": "Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)",
           "target": "local",
           "op": {
@@ -617,57 +1874,1012 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: invalid port\"\n# ---------------------------------------------------------------------------\n\nLOW_PORT_STATUS=$(api_post_status \"tunnels\" '{\"subdomain\":\"e2elow\",\"port\":80,\"description\":\"low port\"}')\nif [ \"$LOW_PORT_STATUS\" = \"400\" ] || [ \"$LOW_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $LOW_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Validation: invalid port\"\n# ---------------------------------------------------------------------------\n\nLOW_PORT_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2elow\\\",\\\"port\\\":80,\\\"description\\\":\\\"low port\\\",\\\"agentLabel\\\":\\\"${OWNER_LABEL}\\\"}\")\nif [ \"$LOW_PORT_STATUS\" = \"400\" ] || [ \"$LOW_PORT_STATUS\" = \"422\" ]; then\n  log_pass \"Port below 1024 rejected (HTTP $LOW_PORT_STATUS)\"\nelse\n  log_fail \"Port below 1024 should be rejected (got HTTP $LOW_PORT_STATUS)\"\nfi"
     },
     {
-      "id": "mac-plist-endpoint",
-      "label": "Mac plist endpoint",
+      "id": "reconfigure-request-body-limit",
+      "label": "Reconfigure: request body limit",
       "steps": [
         {
-          "id": "step-32",
-          "label": "GET /api/tunnels/mac-plist?format=json",
+          "id": "step-96",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
           "target": "host",
           "op": {
             "type": "api",
-            "method": "GET",
-            "path": "tunnels/mac-plist?format=json"
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "maxBodySizeMb": 100
+            }
           },
           "capture": [
             {
-              "variable": "PLIST_RESPONSE",
+              "variable": "BODY_RESPONSE",
               "from": {
                 "kind": "body"
               }
             }
-          ]
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
         },
         {
-          "id": "step-33",
-          "label": "Mac plist endpoint returns plist content",
+          "id": "step-97",
+          "label": "Body limit change returned ok: true",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "json_field_not_empty",
+              "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "PLIST_RESPONSE"
+                "name": "BODY_RESPONSE"
               },
-              "path": ".plist",
-              "message": "Mac plist endpoint returns plist content"
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Body limit change returned ok: true"
             }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Tunnel request body limit is now 100 MB",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BODY_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "100"
+              },
+              "message": "Tunnel request body limit is now 100 MB"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "Set VHOST_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Vhost rewritten with client_max_body_size 100m",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 100m;"
+              },
+              "message": "Vhost rewritten with client_max_body_size 100m"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "Previous body limit removed from vhost",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 10m;"
+              },
+              "message": "Previous body limit removed from vhost"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Set NGINX_TEST_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "nginx -t passes after body limit change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after body limit change"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "maxBodySizeMb": 0
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BODY_ZERO_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Body limit 0 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_ZERO_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Body limit 0 rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "maxBodySizeMb": 10241
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BODY_HIGH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Body limit 10241 rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_HIGH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Body limit 10241 rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "maxBodySizeMb": 1.5
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BODY_FRACTION_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "Fractional body limit rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_FRACTION_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Fractional body limit rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "BODY_AFTER_REJECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "Rejected body limits left the tunnel unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BODY_AFTER_REJECT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "100"
+              },
+              "message": "Rejected body limits left the tunnel unchanged"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "Cannot reconfigure — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot reconfigure — no tunnel ID from creation step"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "TUNNEL_ID"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Mac plist endpoint\"\n# ---------------------------------------------------------------------------\n\nPLIST_RESPONSE=$(api_get \"tunnels/mac-plist?format=json\")\nassert_json_field_not_empty \"$PLIST_RESPONSE\" '.plist' \"Mac plist endpoint returns plist content\" || true\n\nFAKE_ID=\"00000000-0000-0000-0000-000000000000\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reconfigure: request body limit\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  BODY_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"maxBodySizeMb\": 100}')\n  assert_json_field \"$BODY_RESPONSE\" '.ok' 'true' \"Body limit change returned ok: true\" || true\n  assert_json_field \"$BODY_RESPONSE\" '.tunnel.maxBodySizeMb' \"100\" \"Tunnel request body limit is now 100 MB\" || true\n\n  VHOST_BODY=$(sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\")\n  assert_contains \"$VHOST_BODY\" \"client_max_body_size 100m;\" \"Vhost rewritten with client_max_body_size 100m\" || true\n  assert_not_contains \"$VHOST_BODY\" \"client_max_body_size 10m;\" \"Previous body limit removed from vhost\" || true\n\n  NGINX_TEST_BODY=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_BODY\" \"syntax is ok\" \"nginx -t passes after body limit change\" || true\n\n  BODY_ZERO_STATUS=$(api_patch_status \"tunnels/$TUNNEL_ID\" '{\"maxBodySizeMb\": 0}')\n  assert_eq \"$BODY_ZERO_STATUS\" \"400\" \"Body limit 0 rejected (HTTP 400)\" || true\n\n  BODY_HIGH_STATUS=$(api_patch_status \"tunnels/$TUNNEL_ID\" '{\"maxBodySizeMb\": 10241}')\n  assert_eq \"$BODY_HIGH_STATUS\" \"400\" \"Body limit 10241 rejected (HTTP 400)\" || true\n\n  BODY_FRACTION_STATUS=$(api_patch_status \"tunnels/$TUNNEL_ID\" '{\"maxBodySizeMb\": 1.5}')\n  assert_eq \"$BODY_FRACTION_STATUS\" \"400\" \"Fractional body limit rejected (HTTP 400)\" || true\n\n  BODY_AFTER_REJECT=$(api_get \"tunnels\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .maxBodySizeMb' 2>/dev/null || echo \"\")\n  assert_eq \"$BODY_AFTER_REJECT\" \"100\" \"Rejected body limits left the tunnel unchanged\" || true\nelse\n  log_skip \"Cannot reconfigure — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "reconfigure-access-mode",
+      "label": "Reconfigure: access mode",
+      "steps": [
+        {
+          "id": "step-113",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "accessMode": "public"
+            }
+          },
+          "capture": [
+            {
+              "variable": "MODE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "Access mode change returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MODE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Access mode change returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "Tunnel access mode is now public",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "MODE_RESPONSE"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "public"
+              },
+              "message": "Tunnel access mode is now public"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "Set VHOST_PUBLIC",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST_PUBLIC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "Public tunnel vhost has no auth_request gate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_PUBLIC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "auth_request"
+              },
+              "message": "Public tunnel vhost has no auth_request gate"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Body limit kept across the access mode change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_PUBLIC"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 100m;"
+              },
+              "message": "Body limit kept across the access mode change"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "Set NGINX_TEST_MODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "nginx -t passes after access mode change",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_MODE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after access mode change"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "accessMode": "open"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BAD_MODE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "Unknown access mode rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BAD_MODE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Unknown access mode rejected (HTTP 400)"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "Cannot reconfigure — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot reconfigure — no tunnel ID from creation step"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "TUNNEL_ID"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reconfigure: access mode\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  MODE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"accessMode\": \"public\"}')\n  assert_json_field \"$MODE_RESPONSE\" '.ok' 'true' \"Access mode change returned ok: true\" || true\n  assert_json_field \"$MODE_RESPONSE\" '.tunnel.accessMode' \"public\" \"Tunnel access mode is now public\" || true\n\n  VHOST_PUBLIC=$(sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\")\n  assert_not_contains \"$VHOST_PUBLIC\" \"auth_request\" \"Public tunnel vhost has no auth_request gate\" || true\n  assert_contains \"$VHOST_PUBLIC\" \"client_max_body_size 100m;\" \"Body limit kept across the access mode change\" || true\n\n  NGINX_TEST_MODE=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_MODE\" \"syntax is ok\" \"nginx -t passes after access mode change\" || true\n\n  BAD_MODE_STATUS=$(api_patch_status \"tunnels/$TUNNEL_ID\" '{\"accessMode\": \"open\"}')\n  assert_eq \"$BAD_MODE_STATUS\" \"400\" \"Unknown access mode rejected (HTTP 400)\" || true\nelse\n  log_skip \"Cannot reconfigure — no tunnel ID from creation step\"\nfi"
     },
     {
       "id": "disable-tunnel",
       "label": "Disable tunnel",
       "steps": [
         {
-          "id": "step-35",
+          "id": "step-124",
+          "label": "Set PID_BEFORE_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-125",
           "label": "PATCH /api/tunnels/$TUNNEL_ID",
           "target": "host",
           "op": {
@@ -702,7 +2914,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-126",
           "label": "Tunnel disable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -738,7 +2950,27 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-127",
+          "label": "Revoked grant (disable) restarted chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Revoked grant (disable) restarted chisel"
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "Chisel not restarted after a grant was revoked by disabling the tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel not restarted after a grant was revoked by disabling the tunnel"
+          }
+        },
+        {
+          "id": "step-129",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -753,24 +2985,10 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
-          "id": "step-38",
+          "id": "step-130",
           "label": "Set ENABLED_STATE",
           "target": "local",
           "op": {
@@ -784,24 +3002,10 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
-          "id": "step-39",
+          "id": "step-131",
           "label": "Tunnel shows as disabled in list",
           "target": "local",
           "continueOnError": true,
@@ -819,24 +3023,10 @@
               },
               "message": "Tunnel shows as disabled in list"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
           }
         },
         {
-          "id": "step-40",
+          "id": "step-132",
           "label": "Nginx sites-enabled symlink removed for disabled tunnel",
           "target": "local",
           "op": {
@@ -846,7 +3036,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-133",
           "label": "Nginx sites-enabled symlink still exists for disabled tunnel",
           "target": "local",
           "op": {
@@ -856,7 +3046,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-134",
           "label": "Set NGINX_TEST_DISABLED",
           "target": "local",
           "op": {
@@ -873,7 +3063,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-135",
           "label": "nginx -t passes after tunnel disable",
           "target": "local",
           "continueOnError": true,
@@ -894,17 +3084,16 @@
           }
         },
         {
-          "id": "step-44",
-          "label": "GET /api/tunnels/mac-plist?format=json",
-          "target": "host",
+          "id": "step-136",
+          "label": "Set DISABLED_GRANTS",
+          "target": "local",
           "op": {
-            "type": "api",
-            "method": "GET",
-            "path": "tunnels/mac-plist?format=json"
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
           },
           "capture": [
             {
-              "variable": "PLIST_DISABLED",
+              "variable": "DISABLED_GRANTS",
               "from": {
                 "kind": "body"
               }
@@ -912,25 +3101,8 @@
           ]
         },
         {
-          "id": "step-45",
-          "label": "Extract PLIST_CONTENT",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "PLIST_CONTENT",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "PLIST_DISABLED"
-              },
-              "expression": ".plist"
-            }
-          }
-        },
-        {
-          "id": "step-46",
-          "label": "Disabled tunnel excluded from plist",
+          "id": "step-137",
+          "label": "Chisel grant removed while the tunnel is disabled",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -939,18 +3111,180 @@
               "kind": "not_contains",
               "actual": {
                 "kind": "var",
-                "name": "PLIST_CONTENT"
+                "name": "DISABLED_GRANTS"
               },
               "substring": {
                 "kind": "var",
-                "name": "TEST_SUBDOMAIN"
+                "name": "GRANT_PATTERN"
               },
-              "message": "Disabled tunnel excluded from plist"
+              "message": "Chisel grant removed while the tunnel is disabled"
             }
           }
         },
         {
-          "id": "step-47",
+          "id": "step-138",
+          "label": "GET /api/tunnels/agent-config?agent=${OWNER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${OWNER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "DISABLED_CONFIG_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "Disabled tunnel is not in the owner's agent-config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLED_CONFIG_PORT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Disabled tunnel is not in the owner's agent-config"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "maxBodySizeMb": 50
+            }
+          },
+          "capture": [
+            {
+              "variable": "DISABLED_BODY_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-141",
+          "label": "Body limit changed on a disabled tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLED_BODY_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "50"
+              },
+              "message": "Body limit changed on a disabled tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "Tunnel stays disabled after reconfiguration",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLED_BODY_RESPONSE"
+              },
+              "path": ".tunnel.enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Tunnel stays disabled after reconfiguration"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Set VHOST_DISABLED_BODY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "VHOST_DISABLED_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-144",
+          "label": "Disabled tunnel's vhost rewritten with 50m",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_DISABLED_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 50m;"
+              },
+              "message": "Disabled tunnel's vhost rewritten with 50m"
+            }
+          }
+        },
+        {
+          "id": "step-145",
+          "label": "Reconfiguration did not re-enable the disabled tunnel's vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Reconfiguration did not re-enable the disabled tunnel's vhost"
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "Reconfiguration re-enabled the disabled tunnel's vhost",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Reconfiguration re-enabled the disabled tunnel's vhost"
+          }
+        },
+        {
+          "id": "step-147",
           "label": "Cannot disable — no tunnel ID from creation step",
           "target": "local",
           "op": {
@@ -960,14 +3294,45 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  TOGGLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": false}')\n  assert_json_field \"$TOGGLE_RESPONSE\" '.ok' 'true' \"Tunnel disable returned ok: true\" || true\n\n  # Verify tunnel shows as disabled in list\n  LIST_DISABLED=$(api_get \"tunnels\")\n  ENABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE\" \"false\" \"Tunnel shows as disabled in list\" || true\n\n  # Verify nginx vhost symlink removed (disabled = no symlink in sites-enabled)\n  if [ ! -L \"$VHOST_PATH\" ] && [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx sites-enabled symlink removed for disabled tunnel\"\n  else\n    log_fail \"Nginx sites-enabled symlink still exists for disabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_DISABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_DISABLED\" \"syntax is ok\" \"nginx -t passes after tunnel disable\" || true\n\n  # Verify disabled tunnel excluded from plist\n  PLIST_DISABLED=$(api_get \"tunnels/mac-plist?format=json\")\n  PLIST_CONTENT=$(echo \"$PLIST_DISABLED\" | jq -r '.plist' 2>/dev/null || echo \"\")\n  assert_not_contains \"$PLIST_CONTENT\" \"$TEST_SUBDOMAIN\" \"Disabled tunnel excluded from plist\" || true\nelse\n  log_skip \"Cannot disable — no tunnel ID from creation step\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Disable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  PID_BEFORE_DISABLE=$(chisel_pid)\n  TOGGLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": false}')\n  assert_json_field \"$TOGGLE_RESPONSE\" '.ok' 'true' \"Tunnel disable returned ok: true\" || true\n  if [ \"$PINNED_CHISEL\" = \"true\" ]; then\n    if chisel_restarted_since \"$PID_BEFORE_DISABLE\"; then\n      log_pass \"Revoked grant (disable) restarted chisel\"\n    else\n      log_fail \"Chisel not restarted after a grant was revoked by disabling the tunnel\"\n    fi\n  fi\n\n  # Verify tunnel shows as disabled in list\n  LIST_DISABLED=$(api_get \"tunnels\")\n  ENABLED_STATE=$(echo \"$LIST_DISABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE\" \"false\" \"Tunnel shows as disabled in list\" || true\n\n  # Verify nginx vhost symlink removed (disabled = no symlink in sites-enabled)\n  if [ ! -L \"$VHOST_PATH\" ] && [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx sites-enabled symlink removed for disabled tunnel\"\n  else\n    log_fail \"Nginx sites-enabled symlink still exists for disabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_DISABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_DISABLED\" \"syntax is ok\" \"nginx -t passes after tunnel disable\" || true\n\n  # A disabled tunnel grants its port to nobody and is absent from the owner's config\n  DISABLED_GRANTS=$(chisel_grants \"$OWNER_LABEL\")\n  assert_not_contains \"$DISABLED_GRANTS\" \"$GRANT_PATTERN\" \"Chisel grant removed while the tunnel is disabled\" || true\n\n  DISABLED_CONFIG_PORT=$(api_get \"tunnels/agent-config?agent=${OWNER_LABEL}\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\n  assert_eq \"$DISABLED_CONFIG_PORT\" \"\" \"Disabled tunnel is not in the owner's agent-config\" || true\n\n  # Reconfiguring a disabled tunnel rewrites its vhost but keeps it disabled\n  DISABLED_BODY_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"maxBodySizeMb\": 50}')\n  assert_json_field \"$DISABLED_BODY_RESPONSE\" '.tunnel.maxBodySizeMb' \"50\" \"Body limit changed on a disabled tunnel\" || true\n  assert_json_field \"$DISABLED_BODY_RESPONSE\" '.tunnel.enabled' \"false\" \"Tunnel stays disabled after reconfiguration\" || true\n  VHOST_DISABLED_BODY=$(sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\")\n  assert_contains \"$VHOST_DISABLED_BODY\" \"client_max_body_size 50m;\" \"Disabled tunnel's vhost rewritten with 50m\" || true\n  if [ ! -L \"$VHOST_PATH\" ] && [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Reconfiguration did not re-enable the disabled tunnel's vhost\"\n  else\n    log_fail \"Reconfiguration re-enabled the disabled tunnel's vhost\"\n  fi\nelse\n  log_skip \"Cannot disable — no tunnel ID from creation step\"\nfi"
     },
     {
       "id": "re-enable-tunnel",
       "label": "Re-enable tunnel",
       "steps": [
         {
-          "id": "step-48",
+          "id": "step-148",
+          "label": "Set PID_BEFORE_ENABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-149",
           "label": "PATCH /api/tunnels/$TUNNEL_ID",
           "target": "host",
           "op": {
@@ -1002,7 +3367,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-150",
           "label": "Tunnel re-enable returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1038,7 +3403,33 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-151",
+          "label": "Restored grant hot-reloaded: chisel not restarted by the re-enable",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(chisel_pid)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BEFORE_ENABLE"
+              },
+              "message": "Restored grant hot-reloaded: chisel not restarted by the re-enable"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PINNED_CHISEL",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-152",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -1053,24 +3444,10 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
-          "id": "step-51",
+          "id": "step-153",
           "label": "Set ENABLED_STATE2",
           "target": "local",
           "op": {
@@ -1084,24 +3461,10 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
-          "id": "step-52",
+          "id": "step-154",
           "label": "Tunnel shows as enabled in list",
           "target": "local",
           "continueOnError": true,
@@ -1119,24 +3482,10 @@
               },
               "message": "Tunnel shows as enabled in list"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "TUNNEL_ID"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "TUNNEL_ID",
-                "value": "null"
-              }
-            ]
           }
         },
         {
-          "id": "step-53",
+          "id": "step-155",
           "label": "Nginx vhost restored for re-enabled tunnel",
           "target": "local",
           "op": {
@@ -1146,7 +3495,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-156",
           "label": "Nginx vhost not restored for re-enabled tunnel",
           "target": "local",
           "op": {
@@ -1156,7 +3505,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-157",
           "label": "Set NGINX_TEST_ENABLED",
           "target": "local",
           "op": {
@@ -1173,7 +3522,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-158",
           "label": "nginx -t passes after tunnel re-enable",
           "target": "local",
           "continueOnError": true,
@@ -1194,17 +3543,16 @@
           }
         },
         {
-          "id": "step-57",
-          "label": "GET /api/tunnels/mac-plist?format=json",
-          "target": "host",
+          "id": "step-159",
+          "label": "Set ENABLED_GRANTS",
+          "target": "local",
           "op": {
-            "type": "api",
-            "method": "GET",
-            "path": "tunnels/mac-plist?format=json"
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
           },
           "capture": [
             {
-              "variable": "PLIST_ENABLED",
+              "variable": "ENABLED_GRANTS",
               "from": {
                 "kind": "body"
               }
@@ -1212,25 +3560,8 @@
           ]
         },
         {
-          "id": "step-58",
-          "label": "Extract PLIST_CONTENT2",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "PLIST_CONTENT2",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "PLIST_ENABLED"
-              },
-              "expression": ".plist"
-            }
-          }
-        },
-        {
-          "id": "step-59",
-          "label": "Re-enabled tunnel included in plist",
+          "id": "step-160",
+          "label": "Chisel grant restored for the re-enabled tunnel",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1239,18 +3570,18 @@
               "kind": "contains",
               "actual": {
                 "kind": "var",
-                "name": "PLIST_CONTENT2"
+                "name": "ENABLED_GRANTS"
               },
               "substring": {
                 "kind": "var",
-                "name": "TEST_PORT"
+                "name": "GRANT_PATTERN"
               },
-              "message": "Re-enabled tunnel included in plist"
+              "message": "Chisel grant restored for the re-enabled tunnel"
             }
           }
         },
         {
-          "id": "step-60",
+          "id": "step-161",
           "label": "Cannot re-enable — no tunnel ID from creation step",
           "target": "local",
           "op": {
@@ -1260,14 +3591,1291 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  ENABLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": true}')\n  assert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"Tunnel re-enable returned ok: true\" || true\n\n  # Verify tunnel shows as enabled in list\n  LIST_ENABLED=$(api_get \"tunnels\")\n  ENABLED_STATE2=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE2\" \"true\" \"Tunnel shows as enabled in list\" || true\n\n  # Verify nginx vhost symlink restored\n  if [ -L \"$VHOST_PATH\" ] || [ -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost restored for re-enabled tunnel\"\n  else\n    log_fail \"Nginx vhost not restored for re-enabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_ENABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_ENABLED\" \"syntax is ok\" \"nginx -t passes after tunnel re-enable\" || true\n\n  # Verify re-enabled tunnel included in plist\n  PLIST_ENABLED=$(api_get \"tunnels/mac-plist?format=json\")\n  PLIST_CONTENT2=$(echo \"$PLIST_ENABLED\" | jq -r '.plist' 2>/dev/null || echo \"\")\n  assert_contains \"$PLIST_CONTENT2\" \"$TEST_PORT\" \"Re-enabled tunnel included in plist\" || true\nelse\n  log_skip \"Cannot re-enable — no tunnel ID from creation step\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Re-enable tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  PID_BEFORE_ENABLE=$(chisel_pid)\n  ENABLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": true}')\n  assert_json_field \"$ENABLE_RESPONSE\" '.ok' 'true' \"Tunnel re-enable returned ok: true\" || true\n  if [ \"$PINNED_CHISEL\" = \"true\" ]; then\n    assert_eq \"$(chisel_pid)\" \"$PID_BEFORE_ENABLE\" \"Restored grant hot-reloaded: chisel not restarted by the re-enable\" || true\n  fi\n\n  # Verify tunnel shows as enabled in list\n  LIST_ENABLED=$(api_get \"tunnels\")\n  ENABLED_STATE2=$(echo \"$LIST_ENABLED\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .enabled' 2>/dev/null || echo \"\")\n  assert_eq \"$ENABLED_STATE2\" \"true\" \"Tunnel shows as enabled in list\" || true\n\n  # Verify nginx vhost symlink restored\n  if [ -L \"$VHOST_PATH\" ] || [ -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost restored for re-enabled tunnel\"\n  else\n    log_fail \"Nginx vhost not restored for re-enabled tunnel\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_ENABLED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_ENABLED\" \"syntax is ok\" \"nginx -t passes after tunnel re-enable\" || true\n\n  # Verify the owner's chisel grant is back\n  ENABLED_GRANTS=$(chisel_grants \"$OWNER_LABEL\")\n  assert_contains \"$ENABLED_GRANTS\" \"$GRANT_PATTERN\" \"Chisel grant restored for the re-enabled tunnel\" || true\nelse\n  log_skip \"Cannot re-enable — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "reassign-tunnel-to-another-agent",
+      "label": "Reassign tunnel to another agent",
+      "steps": [
+        {
+          "id": "step-162",
+          "label": "Set PID_BEFORE_REASSIGN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_BEFORE_REASSIGN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "REASSIGN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-164",
+          "label": "Tunnel reassignment returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REASSIGN_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel reassignment returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "Reassignment (a revocation for the previous owner) restarted chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Reassignment (a revocation for the previous owner) restarted chisel"
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "Chisel not restarted after the tunnel moved to another agent",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Chisel not restarted after the tunnel moved to another agent"
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "Tunnel is now owned by the second agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REASSIGN_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "OTHER_LABEL"
+              },
+              "message": "Tunnel is now owned by the second agent"
+            }
+          }
+        },
+        {
+          "id": "step-168",
+          "label": "Set MOVED_TO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OTHER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "MOVED_TO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-169",
+          "label": "Chisel grant moved to the new owner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "MOVED_TO"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant moved to the new owner"
+            }
+          }
+        },
+        {
+          "id": "step-170",
+          "label": "Set MOVED_FROM",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "MOVED_FROM",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-171",
+          "label": "Chisel grant removed from the previous owner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "MOVED_FROM"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Chisel grant removed from the previous owner"
+            }
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "Set MOVED_HOLDERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grant_holders \"$GRANT_PATTERN\""
+          },
+          "capture": [
+            {
+              "variable": "MOVED_HOLDERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-173",
+          "label": "Still exactly one chisel user holds the grant",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MOVED_HOLDERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Still exactly one chisel user holds the grant"
+            }
+          }
+        },
+        {
+          "id": "step-174",
+          "label": "GET /api/tunnels/agent-config?agent=${OTHER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${OTHER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "NEW_OWNER_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-175",
+          "label": "New owner's agent-config lists the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_OWNER_PORT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TEST_PORT"
+              },
+              "message": "New owner's agent-config lists the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-176",
+          "label": "GET /api/tunnels/agent-config?agent=${OWNER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=${OWNER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "OLD_OWNER_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-177",
+          "label": "Previous owner's agent-config no longer lists the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OLD_OWNER_PORT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Previous owner's agent-config no longer lists the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-178",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "REASSIGN_UNKNOWN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-179",
+          "label": "Reassignment to an unknown agent rejected (HTTP 400)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REASSIGN_UNKNOWN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Reassignment to an unknown agent rejected (HTTP 400)"
+            }
+          }
+        },
+        {
+          "id": "step-180",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "OWNER_AFTER_REJECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-181",
+          "label": "Rejected reassignment left the owner unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OWNER_AFTER_REJECT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OTHER_LABEL"
+              },
+              "message": "Rejected reassignment left the owner unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "Cannot reassign — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot reassign — no tunnel ID from creation step"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Reassign tunnel to another agent\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  PID_BEFORE_REASSIGN=$(chisel_pid)\n  REASSIGN_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" \"{\\\"agentLabel\\\": \\\"${OTHER_LABEL}\\\"}\")\n  assert_json_field \"$REASSIGN_RESPONSE\" '.ok' 'true' \"Tunnel reassignment returned ok: true\" || true\n  if [ \"$PINNED_CHISEL\" = \"true\" ]; then\n    if chisel_restarted_since \"$PID_BEFORE_REASSIGN\"; then\n      log_pass \"Reassignment (a revocation for the previous owner) restarted chisel\"\n    else\n      log_fail \"Chisel not restarted after the tunnel moved to another agent\"\n    fi\n  fi\n  assert_json_field \"$REASSIGN_RESPONSE\" '.tunnel.agentLabel' \"$OTHER_LABEL\" \"Tunnel is now owned by the second agent\" || true\n\n  # The grant moves with the tunnel in the same chisel sync\n  MOVED_TO=$(chisel_grants \"$OTHER_LABEL\")\n  assert_contains \"$MOVED_TO\" \"$GRANT_PATTERN\" \"Chisel grant moved to the new owner\" || true\n  MOVED_FROM=$(chisel_grants \"$OWNER_LABEL\")\n  assert_not_contains \"$MOVED_FROM\" \"$GRANT_PATTERN\" \"Chisel grant removed from the previous owner\" || true\n  MOVED_HOLDERS=$(chisel_grant_holders \"$GRANT_PATTERN\")\n  assert_eq \"$MOVED_HOLDERS\" \"1\" \"Still exactly one chisel user holds the grant\" || true\n\n  NEW_OWNER_PORT=$(api_get \"tunnels/agent-config?agent=${OTHER_LABEL}\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\n  assert_eq \"$NEW_OWNER_PORT\" \"$TEST_PORT\" \"New owner's agent-config lists the tunnel\" || true\n  OLD_OWNER_PORT=$(api_get \"tunnels/agent-config?agent=${OWNER_LABEL}\" | jq -r --arg sd \"$TEST_SUBDOMAIN\" '.tunnels[]? | select(.subdomain == $sd) | .port' 2>/dev/null || echo \"\")\n  assert_eq \"$OLD_OWNER_PORT\" \"\" \"Previous owner's agent-config no longer lists the tunnel\" || true\n\n  # Reassigning to an agent that is not enrolled is rejected and changes nothing\n  REASSIGN_UNKNOWN_STATUS=$(api_patch_status \"tunnels/$TUNNEL_ID\" \"{\\\"agentLabel\\\": \\\"${UNKNOWN_LABEL}\\\"}\")\n  assert_eq \"$REASSIGN_UNKNOWN_STATUS\" \"400\" \"Reassignment to an unknown agent rejected (HTTP 400)\" || true\n  OWNER_AFTER_REJECT=$(api_get \"tunnels\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .agentLabel' 2>/dev/null || echo \"\")\n  assert_eq \"$OWNER_AFTER_REJECT\" \"$OTHER_LABEL\" \"Rejected reassignment left the owner unchanged\" || true\nelse\n  log_skip \"Cannot reassign — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "one-patch-owner-access-mode-body-limit-and-enabled-together",
+      "label": "One PATCH: owner, access mode, body limit and enabled together",
+      "steps": [
+        {
+          "id": "step-183",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "COMBINED_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "Combined PATCH returned ok: true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COMBINED_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Combined PATCH returned ok: true"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-185",
+          "label": "Combined PATCH moved the tunnel back to ${OWNER_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COMBINED_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "OWNER_LABEL"
+              },
+              "message": "Combined PATCH moved the tunnel back to ${OWNER_LABEL}"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-186",
+          "label": "Combined PATCH set the access mode",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COMBINED_RESPONSE"
+              },
+              "path": ".tunnel.accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "authenticated"
+              },
+              "message": "Combined PATCH set the access mode"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-187",
+          "label": "Combined PATCH set the body limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COMBINED_RESPONSE"
+              },
+              "path": ".tunnel.maxBodySizeMb",
+              "expected": {
+                "kind": "literal",
+                "value": "25"
+              },
+              "message": "Combined PATCH set the body limit"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-188",
+          "label": "Combined PATCH disabled the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COMBINED_RESPONSE"
+              },
+              "path": ".tunnel.enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Combined PATCH disabled the tunnel"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "Set COMBINED_VHOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "COMBINED_VHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-190",
+          "label": "Vhost rewritten with the new body limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "COMBINED_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_max_body_size 25m;"
+              },
+              "message": "Vhost rewritten with the new body limit"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-191",
+          "label": "Vhost rewritten for the authenticated access mode",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "COMBINED_VHOST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "auth_request"
+              },
+              "message": "Vhost rewritten for the authenticated access mode"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-192",
+          "label": "Combined PATCH left the vhost disabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Combined PATCH left the vhost disabled"
+          }
+        },
+        {
+          "id": "step-193",
+          "label": "Combined PATCH left the vhost enabled although it disabled the tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Combined PATCH left the vhost enabled although it disabled the tunnel"
+          }
+        },
+        {
+          "id": "step-194",
+          "label": "Set COMBINED_HOLDERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grant_holders \"$GRANT_PATTERN\""
+          },
+          "capture": [
+            {
+              "variable": "COMBINED_HOLDERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-195",
+          "label": "Disabled tunnel's port granted to nobody after the combined PATCH",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "COMBINED_HOLDERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Disabled tunnel's port granted to nobody after the combined PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-196",
+          "label": "Set NGINX_TEST_COMBINED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo nginx -t 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "NGINX_TEST_COMBINED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-197",
+          "label": "nginx -t passes after the combined PATCH",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "NGINX_TEST_COMBINED"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "syntax is ok"
+              },
+              "message": "nginx -t passes after the combined PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "PATCH /api/tunnels/$TUNNEL_ID",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/$TUNNEL_ID",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "REENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-199",
+          "label": "Tunnel re-enabled after the combined PATCH",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REENABLE_RESPONSE"
+              },
+              "path": ".tunnel.enabled",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Tunnel re-enabled after the combined PATCH"
+            }
+          }
+        },
+        {
+          "id": "step-200",
+          "label": "Set REENABLED_GRANTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grants \"$OWNER_LABEL\""
+          },
+          "capture": [
+            {
+              "variable": "REENABLED_GRANTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-201",
+          "label": "Owner granted the port again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "REENABLED_GRANTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "GRANT_PATTERN"
+              },
+              "message": "Owner granted the port again"
+            }
+          }
+        },
+        {
+          "id": "step-202",
+          "label": "Cannot run the combined PATCH — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot run the combined PATCH — no tunnel ID from creation step"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"One PATCH: owner, access mode, body limit and enabled together\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  # Applied as one workflow under the tunnel lock: the owner first, then the\n  # vhost settings, then enabled\n  COMBINED_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" \"{\\\"agentLabel\\\": \\\"${OWNER_LABEL}\\\", \\\"accessMode\\\": \\\"authenticated\\\", \\\"maxBodySizeMb\\\": 25, \\\"enabled\\\": false}\")\n  assert_json_field \"$COMBINED_RESPONSE\" '.ok' 'true' \"Combined PATCH returned ok: true\" || true\n  assert_json_field \"$COMBINED_RESPONSE\" '.tunnel.agentLabel' \"$OWNER_LABEL\" \"Combined PATCH moved the tunnel back to ${OWNER_LABEL}\" || true\n  assert_json_field \"$COMBINED_RESPONSE\" '.tunnel.accessMode' \"authenticated\" \"Combined PATCH set the access mode\" || true\n  assert_json_field \"$COMBINED_RESPONSE\" '.tunnel.maxBodySizeMb' \"25\" \"Combined PATCH set the body limit\" || true\n  assert_json_field \"$COMBINED_RESPONSE\" '.tunnel.enabled' \"false\" \"Combined PATCH disabled the tunnel\" || true\n\n  COMBINED_VHOST=$(sudo cat \"$VHOST_AVAILABLE\" 2>/dev/null || echo \"\")\n  assert_contains \"$COMBINED_VHOST\" \"client_max_body_size 25m;\" \"Vhost rewritten with the new body limit\" || true\n  assert_contains \"$COMBINED_VHOST\" \"auth_request\" \"Vhost rewritten for the authenticated access mode\" || true\n  if [ ! -L \"$VHOST_PATH\" ] && [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Combined PATCH left the vhost disabled\"\n  else\n    log_fail \"Combined PATCH left the vhost enabled although it disabled the tunnel\"\n  fi\n  COMBINED_HOLDERS=$(chisel_grant_holders \"$GRANT_PATTERN\")\n  assert_eq \"$COMBINED_HOLDERS\" \"0\" \"Disabled tunnel's port granted to nobody after the combined PATCH\" || true\n\n  NGINX_TEST_COMBINED=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_COMBINED\" \"syntax is ok\" \"nginx -t passes after the combined PATCH\" || true\n\n  REENABLE_RESPONSE=$(api_patch \"tunnels/$TUNNEL_ID\" '{\"enabled\": true}')\n  assert_json_field \"$REENABLE_RESPONSE\" '.tunnel.enabled' \"true\" \"Tunnel re-enabled after the combined PATCH\" || true\n  REENABLED_GRANTS=$(chisel_grants \"$OWNER_LABEL\")\n  assert_contains \"$REENABLED_GRANTS\" \"$GRANT_PATTERN\" \"Owner granted the port again\" || true\nelse\n  log_skip \"Cannot run the combined PATCH — no tunnel ID from creation step\"\nfi"
+    },
+    {
+      "id": "revoking-the-owning-agent-releases-the-tunnel",
+      "label": "Revoking the owning agent releases the tunnel",
+      "steps": [
+        {
+          "id": "step-203",
+          "label": "DELETE /api/certs/agent/${OWNER_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/${OWNER_LABEL}"
+          },
+          "capture": [
+            {
+              "variable": "REVOKE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-204",
+          "label": "Owning agent ${OWNER_LABEL} revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REVOKE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Owning agent ${OWNER_LABEL} revoked"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-205",
+          "label": "GET /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels"
+          },
+          "capture": [
+            {
+              "variable": "RELEASED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-206",
+          "label": "Released tunnel still exists",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELEASED"
+              },
+              "path": ".subdomain",
+              "expected": {
+                "kind": "var",
+                "name": "TEST_SUBDOMAIN"
+              },
+              "message": "Released tunnel still exists"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-207",
+          "label": "Released tunnel has no owning agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELEASED"
+              },
+              "path": ".agentLabel // \"none\"",
+              "expected": {
+                "kind": "literal",
+                "value": "none"
+              },
+              "message": "Released tunnel has no owning agent"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-208",
+          "label": "Set RELEASED_HOLDERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grant_holders \"$GRANT_PATTERN\""
+          },
+          "capture": [
+            {
+              "variable": "RELEASED_HOLDERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "Released tunnel's port is granted to no chisel user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RELEASED_HOLDERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Released tunnel's port is granted to no chisel user"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-210",
+          "label": "Set REVOKED_USERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_user_count \"agent-${OWNER_LABEL}:\""
+          },
+          "capture": [
+            {
+              "variable": "REVOKED_USERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "Revoked agent's chisel user removed from the authfile",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REVOKED_USERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Revoked agent's chisel user removed from the authfile"
+            }
+          },
+          "when": {
+            "kind": "and",
+            "conditions": [
+              {
+                "kind": "var_not_empty",
+                "variable": "TUNNEL_ID"
+              },
+              {
+                "kind": "var_not_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-212",
+          "label": "Cannot check tunnel release — no tunnel ID from creation step",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "Cannot check tunnel release — no tunnel ID from creation step"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "TUNNEL_ID"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "TUNNEL_ID",
+                "value": "null"
+              }
+            ]
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revoking the owning agent releases the tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  REVOKE_RESPONSE=$(api_delete \"certs/agent/${OWNER_LABEL}\")\n  assert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Owning agent ${OWNER_LABEL} revoked\" || true\n\n  # The tunnel keeps its hostname (reserved, dark) but has no owner, so a later\n  # enrollment reusing the label inherits nothing\n  RELEASED=$(api_get \"tunnels\" | jq -c --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id)' 2>/dev/null || echo \"\")\n  assert_json_field \"$RELEASED\" '.subdomain' \"$TEST_SUBDOMAIN\" \"Released tunnel still exists\" || true\n  assert_json_field \"$RELEASED\" '.agentLabel // \"none\"' \"none\" \"Released tunnel has no owning agent\" || true\n  RELEASED_HOLDERS=$(chisel_grant_holders \"$GRANT_PATTERN\")\n  assert_eq \"$RELEASED_HOLDERS\" \"0\" \"Released tunnel's port is granted to no chisel user\" || true\n  REVOKED_USERS=$(chisel_user_count \"agent-${OWNER_LABEL}:\")\n  assert_eq \"$REVOKED_USERS\" \"0\" \"Revoked agent's chisel user removed from the authfile\" || true\nelse\n  log_skip \"Cannot check tunnel release — no tunnel ID from creation step\"\nfi"
     },
     {
       "id": "toggle-nonexistent-tunnel",
       "label": "Toggle nonexistent tunnel",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-213",
           "label": "PATCH /api/tunnels/$FAKE_ID",
           "target": "host",
           "op": {
@@ -1289,7 +4897,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-214",
           "label": "Toggle nonexistent tunnel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1317,7 +4925,7 @@
       "label": "Delete tunnel",
       "steps": [
         {
-          "id": "step-63",
+          "id": "step-215",
           "label": "DELETE /api/tunnels/$TUNNEL_ID",
           "target": "host",
           "op": {
@@ -1349,7 +4957,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-216",
           "label": "Tunnel deletion returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1385,7 +4993,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-217",
           "label": "GET /api/tunnels",
           "target": "host",
           "op": {
@@ -1417,7 +5025,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-218",
           "label": "Set FOUND_AFTER",
           "target": "local",
           "op": {
@@ -1448,7 +5056,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-219",
           "label": "Tunnel no longer in list after deletion",
           "target": "local",
           "continueOnError": true,
@@ -1483,7 +5091,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-220",
           "label": "Nginx vhost removed after tunnel deletion",
           "target": "local",
           "op": {
@@ -1493,7 +5101,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-221",
           "label": "Nginx vhost still exists after tunnel deletion",
           "target": "local",
           "op": {
@@ -1503,7 +5111,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-222",
           "label": "Set NGINX_TEST_AFTER",
           "target": "local",
           "op": {
@@ -1520,7 +5128,7 @@
           ]
         },
         {
-          "id": "step-71",
+          "id": "step-223",
           "label": "nginx -t passes after tunnel deletion",
           "target": "local",
           "continueOnError": true,
@@ -1541,7 +5149,45 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-224",
+          "label": "Set DELETED_HOLDERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "chisel_grant_holders \"$GRANT_PATTERN\""
+          },
+          "capture": [
+            {
+              "variable": "DELETED_HOLDERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-225",
+          "label": "Chisel grant removed after tunnel deletion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELETED_HOLDERS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Chisel grant removed after tunnel deletion"
+            }
+          }
+        },
+        {
+          "id": "step-227",
           "label": "Cannot delete — no tunnel ID from creation step",
           "target": "local",
           "op": {
@@ -1551,14 +5197,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  DELETE_RESPONSE=$(api_delete \"tunnels/$TUNNEL_ID\")\n  assert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Tunnel deletion returned ok: true\" || true\n\n  # Verify tunnel is gone from list\n  LIST_AFTER=$(api_get \"tunnels\")\n  FOUND_AFTER=$(echo \"$LIST_AFTER\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\n  assert_eq \"$FOUND_AFTER\" \"\" \"Tunnel no longer in list after deletion\" || true\n\n  # Verify vhost removed\n  if [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost removed after tunnel deletion\"\n  else\n    log_fail \"Nginx vhost still exists after tunnel deletion\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_AFTER=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after tunnel deletion\" || true\nelse\n  log_skip \"Cannot delete — no tunnel ID from creation step\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Delete tunnel\"\n# ---------------------------------------------------------------------------\n\nif [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n  DELETE_RESPONSE=$(api_delete \"tunnels/$TUNNEL_ID\")\n  assert_json_field \"$DELETE_RESPONSE\" '.ok' 'true' \"Tunnel deletion returned ok: true\" || true\n\n  # Verify tunnel is gone from list\n  LIST_AFTER=$(api_get \"tunnels\")\n  FOUND_AFTER=$(echo \"$LIST_AFTER\" | jq -r --arg id \"$TUNNEL_ID\" '.tunnels[] | select(.id == $id) | .id' 2>/dev/null || echo \"\")\n  assert_eq \"$FOUND_AFTER\" \"\" \"Tunnel no longer in list after deletion\" || true\n\n  # Verify vhost removed\n  if [ ! -f \"$VHOST_PATH\" ]; then\n    log_pass \"Nginx vhost removed after tunnel deletion\"\n  else\n    log_fail \"Nginx vhost still exists after tunnel deletion\"\n  fi\n\n  # Verify nginx config still valid\n  NGINX_TEST_AFTER=$(sudo nginx -t 2>&1 || true)\n  assert_contains \"$NGINX_TEST_AFTER\" \"syntax is ok\" \"nginx -t passes after tunnel deletion\" || true\n\n  # Verify no chisel user is granted the deleted tunnel's port\n  DELETED_HOLDERS=$(chisel_grant_holders \"$GRANT_PATTERN\")\n  assert_eq \"$DELETED_HOLDERS\" \"0\" \"Chisel grant removed after tunnel deletion\" || true\n\n  TUNNEL_ID=\"\"\nelse\n  log_skip \"Cannot delete — no tunnel ID from creation step\"\nfi"
     },
     {
       "id": "delete-nonexistent-tunnel",
       "label": "Delete nonexistent tunnel",
       "steps": [
         {
-          "id": "step-73",
+          "id": "step-228",
           "label": "Set NOT_FOUND_STATUS",
           "target": "local",
           "op": {
@@ -1575,7 +5221,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-229",
           "label": "Delete nonexistent tunnel returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1600,8 +5246,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 04 — Tunnel Lifecycle\n# ============================================================================\n# Verifies tunnel CRUD operations:\n# - Create a tunnel via POST /api/tunnels\n# - Verify tunnel appears in GET /api/tunnels\n# - Verify nginx vhost is created and nginx -t passes\n# - Enable/disable tunnel via PATCH /api/tunnels/:id\n# - Delete tunnel via DELETE /api/tunnels/:id\n# - Verify cleanup (tunnel removed from list, vhost removed, nginx -t passes)\n# - Test validation (reserved subdomains, duplicate names, invalid ports)\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nTEST_SUBDOMAIN=\"e2etest-$(date +%s)\"\nTEST_PORT=18080\nTEST_DESCRIPTION=\"E2E test tunnel\"\n\nbegin_test \"04 — Tunnel Lifecycle\"\n",
+  "headerRaw": "# ============================================================================\n# 04 — Tunnel Lifecycle\n# ============================================================================\n# Verifies tunnel CRUD operations and tunnel ownership:\n# - Every tunnel is carried by an owning agent: an admin POST /api/tunnels\n#   must name an enrolled, non-revoked agent in agentLabel\n# - Create a tunnel via POST /api/tunnels; the owner and the default request\n#   body limit are echoed back\n# - Verify tunnel appears in GET /api/tunnels\n# - Verify nginx vhost is created (with client_max_body_size) and nginx -t passes\n# - GET /api/tunnels/agent-config?agent=<label> returns the owner's chisel\n#   config; without ?agent= an admin gets only the domain and chisel URL\n# - The chisel authfile grants the owner exactly the tunnel's anchored reverse\n#   remote and always carries the no-grants sentinel user\n# - Reconfigure the request body limit and access mode via PATCH (vhost\n#   rewritten in place; a disabled tunnel stays disabled)\n# - Enable/disable tunnel via PATCH /api/tunnels/:id (the chisel grant follows)\n# - Reassign the tunnel via PATCH {\"agentLabel\"} (the chisel grant moves)\n# - Change owner, access mode, body limit and enabled in ONE PATCH (one\n#   locked workflow: owner, then vhost settings, then enabled)\n# - Grant additions are hot-reloaded by chisel (no restart); revocations\n#   (disable, reassign, revoke) restart it\n# - Revoking the owning agent's certificate releases the tunnel: it keeps its\n#   hostname but loses its owner and its chisel grant (dark)\n# - Delete tunnel via DELETE /api/tunnels/:id (the chisel grant is removed)\n# - Verify cleanup (tunnel removed from list, vhost removed, nginx -t passes)\n# - Test validation (owner, reserved subdomains, duplicate names, invalid ports,\n#   body limit bounds)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq\n\nTEST_SUBDOMAIN=\"e2etest-$(date +%s)\"\nTEST_PORT=18080\nTEST_DESCRIPTION=\"E2E test tunnel\"\nOWNER_LABEL=\"tunnel-owner-$(date +%s)\"\nOTHER_LABEL=\"tunnel-other-$(date +%s)\"\nUNKNOWN_LABEL=\"no-such-agent-$(date +%s)\"\nTUNNEL_ID=\"\"\nFAKE_ID=\"00000000-0000-0000-0000-000000000000\"\nCHISEL_USERS=\"/etc/lamalibre/lamaste/chisel-users\"\n# The anchored reverse remote chisel must grant the owner for TEST_PORT\nGRANT_PATTERN=\"^R:127\\\\.0\\\\.0\\\\.1:${TEST_PORT}\\$\"\n\n# chisel_grants <label> — print the reverse remotes the chisel authfile grants\n# the chisel user agent-<label>, one per line. The authfile is JSON of the form\n# {\"<user>:<password>\": [<regex>, ...]}; only the user half of each key is\n# matched and only the grants are printed, never a password.\nchisel_grants() {\n  sudo cat \"$CHISEL_USERS\" 2>/dev/null \\\n    | jq -r --arg u \"agent-$1:\" 'to_entries[] | select(.key | startswith($u)) | .value[]' 2>/dev/null \\\n    || true\n}\n\n# chisel_user_count <prefix> — number of authfile users whose name starts with <prefix>\nchisel_user_count() {\n  sudo cat \"$CHISEL_USERS\" 2>/dev/null \\\n    | jq -r --arg p \"$1\" '[keys[] | select(startswith($p))] | length' 2>/dev/null \\\n    || echo \"0\"\n}\n\n# chisel_grant_holders <pattern> — number of authfile users granted <pattern>\nchisel_grant_holders() {\n  sudo cat \"$CHISEL_USERS\" 2>/dev/null \\\n    | jq -r --arg g \"$1\" '[to_entries[] | select(any(.value[]; . == $g))] | length' 2>/dev/null \\\n    || echo \"0\"\n}\n\n# chisel_pid — MainPID of the chisel server\nchisel_pid() {\n  systemctl show -p MainPID --value chisel 2>/dev/null || echo \"0\"\n}\n\n# chisel_restarted_since <pid> — succeed once chisel's MainPID differs from\n# <pid> (polled for up to 15 seconds: the restart is part of the request, but\n# systemd may report the new PID a moment later)\nchisel_restarted_since() {\n  local deadline=$((SECONDS + 15)) now\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    now=$(chisel_pid)\n    if [ -n \"$now\" ] && [ \"$now\" != \"0\" ] && [ \"$now\" != \"$1\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\nbegin_test \"04 — Tunnel Lifecycle\"\n\n# Cleanup function — always runs on exit. The tunnel goes first so that\n# revoking its owner never leaves a tunnel behind.\ncleanup() {\n  if [ -n \"$TUNNEL_ID\" ] && [ \"$TUNNEL_ID\" != \"null\" ]; then\n    api_delete \"tunnels/${TUNNEL_ID}\" > /dev/null 2>&1 || true\n  fi\n  api_delete \"certs/agent/${OWNER_LABEL}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${OTHER_LABEL}\" > /dev/null 2>&1 || true\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

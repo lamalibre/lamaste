@@ -167,6 +167,16 @@ if [ "$COMPLETE_EVENTS" -eq 1 ]; then
   else
     log_fail "Auth method missing from complete event"
   fi
+
+  # bootPersistence mirrors this user's systemd lingering: the chisel user
+  # unit starts at boot only when lingering is on
+  BOOT_PERSISTENCE=$(echo "$COMPLETE_LINE" | jq -r '.agent.bootPersistence // empty')
+  case "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || true)" in
+    yes) EXPECTED_PERSISTENCE="enabled" ;;
+    no) EXPECTED_PERSISTENCE="disabled" ;;
+    *) EXPECTED_PERSISTENCE="unknown" ;;
+  esac
+  assert_eq "$BOOT_PERSISTENCE" "$EXPECTED_PERSISTENCE" "Complete event bootPersistence matches this user's lingering" || true
 elif [ "$ERROR_EVENTS" -gt 0 ]; then
   ERROR_MSG=$(echo "$JSON_OUTPUT" | jq -r 'select(.event=="error") | .message // "unknown"' 2>/dev/null | head -1)
   log_fail "Agent setup emitted error: $ERROR_MSG"

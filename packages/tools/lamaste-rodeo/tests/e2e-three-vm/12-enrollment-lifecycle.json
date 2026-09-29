@@ -3,7 +3,7 @@
   "meta": {
     "number": 12,
     "name": "Enrollment Token Lifecycle",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "12 — Enrollment Token Lifecycle (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "openssl"]
@@ -679,15 +679,36 @@
         },
         {
           "id": "step-39",
-          "label": "Exec on agent",
-          "target": "agent",
+          "label": "lamaste-agent status has a Sync: line",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_STATUS_OUTPUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "Sync:"
+              },
+              "message": "lamaste-agent status has a Sync: line"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Set SYNC_LINE",
+          "target": "local",
           "op": {
             "type": "exec",
-            "command": "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled"
+            "command": "echo \"$AGENT_STATUS_OUTPUT\" | grep \"Sync:\" | head -1 || true"
           },
           "capture": [
             {
-              "variable": "SYSTEMD_ENABLED",
+              "variable": "SYNC_LINE",
               "from": {
                 "kind": "body"
               }
@@ -695,37 +716,286 @@
           ]
         },
         {
-          "id": "step-40",
-          "label": "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "systemd service lamalibre-lamaste-chisel-e2e-agent is enabled"
-          },
-          "when": {
-            "kind": "var_eq",
-            "variable": "SYSTEMD_ENABLED",
-            "value": "enabled"
-          }
-        },
-        {
           "id": "step-41",
-          "label": "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)",
+          "label": "Status Sync: line reports the timer installed",
           "target": "local",
+          "continueOnError": true,
           "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)"
-          },
-          "when": {
-            "kind": "var_not_eq",
-            "variable": "SYSTEMD_ENABLED",
-            "value": "enabled"
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LINE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "not installed"
+              },
+              "message": "Status Sync: line reports the timer installed"
+            }
           }
         },
         {
           "id": "step-42",
+          "label": "Status Sync: line reports no failing sync",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LINE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "failing"
+              },
+              "message": "Status Sync: line reports no failing sync"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Status Sync: line reports the timer running its program (last run under 120 s ago)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LINE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "not running"
+              },
+              "message": "Status Sync: line reports the timer running its program (last run under 120 s ago)"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set CHISEL_LINE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENT_STATUS_OUTPUT\" | grep \"Chisel:\" | head -1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_LINE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Status Chisel: line shows the pinned release 1.12.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_LINE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "1.12.0"
+              },
+              "message": "Status Chisel: line shows the pinned release 1.12.0"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo disabled"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_TIMER_ENABLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_TIMER_ENABLED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is enabled"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo inactive"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_TIMER_ACTIVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_TIMER_ACTIVE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "GET /api/tunnels/agent-config?agent=test-agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config?agent=test-agent"
+          },
+          "capture": [
+            {
+              "variable": "CARRIED_TUNNELS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_ACTIVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Chisel unit is not running while the agent carries no tunnel (state: ${CHISEL_ACTIVE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ACTIVE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Chisel unit is not running while the agent carries no tunnel (state: ${CHISEL_ACTIVE})"
+            }
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CARRIED_TUNNELS",
+            "value": "0"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Could not read the agent's tunnel count from agent-config",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Could not read the agent's tunnel count from agent-config"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "CARRIED_TUNNELS",
+            "value": "0"
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Chisel unit is running while the agent carries ${CARRIED_TUNNELS} tunnel(s)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_ACTIVE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Chisel unit is running while the agent carries ${CARRIED_TUNNELS} tunnel(s)"
+            }
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "CARRIED_TUNNELS",
+            "value": "0"
+          }
+        },
+        {
+          "id": "step-56",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -742,7 +1012,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-57",
           "label": "Agent config file exists after setup",
           "target": "local",
           "continueOnError": true,
@@ -763,14 +1033,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify lamaste-agent status shows enrolled agent\"\n# ---------------------------------------------------------------------------\n\n# The agent VM was enrolled during setup-agent.sh using lamaste-agent setup --token.\n# Verify the lamaste-agent CLI can report its status correctly.\n# Note: the agent may show \"not loaded\" if no tunnels are configured (chisel needs\n# at least one remote). We check for \"Config: present\" to confirm setup completed.\nAGENT_STATUS_OUTPUT=$(agent_exec \"lamaste-agent status 2>&1 || true\")\nif echo \"$AGENT_STATUS_OUTPUT\" | grep -q \"Config:.*present\"; then\n  log_pass \"lamaste-agent status shows config present\"\nelse\n  log_fail \"lamaste-agent status does not show config present\"\n  log_info \"Status output: $AGENT_STATUS_OUTPUT\"\nfi\n\n# Verify systemd service is enabled (it may not be active if no tunnels are configured)\n# Multi-agent: service name includes the label set during setup-agent.sh.\n# The agent installs as a user-level systemd unit (linger enabled), so we query\n# the per-user manager via XDG_RUNTIME_DIR + --user.\nSYSTEMD_ENABLED=$(agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || echo disabled\")\nif [ \"$SYSTEMD_ENABLED\" = \"enabled\" ]; then\n  log_pass \"systemd service lamalibre-lamaste-chisel-e2e-agent is enabled\"\nelse\n  log_fail \"systemd service lamalibre-lamaste-chisel-e2e-agent is $SYSTEMD_ENABLED (expected enabled)\"\nfi\n\n# Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)\nCONFIG_EXISTS=$(agent_exec \"test -f ~/.lamalibre/lamaste/agents/e2e-agent/config.json && echo yes || echo no\")\nassert_eq \"$CONFIG_EXISTS\" \"yes\" \"Agent config file exists after setup\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify lamaste-agent status shows enrolled agent\"\n# ---------------------------------------------------------------------------\n\n# The agent VM was enrolled during setup-agent.sh using lamaste-agent setup --token.\n# Verify the lamaste-agent CLI can report its status correctly.\n# Note: the agent may show \"not loaded\" if no tunnels are configured (chisel needs\n# at least one remote). We check for \"Config: present\" to confirm setup completed.\nAGENT_STATUS_OUTPUT=$(agent_exec \"lamaste-agent status 2>&1 || true\")\nif echo \"$AGENT_STATUS_OUTPUT\" | grep -q \"Config:.*present\"; then\n  log_pass \"lamaste-agent status shows config present\"\nelse\n  log_fail \"lamaste-agent status does not show config present\"\n  log_info \"Status output: $AGENT_STATUS_OUTPUT\"\nfi\n\n# status reports the sync timer and the pinned chisel release\nassert_contains \"$AGENT_STATUS_OUTPUT\" \"Sync:\" \"lamaste-agent status has a Sync: line\" || true\nSYNC_LINE=$(echo \"$AGENT_STATUS_OUTPUT\" | grep \"Sync:\" | head -1 || true)\nassert_not_contains \"$SYNC_LINE\" \"not installed\" \"Status Sync: line reports the timer installed\" || true\nassert_not_contains \"$SYNC_LINE\" \"failing\" \"Status Sync: line reports no failing sync\" || true\nassert_not_contains \"$SYNC_LINE\" \"not running\" \"Status Sync: line reports the timer running its program (last run under 120 s ago)\" || true\nCHISEL_LINE=$(echo \"$AGENT_STATUS_OUTPUT\" | grep \"Chisel:\" | head -1 || true)\nassert_contains \"$CHISEL_LINE\" \"1.12.0\" \"Status Chisel: line shows the pinned release 1.12.0\" || true\n\n# The sync timer (user units — linger enabled — queried via XDG_RUNTIME_DIR +\n# --user; names carry the label set during setup-agent.sh) keeps the chisel\n# client converged with the panel. It must be enabled and running.\nSYNC_TIMER_ENABLED=$(agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-enabled lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo disabled\")\nassert_eq \"$SYNC_TIMER_ENABLED\" \"enabled\" \"Sync timer lamalibre-lamaste-sync-e2e-agent.timer is enabled\" || true\nSYNC_TIMER_ACTIVE=$(agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-sync-e2e-agent.timer 2>/dev/null || echo inactive\")\nassert_eq \"$SYNC_TIMER_ACTIVE\" \"active\" \"Sync timer lamalibre-lamaste-sync-e2e-agent.timer is active\" || true\n\n# The chisel unit runs exactly when the panel assigns this agent a tunnel:\n# with none it stays stopped (and disabled) instead of crash-looping\nCARRIED_TUNNELS=$(host_api_get \"tunnels/agent-config?agent=test-agent\" 2>/dev/null | jq '.tunnels | length' 2>/dev/null || echo \"unknown\")\nCHISEL_ACTIVE=$(agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user is-active lamalibre-lamaste-chisel-e2e-agent 2>/dev/null || true\")\nif [ \"$CARRIED_TUNNELS\" = \"0\" ]; then\n  assert_not_eq \"$CHISEL_ACTIVE\" \"active\" \"Chisel unit is not running while the agent carries no tunnel (state: ${CHISEL_ACTIVE})\" || true\nelif [ \"$CARRIED_TUNNELS\" = \"unknown\" ]; then\n  log_fail \"Could not read the agent's tunnel count from agent-config\"\nelse\n  assert_eq \"$CHISEL_ACTIVE\" \"active\" \"Chisel unit is running while the agent carries ${CARRIED_TUNNELS} tunnel(s)\" || true\nfi\n\n# Verify agent config file exists (multi-agent: per-agent config at agents/<label>/config.json)\nCONFIG_EXISTS=$(agent_exec \"test -f ~/.lamalibre/lamaste/agents/e2e-agent/config.json && echo yes || echo no\")\nassert_eq \"$CONFIG_EXISTS\" \"yes\" \"Agent config file exists after setup\" || true"
     },
     {
       "id": "clean-up-revoke-test-agent",
       "label": "Clean up: revoke test agent",
       "steps": [
         {
-          "id": "step-46",
+          "id": "step-60",
           "label": "Cleaned up test agent and temp files",
           "target": "local",
           "op": {
@@ -787,7 +1057,7 @@
       "label": "Admin upgrade endpoint is locked down (B9)",
       "steps": [
         {
-          "id": "step-47",
+          "id": "step-61",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -796,7 +1066,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-62",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -813,7 +1083,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-63",
           "label": "Set ADMIN_BODY",
           "target": "local",
           "op": {
@@ -830,7 +1100,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-64",
           "label": "Set LOCAL_ADMIN_TMP",
           "target": "local",
           "op": {
@@ -847,7 +1117,7 @@
           ]
         },
         {
-          "id": "step-54",
+          "id": "step-68",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -871,7 +1141,7 @@
           ]
         },
         {
-          "id": "step-55",
+          "id": "step-69",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -888,7 +1158,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-70",
           "label": "Panel-initiated admin upgrade returns 503",
           "target": "local",
           "continueOnError": true,
@@ -909,7 +1179,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-71",
           "label": "Extract UPGRADE_ERR",
           "target": "local",
           "op": {
@@ -926,7 +1196,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-72",
           "label": "Error message references \\`lamaste-server reset-admin\\` recovery path",
           "target": "local",
           "op": {
@@ -936,7 +1206,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-73",
           "label": "Unexpected upgrade error body: $UPGRADE_ERR",
           "target": "local",
           "op": {
@@ -946,7 +1216,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-74",
           "label": "GET /api/certs/admin/auth-mode",
           "target": "host",
           "op": {
@@ -964,7 +1234,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-75",
           "label": "Admin auth mode still p12 after refused upgrade",
           "target": "local",
           "continueOnError": true,
@@ -993,7 +1263,7 @@
       "label": "P12 rotation lockdown",
       "steps": [
         {
-          "id": "step-62",
+          "id": "step-76",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1013,7 +1283,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-79",
           "label": "P12 rotation blocked (HTTP $ROTATE_STATUS)",
           "target": "local",
           "op": {
@@ -1023,7 +1293,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-82",
           "label": "P12 rotation blocked — nginx rejected the client cert (HTTP $ROTATE_STATUS)",
           "target": "local",
           "op": {
@@ -1033,7 +1303,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-85",
           "label": "Unexpected status for P12 rotation: HTTP $ROTATE_STATUS (expected 503/410/496/000)",
           "target": "local",
           "op": {

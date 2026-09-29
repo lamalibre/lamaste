@@ -247,18 +247,16 @@ assert_eq "$ACCESS_AFTER_VAL" "false" "Charlie denied after group deletion" || t
 log_section "8. Tunnel Access Modes (agent-only)"
 # ===========================================================================
 
-# Detect agent label for tunnel creation
-AGENTS_DIR="/etc/lamalibre/lamaste/pki/agents"
-AGENT_LABEL=""
-if [ -d "$AGENTS_DIR" ]; then
-  AGENT_LABEL=$(ls "$AGENTS_DIR" 2>/dev/null | head -1 || echo "")
-fi
+# Every tunnel is owned by an enrolled agent — enroll one for this section
+GK_AGENT_LABEL="gatekeeper-e2e-$(date +%s)"
+GK_AGENT_RESPONSE=$(api_post "certs/agent" '{"label":"'"${GK_AGENT_LABEL}"'","capabilities":["tunnels:read"]}' 2>/dev/null || echo '{}')
+GK_AGENT_OK=$(echo "$GK_AGENT_RESPONSE" | jq -r '.ok // empty' 2>/dev/null || echo "")
 
-if [ -n "$AGENT_LABEL" ]; then
+if [ "$GK_AGENT_OK" = "true" ]; then
   # Create tunnel with default access mode (should be restricted)
   # Note: tunnel creation needs a valid port and subdomain — this may fail
   # if ports/subdomains are in use, which is acceptable in single-VM
-  TUNNEL_RESULT=$(api_post "tunnels" '{"subdomain":"e2e-gk-test","port":19294,"description":"gatekeeper e2e test"}' 2>/dev/null || echo '{}')
+  TUNNEL_RESULT=$(api_post "tunnels" "{\"subdomain\":\"e2e-gk-test\",\"port\":19294,\"description\":\"gatekeeper e2e test\",\"agentLabel\":\"${GK_AGENT_LABEL}\"}" 2>/dev/null || echo '{}')
   TUNNEL_MODE=$(echo "$TUNNEL_RESULT" | jq -r '.tunnel.accessMode // empty')
   if [ "$TUNNEL_MODE" = "restricted" ]; then
     log_pass "Default tunnel access mode is 'restricted'"
@@ -272,8 +270,10 @@ if [ -n "$AGENT_LABEL" ]; then
   else
     log_skip "Tunnel creation failed (port/subdomain conflict or cert issue) — skipping accessMode test"
   fi
+  # Revoke the agent only after its tunnel is gone
+  api_delete "certs/agent/${GK_AGENT_LABEL}" > /dev/null 2>&1 || true
 else
-  log_skip "No enrolled agent — skipping tunnel access mode tests"
+  log_fail "Failed to enroll agent ${GK_AGENT_LABEL} for tunnel access mode tests"
 fi
 
 # ===========================================================================

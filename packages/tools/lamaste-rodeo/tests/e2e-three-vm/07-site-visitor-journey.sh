@@ -15,6 +15,14 @@
 # 8. Re-enable Authelia protection via PATCH
 # 9. Visit site from visitor VM without auth — should redirect again (302)
 # 10. Cleanup: delete the site
+# 11. Custom-domain site with an alias: verify DNS (dnsmasq on the host
+#     resolves the custom domain), then from the visitor the alias answers
+#     301 to the same path on the site's domain and following it serves the
+#     site; adding an alias to the live site re-issues the certificate
+#
+# Every visitor request verifies the host's certificate (no -k): the visitor
+# trusts the E2E test CA (setup-visitor.sh), so a certificate that does not
+# name the requested host — e.g. an alias missing from subjectAltName — fails.
 # ============================================================================
 
 set -euo pipefail
@@ -56,6 +64,15 @@ SITE_FQDN="${SITE_NAME}.${TEST_DOMAIN}"
 SITE_ID=""
 MARKER="E2E_SITE_TEST_OK_$(date +%s)"
 
+# Custom-domain site with aliases (section 11)
+RUN_ID="$(date +%s)"
+CUSTOM_DOMAIN="e2e-alias-${RUN_ID}.test"
+ALIAS_WWW="www.${CUSTOM_DOMAIN}"
+ALIAS_BLOG="blog.${CUSTOM_DOMAIN}"
+ALIAS_SITE_ID=""
+ALIAS_MARKER="E2E_ALIAS_SITE_OK_${RUN_ID}"
+ALIAS_DNSMASQ_CONF="/etc/dnsmasq.d/lamaste-e2e-07-aliases.conf"
+
 begin_test "07 — Static Site Visitor Journey (Three-VM)"
 
 # ---------------------------------------------------------------------------
@@ -69,6 +86,11 @@ cleanup() {
   if [ -n "$SITE_ID" ] && [ "$SITE_ID" != "null" ]; then
     host_api_delete "sites/${SITE_ID}" 2>/dev/null || true
   fi
+  if [ -n "$ALIAS_SITE_ID" ] && [ "$ALIAS_SITE_ID" != "null" ]; then
+    host_api_delete "sites/${ALIAS_SITE_ID}" > /dev/null 2>&1 || true
+  fi
+  visitor_exec "sed -i '/${CUSTOM_DOMAIN}/d' /etc/hosts 2>/dev/null || true" 2>/dev/null || true
+  host_exec "rm -f ${ALIAS_DNSMASQ_CONF} && systemctl restart dnsmasq" > /dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -126,7 +148,7 @@ visitor_exec "grep -q '${SITE_FQDN}' /etc/hosts || echo '${HOST_IP} ${SITE_FQDN}
 log_section "Visit site from visitor VM WITHOUT auth — should redirect to Authelia"
 # ---------------------------------------------------------------------------
 
-UNAUTH_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
+UNAUTH_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
 
 if [ "$UNAUTH_STATUS" = "302" ] || [ "$UNAUTH_STATUS" = "401" ]; then
   log_pass "Unauthenticated request redirected/rejected (HTTP $UNAUTH_STATUS)"
@@ -135,7 +157,7 @@ else
 fi
 
 # Verify redirect target is the Authelia portal
-UNAUTH_LOCATION=$(visitor_exec "curl -sk -o /dev/null -w '%{redirect_url}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "")
+UNAUTH_LOCATION=$(visitor_exec "curl -s -o /dev/null -w '%{redirect_url}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "")
 if echo "$UNAUTH_LOCATION" | grep -qF "auth.${TEST_DOMAIN}"; then
   log_pass "Redirect points to Authelia portal (auth.${TEST_DOMAIN})"
 elif [ "$UNAUTH_STATUS" = "401" ]; then
@@ -176,7 +198,7 @@ wait_for_next_totp_window
 log_section "Authenticate with Authelia from visitor VM (firstfactor)"
 # ---------------------------------------------------------------------------
 
-AUTH_RESPONSE=$(visitor_exec "curl -sk --max-time 15 -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\"username\":\"${TEST_USER}\",\"password\":\"${TEST_USER_PASSWORD}\",\"keepMeLoggedIn\":false,\"targetURL\":\"https://${SITE_FQDN}/\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null" || echo '{}')
+AUTH_RESPONSE=$(visitor_exec "curl -s --max-time 15 -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\"username\":\"${TEST_USER}\",\"password\":\"${TEST_USER_PASSWORD}\",\"keepMeLoggedIn\":false,\"targetURL\":\"https://${SITE_FQDN}/\"}' https://auth.${TEST_DOMAIN}/api/firstfactor 2>/dev/null" || echo '{}')
 
 AUTH_STATUS=$(echo "$AUTH_RESPONSE" | jq -r '.status' 2>/dev/null || echo "unknown")
 if [ "$AUTH_STATUS" = "OK" ]; then
@@ -198,7 +220,7 @@ else
 fi
 
 # POST secondfactor TOTP from visitor VM
-TOTP_AUTH_RESPONSE=$(visitor_exec "curl -sk --max-time 15 -b /tmp/authelia-site-cookies.txt -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${TOTP_CODE}\",\"targetURL\":\"https://${SITE_FQDN}/\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null" || echo '{}')
+TOTP_AUTH_RESPONSE=$(visitor_exec "curl -s --max-time 15 -b /tmp/authelia-site-cookies.txt -c /tmp/authelia-site-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${TOTP_CODE}\",\"targetURL\":\"https://${SITE_FQDN}/\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null" || echo '{}')
 
 TOTP_AUTH_STATUS=$(echo "$TOTP_AUTH_RESPONSE" | jq -r '.status' 2>/dev/null || echo "unknown")
 if [ "$TOTP_AUTH_STATUS" = "OK" ]; then
@@ -211,10 +233,10 @@ fi
 log_section "Visit site from visitor VM WITH auth — should return content"
 # ---------------------------------------------------------------------------
 
-AUTH_CONTENT=$(visitor_exec "curl -sk --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null" || echo "")
+AUTH_CONTENT=$(visitor_exec "curl -s --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null" || echo "")
 assert_contains "$AUTH_CONTENT" "$MARKER" "Authenticated request returns site content" || true
 
-AUTH_HTTP_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
+AUTH_HTTP_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/authelia-site-cookies.txt https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
 assert_eq "$AUTH_HTTP_STATUS" "200" "Authenticated request returns HTTP 200" || true
 
 # ---------------------------------------------------------------------------
@@ -232,10 +254,10 @@ sleep 2
 log_section "Visit site from visitor VM WITHOUT auth — should now return content (unprotected)"
 # ---------------------------------------------------------------------------
 
-UNPROTECTED_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
+UNPROTECTED_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
 assert_eq "$UNPROTECTED_STATUS" "200" "Unprotected site returns HTTP 200 without auth" || true
 
-UNPROTECTED_CONTENT=$(visitor_exec "curl -sk --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "")
+UNPROTECTED_CONTENT=$(visitor_exec "curl -s --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "")
 assert_contains "$UNPROTECTED_CONTENT" "$MARKER" "Unprotected site returns expected content" || true
 
 # ---------------------------------------------------------------------------
@@ -253,7 +275,7 @@ sleep 2
 log_section "Verify protection is back — visitor without auth should redirect"
 # ---------------------------------------------------------------------------
 
-REPROTECTED_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
+REPROTECTED_STATUS=$(visitor_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://${SITE_FQDN}/ 2>/dev/null" || echo "000")
 
 if [ "$REPROTECTED_STATUS" = "302" ] || [ "$REPROTECTED_STATUS" = "401" ]; then
   log_pass "Re-protected site redirects/rejects unauthenticated request (HTTP $REPROTECTED_STATUS)"
@@ -275,5 +297,58 @@ SITE_ID=""
 LIST_RESPONSE=$(host_api_get "sites")
 FOUND_SITE=$(echo "$LIST_RESPONSE" | jq -r --arg name "$SITE_NAME" '.sites[] | select(.name == $name) | .name' 2>/dev/null || echo "")
 assert_eq "$FOUND_SITE" "" "Site no longer appears in site list after deletion" || true
+
+# ---------------------------------------------------------------------------
+log_section "Custom-domain site with an alias: create and verify DNS"
+# ---------------------------------------------------------------------------
+
+ALIAS_SITE_RESPONSE=$(host_api_post "sites" "{\"name\":\"e2ealias${RUN_ID}\",\"type\":\"custom\",\"customDomain\":\"${CUSTOM_DOMAIN}\",\"aliases\":[\"${ALIAS_WWW}\"],\"autheliaProtected\":false}" 2>/dev/null || echo '{}')
+assert_json_field "$ALIAS_SITE_RESPONSE" '.ok' 'true' "Custom site with alias ${ALIAS_WWW} created" || true
+ALIAS_SITE_ID=$(echo "$ALIAS_SITE_RESPONSE" | jq -r '.site.id // empty' 2>/dev/null || echo "")
+
+# Point the custom domain and every name under it at the host, the same way
+# setup-host.sh points the Lamaste domain at it
+host_exec "echo 'address=/${CUSTOM_DOMAIN}/${HOST_IP}' > ${ALIAS_DNSMASQ_CONF} && systemctl restart dnsmasq"
+sleep 1
+
+VERIFY_RESPONSE=$(host_api_post "sites/${ALIAS_SITE_ID}/verify-dns" '{}' 2>/dev/null || echo '{}')
+assert_json_field "$VERIFY_RESPONSE" '.ok' 'true' "verify-dns succeeds for the domain and its alias" || true
+
+ALIAS_SAN=$(host_exec "openssl x509 -noout -ext subjectAltName -in /etc/letsencrypt/live/${CUSTOM_DOMAIN}/fullchain.pem" 2>/dev/null || echo "")
+assert_contains "$ALIAS_SAN" "DNS:${ALIAS_WWW}" "One certificate lineage covers the domain and ${ALIAS_WWW}" || true
+
+host_exec "echo '<h1>${ALIAS_MARKER}</h1>' > /var/www/lamaste/${ALIAS_SITE_ID}/index.html"
+
+visitor_exec "sed -i '/${CUSTOM_DOMAIN}/d' /etc/hosts; printf '%s\n' '${HOST_IP} ${CUSTOM_DOMAIN}' '${HOST_IP} ${ALIAS_WWW}' '${HOST_IP} ${ALIAS_BLOG}' >> /etc/hosts"
+
+# ---------------------------------------------------------------------------
+log_section "Visitor follows the alias to the site's domain"
+# ---------------------------------------------------------------------------
+
+ALIAS_REDIRECT=$(visitor_exec "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 15 'https://${ALIAS_WWW}/docs/page?x=1' 2>/dev/null" || echo "000")
+assert_eq "$ALIAS_REDIRECT" "301 https://${CUSTOM_DOMAIN}/docs/page?x=1" "Alias answers 301 to the same path on the site's domain (TLS verified)" || true
+
+ALIAS_FOLLOWED=$(visitor_exec "curl -sL --max-time 15 'https://${ALIAS_WWW}/' 2>/dev/null" || echo "")
+assert_contains "$ALIAS_FOLLOWED" "$ALIAS_MARKER" "Following the alias serves the site's content" || true
+
+# ---------------------------------------------------------------------------
+log_section "Add an alias to the live site"
+# ---------------------------------------------------------------------------
+
+ADD_ALIAS_RESPONSE=$(host_api_patch "sites/${ALIAS_SITE_ID}" "{\"aliases\":[\"${ALIAS_WWW}\",\"${ALIAS_BLOG}\"]}" 2>/dev/null || echo '{}')
+assert_json_field "$ADD_ALIAS_RESPONSE" '.site.aliases | join(",")' "${ALIAS_WWW},${ALIAS_BLOG}" "Alias ${ALIAS_BLOG} added to the live site" || true
+sleep 2
+
+# Verified TLS on the new alias proves the certificate was re-issued for it
+BLOG_REDIRECT=$(visitor_exec "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 15 'https://${ALIAS_BLOG}/' 2>/dev/null" || echo "000")
+assert_eq "$BLOG_REDIRECT" "301 https://${CUSTOM_DOMAIN}/" "New alias answers 301 with a certificate that names it" || true
+
+# ---------------------------------------------------------------------------
+log_section "Cleanup: delete the custom-domain site"
+# ---------------------------------------------------------------------------
+
+ALIAS_DELETE=$(host_api_delete "sites/${ALIAS_SITE_ID}" 2>/dev/null || echo '{}')
+assert_json_field "$ALIAS_DELETE" '.ok' 'true' "Custom-domain site deleted" || true
+ALIAS_SITE_ID=""
 
 end_test

@@ -8,6 +8,14 @@
 # - Self-signed certificates exist at expected paths
 # - Panel is accessible via domain with mTLS
 # - DNS resolves TEST_DOMAIN to HOST_IP
+# - Chisel server hardening: pinned release 1.12.0; the authfile (every
+#   agent's tunnel password) is 0640 lamaste:lamaste-chisel; chisel runs as
+#   User=nobody Group=lamaste-chisel; the panel reaches the authfile through
+#   SupplementaryGroups=lamaste-chisel; no fail-closed marker
+# - Sudoers: certbot and Let's Encrypt openssl reads go only through the
+#   root-owned wrappers lamaste-certbot and lamaste-cert-info, which refuse
+#   extra arguments
+# - Port 80: any Host is answered with a 301 to https://<same host><same URI>
 # ============================================================================
 
 set -euo pipefail
@@ -138,5 +146,75 @@ if [ "$VISITOR_AUTH" != "000" ]; then
 else
   log_fail "Visitor VM cannot reach Authelia at auth.${TEST_DOMAIN}"
 fi
+
+# ---------------------------------------------------------------------------
+log_section "Chisel server hardening"
+# ---------------------------------------------------------------------------
+
+SERVER_CHISEL_VERSION=$(host_exec "/usr/local/bin/chisel --version 2>/dev/null" 2>/dev/null | sed 's/^v//' || echo "")
+assert_eq "$SERVER_CHISEL_VERSION" "1.12.0" "Server chisel (/usr/local/bin/chisel) is the pinned release 1.12.0" || true
+
+AUTHFILE_STAT=$(host_exec "stat -c '%a %U %G' /etc/lamalibre/lamaste/chisel-users 2>/dev/null" || echo "missing")
+assert_eq "$AUTHFILE_STAT" "640 lamaste lamaste-chisel" "Chisel authfile is 0640 lamaste:lamaste-chisel" || true
+
+CHISEL_UNIT_USER=$(host_exec "systemctl show -p User --value chisel 2>/dev/null" || echo "")
+assert_eq "$CHISEL_UNIT_USER" "nobody" "chisel.service runs as User=nobody" || true
+CHISEL_UNIT_GROUP=$(host_exec "systemctl show -p Group --value chisel 2>/dev/null" || echo "")
+assert_eq "$CHISEL_UNIT_GROUP" "lamaste-chisel" "chisel.service runs as Group=lamaste-chisel" || true
+
+LAMASTE_GROUPS=$(host_exec "id -nG lamaste 2>/dev/null" || echo "")
+assert_contains " ${LAMASTE_GROUPS} " " lamaste-chisel " "The lamaste user is a member of lamaste-chisel" || true
+SERVERD_SUPP=$(host_exec "systemctl show -p SupplementaryGroups --value lamalibre-lamaste-serverd 2>/dev/null" || echo "")
+assert_contains "$SERVERD_SUPP" "lamaste-chisel" "lamalibre-lamaste-serverd has SupplementaryGroups=lamaste-chisel" || true
+
+FAILED_CLOSED=$(host_exec "test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no")
+assert_eq "$FAILED_CLOSED" "no" "No chisel fail-closed marker (startup reconciliation succeeded)" || true
+CHISEL_ENABLED=$(host_exec "systemctl is-enabled chisel 2>/dev/null || true")
+assert_eq "$CHISEL_ENABLED" "enabled" "chisel.service is enabled" || true
+
+# ---------------------------------------------------------------------------
+log_section "Sudoers: certbot and certificate reads via root-owned wrappers"
+# ---------------------------------------------------------------------------
+
+SUDOERS_RULES=$(host_exec "grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste" 2>/dev/null || echo "")
+assert_contains "$SUDOERS_RULES" "NOPASSWD: /usr/local/sbin/lamaste-certbot" "sudoers allows the lamaste-certbot wrapper" || true
+assert_contains "$SUDOERS_RULES" "NOPASSWD: /usr/local/sbin/lamaste-cert-info" "sudoers allows the lamaste-cert-info wrapper" || true
+assert_not_contains "$SUDOERS_RULES" "/usr/bin/certbot" "sudoers has no direct certbot rule" || true
+assert_not_contains "$SUDOERS_RULES" "/etc/letsencrypt" "sudoers has no rule reaching into /etc/letsencrypt" || true
+
+for wrapper in lamaste-certbot lamaste-cert-info; do
+  WRAPPER_STAT=$(host_exec "stat -c '%U %G %a' /usr/local/sbin/${wrapper} 2>/dev/null" || echo "missing")
+  assert_eq "$WRAPPER_STAT" "root root 755" "/usr/local/sbin/${wrapper} is root-owned 0755" || true
+done
+
+# The service user cannot reach certbot directly, and the wrappers refuse any
+# argument beyond their fixed shapes (a trailing --deploy-hook would run code
+# as root)
+DIRECT_CERTBOT=$(host_exec "sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied")
+assert_eq "$DIRECT_CERTBOT" "denied" "lamaste cannot run /usr/bin/certbot through sudo" || true
+EXTRA_ARG_RC=$(host_exec "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew tunnel.${TEST_DOMAIN} --deploy-hook /bin/true >/dev/null 2>&1; echo \$?")
+assert_eq "$EXTRA_ARG_RC" "2" "lamaste-certbot rejects extra arguments (exit 2)" || true
+TRAVERSAL_RC=$(host_exec "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1; echo \$?")
+assert_eq "$TRAVERSAL_RC" "2" "lamaste-cert-info rejects a traversing lineage name (exit 2)" || true
+TUNNEL_ENDDATE=$(host_exec "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info tunnel.${TEST_DOMAIN} enddate 2>/dev/null" || echo "")
+assert_contains "$TUNNEL_ENDDATE" "notAfter=" "lamaste-cert-info reads the tunnel certificate's expiry" || true
+
+# ---------------------------------------------------------------------------
+log_section "Port 80 redirects every host to HTTPS"
+# ---------------------------------------------------------------------------
+
+# From the visitor: plain HTTP for any Host (the catch-all
+# lamalibre-lamaste-http-redirect site) answers 301 to the same host and URI
+REDIRECT_HEAD=$(visitor_exec "curl -sI --max-time 10 -H 'Host: foo.example' 'http://${HOST_IP}/a?b=1' 2>/dev/null" || echo "")
+REDIRECT_CODE=$(echo "$REDIRECT_HEAD" | head -1 | awk '{print $2}')
+assert_eq "$REDIRECT_CODE" "301" "http://${HOST_IP}/a?b=1 with Host foo.example answers 301" || true
+REDIRECT_LOCATION=$(echo "$REDIRECT_HEAD" | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}')
+assert_eq "$REDIRECT_LOCATION" "https://foo.example/a?b=1" "301 Location is https://foo.example/a?b=1" || true
+
+PANEL_REDIRECT=$(visitor_exec "curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 'http://panel.${TEST_DOMAIN}/x' 2>/dev/null" || echo "000")
+assert_eq "$PANEL_REDIRECT" "301 https://panel.${TEST_DOMAIN}/x" "http://panel.${TEST_DOMAIN}/x answers 301 to HTTPS" || true
+
+REDIRECT_SITE=$(host_exec "test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no")
+assert_eq "$REDIRECT_SITE" "yes" "nginx site lamalibre-lamaste-http-redirect is enabled" || true
 
 end_test

@@ -7,6 +7,8 @@
 # - Panel server is running on port 9292
 # - Health endpoint returns { status: "ok" }
 # - Panel client static files are served at /
+# - Port 80 is a catch-all redirect: any Host gets a 301 to
+#   https://<same host><same URI> (site lamalibre-lamaste-http-redirect)
 # ============================================================================
 
 set -euo pipefail
@@ -72,5 +74,18 @@ assert_eq "$NGINX_STATUS" "active" "nginx service is active" || true
 # Verify nginx config is valid
 NGINX_TEST=$(sudo nginx -t 2>&1 || true)
 assert_contains "$NGINX_TEST" "syntax is ok" "nginx configuration syntax is valid" || true
+
+# ---------------------------------------------------------------------------
+log_section "Port 80 redirects every host to HTTPS"
+# ---------------------------------------------------------------------------
+
+REDIRECT_SITE=$(test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no)
+assert_eq "$REDIRECT_SITE" "yes" "nginx site lamalibre-lamaste-http-redirect is enabled" || true
+
+REDIRECT_HEAD=$(curl -sI --max-time 10 -H 'Host: foo.example' 'http://127.0.0.1/a?b=1' 2>/dev/null || echo "")
+REDIRECT_CODE=$(echo "$REDIRECT_HEAD" | head -1 | awk '{print $2}')
+assert_eq "$REDIRECT_CODE" "301" "Plain HTTP with Host foo.example answers 301" || true
+REDIRECT_LOCATION=$(echo "$REDIRECT_HEAD" | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}')
+assert_eq "$REDIRECT_LOCATION" "https://foo.example/a?b=1" "301 Location keeps the host, path and query (https://foo.example/a?b=1)" || true
 
 end_test

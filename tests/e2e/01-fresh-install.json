@@ -67,7 +67,7 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Node.js installation\"\n# ---------------------------------------------------------------------------\n\nNODE_VERSION=$(node --version 2>/dev/null || echo \"none\")\nif [[ \"$NODE_VERSION\" == v2* ]]; then\n  log_pass \"Node.js installed: $NODE_VERSION\"\nelse\n  log_fail \"Node.js version 20+ expected, got: $NODE_VERSION\"\nfi"
     },
     {
-      "id": "serverd-service",
+      "id": "panel-server-service",
       "label": "Panel server service",
       "steps": [
         {
@@ -391,10 +391,148 @@
         }
       ],
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"nginx service\"\n# ---------------------------------------------------------------------------\n\nNGINX_STATUS=$(systemctl is-active nginx 2>/dev/null || echo \"unknown\")\nassert_eq \"$NGINX_STATUS\" \"active\" \"nginx service is active\" || true\n\n# Verify nginx config is valid\nNGINX_TEST=$(sudo nginx -t 2>&1 || true)\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx configuration syntax is valid\" || true"
+    },
+    {
+      "id": "port-80-redirects-every-host-to-https",
+      "label": "Port 80 redirects every host to HTTPS",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "Set REDIRECT_SITE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_SITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "nginx site lamalibre-lamaste-http-redirect is enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_SITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "nginx site lamalibre-lamaste-http-redirect is enabled"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set REDIRECT_HEAD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sI --max-time 10 -H 'Host: foo.example' 'http://127.0.0.1/a?b=1' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_HEAD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Set REDIRECT_CODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$REDIRECT_HEAD\" | head -1 | awk '{print $2}'"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-22",
+          "label": "Plain HTTP with Host foo.example answers 301",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "301"
+              },
+              "message": "Plain HTTP with Host foo.example answers 301"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Set REDIRECT_LOCATION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$REDIRECT_HEAD\" | tr -d '\\r' | awk 'tolower($1) == \"location:\" {print $2}'"
+          },
+          "capture": [
+            {
+              "variable": "REDIRECT_LOCATION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "301 Location keeps the host, path and query (https://foo.example/a?b=1)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REDIRECT_LOCATION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "https://foo.example/a?b=1"
+              },
+              "message": "301 Location keeps the host, path and query (https://foo.example/a?b=1)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Port 80 redirects every host to HTTPS\"\n# ---------------------------------------------------------------------------\n\nREDIRECT_SITE=$(test -L /etc/nginx/sites-enabled/lamalibre-lamaste-http-redirect && echo yes || echo no)\nassert_eq \"$REDIRECT_SITE\" \"yes\" \"nginx site lamalibre-lamaste-http-redirect is enabled\" || true\n\nREDIRECT_HEAD=$(curl -sI --max-time 10 -H 'Host: foo.example' 'http://127.0.0.1/a?b=1' 2>/dev/null || echo \"\")\nREDIRECT_CODE=$(echo \"$REDIRECT_HEAD\" | head -1 | awk '{print $2}')\nassert_eq \"$REDIRECT_CODE\" \"301\" \"Plain HTTP with Host foo.example answers 301\" || true\nREDIRECT_LOCATION=$(echo \"$REDIRECT_HEAD\" | tr -d '\\r' | awk 'tolower($1) == \"location:\" {print $2}')\nassert_eq \"$REDIRECT_LOCATION\" \"https://foo.example/a?b=1\" \"301 Location keeps the host, path and query (https://foo.example/a?b=1)\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 01 — Fresh Install\n# ============================================================================\n# Verifies that create-lamaste installs correctly on a clean Ubuntu system:\n# - Node.js is present (correct version)\n# - Panel server is running on port 9292\n# - Health endpoint returns { status: \"ok\" }\n# - Panel client static files are served at /\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 01 — Fresh Install\n# ============================================================================\n# Verifies that create-lamaste installs correctly on a clean Ubuntu system:\n# - Node.js is present (correct version)\n# - Panel server is running on port 9292\n# - Health endpoint returns { status: \"ok\" }\n# - Panel client static files are served at /\n# - Port 80 is a catch-all redirect: any Host gets a 301 to\n#   https://<same host><same URI> (site lamalibre-lamaste-http-redirect)\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node systemctl\n\nbegin_test \"01 — Fresh Install\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

@@ -26,18 +26,23 @@ if [ "$ONBOARDING_STATUS" != "COMPLETED" ]; then
 fi
 log_pass "Onboarding is complete"
 
-# Detect agent label
-AGENTS_DIR="/etc/lamalibre/lamaste/pki/agents"
-AGENT_LABEL=""
-if [ -d "$AGENTS_DIR" ]; then
-  AGENT_LABEL=$(ls "$AGENTS_DIR" 2>/dev/null | head -1 || echo "")
-fi
-if [ -z "$AGENT_LABEL" ]; then
-  log_skip "No enrolled agent found — skipping"
+# Enroll a dedicated agent. Grants target it, and plugin tunnels name it as
+# their owner — it must be enrolled and not revoked, or the plugin tunnel
+# validation cases below would be rejected for the owner instead of for the
+# field each one tests.
+AGENT_LABEL="plugin-access-e2e-$(date +%s)"
+AGENT_CERT_RESPONSE=$(api_post "certs/agent" '{"label":"'"${AGENT_LABEL}"'","capabilities":["tunnels:read"]}')
+if [ "$(echo "$AGENT_CERT_RESPONSE" | jq -r '.ok' 2>/dev/null || echo "")" != "true" ]; then
+  log_fail "Failed to enroll agent ${AGENT_LABEL}: ${AGENT_CERT_RESPONSE}"
   end_test
   exit $?
 fi
 log_info "Using agent label: ${AGENT_LABEL}"
+
+cleanup() {
+  api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
 log_section "1. Grant creation with target field"

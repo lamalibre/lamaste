@@ -3,9 +3,9 @@
   "meta": {
     "number": 28,
     "name": "Agents Me Endpoints",
-    "suite": "e2e-three-vm",
-    "description": "28 — Agents /me/* self-service and chisel credential rotation (Three-VM)",
-    "deps": [1],
+    "suite": "e2e",
+    "description": "28 — Agents Me Endpoints (Three-VM)",
+    "deps": [],
     "requires": ["multipass", "curl", "jq"]
   },
   "env": {},
@@ -17,7 +17,7 @@
   "cleanup": [
     {
       "id": "cleanup-0",
-      "label": "Revoke agent cert",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
       "target": "host",
       "continueOnError": true,
       "op": {
@@ -28,22 +28,23 @@
     },
     {
       "id": "cleanup-1",
-      "label": "Securely delete extracted PEM files",
+      "label": "Delete /tmp/e2e-agents-me-28-cert.pem",
       "target": "host",
       "continueOnError": true,
       "op": {
-        "type": "exec",
-        "command": "shred -u /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem 2>/dev/null || rm -f /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem"
+        "type": "file",
+        "action": "delete",
+        "path": "/tmp/e2e-agents-me-28-cert.pem"
       }
     }
   ],
   "sections": [
     {
-      "id": "1-pre-flight",
+      "id": "1-pre-flight-verify-onboarding-is-complete",
       "label": "1. Pre-flight — verify onboarding is complete",
       "steps": [
         {
-          "id": "step-preflight-get",
+          "id": "step-0",
           "label": "GET /api/onboarding/status",
           "target": "host",
           "op": {
@@ -62,8 +63,8 @@
           ]
         },
         {
-          "id": "step-preflight-assert",
-          "label": "Onboarding must be COMPLETED",
+          "id": "step-1",
+          "label": "Onboarding status is COMPLETED",
           "target": "local",
           "op": {
             "type": "assert",
@@ -81,25 +82,22 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"1. Pre-flight — verify onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"\")\nassert_eq \"$ONBOARDING_STATUS\" \"COMPLETED\" \"Onboarding status is COMPLETED\""
     },
     {
-      "id": "2-create-agent-cert",
+      "id": "2-create-agent-cert-with-known-capabilities-allowedsites",
       "label": "2. Create agent cert with known capabilities + allowedSites",
       "steps": [
         {
-          "id": "step-create-cert",
+          "id": "step-2",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "certs/agent",
-            "body": {
-              "label": "agents-me-28",
-              "capabilities": ["tunnels:read", "sites:read"],
-              "allowedSites": ["site-alpha", "site-beta"]
-            }
+            "body": "{\\"
           },
           "capture": [
             {
@@ -111,7 +109,7 @@
           ]
         },
         {
-          "id": "step-cert-ok",
+          "id": "step-3",
           "label": "POST /certs/agent returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -133,8 +131,8 @@
           }
         },
         {
-          "id": "step-cert-label",
-          "label": "Agent cert label matches",
+          "id": "step-4",
+          "label": "Response label matches agent label",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -155,7 +153,7 @@
           }
         },
         {
-          "id": "step-p12pass-extract",
+          "id": "step-5",
           "label": "Extract P12_PASSWORD",
           "target": "local",
           "op": {
@@ -172,8 +170,8 @@
           }
         },
         {
-          "id": "step-p12-notempty",
-          "label": "Response has a non-empty p12Password",
+          "id": "step-6",
+          "label": "Response carries a p12Password",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -190,34 +188,72 @@
           }
         },
         {
-          "id": "step-extract-pem",
-          "label": "Extract PEM cert/key from .p12 and restrict perms",
+          "id": "step-10",
+          "label": "Exec on host",
           "target": "host",
-          "bash": "P12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-agents-me-28-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-agents-me-28-key.pem\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"chmod 0600 '${AGENT_CERT_PATH}' '${AGENT_KEY_PATH}'\"\nlog_pass \"Extracted PEM cert and key from .p12\"",
           "op": {
             "type": "exec",
-            "command": "true"
-          }
-        }
-      ]
-    },
-    {
-      "id": "3-me-capabilities",
-      "label": "3. GET /agents/me/capabilities with agent cert",
-      "steps": [
-        {
-          "id": "step-me-caps-call",
-          "label": "GET /agents/me/capabilities as agent",
-          "target": "host",
-          "bash": "ME_CAPS_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/capabilities\")",
-          "op": {
-            "type": "exec",
-            "command": "true"
+            "command": "openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'"
           }
         },
         {
-          "id": "step-me-caps-role",
-          "label": "/me/capabilities role is agent",
+          "id": "step-11",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'"
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "chmod 0600 '${AGENT_CERT_PATH}' '${AGENT_KEY_PATH}'"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "Extracted PEM cert and key from .p12",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Extracted PEM cert and key from .p12"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"2. Create agent cert with known capabilities + allowedSites\"\n# ---------------------------------------------------------------------------\n\nCERT_RESPONSE=$(host_api_post \"certs/agent\" \"{\\\"label\\\":\\\"agents-me-28\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\",\\\"sites:read\\\"],\\\"allowedSites\\\":[\\\"site-alpha\\\",\\\"site-beta\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"POST /certs/agent returned ok: true\" || true\nassert_json_field \"$CERT_RESPONSE\" '.label' \"$AGENT_LABEL\" \"Response label matches agent label\" || true\nP12_PASSWORD=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CERT_RESPONSE\" '.p12Password' \"Response carries a p12Password\" || true\nP12_PATH=\"/etc/lamalibre/lamaste/pki/agents/${AGENT_LABEL}/client.p12\"\nAGENT_CERT_PATH=\"/tmp/e2e-agents-me-28-cert.pem\"\nAGENT_KEY_PATH=\"/tmp/e2e-agents-me-28-key.pem\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -clcerts -nokeys -out '${AGENT_CERT_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}' -legacy 2>/dev/null || openssl pkcs12 -in '${P12_PATH}' -nocerts -nodes -out '${AGENT_KEY_PATH}' -passin 'pass:${P12_PASSWORD}'\"\nhost_exec \"chmod 0600 '${AGENT_CERT_PATH}' '${AGENT_KEY_PATH}'\"\nlog_pass \"Extracted PEM cert and key from .p12\""
+    },
+    {
+      "id": "3-get-agents-me-capabilities-with-agent-cert",
+      "label": "3. GET /agents/me/capabilities with agent cert",
+      "steps": [
+        {
+          "id": "step-14",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/agents/me/capabilities",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "ME_CAPS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "/me/capabilities returns role=agent for an agent cert",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -238,8 +274,8 @@
           }
         },
         {
-          "id": "step-me-caps-tunnels",
-          "label": "/me/capabilities includes tunnels:read",
+          "id": "step-16",
+          "label": "/me/capabilities response contains tunnels:read",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -259,8 +295,8 @@
           }
         },
         {
-          "id": "step-me-caps-sites",
-          "label": "/me/capabilities includes sites:read",
+          "id": "step-17",
+          "label": "/me/capabilities response contains sites:read",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -280,8 +316,8 @@
           }
         },
         {
-          "id": "step-me-caps-count-compute",
-          "label": "Compute capability count",
+          "id": "step-18",
+          "label": "Set ME_CAPS_COUNT",
           "target": "local",
           "op": {
             "type": "exec",
@@ -297,8 +333,8 @@
           ]
         },
         {
-          "id": "step-me-caps-count-assert",
-          "label": "/me/capabilities returns exactly the two capabilities admin set",
+          "id": "step-19",
+          "label": "/me/capabilities returns exactly 2 capabilities (the set admin provided)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -318,7 +354,7 @@
           }
         },
         {
-          "id": "step-me-caps-alpha",
+          "id": "step-20",
           "label": "/me/capabilities allowedSites includes site-alpha",
           "target": "local",
           "continueOnError": true,
@@ -339,7 +375,7 @@
           }
         },
         {
-          "id": "step-me-caps-beta",
+          "id": "step-21",
           "label": "/me/capabilities allowedSites includes site-beta",
           "target": "local",
           "continueOnError": true,
@@ -360,8 +396,8 @@
           }
         },
         {
-          "id": "step-me-caps-sites-count",
-          "label": "Compute allowedSites count",
+          "id": "step-22",
+          "label": "Set ME_SITES_COUNT",
           "target": "local",
           "op": {
             "type": "exec",
@@ -377,8 +413,8 @@
           ]
         },
         {
-          "id": "step-me-caps-sites-count-assert",
-          "label": "/me/capabilities returns exactly the two allowedSites admin set",
+          "id": "step-23",
+          "label": "/me/capabilities returns exactly 2 allowedSites (the set admin provided)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -397,25 +433,36 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"3. GET /agents/me/capabilities with agent cert\"\n# ---------------------------------------------------------------------------\n\nME_CAPS_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/capabilities\")\nassert_json_field \"$ME_CAPS_RESPONSE\" '.role' 'agent' \"/me/capabilities returns role=agent for an agent cert\" || true\nassert_contains \"$ME_CAPS_RESPONSE\" \"tunnels:read\" \"/me/capabilities response contains tunnels:read\" || true\nassert_contains \"$ME_CAPS_RESPONSE\" \"sites:read\" \"/me/capabilities response contains sites:read\" || true\nME_CAPS_COUNT=$(echo \"$ME_CAPS_RESPONSE\" | jq '.capabilities | length' 2>/dev/null || echo \"0\")\nassert_eq \"$ME_CAPS_COUNT\" \"2\" \"/me/capabilities returns exactly 2 capabilities (the set admin provided)\" || true\nassert_contains \"$ME_CAPS_RESPONSE\" \"site-alpha\" \"/me/capabilities allowedSites includes site-alpha\" || true\nassert_contains \"$ME_CAPS_RESPONSE\" \"site-beta\" \"/me/capabilities allowedSites includes site-beta\" || true\nME_SITES_COUNT=$(echo \"$ME_CAPS_RESPONSE\" | jq '.allowedSites | length' 2>/dev/null || echo \"0\")\nassert_eq \"$ME_SITES_COUNT\" \"2\" \"/me/capabilities returns exactly 2 allowedSites (the set admin provided)\" || true"
     },
     {
-      "id": "4-me-chisel-credential",
+      "id": "4-get-agents-me-chisel-credential-with-agent-cert",
       "label": "4. GET /agents/me/chisel-credential with agent cert",
       "steps": [
         {
-          "id": "step-me-chisel-call",
-          "label": "GET /agents/me/chisel-credential as agent",
+          "id": "step-24",
+          "label": "HTTP request on host",
           "target": "host",
-          "bash": "ME_CHISEL_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")",
           "op": {
-            "type": "exec",
-            "command": "true"
-          }
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/agents/me/chisel-credential",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "ME_CHISEL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
         },
         {
-          "id": "step-me-chisel-user",
-          "label": "/me/chisel-credential has non-empty user",
+          "id": "step-25",
+          "label": "/me/chisel-credential returns a non-empty user",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -432,8 +479,8 @@
           }
         },
         {
-          "id": "step-me-chisel-password",
-          "label": "/me/chisel-credential has non-empty password",
+          "id": "step-26",
+          "label": "/me/chisel-credential returns a non-empty password",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -450,8 +497,8 @@
           }
         },
         {
-          "id": "step-me-chisel-user-matches",
-          "label": "/me/chisel-credential references agent label",
+          "id": "step-27",
+          "label": "/me/chisel-credential user references the agent label",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -471,8 +518,8 @@
           }
         },
         {
-          "id": "step-me-chisel-pw1-extract",
-          "label": "Capture first-round password",
+          "id": "step-28",
+          "label": "Extract PW_BEFORE",
           "target": "local",
           "op": {
             "type": "set",
@@ -487,15 +534,16 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"4. GET /agents/me/chisel-credential with agent cert\"\n# ---------------------------------------------------------------------------\n\nME_CHISEL_RESPONSE=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")\nassert_json_field_not_empty \"$ME_CHISEL_RESPONSE\" '.user' \"/me/chisel-credential returns a non-empty user\" || true\nassert_json_field_not_empty \"$ME_CHISEL_RESPONSE\" '.password' \"/me/chisel-credential returns a non-empty password\" || true\nassert_contains \"$ME_CHISEL_RESPONSE\" \"$AGENT_LABEL\" \"/me/chisel-credential user references the agent label\" || true\nPW_BEFORE=$(echo \"$ME_CHISEL_RESPONSE\" | jq -r '.password' 2>/dev/null || echo \"\")"
     },
     {
-      "id": "5-admin-rotate",
+      "id": "5-post-agents-label-chisel-credential-rotate-admin",
       "label": "5. POST /agents/:label/chisel-credential/rotate (admin)",
       "steps": [
         {
-          "id": "step-rotate-call",
-          "label": "POST /api/agents/agents-me-28/chisel-credential/rotate",
+          "id": "step-29",
+          "label": "POST /api/agents/${AGENT_LABEL}/chisel-credential/rotate",
           "target": "host",
           "op": {
             "type": "api",
@@ -513,8 +561,8 @@
           ]
         },
         {
-          "id": "step-rotate-ok",
-          "label": "Rotate response ok: true",
+          "id": "step-30",
+          "label": "Rotate returned ok: true",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -535,8 +583,8 @@
           }
         },
         {
-          "id": "step-rotate-label",
-          "label": "Rotate response label matches agent",
+          "id": "step-31",
+          "label": "Rotate response label matches the agent",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -557,8 +605,8 @@
           }
         },
         {
-          "id": "step-rotate-password-nonempty",
-          "label": "Rotate response has new password",
+          "id": "step-32",
+          "label": "Rotate response carries a non-empty new password",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -575,8 +623,8 @@
           }
         },
         {
-          "id": "step-rotate-pw-capture",
-          "label": "Capture rotated password",
+          "id": "step-33",
+          "label": "Extract PW_ROTATED",
           "target": "local",
           "op": {
             "type": "set",
@@ -592,8 +640,8 @@
           }
         },
         {
-          "id": "step-rotate-diff",
-          "label": "Rotated password differs from previous",
+          "id": "step-34",
+          "label": "Rotated chisel password differs from pre-rotation password",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -612,25 +660,36 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. POST /agents/:label/chisel-credential/rotate (admin)\"\n# ---------------------------------------------------------------------------\n\nROTATE_RESPONSE=$(host_api_post \"agents/${AGENT_LABEL}/chisel-credential/rotate\" \"{}\")\nassert_json_field \"$ROTATE_RESPONSE\" '.ok' 'true' \"Rotate returned ok: true\" || true\nassert_json_field \"$ROTATE_RESPONSE\" '.label' \"$AGENT_LABEL\" \"Rotate response label matches the agent\" || true\nassert_json_field_not_empty \"$ROTATE_RESPONSE\" '.password' \"Rotate response carries a non-empty new password\" || true\nPW_ROTATED=$(echo \"$ROTATE_RESPONSE\" | jq -r '.password' 2>/dev/null || echo \"\")\nassert_not_eq \"$PW_ROTATED\" \"$PW_BEFORE\" \"Rotated chisel password differs from pre-rotation password\" || true"
     },
     {
-      "id": "6-me-chisel-after-rotate",
+      "id": "6-agent-re-fetches-me-chisel-credential-sees-rotated-password",
       "label": "6. Agent re-fetches /me/chisel-credential — sees rotated password",
       "steps": [
         {
-          "id": "step-me-chisel-recall",
-          "label": "GET /agents/me/chisel-credential (post-rotate)",
+          "id": "step-35",
+          "label": "HTTP request on host",
           "target": "host",
-          "bash": "ME_CHISEL_AFTER=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")",
           "op": {
-            "type": "exec",
-            "command": "true"
-          }
+            "type": "http",
+            "method": "GET",
+            "url": "https://127.0.0.1:9292/api/agents/me/chisel-credential",
+            "tlsVerify": false,
+            "timeout": 30
+          },
+          "capture": [
+            {
+              "variable": "ME_CHISEL_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
         },
         {
-          "id": "step-me-chisel-after-extract",
-          "label": "Capture post-rotate password",
+          "id": "step-36",
+          "label": "Extract PW_AFTER",
           "target": "local",
           "op": {
             "type": "set",
@@ -646,8 +705,8 @@
           }
         },
         {
-          "id": "step-me-chisel-after-matches-rotated",
-          "label": "Agent sees rotated password via /me/chisel-credential",
+          "id": "step-37",
+          "label": "Agent's /me/chisel-credential returns the rotated password",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -667,8 +726,8 @@
           }
         },
         {
-          "id": "step-me-chisel-after-differs-pre",
-          "label": "Post-rotate password differs from pre-rotate",
+          "id": "step-38",
+          "label": "Post-rotate /me/chisel-credential differs from the pre-rotation value",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -687,8 +746,670 @@
             }
           }
         }
-      ]
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"6. Agent re-fetches /me/chisel-credential — sees rotated password\"\n# ---------------------------------------------------------------------------\n\nME_CHISEL_AFTER=$(host_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/agents/me/chisel-credential\")\nPW_AFTER=$(echo \"$ME_CHISEL_AFTER\" | jq -r '.password' 2>/dev/null || echo \"\")\nassert_eq \"$PW_AFTER\" \"$PW_ROTATED\" \"Agent's /me/chisel-credential returns the rotated password\" || true\nassert_not_eq \"$PW_AFTER\" \"$PW_BEFORE\" \"Post-rotate /me/chisel-credential differs from the pre-rotation value\" || true"
+    },
+    {
+      "id": "7-credential-issue-time-me-chisel-credential-and-agent-config",
+      "label": "7. Credential issue time: /me/chisel-credential and agent-config",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Extract ISSUED_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ISSUED_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ME_CHISEL_AFTER"
+              },
+              "expression": ".createdAt // empty"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "/me/chisel-credential returns createdAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "ME_CHISEL_AFTER"
+              },
+              "path": ".createdAt",
+              "message": "/me/chisel-credential returns createdAt"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Admin rotation's createdAt matches /me/chisel-credential",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "path": ".createdAt",
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_AT"
+              },
+              "message": "Admin rotation's createdAt matches /me/chisel-credential"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set AGENT_CONFIG",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/tunnels/agent-config\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "agent-config reports chiselCredentialIssuedAt = the credential's createdAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "path": ".chiselCredentialIssuedAt",
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_AT"
+              },
+              "message": "agent-config reports chiselCredentialIssuedAt = the credential's createdAt"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "agent-config never carries the chisel password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "PW_AFTER"
+              },
+              "message": "agent-config never carries the chisel password"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"7. Credential issue time: /me/chisel-credential and agent-config\"\n# ---------------------------------------------------------------------------\n\nISSUED_AT=$(echo \"$ME_CHISEL_AFTER\" | jq -r '.createdAt // empty' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$ME_CHISEL_AFTER\" '.createdAt' \"/me/chisel-credential returns createdAt\" || true\nassert_json_field \"$ROTATE_RESPONSE\" '.createdAt' \"$ISSUED_AT\" \"Admin rotation's createdAt matches /me/chisel-credential\" || true\n\nAGENT_CONFIG=$(agent_curl \"https://127.0.0.1:9292/api/tunnels/agent-config\" 2>/dev/null || echo '{}')\nassert_json_field \"$AGENT_CONFIG\" '.chiselCredentialIssuedAt' \"$ISSUED_AT\" \"agent-config reports chiselCredentialIssuedAt = the credential's createdAt\" || true\nassert_not_contains \"$AGENT_CONFIG\" \"$PW_AFTER\" \"agent-config never carries the chisel password\" || true"
+    },
+    {
+      "id": "8-self-rotation-is-refused-while-the-credential-is-fresh-429",
+      "label": "8. Self-rotation is refused while the credential is fresh (429)",
+      "steps": [
+        {
+          "id": "step-45",
+          "label": "Set FRESH_ROTATE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"-o /tmp/e2e-28-rotate.json -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "FRESH_ROTATE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "cat /tmp/e2e-28-rotate.json 2>/dev/null; rm -f /tmp/e2e-28-rotate.json"
+          },
+          "capture": [
+            {
+              "variable": "FRESH_ROTATE_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-47",
+          "label": "Agent self-rotation within 10 minutes of issue returns 429",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FRESH_ROTATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "429"
+              },
+              "message": "Agent self-rotation within 10 minutes of issue returns 429"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "429 response names when the current credential was issued",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FRESH_ROTATE_BODY"
+              },
+              "path": ".issuedAt",
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_AT"
+              },
+              "message": "429 response names when the current credential was issued"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set PW_AFTER_429",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.password' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PW_AFTER_429",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Refused self-rotation left the credential unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_AFTER_429"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_AFTER"
+              },
+              "message": "Refused self-rotation left the credential unchanged"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"8. Self-rotation is refused while the credential is fresh (429)\"\n# ---------------------------------------------------------------------------\n\n# The admin rotation above issued the credential seconds ago\nFRESH_ROTATE_STATUS=$(agent_curl \"-o /tmp/e2e-28-rotate.json -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo \"000\")\nFRESH_ROTATE_BODY=$(host_exec \"cat /tmp/e2e-28-rotate.json 2>/dev/null; rm -f /tmp/e2e-28-rotate.json\" 2>/dev/null || echo '{}')\nassert_eq \"$FRESH_ROTATE_STATUS\" \"429\" \"Agent self-rotation within 10 minutes of issue returns 429\" || true\nassert_json_field \"$FRESH_ROTATE_BODY\" '.issuedAt' \"$ISSUED_AT\" \"429 response names when the current credential was issued\" || true\nPW_AFTER_429=$(agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.password' 2>/dev/null || echo \"\")\nassert_eq \"$PW_AFTER_429\" \"$PW_AFTER\" \"Refused self-rotation left the credential unchanged\" || true"
+    },
+    {
+      "id": "9-self-rotation-of-a-credential-older-than-10-minutes",
+      "label": "9. Self-rotation of a credential older than 10 minutes",
+      "steps": [
+        {
+          "id": "step-52",
+          "label": "Set BACKDATED_AT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.createdAt' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "BACKDATED_AT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Credential backdated by 11 minutes in the panel's store",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "BACKDATED_AT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_AT"
+              },
+              "message": "Credential backdated by 11 minutes in the panel's store"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Set SELF_ROTATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"-X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "SELF_ROTATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "Self-rotation returns a new password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "SELF_ROTATE"
+              },
+              "path": ".password",
+              "message": "Self-rotation returns a new password"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Self-rotation returns the agent's chisel user",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$SELF_ROTATE\" | jq -r '.user // empty' 2>/dev/null || echo \"\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "Self-rotation returns the agent's chisel user"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Self-rotation returns the new createdAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field_not_empty",
+              "source": {
+                "kind": "var",
+                "name": "SELF_ROTATE"
+              },
+              "path": ".createdAt",
+              "message": "Self-rotation returns the new createdAt"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Extract PW_SELF",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PW_SELF",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SELF_ROTATE"
+              },
+              "expression": ".password"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Extract SELF_ISSUED_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SELF_ISSUED_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "SELF_ROTATE"
+              },
+              "expression": ".createdAt"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Self-rotated password differs from the previous one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_SELF"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_AFTER"
+              },
+              "message": "Self-rotated password differs from the previous one"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Set ME_AFTER_SELF",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "ME_AFTER_SELF",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "/me/chisel-credential returns the self-rotated password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ME_AFTER_SELF"
+              },
+              "path": ".password",
+              "expected": {
+                "kind": "var",
+                "name": "PW_SELF"
+              },
+              "message": "/me/chisel-credential returns the self-rotated password"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Set CONFIG_AFTER_SELF",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/tunnels/agent-config\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG_AFTER_SELF",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "agent-config reports the new credential's issue time",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CONFIG_AFTER_SELF"
+              },
+              "path": ".chiselCredentialIssuedAt",
+              "expected": {
+                "kind": "var",
+                "name": "SELF_ISSUED_AT"
+              },
+              "message": "agent-config reports the new credential's issue time"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "jq -r --arg n 'agent-${AGENT_LABEL}:${PW_SELF}' --arg o 'agent-${AGENT_LABEL}:${PW_AFTER}' '[(keys[] | select(. == \\$n)) | \\"
+          },
+          "capture": [
+            {
+              "variable": "AUTHFILE_KEYS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "Chisel authfile holds the self-rotated password and not the replaced one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHFILE_KEYS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "new"
+              },
+              "message": "Chisel authfile holds the self-rotated password and not the replaced one"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"9. Self-rotation of a credential older than 10 minutes\"\n# ---------------------------------------------------------------------------\n\nbackdate_credential 11\nBACKDATED_AT=$(agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.createdAt' 2>/dev/null || echo \"\")\nassert_not_eq \"$BACKDATED_AT\" \"$ISSUED_AT\" \"Credential backdated by 11 minutes in the panel's store\" || true\n\nSELF_ROTATE=$(agent_curl \"-X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo '{}')\nassert_json_field_not_empty \"$SELF_ROTATE\" '.password' \"Self-rotation returns a new password\" || true\nassert_contains \"$(echo \"$SELF_ROTATE\" | jq -r '.user // empty' 2>/dev/null || echo \"\")\" \"$AGENT_LABEL\" \"Self-rotation returns the agent's chisel user\" || true\nassert_json_field_not_empty \"$SELF_ROTATE\" '.createdAt' \"Self-rotation returns the new createdAt\" || true\nPW_SELF=$(echo \"$SELF_ROTATE\" | jq -r '.password' 2>/dev/null || echo \"\")\nSELF_ISSUED_AT=$(echo \"$SELF_ROTATE\" | jq -r '.createdAt' 2>/dev/null || echo \"\")\nassert_not_eq \"$PW_SELF\" \"$PW_AFTER\" \"Self-rotated password differs from the previous one\" || true\n\nME_AFTER_SELF=$(agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null || echo '{}')\nassert_json_field \"$ME_AFTER_SELF\" '.password' \"$PW_SELF\" \"/me/chisel-credential returns the self-rotated password\" || true\nCONFIG_AFTER_SELF=$(agent_curl \"https://127.0.0.1:9292/api/tunnels/agent-config\" 2>/dev/null || echo '{}')\nassert_json_field \"$CONFIG_AFTER_SELF\" '.chiselCredentialIssuedAt' \"$SELF_ISSUED_AT\" \"agent-config reports the new credential's issue time\" || true\n\n# The authfile carries the new password and no longer the old one (compared on\n# the host; only counts come back)\nAUTHFILE_KEYS=$(host_exec \"jq -r --arg n 'agent-${AGENT_LABEL}:${PW_SELF}' --arg o 'agent-${AGENT_LABEL}:${PW_AFTER}' '[(keys[] | select(. == \\$n)) | \\\"new\\\"] + [(keys[] | select(. == \\$o)) | \\\"old\\\"] | join(\\\",\\\")' /etc/lamalibre/lamaste/chisel-users\" 2>/dev/null || echo \"error\")\nassert_eq \"$AUTHFILE_KEYS\" \"new\" \"Chisel authfile holds the self-rotated password and not the replaced one\" || true"
+    },
+    {
+      "id": "10-an-immediate-second-self-rotation-is-refused",
+      "label": "10. An immediate second self-rotation is refused",
+      "steps": [
+        {
+          "id": "step-67",
+          "label": "Set REPEAT_ROTATE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"-o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "REPEAT_ROTATE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "Repeating the self-rotation right away returns 429",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REPEAT_ROTATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "429"
+              },
+              "message": "Repeating the self-rotation right away returns 429"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Set PW_FINAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.password' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PW_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Refused repeat left the self-rotated credential in place",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PW_FINAL"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PW_SELF"
+              },
+              "message": "Refused repeat left the self-rotated credential in place"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Set ADMIN_ROUTE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_curl \"-o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' https://127.0.0.1:9292/api/agents/${AGENT_LABEL}/chisel-credential/rotate\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_ROUTE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Agent cert cannot use the admin rotation route (403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_ROUTE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Agent cert cannot use the admin rotation route (403)"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"10. An immediate second self-rotation is refused\"\n# ---------------------------------------------------------------------------\n\nREPEAT_ROTATE_STATUS=$(agent_curl \"-o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:9292/api/agents/me/chisel-credential/rotate\" 2>/dev/null || echo \"000\")\nassert_eq \"$REPEAT_ROTATE_STATUS\" \"429\" \"Repeating the self-rotation right away returns 429\" || true\nPW_FINAL=$(agent_curl \"https://127.0.0.1:9292/api/agents/me/chisel-credential\" 2>/dev/null | jq -r '.password' 2>/dev/null || echo \"\")\nassert_eq \"$PW_FINAL\" \"$PW_SELF\" \"Refused repeat left the self-rotated credential in place\" || true\n\n# The admin endpoint is not an agent's: an agent cert cannot rotate by label\nADMIN_ROUTE_STATUS=$(agent_curl \"-o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' https://127.0.0.1:9292/api/agents/${AGENT_LABEL}/chisel-credential/rotate\" 2>/dev/null || echo \"000\")\nassert_eq \"$ADMIN_ROUTE_STATUS\" \"403\" \"Agent cert cannot use the admin rotation route (403)\" || true"
     }
   ],
-  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"]
+  "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
+  "headerRaw": "# ============================================================================\n# 28 — Agents Me Endpoints (Three-VM)\n# ============================================================================\n# 28 — Agents /me/* self-service and chisel credential rotation (Three-VM)\n#\n# Covers the admin rotation, the credential's createdAt (also reported by\n# agent-config as chiselCredentialIssuedAt, which is how an agent notices a\n# replaced credential), and an agent rotating its own credential: refused with\n# 429 while the current one is under 10 minutes old, accepted once it is older,\n# and refused again right after.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"/Users/onurdevrimvatan/lama/repositories/lamalibre/lamaste/packages/tools/lamaste-rodeo/tests/e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nAGENT_LABEL=\"agents-me-28\"\n\nbegin_test \"28 — Agents Me Endpoints (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  host_api_delete \"certs/agent/${AGENT_LABEL}\" 2>/dev/null || true\n  host_exec \"shred -u /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem 2>/dev/null || rm -f /tmp/e2e-agents-me-28-cert.pem /tmp/e2e-agents-me-28-key.pem\" 2>/dev/null || true\n}\n\n# agent_curl <curl args...> — call the panel with the test agent's certificate\nagent_curl() {\n  host_exec \"curl -sk --max-time 30 --cert ${AGENT_CERT_PATH} --key ${AGENT_KEY_PATH} --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' $*\"\n}\n\n# backdate_credential <minutes> — make the test agent's chisel credential look\n# <minutes> old in the panel's credential store, so the self-rotation rate\n# limit can be exercised without waiting. Rewritten in place (cat >) so the\n# file keeps its owner and 0600 mode; the temp copy is private (umask 077).\nbackdate_credential() {\n  host_exec \"umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\\$(date -u -d '$1 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${AGENT_LABEL}' --arg t \\\"\\$t\\\" '.[\\$l].createdAt = \\$t' \\\"\\$f\\\" > /tmp/e2e-28-creds.json && cat /tmp/e2e-28-creds.json > \\\"\\$f\\\"; rm -f /tmp/e2e-28-creds.json\"\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
 }

@@ -737,11 +737,343 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"authelia failure and recovery\"\n# ---------------------------------------------------------------------------\n\nlog_info \"Stopping authelia...\"\nsudo systemctl stop authelia 2>/dev/null || true\nsleep 2\n\nSERVICES_AUTH_DOWN=$(api_get \"services\")\nAUTH_STATUS_DOWN=$(echo \"$SERVICES_AUTH_DOWN\" | jq -r '.services[] | select(.name == \"authelia\") | .status' 2>/dev/null || echo \"unknown\")\n\nif [ \"$AUTH_STATUS_DOWN\" = \"inactive\" ] || [ \"$AUTH_STATUS_DOWN\" = \"failed\" ]; then\n  log_pass \"API shows authelia as '$AUTH_STATUS_DOWN' after stop\"\nelse\n  log_fail \"Expected authelia status 'inactive' or 'failed', got '$AUTH_STATUS_DOWN'\"\nfi\n\nRESTART_AUTH=$(api_post \"services/authelia/restart\")\nassert_json_field \"$RESTART_AUTH\" '.ok' 'true' \"authelia restart via API returned ok: true\" || true\n\nsleep 2\n\nAUTH_STATUS_UP=$(systemctl is-active authelia 2>/dev/null || echo \"unknown\")\nassert_eq \"$AUTH_STATUS_UP\" \"active\" \"authelia is active after API restart\" || true"
     },
     {
+      "id": "chisel-authfile-and-unit-are-healed-on-panel-start",
+      "label": "Chisel authfile and unit are healed on panel start",
+      "steps": [
+        {
+          "id": "step-54",
+          "label": "Set AUTHFILE_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo stat -c '%a %U %G' \"$AUTHFILE\" 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "AUTHFILE_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-55",
+          "label": "Chisel authfile starts as 0640 lamaste:lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHFILE_BEFORE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "640 lamaste lamaste-chisel"
+              },
+              "message": "Chisel authfile starts as 0640 lamaste:lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Authfile loosened to 0644 for the test",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo stat -c '%a' \"$AUTHFILE\" 2>/dev/null || echo \"missing\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "644"
+              },
+              "message": "Authfile loosened to 0644 for the test"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "chisel.service pointed at Group=nogroup for the test",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl show -p Group --value chisel 2>/dev/null || echo \"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "nogroup"
+              },
+              "message": "chisel.service pointed at Group=nogroup for the test"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Panel back after restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel back after restart"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Panel not healthy within 60 seconds of restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel not healthy within 60 seconds of restart"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Set AUTHFILE_HEALED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo stat -c '%a %U %G' \"$AUTHFILE\" 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "AUTHFILE_HEALED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-73",
+          "label": "Set UNIT_GROUP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p Group --value chisel 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "UNIT_GROUP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Reconciliation restored the authfile to 0640 lamaste:lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHFILE_HEALED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "640 lamaste lamaste-chisel"
+              },
+              "message": "Reconciliation restored the authfile to 0640 lamaste:lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Reconciliation restored Group=lamaste-chisel in chisel.service",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl show -p Group --value chisel 2>/dev/null || echo \"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-chisel"
+              },
+              "message": "Reconciliation restored Group=lamaste-chisel in chisel.service"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "chisel.service still runs as User=nobody",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl show -p User --value chisel 2>/dev/null || echo \"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "nobody"
+              },
+              "message": "chisel.service still runs as User=nobody"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "chisel is active after reconciliation (restarted onto the healed unit)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "chisel is active after reconciliation (restarted onto the healed unit)"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "chisel is not active after reconciliation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "chisel is not active after reconciliation"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Set CHISEL_GROUP_NOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ps -o group= -p \"$(systemctl show -p MainPID --value chisel 2>/dev/null || echo 0)\" 2>/dev/null | tr -d ' ' || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_GROUP_NOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "Running chisel process has group lamaste-chisel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_GROUP_NOW"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-chisel"
+              },
+              "message": "Running chisel process has group lamaste-chisel"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Reconciliation did not fail closed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sudo test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "Reconciliation did not fail closed"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "chisel.service is enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-enabled chisel 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "chisel.service is enabled"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Chisel authfile and unit are healed on panel start\"\n# ---------------------------------------------------------------------------\n\nAUTHFILE=\"/etc/lamalibre/lamaste/chisel-users\"\nCHISEL_UNIT_FILE=\"/etc/systemd/system/chisel.service\"\n\nAUTHFILE_BEFORE=$(sudo stat -c '%a %U %G' \"$AUTHFILE\" 2>/dev/null || echo \"missing\")\nassert_eq \"$AUTHFILE_BEFORE\" \"640 lamaste lamaste-chisel\" \"Chisel authfile starts as 0640 lamaste:lamaste-chisel\" || true\n\n# Loosen the authfile (every agent's tunnel password) and put the unit on the\n# wrong group, as an older version or a careless operator might\nsudo chmod 644 \"$AUTHFILE\"\nsudo sed -i 's/^Group=.*/Group=nogroup/' \"$CHISEL_UNIT_FILE\"\nsudo systemctl daemon-reload\nassert_eq \"$(sudo stat -c '%a' \"$AUTHFILE\" 2>/dev/null || echo \"missing\")\" \"644\" \"Authfile loosened to 0644 for the test\" || true\nassert_eq \"$(systemctl show -p Group --value chisel 2>/dev/null || echo \"\")\" \"nogroup\" \"chisel.service pointed at Group=nogroup for the test\" || true\n\nsudo systemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=false\nfor _ in $(seq 1 30); do\n  if [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; then\n    PANEL_BACK=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$PANEL_BACK\" = \"true\" ]; then\n  log_pass \"Panel back after restart\"\nelse\n  log_fail \"Panel not healthy within 60 seconds of restart\"\nfi\n\n# Reconciliation runs in the background right after start\nAUTHFILE_HEALED=\"\"\nfor _ in $(seq 1 30); do\n  AUTHFILE_HEALED=$(sudo stat -c '%a %U %G' \"$AUTHFILE\" 2>/dev/null || echo \"missing\")\n  UNIT_GROUP=$(systemctl show -p Group --value chisel 2>/dev/null || echo \"\")\n  if [ \"$AUTHFILE_HEALED\" = \"640 lamaste lamaste-chisel\" ] && [ \"$UNIT_GROUP\" = \"lamaste-chisel\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"$AUTHFILE_HEALED\" \"640 lamaste lamaste-chisel\" \"Reconciliation restored the authfile to 0640 lamaste:lamaste-chisel\" || true\nassert_eq \"$(systemctl show -p Group --value chisel 2>/dev/null || echo \"\")\" \"lamaste-chisel\" \"Reconciliation restored Group=lamaste-chisel in chisel.service\" || true\nassert_eq \"$(systemctl show -p User --value chisel 2>/dev/null || echo \"\")\" \"nobody\" \"chisel.service still runs as User=nobody\" || true\n\nif wait_for_service chisel 30; then\n  log_pass \"chisel is active after reconciliation (restarted onto the healed unit)\"\nelse\n  log_fail \"chisel is not active after reconciliation\"\nfi\nCHISEL_GROUP_NOW=$(ps -o group= -p \"$(systemctl show -p MainPID --value chisel 2>/dev/null || echo 0)\" 2>/dev/null | tr -d ' ' || echo \"\")\nassert_eq \"$CHISEL_GROUP_NOW\" \"lamaste-chisel\" \"Running chisel process has group lamaste-chisel\" || true\nassert_eq \"$(sudo test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no)\" \"no\" \"Reconciliation did not fail closed\" || true\nassert_eq \"$(systemctl is-enabled chisel 2>/dev/null || true)\" \"enabled\" \"chisel.service is enabled\" || true"
+    },
+    {
       "id": "panel-survives-all-service-disruptions",
       "label": "Panel survives all service disruptions",
       "steps": [
         {
-          "id": "step-52",
+          "id": "step-86",
           "label": "GET /api/health",
           "target": "host",
           "op": {
@@ -759,7 +1091,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-87",
           "label": "Panel health is ok after all disruptions",
           "target": "local",
           "continueOnError": true,
@@ -781,7 +1113,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-88",
           "label": "GET /api/services",
           "target": "host",
           "op": {
@@ -799,7 +1131,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-90",
           "label": "Set FINAL_STATUS",
           "target": "local",
           "op": {
@@ -816,7 +1148,7 @@
           ]
         },
         {
-          "id": "step-57",
+          "id": "step-91",
           "label": "Service $svc is active at end of resilience test",
           "target": "local",
           "continueOnError": true,
@@ -841,7 +1173,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 10 — Resilience\n# ============================================================================\n# Verifies service failure detection and recovery:\n# - Stop nginx, verify dashboard shows it as inactive\n# - Restart nginx from API, verify it recovers\n# - Stop chisel, verify dashboard shows it as inactive\n# - Restart chisel from API, verify it recovers\n# - Verify panel stays up throughout\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 10 — Resilience\n# ============================================================================\n# Verifies service failure detection and recovery:\n# - Stop nginx, verify dashboard shows it as inactive\n# - Restart nginx from API, verify it recovers\n# - Stop chisel, verify dashboard shows it as inactive\n# - Restart chisel from API, verify it recovers\n# - Loosen the chisel authfile to 0644 and point chisel.service at the wrong\n#   group; a panel restart's background reconciliation restores 0640\n#   lamaste:lamaste-chisel and Group=lamaste-chisel, and chisel keeps running\n#   (not failed closed)\n# - Verify panel stays up throughout\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq systemctl\n\nbegin_test \"10 — Resilience\"\n\n# Safety: ensure all services are restored on exit\ncleanup_services() {\n  sudo systemctl start nginx 2>/dev/null || true\n  sudo systemctl start chisel 2>/dev/null || true\n  sudo systemctl start authelia 2>/dev/null || true\n}\ntrap cleanup_services EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

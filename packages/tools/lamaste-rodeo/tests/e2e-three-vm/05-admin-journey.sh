@@ -52,6 +52,8 @@ host_api_delete() {
 
 TEST_TUNNEL_SUBDOMAIN="e2eadmin"
 TEST_TUNNEL_PORT=18090
+# Every tunnel is owned by an enrolled agent — the one setup-host.sh enrolled
+TUNNEL_AGENT="test-agent"
 TEST_TUNNEL_ID=""
 TEST_USERNAME="e2etestuser"
 
@@ -149,11 +151,12 @@ TUNNEL_COUNT_BEFORE=$(echo "$LIST_BEFORE" | jq '.tunnels | length' 2>/dev/null |
 log_info "Tunnels before create: $TUNNEL_COUNT_BEFORE"
 
 # POST /api/tunnels — create test tunnel
-CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TEST_TUNNEL_SUBDOMAIN}\",\"port\":${TEST_TUNNEL_PORT}}")
+CREATE_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${TEST_TUNNEL_SUBDOMAIN}\",\"port\":${TEST_TUNNEL_PORT},\"agentLabel\":\"${TUNNEL_AGENT}\"}")
 assert_json_field "$CREATE_RESPONSE" '.ok' 'true' "POST /api/tunnels create returned ok: true" || true
 
 TEST_TUNNEL_ID=$(echo "$CREATE_RESPONSE" | jq -r '.tunnel.id' 2>/dev/null || echo "")
 assert_json_field_not_empty "$CREATE_RESPONSE" '.tunnel.id' "Created tunnel has an ID" || true
+assert_json_field "$CREATE_RESPONSE" '.tunnel.agentLabel' "$TUNNEL_AGENT" "Created tunnel is owned by ${TUNNEL_AGENT}" || true
 log_info "Created tunnel ID: $TEST_TUNNEL_ID"
 
 # GET /api/tunnels — verify new tunnel appears

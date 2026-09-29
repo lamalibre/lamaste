@@ -3,7 +3,7 @@
   "meta": {
     "number": 22,
     "name": "Restricted Tunnel + Per-User Grant",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "22 — Restricted Tunnel + Per-User Grant (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq"]
@@ -28,6 +28,9 @@
     },
     "TUNNEL_PORT": {
       "value": "18090"
+    },
+    "TUNNEL_AGENT": {
+      "value": "test-agent"
     },
     "TUNNEL_FQDN": {
       "value": "${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}",
@@ -254,6 +257,28 @@
         },
         {
           "id": "step-12",
+          "label": "Tunnel is owned by ${TUNNEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CREATE_RESPONSE"
+              },
+              "path": ".tunnel.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "TUNNEL_AGENT"
+              },
+              "message": "Tunnel is owned by ${TUNNEL_AGENT}"
+            }
+          }
+        },
+        {
+          "id": "step-13",
           "label": "Default accessMode is 'restricted' (security posture)",
           "target": "local",
           "continueOnError": true,
@@ -275,7 +300,7 @@
           }
         },
         {
-          "id": "step-13",
+          "id": "step-14",
           "label": "Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})",
           "target": "local",
           "op": {
@@ -285,14 +310,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel using the default accessMode\"\n# ---------------------------------------------------------------------------\n# Delete any leftover tunnel with our subdomain so the create below doesn't\n# 409. `host_api_get` is curl -f, so we swallow its non-zero when the list\n# endpoint isn't populated yet.\nEXISTING_TUNNELS=$(host_api_get \"tunnels\" 2>/dev/null || echo '{\"tunnels\":[]}')\nEXISTING_ID=$(echo \"$EXISTING_TUNNELS\" | jq -r --arg sd \"${TUNNEL_SUBDOMAIN}\" '.tunnels[]? | select(.subdomain==$sd) | .id' 2>/dev/null | head -1)\nif [ -n \"${EXISTING_ID}\" ] && [ \"${EXISTING_ID}\" != \"null\" ]; then\n  log_info \"Removing stale tunnel ${EXISTING_ID} (subdomain ${TUNNEL_SUBDOMAIN}) from a prior run\"\n  # Use the timeout-wrapped helper — plain host_api_delete has no outer cap\n  # and can hang on the known rodeo multipass-exec pipe-leak.\n  cleanup_host_delete \"tunnels/${EXISTING_ID}\"\nfi\n\n# Intentionally omit accessMode — the route handler's Zod schema defaults to\n# \"restricted\", which is what this test is verifying the behavior of.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT}}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.accessMode' 'restricted' \\\n  \"Default accessMode is 'restricted' (security posture)\" || true\n\nlog_info \"Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Step 1: Create tunnel using the default accessMode\"\n# ---------------------------------------------------------------------------\n# Delete any leftover tunnel with our subdomain so the create below doesn't\n# 409. `host_api_get` is curl -f, so we swallow its non-zero when the list\n# endpoint isn't populated yet.\nEXISTING_TUNNELS=$(host_api_get \"tunnels\" 2>/dev/null || echo '{\"tunnels\":[]}')\nEXISTING_ID=$(echo \"$EXISTING_TUNNELS\" | jq -r --arg sd \"${TUNNEL_SUBDOMAIN}\" '.tunnels[]? | select(.subdomain==$sd) | .id' 2>/dev/null | head -1)\nif [ -n \"${EXISTING_ID}\" ] && [ \"${EXISTING_ID}\" != \"null\" ]; then\n  log_info \"Removing stale tunnel ${EXISTING_ID} (subdomain ${TUNNEL_SUBDOMAIN}) from a prior run\"\n  # Use the timeout-wrapped helper — plain host_api_delete has no outer cap\n  # and can hang on the known rodeo multipass-exec pipe-leak.\n  cleanup_host_delete \"tunnels/${EXISTING_ID}\"\nfi\n\n# Intentionally omit accessMode — the route handler's Zod schema defaults to\n# \"restricted\", which is what this test is verifying the behavior of.\nCREATE_RESPONSE=$(host_api_post \"tunnels\" \"{\\\"subdomain\\\":\\\"${TUNNEL_SUBDOMAIN}\\\",\\\"port\\\":${TUNNEL_PORT},\\\"agentLabel\\\":\\\"${TUNNEL_AGENT}\\\"}\")\nassert_json_field \"$CREATE_RESPONSE\" '.ok' 'true' \"Tunnel creation returned ok: true\" || true\n\nTUNNEL_ID=$(echo \"$CREATE_RESPONSE\" | jq -r '.tunnel.id' 2>/dev/null || echo \"\")\nassert_json_field_not_empty \"$CREATE_RESPONSE\" '.tunnel.id' \"Tunnel has an ID\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.agentLabel' \"$TUNNEL_AGENT\" \"Tunnel is owned by ${TUNNEL_AGENT}\" || true\nassert_json_field \"$CREATE_RESPONSE\" '.tunnel.accessMode' 'restricted' \\\n  \"Default accessMode is 'restricted' (security posture)\" || true\n\nlog_info \"Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})\""
     },
     {
       "id": "step-2-wire-up-host-entries-and-start-a-marker-http-server",
       "label": "Step 2: Wire up host entries and start a marker HTTP server",
       "steps": [
         {
-          "id": "step-14",
+          "id": "step-15",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -301,7 +326,7 @@
           }
         },
         {
-          "id": "step-15",
+          "id": "step-16",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -310,7 +335,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-17",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -319,7 +344,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-18",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -328,7 +353,7 @@
           }
         },
         {
-          "id": "step-18",
+          "id": "step-19",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -337,7 +362,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-20",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -346,7 +371,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-22",
           "label": "Marker HTTP server running on agent at port ${TUNNEL_PORT}",
           "target": "local",
           "op": {
@@ -356,7 +381,7 @@
           }
         },
         {
-          "id": "step-23",
+          "id": "step-24",
           "label": "Sleep 5s",
           "target": "local",
           "op": {
@@ -372,7 +397,7 @@
       "label": "Step 3: Create a second Authelia user without a grant",
       "steps": [
         {
-          "id": "step-25",
+          "id": "step-26",
           "label": "POST /api/users",
           "target": "host",
           "op": {
@@ -391,7 +416,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-27",
           "label": "Created second Authelia user (${OUTSIDER_USER}) for no-grant case",
           "target": "local",
           "op": {
@@ -401,7 +426,7 @@
           }
         },
         {
-          "id": "step-27",
+          "id": "step-28",
           "label": "Outsider user creation returned: $(echo \"$CREATE_OUTSIDER\" | head -c 160)",
           "target": "local",
           "op": {
@@ -411,7 +436,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-29",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -427,7 +452,7 @@
       "label": "Step 4: Authenticate as testuser (will have the grant)",
       "steps": [
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "POST /api/users/${TEST_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -446,7 +471,7 @@
           ]
         },
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "TOTP reset returned otpauth URI for testuser",
           "target": "local",
           "continueOnError": true,
@@ -464,7 +489,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "Extract OTPAUTH_URI",
           "target": "local",
           "op": {
@@ -481,7 +506,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "Extract TESTUSER_SECRET",
           "target": "local",
           "op": {
@@ -498,7 +523,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "Failed to extract testuser TOTP secret",
           "target": "local",
           "op": {
@@ -515,7 +540,7 @@
           }
         },
         {
-          "id": "step-35",
+          "id": "step-36",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -524,7 +549,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-37",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -550,7 +575,7 @@
           ]
         },
         {
-          "id": "step-37",
+          "id": "step-38",
           "label": "testuser first factor OK",
           "target": "local",
           "continueOnError": true,
@@ -572,7 +597,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-39",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -593,7 +618,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-40",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -620,7 +645,7 @@
           ]
         },
         {
-          "id": "step-40",
+          "id": "step-41",
           "label": "testuser TOTP OK",
           "target": "local",
           "continueOnError": true,
@@ -649,7 +674,7 @@
       "label": "Step 5: testuser WITHOUT a grant is denied (403)",
       "steps": [
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -673,7 +698,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "Restricted tunnel denies authenticated user without grant (403)",
           "target": "local",
           "continueOnError": true,
@@ -701,7 +726,7 @@
       "label": "Step 6: Admin creates a grant for testuser",
       "steps": [
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "POST /api/gatekeeper/grants",
           "target": "host",
           "op": {
@@ -720,7 +745,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "Extract GRANT_ID",
           "target": "local",
           "op": {
@@ -737,7 +762,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "Grant created (${GRANT_ID})",
           "target": "local",
           "op": {
@@ -761,7 +786,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-47",
           "label": "Grant creation failed: $(echo \"$GRANT_RESPONSE\" | head -c 200)",
           "target": "local",
           "op": {
@@ -788,7 +813,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -804,7 +829,7 @@
       "label": "Step 7: testuser WITH a grant is allowed (200 + marker)",
       "steps": [
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -827,7 +852,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "Grantee receives tunnel marker content",
           "target": "local",
           "continueOnError": true,
@@ -848,7 +873,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -872,7 +897,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "Grantee reaches tunnel (HTTP 200)",
           "target": "local",
           "continueOnError": true,
@@ -900,7 +925,7 @@
       "label": "Step 8: Outsider authenticates but has no grant → 403",
       "steps": [
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "POST /api/users/${OUTSIDER_USER}/reset-totp",
           "target": "host",
           "op": {
@@ -919,7 +944,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-54",
           "label": "Extract OUTSIDER_URI",
           "target": "local",
           "op": {
@@ -936,7 +961,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-55",
           "label": "Extract OUTSIDER_SECRET",
           "target": "local",
           "op": {
@@ -953,7 +978,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-56",
           "label": "Could not reset TOTP for outsider user (reset-totp response: $(echo \"$OUTSIDER_TOTP_RESPONSE\" | head -c 160)) — skipping outsider assertions",
           "target": "local",
           "op": {
@@ -970,7 +995,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "Exec on visitor",
           "target": "visitor",
           "op": {
@@ -983,7 +1008,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1013,7 +1038,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-60",
           "label": "outsider first factor OK",
           "target": "local",
           "continueOnError": true,
@@ -1039,7 +1064,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "Generate TOTP on visitor",
           "target": "visitor",
           "op": {
@@ -1064,7 +1089,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1095,7 +1120,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-63",
           "label": "outsider TOTP OK",
           "target": "local",
           "continueOnError": true,
@@ -1121,7 +1146,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-64",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1149,7 +1174,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-65",
           "label": "Outsider authenticated but ungranted receives 403",
           "target": "local",
           "continueOnError": true,
@@ -1174,7 +1199,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-66",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1201,7 +1226,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-67",
           "label": "Outsider unexpectedly received tunnel marker content — restricted mode breached",
           "target": "local",
           "op": {
@@ -1211,7 +1236,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-68",
           "label": "Outsider does not see tunnel content (restricted mode holds)",
           "target": "local",
           "op": {
@@ -1228,7 +1253,7 @@
       "label": "Step 9: Revoke testuser's grant → previously-allowed user 403",
       "steps": [
         {
-          "id": "step-70",
+          "id": "step-71",
           "label": "Sleep 12s",
           "target": "local",
           "op": {
@@ -1237,7 +1262,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-72",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1261,7 +1286,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-73",
           "label": "Revoked grant blocks the previously-allowed user (403)",
           "target": "local",
           "continueOnError": true,
@@ -1282,7 +1307,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-74",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1305,7 +1330,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-75",
           "label": "Previously-allowed user still receives tunnel content after revoke",
           "target": "local",
           "op": {
@@ -1315,7 +1340,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-76",
           "label": "Previously-allowed user no longer receives tunnel content",
           "target": "local",
           "op": {
@@ -1330,7 +1355,7 @@
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],
   "headerRaw": "# ============================================================================\n# 22 — Restricted Tunnel + Per-User Grant (Three-VM)\n# ============================================================================\n# Exercises the security default: a tunnel created without an explicit\n# accessMode is `restricted`, which requires an admin-issued grant for any\n# user to reach it. We cover the three decisive states:\n#\n#   1. User has a grant           → 200 with tunnel content\n#   2. User authenticates but has no grant → 403 (Gatekeeper access-request)\n#   3. Admin revokes the grant     → previously-allowed user now 403\n#\n# Verifies both that the default posture holds (a fresh tunnel is not\n# accessible to any authenticated user) and that the grant lifecycle\n# actually drives the nginx/Gatekeeper decision — the surface we regressed\n# before with the `fs.watch` atomic-replace bug.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\nhost_exec()    { multipass exec lamaste-host    -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\nagent_exec()   { multipass exec lamaste-agent   -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\nTUNNEL_SUBDOMAIN=\"e2erestricted\"\nTUNNEL_PORT=18090\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nGRANT_ID=\"\"\nMARKER=\"LAMASTE_RESTRICTED_OK_$(date +%s)\"\nOUTSIDER_USER=\"e2eoutsider\"\nOUTSIDER_PASSWORD=\"Outsider-E2E-Password-123\"\n\n# ---------------------------------------------------------------------------\n# Cleanup on exit — runs even when assertions fail\n#\n# Every multipass exec is wrapped in `timeout` at the host level because a\n# SIGKILL'd `multipass exec` child can reparent to launchd (PPID 1) and hold\n# stdout open, blocking the outer bash pipe indefinitely. A 35s outer cap\n# lets each step fail fast without hanging the whole suite.\n# ---------------------------------------------------------------------------\nCLEANUP_CURL_ARGS=\"-skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n# `timed_exec` is defined in helpers.sh.\ncleanup_host_delete() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \\\n    \"curl ${CLEANUP_CURL_ARGS} -X DELETE https://127.0.0.1:9292/api/$1\" \\\n    >/dev/null 2>&1\n}\ncleanup_exec() {\n  # $1 = vm name, $2 = command\n  timed_exec 15 multipass exec \"$1\" -- sudo bash -c \"$2\" >/dev/null 2>&1\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Revoke grant if still present\n  if [ -n \"${GRANT_ID}\" ]; then\n    cleanup_host_delete \"gatekeeper/grants/${GRANT_ID}\"\n  fi\n\n  # Delete tunnel\n  if [ -n \"${TUNNEL_ID}\" ]; then\n    cleanup_host_delete \"tunnels/${TUNNEL_ID}\"\n  fi\n\n  # Remove outsider user so repeat runs are idempotent\n  cleanup_host_delete \"users/${OUTSIDER_USER}\"\n\n  # Stop the agent-side HTTP server and remove hosts entries we added\n  # Bracket-escape so pkill doesn't self-match its own cmdline.\n  cleanup_exec lamaste-agent   \"pkill -f '[p]ython3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\"\n  cleanup_exec lamaste-agent   \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n  cleanup_exec lamaste-visitor \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n}\ntrap cleanup EXIT\n\nbegin_test \"22 — Restricted Tunnel + Per-User Grant (Three-VM)\"\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\nhost_exec()    { multipass exec lamaste-host    -- sudo bash -c \"$1\"; }\nvisitor_exec() { multipass exec lamaste-visitor -- sudo bash -c \"$1\"; }\nagent_exec()   { multipass exec lamaste-agent   -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE https://127.0.0.1:9292/api/$1\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\nTUNNEL_SUBDOMAIN=\"e2erestricted\"\nTUNNEL_PORT=18090\n# The agent enrolled by setup-host.sh. Its VM runs the Chisel client, so it\n# must own the tunnel for traffic to reach the test's HTTP server.\nTUNNEL_AGENT=\"test-agent\"\nTUNNEL_FQDN=\"${TUNNEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nTUNNEL_ID=\"\"\nGRANT_ID=\"\"\nMARKER=\"LAMASTE_RESTRICTED_OK_$(date +%s)\"\nOUTSIDER_USER=\"e2eoutsider\"\nOUTSIDER_PASSWORD=\"Outsider-E2E-Password-123\"\n\n# ---------------------------------------------------------------------------\n# Cleanup on exit — runs even when assertions fail\n#\n# Every multipass exec is wrapped in `timeout` at the host level because a\n# SIGKILL'd `multipass exec` child can reparent to launchd (PPID 1) and hold\n# stdout open, blocking the outer bash pipe indefinitely. A 35s outer cap\n# lets each step fail fast without hanging the whole suite.\n# ---------------------------------------------------------------------------\nCLEANUP_CURL_ARGS=\"-skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n# `timed_exec` is defined in helpers.sh.\ncleanup_host_delete() {\n  timed_exec 35 multipass exec lamaste-host -- sudo bash -c \\\n    \"curl ${CLEANUP_CURL_ARGS} -X DELETE https://127.0.0.1:9292/api/$1\" \\\n    >/dev/null 2>&1\n}\ncleanup_exec() {\n  # $1 = vm name, $2 = command\n  timed_exec 15 multipass exec \"$1\" -- sudo bash -c \"$2\" >/dev/null 2>&1\n}\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Revoke grant if still present\n  if [ -n \"${GRANT_ID}\" ]; then\n    cleanup_host_delete \"gatekeeper/grants/${GRANT_ID}\"\n  fi\n\n  # Delete tunnel\n  if [ -n \"${TUNNEL_ID}\" ]; then\n    cleanup_host_delete \"tunnels/${TUNNEL_ID}\"\n  fi\n\n  # Remove outsider user so repeat runs are idempotent\n  cleanup_host_delete \"users/${OUTSIDER_USER}\"\n\n  # Stop the agent-side HTTP server and remove hosts entries we added\n  # Bracket-escape so pkill doesn't self-match its own cmdline.\n  cleanup_exec lamaste-agent   \"pkill -f '[p]ython3 -m http.server ${TUNNEL_PORT}' 2>/dev/null || true\"\n  cleanup_exec lamaste-agent   \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n  cleanup_exec lamaste-visitor \"sed -i '/${TUNNEL_FQDN}/d' /etc/hosts 2>/dev/null || true\"\n}\ntrap cleanup EXIT\n\nbegin_test \"22 — Restricted Tunnel + Per-User Grant (Three-VM)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\n# ---------------------------------------------------------------------------\nend_test\n"
 }

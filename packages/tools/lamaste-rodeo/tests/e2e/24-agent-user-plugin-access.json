@@ -10,7 +10,19 @@
   },
   "env": {},
   "constants": {},
-  "cleanup": [],
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    }
+  ],
   "sections": [
     {
       "id": "pre-flight-check-onboarding-is-complete",
@@ -46,21 +58,33 @@
           }
         },
         {
-          "id": "step-4",
-          "label": "Set AGENT_LABEL",
-          "target": "local",
+          "id": "step-3",
+          "label": "POST /api/certs/agent",
+          "target": "host",
           "op": {
-            "type": "exec",
-            "command": "ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\""
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\"label\":\""
           },
           "capture": [
             {
-              "variable": "AGENT_LABEL",
+              "variable": "AGENT_CERT_RESPONSE",
               "from": {
                 "kind": "body"
               }
             }
           ]
+        },
+        {
+          "id": "step-4",
+          "label": "Failed to enroll agent ${AGENT_LABEL}: ${AGENT_CERT_RESPONSE}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Failed to enroll agent ${AGENT_LABEL}: ${AGENT_CERT_RESPONSE}"
+          }
         },
         {
           "id": "step-5",
@@ -74,10 +98,11 @@
         }
       ],
       "when": {
-        "kind": "var_not_empty",
-        "variable": "AGENT_LABEL"
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Detect agent label\nAGENTS_DIR=\"/etc/lamalibre/lamaste/pki/agents\"\nAGENT_LABEL=\"\"\nif [ -d \"$AGENTS_DIR\" ]; then\n  AGENT_LABEL=$(ls \"$AGENTS_DIR\" 2>/dev/null | head -1 || echo \"\")\nfi\nif [ -z \"$AGENT_LABEL\" ]; then\n  log_skip \"No enrolled agent found — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Enroll a dedicated agent. Grants target it, and plugin tunnels name it as\n# their owner — it must be enrolled and not revoked, or the plugin tunnel\n# validation cases below would be rejected for the owner instead of for the\n# field each one tests.\nAGENT_LABEL=\"plugin-access-e2e-$(date +%s)\"\nAGENT_CERT_RESPONSE=$(api_post \"certs/agent\" '{\"label\":\"'\"${AGENT_LABEL}\"'\",\"capabilities\":[\"tunnels:read\"]}')\nif [ \"$(echo \"$AGENT_CERT_RESPONSE\" | jq -r '.ok' 2>/dev/null || echo \"\")\" != \"true\" ]; then\n  log_fail \"Failed to enroll agent ${AGENT_LABEL}: ${AGENT_CERT_RESPONSE}\"\n  end_test\n  exit $?\nfi\nlog_info \"Using agent label: ${AGENT_LABEL}\"\n\ncleanup() {\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n}\ntrap cleanup EXIT"
     },
     {
       "id": "1-grant-creation-with-target-field",
