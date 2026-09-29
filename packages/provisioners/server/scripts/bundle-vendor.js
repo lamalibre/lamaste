@@ -2,7 +2,9 @@
  * Bundles sibling monorepo packages into vendor/ so that create-lamaste
  * works standalone when installed via npx (outside the monorepo).
  *
- * Run automatically via the "prepublishOnly" npm script.
+ * Runs automatically before every `npm pack` / `npm publish` (the "prepack"
+ * script), so a packed installer never carries a stale vendor/. Progress goes
+ * to stderr: `npm pack --json` prints its JSON on stdout.
  */
 
 import { cp, mkdir, rm } from 'node:fs/promises';
@@ -34,7 +36,7 @@ async function main() {
     recursive: true,
   });
 
-  console.log('Bundled vendor/serverd from lamaste-serverd (package.json + src/)');
+  console.error('Bundled vendor/serverd from lamaste-serverd (package.json + src/)');
 
   // --- lamaste-server: server operational CLI (package.json + bin/ + src/) ---
   // The 2.0 refactor split the CLI out of the daemon; this CLI owns
@@ -49,7 +51,7 @@ async function main() {
   await cp(join(serverCliSrc, 'package.json'), join(serverCliDest, 'package.json'));
   await cp(join(serverCliSrc, 'bin'), join(serverCliDest, 'bin'), { recursive: true });
   await cp(join(serverCliSrc, 'src'), join(serverCliDest, 'src'), { recursive: true });
-  console.log('Bundled vendor/server from lamaste-server CLI (package.json + bin/ + src/)');
+  console.error('Bundled vendor/server from lamaste-server CLI (package.json + bin/ + src/)');
 
   // --- lamaste-server-ui: dist/ (pre-built assets) ---
   const clientDist = join(monorepoRoot, 'packages', 'server', 'ui', 'dist');
@@ -63,7 +65,7 @@ async function main() {
   await mkdir(join(clientDest, 'dist'), { recursive: true });
   await cp(clientDist, join(clientDest, 'dist'), { recursive: true });
 
-  console.log('Bundled vendor/server-ui (dist/)');
+  console.error('Bundled vendor/server-ui (dist/)');
 
   // --- gatekeeper: package.json + dist/ (compiled TypeScript) ---
   const gatekeeperSrc = join(monorepoRoot, 'packages', 'sdks', 'gatekeeper');
@@ -73,9 +75,9 @@ async function main() {
     await mkdir(gatekeeperDest, { recursive: true });
     await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
     await cp(gatekeeperDist, join(gatekeeperDest, 'dist'), { recursive: true });
-    console.log('Bundled vendor/gatekeeper (package.json + dist/)');
+    console.error('Bundled vendor/gatekeeper (package.json + dist/)');
   } else {
-    console.log('Skipped vendor/gatekeeper (dist/ not found — run "npm run build" first)');
+    console.error('Skipped vendor/gatekeeper (dist/ not found — run "npm run build" first)');
   }
 
   // --- docs: version-stamped markdown ---
@@ -91,14 +93,15 @@ async function main() {
     const docsDest = join(vendorDir, 'docs');
     execFileSync('node', [docsStampScript, docsDest], {
       cwd: monorepoRoot,
-      stdio: 'inherit',
+      // Progress on stderr: `npm pack --json` (prepack) reads stdout as JSON.
+      stdio: ['ignore', 'pipe', 'inherit'],
     });
-    console.log('Bundled vendor/docs (version-stamped)');
+    console.error('Bundled vendor/docs (version-stamped)');
   } else {
-    console.log('Skipped vendor/docs (version-stamp script not found)');
+    console.error('Skipped vendor/docs (version-stamp script not found)');
   }
 
-  console.log('Vendor bundling complete.');
+  console.error('Vendor bundling complete.');
 }
 
 main().catch((err) => {
