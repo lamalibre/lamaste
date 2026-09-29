@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-docs",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "private": true,
   "description": "Lamaste documentation — markdown files served by the panel and published to GitHub Pages",
   "type": "module",

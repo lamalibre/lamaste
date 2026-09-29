@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-server",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Server operations CLI for Lamaste",
   "type": "module",
   "license": "SEE LICENSE IN ../../LICENSE.md",
@@ -16,7 +16,7 @@
     "lint": "echo 'No lint configured'"
   },
   "dependencies": {
-    "@lamalibre/lamaste": "^2.0.0",
+    "@lamalibre/lamaste": "^4.0.0",
     "chalk": "^5.3.0",
     "execa": "^9.0.0"
   },

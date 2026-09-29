@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/create-lamaste-desktop",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Download and launch the Lamaste Desktop app",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",

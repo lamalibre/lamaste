@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-identity",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "SDK for Lamaste identity system — Authelia identity header parsing and user metadata queries",
   "type": "module",
   "exports": {

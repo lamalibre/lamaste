@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Core library for Lamaste — types, constants, schemas, plugin host, file helpers",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",

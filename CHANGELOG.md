@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - Unreleased
+
+Not yet published; the date is set at release. All lockstep packages move to 4.0.0 (npm's latest is 3.0.0; the tree still said 2.0.0).
+
 ### Upgrade notes
 
 - **Upgrade agents first, then the server.** Agents older than this release reject the new `chiselArgs` shape; a new agent works against an old server.

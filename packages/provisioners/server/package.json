@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/create-lamaste",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "One-command setup for secure reverse tunnels with a management dashboard",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE.md",
@@ -42,7 +42,7 @@
     "mtls"
   ],
   "dependencies": {
-    "@lamalibre/lamaste": "^2.0.0",
+    "@lamalibre/lamaste": "^4.0.0",
     "chalk": "^5.3.0",
     "execa": "^9.0.0",
     "listr2": "^8.0.0"

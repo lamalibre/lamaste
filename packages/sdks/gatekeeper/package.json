@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-gatekeeper",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Authorization layer for Lamaste — groups, grants, and tunnel access control",
   "type": "module",
   "exports": {

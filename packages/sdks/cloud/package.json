@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-cloud",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "description": "Cloud provider abstraction for Lamaste server and storage provisioning",
   "type": "module",
   "exports": {

@@ -1,6 +1,6 @@
 [package]
 name = "lamaste-desktop"
-version = "2.0.0"
+version = "4.0.0"
 edition = "2021"
 
 [dependencies]
