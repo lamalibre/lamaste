@@ -74,9 +74,9 @@
           "file": "02-guides/desktop-app-setup.md"
         },
         {
-          "title": "Mac Client Setup (CLI)",
-          "slug": "mac-client-setup",
-          "file": "02-guides/mac-client-setup.md"
+          "title": "Agent Setup (CLI)",
+          "slug": "agent-setup",
+          "file": "02-guides/agent-setup.md"
         },
         {
           "title": "Managing Users",

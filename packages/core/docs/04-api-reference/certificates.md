@@ -132,7 +132,7 @@ This endpoint always returns 200. If the timer status cannot be determined, it r
 
 ### `POST /api/certs/:domain/renew`
 
-Forces immediate renewal of a Let's Encrypt certificate using `certbot renew --force-renewal`. After renewal, the new expiry date is read from the certificate, and nginx is reloaded to pick up the new cert.
+Forces immediate renewal of a Let's Encrypt certificate: `sudo lamaste-certbot renew <domain> force`, which runs `certbot renew --cert-name <domain> --force-renewal --no-random-sleep-on-renew --non-interactive`. The random delay certbot otherwise adds before a non-interactive renewal (up to about 8 minutes, meant for `certbot.timer`) is skipped, because an operator is waiting. After renewal, the new expiry date is read from the certificate, and nginx is reloaded to pick up the new cert.
 
 **Request:**
 
@@ -507,6 +507,8 @@ Revokes an agent certificate. The certificate serial is added to the revocation 
 
 **Cascade revocation:** When a regular agent is revoked, all plugin-agents delegated by that agent are automatically cascade-revoked in the same operation. Their serials are added to `revoked.json` and their cert files cleaned up.
 
+**Chisel credential and tunnels:** Revoking a regular agent also removes its Chisel credential (Chisel restarts, ending the agent's tunnel session) and releases its tunnels: its app and plugin tunnels become **unassigned** — their hostnames stay reserved and dark until an administrator assigns them to another agent — and its `agent-<label>` panel tunnel is removed with its vhost. A later enrollment that reuses the label therefore inherits no tunnels.
+
 **Request:**
 
 No request body.
@@ -532,6 +534,60 @@ curl -s --cert client.p12:password \
 | ------ | --------------------------------------------------------- | -------------------------------------------- |
 | 400    | `{"error":"Validation failed",...}`                       | Invalid label format                         |
 | 404    | `{"error":"Agent certificate \"macbook-pro\" not found"}` | No agent with this label, or already revoked |
+
+---
+
+## Chisel Credential Endpoints
+
+Every regular agent has its own Chisel credential — the user `agent-<label>` and a random password — which its tunnel client presents to the Chisel server. The credential is minted at enrollment; these endpoints fetch and rotate it. Plugin-agents have none.
+
+### `GET /api/agents/me/chisel-credential` (agent-only)
+
+Returns the calling agent's credential. The agent is identified strictly by its certificate — there is no label parameter, so an agent can never read another agent's credential.
+
+**Required capability:** `tunnels:read`
+
+**Response (200):**
+
+```json
+{
+  "user": "agent-macbook-pro",
+  "password": "<64 hex characters>",
+  "createdAt": "2026-09-20T10:12:00.000Z"
+}
+```
+
+`createdAt` is when this password was issued. It matches `chiselCredentialIssuedAt` in [`GET /api/tunnels/agent-config`](tunnels.md#get-api-tunnels-agent-config), which is how an agent's sync timer notices that an administrator rotated its credential and fetches the new one.
+
+**Errors:**
+
+| Status | Body                                                                      | When                                       |
+| ------ | ------------------------------------------------------------------------- | ------------------------------------------ |
+| 400    | `{"error":"Agent label could not be determined from client certificate"}` | Certificate has no agent label             |
+| 404    | `{"error":"No chisel credential found for this agent","hint":"..."}`      | No credential; an admin must rotate one in |
+
+### `POST /api/agents/me/chisel-credential/rotate` (agent-only)
+
+Replaces the calling agent's credential and returns the new one (same shape as above). An agent upgraded from a version that exposed its credential in process arguments and 0644 unit files calls this once, automatically, on its first sync.
+
+Every rotation restarts Chisel — the old password must stop working — which briefly drops **every** agent's tunnels. An agent may therefore rotate only a credential that is at least 10 minutes old.
+
+**Required capability:** `tunnels:read`
+
+**Errors:**
+
+| Status | Body                                                                                     | When                                       |
+| ------ | ---------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 429    | `{"error":"The chisel credential was issued less than 10 minutes ago","issuedAt":"..."}` | The current credential is under 10 min old |
+
+### `POST /api/agents/:label/chisel-credential/rotate` (admin-only)
+
+Mints a new credential for the named agent, rewrites the authfile and restarts Chisel. The response includes the new credential and `restartOk` (plus `restartError` when the restart failed). The agent does not need to be told: its sync timer sees the new `chiselCredentialIssuedAt` within about 30 seconds and fetches the credential through the `/me` endpoint (`lamaste-agent chisel refresh-credential` does it at once).
+
+| Status | When                            |
+| ------ | ------------------------------- |
+| 400    | The label is a plugin-agent     |
+| 404    | No active agent with this label |
 
 ---
 
@@ -952,26 +1008,29 @@ curl -s --cert agent.p12:password \
 
 ## Quick Reference
 
-| Method | Path                                         | Description                             |
-| ------ | -------------------------------------------- | --------------------------------------- |
-| GET    | `/api/certs`                                 | List all certs (sorted by expiry)       |
-| GET    | `/api/certs/auto-renew-status`               | Check certbot timer status              |
-| POST   | `/api/certs/:domain/renew`                   | Force-renew a Let's Encrypt cert        |
-| POST   | `/api/certs/mtls/rotate`                     | Rotate mTLS client certificate          |
-| GET    | `/api/certs/mtls/download`                   | Download client.p12 file                |
-| POST   | `/api/certs/agent`                           | Generate agent certificate (P12)        |
-| GET    | `/api/certs/agent`                           | List agent certificates                 |
-| GET    | `/api/certs/agent/:label/download`           | Download agent .p12 file                |
-| PATCH  | `/api/certs/agent/:label/capabilities`       | Update agent capabilities               |
-| PATCH  | `/api/certs/agent/:label/allowed-sites`      | Update agent site access                |
-| DELETE | `/api/certs/agent/:label`                    | Revoke agent certificate                |
-| POST   | `/api/certs/agent/enroll`                    | Generate enrollment token (admin-only)  |
-| POST   | `/api/certs/agent/enroll-delegated`          | Delegated enrollment token (agent-only) |
-| DELETE | `/api/certs/agent/enroll/:label`             | Revoke unused enrollment token          |
-| POST   | `/api/certs/agent/upgrade-cert`              | Upgrade agent cert to hardware-bound    |
-| POST   | `/api/enroll`                                | Enroll agent with token (public)        |
-| POST   | `/api/certs/admin/upgrade-to-hardware-bound` | Upgrade admin to hardware-bound         |
-| GET    | `/api/certs/admin/auth-mode`                 | Get admin auth mode                     |
+| Method | Path                                          | Description                                             |
+| ------ | --------------------------------------------- | ------------------------------------------------------- |
+| GET    | `/api/certs`                                  | List all certs (sorted by expiry)                       |
+| GET    | `/api/certs/auto-renew-status`                | Check certbot timer status                              |
+| POST   | `/api/certs/:domain/renew`                    | Force-renew a Let's Encrypt cert                        |
+| POST   | `/api/certs/mtls/rotate`                      | Rotate mTLS client certificate                          |
+| GET    | `/api/certs/mtls/download`                    | Download client.p12 file                                |
+| POST   | `/api/certs/agent`                            | Generate agent certificate (P12)                        |
+| GET    | `/api/certs/agent`                            | List agent certificates                                 |
+| GET    | `/api/certs/agent/:label/download`            | Download agent .p12 file                                |
+| PATCH  | `/api/certs/agent/:label/capabilities`        | Update agent capabilities                               |
+| PATCH  | `/api/certs/agent/:label/allowed-sites`       | Update agent site access                                |
+| DELETE | `/api/certs/agent/:label`                     | Revoke agent certificate (releases its tunnels)         |
+| GET    | `/api/agents/me/chisel-credential`            | Own Chisel credential (agent-only)                      |
+| POST   | `/api/agents/me/chisel-credential/rotate`     | Rotate own Chisel credential (agent-only, 10-min floor) |
+| POST   | `/api/agents/:label/chisel-credential/rotate` | Rotate an agent's Chisel credential (admin-only)        |
+| POST   | `/api/certs/agent/enroll`                     | Generate enrollment token (admin-only)                  |
+| POST   | `/api/certs/agent/enroll-delegated`           | Delegated enrollment token (agent-only)                 |
+| DELETE | `/api/certs/agent/enroll/:label`              | Revoke unused enrollment token                          |
+| POST   | `/api/certs/agent/upgrade-cert`               | Upgrade agent cert to hardware-bound                    |
+| POST   | `/api/enroll`                                 | Enroll agent with token (public)                        |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound`  | Upgrade admin to hardware-bound                         |
+| GET    | `/api/certs/admin/auth-mode`                  | Get admin auth mode                                     |
 
 ### Certificate Object Shape
 

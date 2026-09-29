@@ -13,6 +13,10 @@ nginx is the gatekeeper. The services behind it (Panel Server, Authelia, Chisel)
 ```
 Internet
   │
+  ├── :80 (every hostname)
+  │   └── lamalibre-lamaste-http-redirect (default_server)
+  │       └── 301 → https://$host$request_uri
+  │
   ├── :9292 (IP-based, always available)
   │   └── lamalibre-lamaste-panel-ip
   │       ├── Self-signed TLS cert
@@ -41,9 +45,11 @@ Internet
       └── <app>.<domain>
           └── lamalibre-lamaste-app-<name>
               ├── Let's Encrypt TLS cert
-              ├── Authelia forward auth
+              ├── Gatekeeper/Authelia auth (unless the tunnel is public)
+              ├── client_max_body_size (per tunnel)
+              ├── Proxy headers per location; X-SSL-Client-* cleared
               ├── WebSocket upgrade
-              └── Proxy → 127.0.0.1:<port> (tunneled app)
+              └── Proxy → 127.0.0.1:<port> (Chisel → carrying agent)
 ```
 
 ## Vhost Types
@@ -271,78 +277,45 @@ Key characteristics:
 
 ### 5. App Vhost (`lamalibre-lamaste-app-<name>`)
 
-Created when a tunnel is added via the management UI. Each tunnel gets its own vhost.
+Created when a tunnel is added via the management UI or `POST /api/tunnels`. Each tunnel gets its own vhost, rendered by one of three writers according to the tunnel's `accessMode`:
+
+| `accessMode`           | Writer                      | Authorization                                | Section |
+| ---------------------- | --------------------------- | -------------------------------------------- | ------- |
+| `restricted` (default) | `writeRestrictedVhost()`    | Gatekeeper: Authelia session **and** a grant | 9       |
+| `authenticated`        | `writeAuthenticatedVhost()` | Gatekeeper: any Authelia session             | 8       |
+| `public`               | `writePublicVhost()`        | None                                         | 7       |
+
+All three proxy to `127.0.0.1:<port>` — the port Chisel binds on the server for the tunnel's carrying agent — with WebSocket upgrade and 24-hour timeouts, and all three emit the tunnel's request body limit:
 
 ```nginx
-server {
-    listen 443 ssl;
-    server_name myapp.example.com;
+    client_max_body_size 10m;   # from the tunnel's maxBodySizeMb (1–10240, default 10)
+```
 
-    ssl_certificate /etc/letsencrypt/live/myapp.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/myapp.example.com/privkey.pem;
+All three also declare the same request headers inside their `location /` (`TUNNEL_PROXY_HEADERS` in `nginx.js`):
 
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
+```nginx
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
 
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # Authelia forward authentication (AuthRequest implementation for nginx)
-    location /internal/lamaste/authz {
-        internal;
-
-        proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
-        proxy_pass_request_body off;
-
-        proxy_set_header Content-Length "";
-        proxy_set_header Connection "";
-        proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
-
-        proxy_http_version 1.1;
-        proxy_buffers 4 32k;
-        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
-    }
-
-    location / {
-        auth_request /internal/lamaste/authz;
-        auth_request_set $user $upstream_http_remote_user;
-        auth_request_set $groups $upstream_http_remote_groups;
-        auth_request_set $name $upstream_http_remote_name;
-        auth_request_set $email $upstream_http_remote_email;
-        auth_request_set $redirection_url $upstream_http_location;
-
-        proxy_set_header Remote-User $user;
-        proxy_set_header Remote-Groups $groups;
-        proxy_set_header Remote-Name $name;
-        proxy_set_header Remote-Email $email;
-
-        proxy_pass http://127.0.0.1:<port>;
-        proxy_http_version 1.1;
+        # Never forward client-supplied certificate headers
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
 
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-    }
-
-    # Redirect unauthenticated requests to Authelia login portal
-    error_page 401 =302 $redirection_url;
-}
 ```
 
-Key characteristics:
+- **Per location, not per server.** nginx inherits `proxy_set_header` from the enclosing level only when a level declares none of its own. Every tunnel location declares some (`Upgrade`, `Remote-*`), so headers placed at server level never reached the app — it saw `Host: 127.0.0.1:<port>` and no client address. Declared in the location, `Host`, `X-Real-IP`, `X-Forwarded-For` and `X-Forwarded-Proto` now reach the app.
+- **Client-certificate headers are always cleared.** The panel treats `X-SSL-Client-*` from nginx as proof of an mTLS client certificate. A tunnel vhost never passes client-supplied values through, whatever listens on its port.
+- **Identity headers.** Public vhosts also clear `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` — a public tunnel has no authenticated user, and an app might trust those headers from an authenticated vhost. Authenticated and restricted vhosts set them from the Gatekeeper's answer, which replaces anything the client sent.
 
-- Forward auth via `auth_request` to Authelia's `/api/authz/auth-request` endpoint
-- Passes authenticated user info as headers (`Remote-User`, `Remote-Groups`, etc.)
-- WebSocket support for apps that need it
-- 401 errors redirect to the Authelia login page with a return URL
+A tunnel created before `maxBodySizeMb` existed has no value and its vhost has no directive, so nginx applies its built-in 1 MiB limit until a body limit is set on it (`PATCH /api/tunnels/:id` with `maxBodySizeMb`, or **Edit** in the panel). Changing the access mode or body limit re-renders the vhost in place through the write-with-rollback pattern below; a disabled tunnel's vhost stays disabled.
+
+Agent panel tunnels (`type: 'panel'`) use a separate mTLS vhost (`writeAgentPanelVhost()`) with no body limit setting.
 
 ### 6. Static Site Vhost (`lamalibre-lamaste-site-<id>`)
 
@@ -363,13 +336,24 @@ server {
     add_header X-Frame-Options SAMEORIGIN always;
     add_header X-Content-Type-Options nosniff always;
 
-    # Optional Authelia forward auth (same pattern as app vhost)
+    # Optional Authelia forward auth (auth_request to 127.0.0.1:9091/api/authz/auth-request)
 
     location / {
         try_files $uri $uri/ =404;       # Standard mode
         # OR
         try_files $uri $uri/ /index.html; # SPA mode
     }
+}
+
+# Only for a custom-domain site with aliases — same certificate lineage
+server {
+    listen 443 ssl;
+    server_name www.myblog.net;
+
+    ssl_certificate /etc/letsencrypt/live/myblog.net/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/myblog.net/privkey.pem;
+
+    return 301 https://myblog.net$request_uri;
 }
 ```
 
@@ -379,6 +363,8 @@ Two serving modes based on the `spaMode` flag:
 - **SPA**: `try_files $uri $uri/ /index.html` — falls back to `index.html` for client-side routing
 
 Optional Authelia protection is controlled by the `autheliaProtected` flag on the site object.
+
+A custom-domain site may list `aliases` (e.g. `www.myblog.net`). They are served by a second server block that answers with a 301 to the primary host. One certificate lineage, named after the site's domain (`certbot certonly --nginx --cert-name <fqdn> -d <fqdn> -d <alias> ...`), covers the primary name and every alias, so both blocks point at the same `live/<fqdn>/` directory.
 
 ### 7. Public Tunnel Vhost (`lamalibre-lamaste-app-<name>`, access mode: public)
 
@@ -392,13 +378,22 @@ server {
     ssl_certificate /etc/letsencrypt/live/public-app.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/public-app.example.com/privkey.pem;
 
-    # ... standard SSL settings and proxy headers
+    # ... standard SSL settings
+    client_max_body_size 10m;
 
     location / {
+        # A public tunnel has no authenticated user: clear identity headers
+        # an app might trust from an authenticated vhost.
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+
+        # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
     }
@@ -419,7 +414,8 @@ server {
     ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/app.example.com/privkey.pem;
 
-    # ... standard SSL settings and proxy headers
+    # ... standard SSL settings
+    client_max_body_size 10m;
 
     # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
     location /internal/lamaste/authz {
@@ -442,27 +438,24 @@ server {
     }
 
     location / {
-        # Clear client-supplied identity headers
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Groups "";
-        proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
-
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
         auth_request_set $groups $upstream_http_remote_groups;
         auth_request_set $name $upstream_http_remote_name;
         auth_request_set $email $upstream_http_remote_email;
 
+        # Identity comes from the Gatekeeper's answer, replacing anything
+        # the client sent under these names
         proxy_set_header Remote-User $user;
         proxy_set_header Remote-Groups $groups;
         proxy_set_header Remote-Name $name;
         proxy_set_header Remote-Email $email;
 
+        # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
@@ -476,7 +469,7 @@ Key characteristics:
 
 - `auth_request` targets the Gatekeeper at `127.0.0.1:9294/authz/check` instead of Authelia directly
 - The Gatekeeper validates the Authelia session cookie and returns 200 (authenticated) or 401 (unauthenticated)
-- Client-supplied `Remote-*` headers are cleared before the auth subrequest to prevent spoofing
+- The upstream receives `Remote-*` headers only as set from the Gatekeeper's response; client-supplied values under those names are replaced
 - 401 redirects to the Authelia login portal
 
 > **Note:** The `lamalibre-lamaste-authz-cache.conf` nginx snippet is installed by the Gatekeeper installer task, but the generated vhosts do not currently include `proxy_cache` directives. Authorization caching relies on the Gatekeeper's in-memory session cache (30-second TTL) rather than nginx-level proxy caching.
@@ -493,7 +486,8 @@ server {
     ssl_certificate /etc/letsencrypt/live/restricted-app.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/restricted-app.example.com/privkey.pem;
 
-    # ... standard SSL settings and proxy headers
+    # ... standard SSL settings
+    client_max_body_size 10m;
 
     # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
     location /internal/lamaste/authz {
@@ -516,27 +510,24 @@ server {
     }
 
     location / {
-        # Clear client-supplied identity headers
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Groups "";
-        proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
-
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
         auth_request_set $groups $upstream_http_remote_groups;
         auth_request_set $name $upstream_http_remote_name;
         auth_request_set $email $upstream_http_remote_email;
 
+        # Identity comes from the Gatekeeper's answer, replacing anything
+        # the client sent under these names
         proxy_set_header Remote-User $user;
         proxy_set_header Remote-Groups $groups;
         proxy_set_header Remote-Name $name;
         proxy_set_header Remote-Email $email;
 
+        # ... the tunnel proxy headers (section 5): Host, X-Real-IP,
+        #     X-Forwarded-For/Proto, X-SSL-Client-* cleared, WebSocket
+
         proxy_pass http://127.0.0.1:<port>;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
@@ -627,7 +618,7 @@ This design allows the panel vhosts to serve both mTLS-protected and public endp
 
 ## Write-With-Rollback Pattern
 
-All vhost modifications in the Panel Server follow a safe write-with-rollback sequence. This is implemented in `packages/lamaste-serverd/src/lib/nginx.js`.
+All vhost modifications in the Panel Server follow a safe write-with-rollback sequence. This is implemented in `packages/server/daemon/src/lib/nginx.js` (`safeWriteVhost()` for tunnel vhosts; `writeStaticSiteVhost()` follows the same sequence).
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -665,7 +656,10 @@ All vhost modifications in the Panel Server follow a safe write-with-rollback se
 The implementation wraps the entire sequence in a try/catch. Even unexpected errors (e.g., `sudo mv` fails) trigger rollback:
 
 ```javascript
-export async function writeAppVhost(subdomain, domain, port, certPath) {
+async function safeWriteVhost(name, config, fqdn) {
+  const availablePath = path.join(SITES_AVAILABLE, name);
+  const bakPath = `${availablePath}.bak`;
+
   const existed = await fileExistsSudo(availablePath);
   if (existed) {
     await execa('sudo', ['cp', availablePath, bakPath]);
@@ -684,7 +678,7 @@ export async function writeAppVhost(subdomain, domain, port, certPath) {
         await execa('sudo', ['rm', '-f', availablePath]);
         await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
       }
-      throw new Error(`Nginx config test failed: ${result.error}`);
+      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`);
     }
 
     await reload();
@@ -692,7 +686,12 @@ export async function writeAppVhost(subdomain, domain, port, certPath) {
     if (existed) {
       await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
     }
+
+    return availablePath;
   } catch (err) {
+    if (err.message.includes('Nginx config test failed')) {
+      throw err; // already rolled back above
+    }
     // Rollback on unexpected errors
     if (existed) {
       await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
@@ -707,7 +706,7 @@ export async function writeAppVhost(subdomain, domain, port, certPath) {
 
 ## Forward Auth Block
 
-The Authelia forward auth integration uses nginx's `auth_request` module. Here is the flow:
+The Authelia forward auth integration uses nginx's `auth_request` module. Protected static sites call Authelia directly as shown below; `restricted` and `authenticated` tunnels send the same subrequest to Gatekeeper (`127.0.0.1:9294/authz/check`), which validates the Authelia session and, for restricted tunnels, the grant (sections 8 and 9). Here is the flow:
 
 ```
 1. User requests https://myapp.example.com/page
@@ -762,6 +761,7 @@ The 24-hour timeout (`proxy_read_timeout 86400s`) is set on tunnel and app vhost
 /etc/nginx/
 ├── nginx.conf                          ← Default nginx config (not modified by Lamaste)
 ├── sites-available/
+│   ├── lamalibre-lamaste-http-redirect         ← :80 catch-all → HTTPS (created by installer)
 │   ├── lamalibre-lamaste-panel-ip              ← IP:9292 panel access (created by installer)
 │   ├── lamalibre-lamaste-panel-domain          ← panel.<domain> (created during onboarding)
 │   ├── lamalibre-lamaste-auth        ← auth.<domain> (created during onboarding)
@@ -769,6 +769,7 @@ The 24-hour timeout (`proxy_read_timeout 86400s`) is set on tunnel and app vhost
 │   ├── lamalibre-lamaste-app-myapp   ← <app>.<domain> (created per tunnel)
 │   └── lamalibre-lamaste-site-<uuid> ← <site>.<domain> (created per static site)
 ├── sites-enabled/
+│   ├── lamalibre-lamaste-http-redirect → ../sites-available/lamalibre-lamaste-http-redirect
 │   ├── lamalibre-lamaste-panel-ip → ../sites-available/lamalibre-lamaste-panel-ip
 │   ├── lamalibre-lamaste-panel-domain → ../sites-available/lamalibre-lamaste-panel-domain
 │   ├── lamalibre-lamaste-auth → ../sites-available/lamalibre-lamaste-auth
@@ -786,9 +787,23 @@ All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish 
 
 ### Created by the Installer
 
-| Vhost                        | When         | Removed                 |
-| ---------------------------- | ------------ | ----------------------- |
-| `lamalibre-lamaste-panel-ip` | Installation | Never (fallback access) |
+| Vhost                             | When                   | Removed                 |
+| --------------------------------- | ---------------------- | ----------------------- |
+| `lamalibre-lamaste-panel-ip`      | Installation           | Never (fallback access) |
+| `lamalibre-lamaste-http-redirect` | Installation, redeploy | Uninstall               |
+
+`lamalibre-lamaste-http-redirect` is the port-80 catch-all:
+
+```nginx
+# Managed by Lamaste — plain HTTP is redirected to HTTPS.
+server {
+    listen 80 default_server;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+```
+
+Without it nothing listens on port 80 and `http://` links to the relay's hostnames are refused. It does not interfere with Let's Encrypt: for an HTTP-01 challenge (`certbot certonly --nginx` and renewals) certbot's nginx plugin clones this default server block for the name being validated, answers the challenge path ahead of the redirect, and restores the file afterwards. This was verified on Ubuntu 24.04 (nginx 1.24, certbot 2.9) for new names, names that already have a 443 block, multi-name lineages and forced renewals. The installer tests the file with `nginx -t` and restores the previous state on failure; if another site already owns port 80's `default_server`, the step is skipped — not fatal — and the relay works without the redirect.
 
 ### Created During Onboarding
 
@@ -800,17 +815,20 @@ All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish 
 
 ### Created/Removed at Runtime
 
-| Vhost                           | Created           | Removed                 |
-| ------------------------------- | ----------------- | ----------------------- |
-| `lamalibre-lamaste-app-<name>`  | POST /api/tunnels | DELETE /api/tunnels/:id |
-| `lamalibre-lamaste-site-<uuid>` | POST /api/sites   | DELETE /api/sites/:id   |
+| Vhost                          | Created           | Removed                 |
+| ------------------------------ | ----------------- | ----------------------- |
+| `lamalibre-lamaste-app-<name>` | POST /api/tunnels | DELETE /api/tunnels/:id |
+
+`PATCH /api/tunnels/:id` removes or restores the `sites-enabled` symlink when a tunnel is disabled or enabled (the file in `sites-available` is kept), and re-renders the vhost in place when `accessMode` or `maxBodySizeMb` changes. `PATCH /api/sites/:id` re-renders a site vhost when `spaMode`, `autheliaProtected` or `aliases` change.
+| `lamalibre-lamaste-site-<uuid>` | POST /api/sites | DELETE /api/sites/:id |
 
 ## Key Files
 
 | File                                                     | Role                                                                  |
 | -------------------------------------------------------- | --------------------------------------------------------------------- |
-| `packages/create-lamaste/src/tasks/nginx.js`             | Installer: self-signed cert, mTLS snippet, IP vhost                   |
-| `packages/lamaste-serverd/src/lib/nginx.js`              | Runtime: vhost generation, write-with-rollback, enable/disable/reload |
+| `packages/provisioners/server/src/tasks/nginx.js`        | Installer: self-signed cert, mTLS snippet, IP vhost, port-80 redirect |
+| `packages/provisioners/server/src/lib/http-redirect.js`  | Installs/refreshes the port-80 redirect site (installer and redeploy) |
+| `packages/server/daemon/src/lib/nginx.js`                | Runtime: vhost generation, write-with-rollback, enable/disable/reload |
 | `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | Shared mTLS snippet                                                   |
 | `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                |
 | `/etc/nginx/sites-available/lamalibre-lamaste-*`         | Vhost configuration files                                             |
@@ -840,4 +858,4 @@ Chisel tunnel connections and some app WebSocket connections are long-lived. ngi
 
 ### Why use sudo for nginx operations?
 
-The Panel Server runs as the `lamaste` user, not root. Writing to `/etc/nginx/sites-available/` and reloading nginx require root privileges. Instead of running the Panel Server as root, Lamaste uses scoped `sudoers` rules that allow the `lamaste` user to perform only specific operations (mv to specific paths, `nginx -t`, `systemctl reload nginx`). This follows the principle of least privilege.
+The Panel Server runs as the `lamaste` user, not root. Writing to `/etc/nginx/sites-available/` and reloading nginx require root privileges. Instead of running the Panel Server as root, Lamaste uses scoped `sudoers` rules that allow the `lamaste` user to perform only specific operations (mv to specific paths, `nginx -t`, `systemctl reload nginx`). Certbot is reached only through the root-owned `/usr/local/sbin/lamaste-certbot` wrapper, which validates hostnames and email and runs certbot with a fixed argument vector — a sudoers wildcard over certbot's arguments would also accept flags like `--deploy-hook` and run code as root. This follows the principle of least privilege.

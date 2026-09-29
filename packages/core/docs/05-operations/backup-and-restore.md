@@ -18,21 +18,24 @@ Lamaste's state is spread across four directories. All of them matter.
 
 This is the most important directory. It contains:
 
-| File                      | Purpose                                                     |
-| ------------------------- | ----------------------------------------------------------- |
-| `panel.json`              | Server configuration (IP, domain, email, onboarding status) |
-| `tunnels.json`            | Tunnel definitions (subdomain, port, enabled state)         |
-| `sites.json`              | Static site definitions                                     |
-| `invitations.json`        | Pending user invitations                                    |
-| `pki/revoked.json`        | Revoked certificate tracking                                |
-| `pki/ca.key`              | Certificate Authority private key                           |
-| `pki/ca.crt`              | Certificate Authority certificate                           |
-| `pki/client.key`          | Client certificate private key                              |
-| `pki/client.crt`          | Client certificate                                          |
-| `pki/client.p12`          | PKCS12 bundle (imported into browsers)                      |
-| `pki/.p12-password`       | Password for the PKCS12 bundle                              |
-| `pki/self-signed.pem`     | Self-signed TLS cert for IP:9292 access                     |
-| `pki/self-signed-key.pem` | Self-signed TLS key for IP:9292 access                      |
+| File                      | Purpose                                                                                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `panel.json`              | Server configuration (IP, domain, email, onboarding status)                                                                                                                                               |
+| `tunnels.json`            | Tunnel definitions (subdomain, port, carrying agent, enabled state)                                                                                                                                       |
+| `sites.json`              | Static site definitions (including custom-domain aliases)                                                                                                                                                 |
+| `chisel-credentials.json` | Per-agent Chisel credentials. If lost, the panel mints a new credential for every active agent at its next start, and each agent's sync timer fetches it within about 30 seconds (the issue time changed) |
+| `chisel-users`            | Chisel authfile — derived; rewritten from the two files above, with mode `0640` and group `lamaste-chisel`, at every panel start                                                                          |
+| `chisel-sentinel`         | Password of the no-grants sentinel Chisel user                                                                                                                                                            |
+| `invitations.json`        | Pending user invitations                                                                                                                                                                                  |
+| `pki/revoked.json`        | Revoked certificate tracking                                                                                                                                                                              |
+| `pki/ca.key`              | Certificate Authority private key                                                                                                                                                                         |
+| `pki/ca.crt`              | Certificate Authority certificate                                                                                                                                                                         |
+| `pki/client.key`          | Client certificate private key                                                                                                                                                                            |
+| `pki/client.crt`          | Client certificate                                                                                                                                                                                        |
+| `pki/client.p12`          | PKCS12 bundle (imported into browsers)                                                                                                                                                                    |
+| `pki/.p12-password`       | Password for the PKCS12 bundle                                                                                                                                                                            |
+| `pki/self-signed.pem`     | Self-signed TLS cert for IP:9292 access                                                                                                                                                                   |
+| `pki/self-signed-key.pem` | Self-signed TLS key for IP:9292 access                                                                                                                                                                    |
 
 **If you lose the PKI files**, every browser that imported the client certificate will need a new one. This is the single most important directory to back up.
 
@@ -180,7 +183,14 @@ sudo chmod 600 /etc/lamalibre/lamaste/pki/client.key
 sudo chmod 600 /etc/lamalibre/lamaste/pki/client.p12
 sudo chmod 600 /etc/lamalibre/lamaste/pki/.p12-password
 sudo chmod 640 /etc/lamalibre/lamaste/panel.json
+# Files the Chisel server (User=nobody, Group=lamaste-chisel) must read
+sudo chgrp lamaste-chisel /etc/lamalibre/lamaste/chisel-users
+sudo chmod 640 /etc/lamalibre/lamaste/chisel-users
+sudo chown nobody:nogroup /etc/lamalibre/lamaste/chisel-server.key
+sudo chmod 400 /etc/lamalibre/lamaste/chisel-server.key
 ```
+
+The panel re-applies the authfile's group and mode itself on every start, so a Chisel that fails to read it before the panel is up is started again by the panel's reconciliation.
 
 **Step 4: Validate nginx configuration**
 

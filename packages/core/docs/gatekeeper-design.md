@@ -586,11 +586,11 @@ Tunnel creation form offers four access levels:
 
 Panel-server's `nginx.js` gains new vhost template functions:
 
-- `writePublicVhost(subdomain, domain, port, certPath)` — no auth_request, direct proxy
-- `writeAuthenticatedVhost(subdomain, domain, port, certPath)` — auth_request to gatekeeper, Authelia headers forwarded
-- `writeRestrictedVhost(subdomain, domain, port, certPath)` — auth_request to gatekeeper, Authelia headers forwarded, 403 → access-request redirect
+- `writePublicVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb })` — no auth_request, direct proxy
+- `writeAuthenticatedVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb })` — auth_request to gatekeeper, Authelia headers forwarded
+- `writeRestrictedVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb })` — auth_request to gatekeeper, Authelia headers forwarded, 403 → access-request redirect
 
-Existing `writeAppVhost()` becomes `writeAuthenticatedVhost()` (backwards compatible).
+The former `writeAppVhost()` (direct Authelia forward auth) was replaced by `writeAuthenticatedVhost()` and has since been removed; every app tunnel vhost is rendered by one of the three writers above. `maxBodySizeMb` becomes the vhost's `client_max_body_size`.
 Existing `writeAgentPanelVhost()` unchanged (mTLS, no gatekeeper involvement).
 
 ### Default Behavior & Migration

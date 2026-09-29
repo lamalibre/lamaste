@@ -28,7 +28,7 @@ lamaste/
 │   │   └── tickets/                   @lamalibre/lamaste-tickets — SDK for ticket system (agent-to-agent authorization)
 │   ├── provisioners/
 │   │   ├── server/                    @lamalibre/create-lamaste — zero-prompt server provisioner CLI
-│   │   ├── agent/                     @lamalibre/create-lamaste-agent — agent cert enrollment provisioner
+│   │   ├── agent/                     @lamalibre/create-lamaste-agent — hardware-bound agent cert enrollment/upgrade (NOT agent setup — that is `npm install -g @lamalibre/lamaste-agent` + `lamaste-agent setup`)
 │   │   ├── admin/                     @lamalibre/create-lamaste-admin — admin cert upgrade to hardware-bound
 │   │   ├── desktop/                   @lamalibre/create-lamaste-desktop — npx installer for the desktop app
 │   │   └── e2e/                       @lamalibre/create-lamaste-e2e — npx installer + MCP server for E2E test infrastructure
@@ -104,6 +104,10 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 - Registry: Agent registry CRUD, label validation, legacy migration
 - Config: Agent config I/O
 - Service: Start/stop/status for launchctl and systemd
+- Chisel service (`chisel-service.ts`, `chisel-credential.ts`): the single implementation of the agent's chisel client service, used by both `lamaste-agent` and `lamaste-agentd`. `parseChiselArgs` validates the panel's `chiselArgs` (`['client', 'https://tunnel.<domain>:443', ...'R:127.0.0.1:<p>:127.0.0.1:<p>']`, loopback remotes only) and drops a legacy `--tls-skip-verify`; `writeChiselService(label, spec, credential)` renders the service with the credential (`agents/<label>/chisel.json`, 0600) and reports whether it changed; only `convergeChiselService` calls it, so no refresh path can drop the credential. TLS to the relay is verified; the credential is never in argv (Linux: systemd user unit + `EnvironmentFile=agents/<label>/chisel.env` 0600 with `AUTH=`; macOS: 0600 plist with `AUTH` in `EnvironmentVariables`). `userLingerStatus()` / `enableLingerCommand()` report Linux boot persistence. `assertRelayServerUrl` pins the server URL to `https://tunnel.<enrolled domain>:443`; the client runs with `--max-retry-interval 30s`. Agent data dir `agents/<label>` is 0700
+- Converge (`converge.ts`): `convergeChiselService(label, agentConfigResponse, panelCalls, { forceRestart })` is the ONE refresh path of `setup`, `update`, `sync`, `chisel refresh-credential`, the agent panel and `lamaste-agentd`. It refuses a panel reporting a different domain than the enrolled one (`config.domain`), rotates a pre-upgrade credential once (`chiselCredentialSealedAt` unset → `POST /api/agents/me/chisel-credential/rotate`; failure is a warning, retried next run), re-fetches the credential when `chiselCredentialIssuedAt` differs from the stored `issuedAt`, installs the pinned chisel (`chisel-binary.ts`), rewrites the service only on change, and stops the service when the agent carries zero tunnels (`idle` — chisel cannot run without a remote) or `config.tunnelsStopped` is set (`stopped` — the operator stopped it via the agent panel/desktop; start/restart clear it)
+- Sync timer (`sync-service.ts`): `lamaste-agent sync --label <l> --quiet` every 30 s — Linux: user `lamalibre-lamaste-sync-<label>.service` (oneshot) + `.timer` (`OnUnitInactiveSec=30s`); macOS: LaunchAgent `com.lamalibre.lamaste.sync-<label>` (`StartInterval` 30). Exists because chisel rejects a client's whole session if one requested remote is not granted — a revoked tunnel must be dropped promptly or all the agent's tunnels go dark. Logs only changes, new warnings (`lastWarnings`) and new/cleared errors to `logs/sync.log`; last outcome in `agents/<label>/sync-state.json`; `status` flags a last run older than 2 min (`isSyncStale`). `resolveInstalledAgentCli` requires a global npm install (the timer runs `<node> <installed script>`, with a stable Node path such as `/opt/homebrew/bin/node`, not the versioned Cellar path); `setup`/`update` call it before spending a token. Override: `LAMALIBRE_LAMASTE_AGENT_CLI_PATH`
+- Agent lock (`agent-lock.ts`): `withAgentLock(label, fn)` — a per-agent lock file `agents/<label>/agent.lock` (PID, boot id, time; created atomically via link) serializing sync, update, setup's converge, agentd start/stop/update and config writes (`updateAgentConfig`). A stale lock (dead PID, other boot, >15 min) is taken over. Anything that loads/unloads the chisel service or rewrites `config.json` must take it
 - Plugins: Agent and local plugin lifecycle (unified — uses shared schema/lifecycle from root)
 - Local Host Service: Service config generation and lifecycle
 - Service Discovery: Port scanning, process detection, Docker discovery
@@ -113,8 +117,11 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 **Server subpath (`@lamalibre/lamaste/server`):**
 
 - Plugins: Server-side plugin lifecycle (uses shared schema from root)
-- Tunnels: Tunnel creation workflow with rollback
-- Sites: Site creation with managed/custom domain branching
+- Tunnels: Tunnel create/delete/toggle/assign/reconfigure workflows with rollback, all under one lock (`withTunnelLock`) with validation inside it — anything else that rewrites `tunnels.json` must take it too. `updateTunnel` applies agentLabel → accessMode/maxBodySizeMb → enabled in one hold. Every tunnel has an owning agent (`agentLabel`); `bindUnownedTunnels` (startup) binds a legacy ownerless panel tunnel only to the agent named by its `agent-<label>` subdomain, and other ownerless tunnels only when exactly one agent is active. `releaseAgentTunnels` (on agent cert revocation) unassigns the agent's app/plugin tunnels and removes its panel tunnel. Per-tunnel `maxBodySizeMb` (1–10240, default 10; non-admins up to `agentMax` 100) → vhost `client_max_body_size`. Ports in `RESERVED_TUNNEL_PORTS` (3100, 9090, 9091, 9292, 9294 — panel, chisel, Authelia, IP panel, Gatekeeper) are never tunnel ports: a tunnel vhost proxies to `127.0.0.1:<port>`, and the panel trusts nginx's client-cert headers
+- Chisel users (`chisel-users.ts`): per-agent credentials in `chisel-credentials.json`; the authfile `chisel-users` is rendered from credentials + tunnel state, granting each `agent-<label>` exactly `^R:127\.0\.0\.1:<port>$` per enabled owned tunnel, plus a `lamaste-no-grants` sentinel user (`chisel-sentinel`, 0600) because chisel disables auth on an empty authfile. Grants are anchored per-port patterns; reserved ports and a port claimed by two tunnels are never granted. The authfile `/etc/lamalibre/lamaste/chisel-users` is 0640 `lamaste:lamaste-chisel`, written by the panel itself (temp 0600 → chgrp → chmod 0640 → fsync → rename, no sudo); chisel runs `User=nobody Group=lamaste-chisel`, serverd has `SupplementaryGroups=lamaste-chisel`. Write tunnel state **before** syncing chisel. Chisel 1.12.0 hot-reloads the authfile, so additions need no restart; every function reports `revoked`, and a revocation restarts chisel (`systemctl try-restart`, via `chisel-runtime.js` in serverd — also restarts on every change until chisel is known to run the pinned release)
+- Chisel release (`constants.ts` `CHISEL_RELEASE`, `chisel-download.ts`): pinned 1.12.0 on server and agent, fixed release URL, SHA-256 verified before unpacking; other versions are replaced (agent: by sync; server: by startup reconciliation)
+- Chisel args (`chisel-args.ts`): `buildChiselArgs` → `['client', 'https://tunnel.<domain>:443', ...remotes]` — no `--tls-skip-verify`, no credential
+- Sites: Site creation with managed/custom domain branching; custom sites may carry redirect `aliases` (301 to the primary host, max 10) on one certificate lineage (`issueSiteCert` → `lamaste-certbot issue <email> <fqdn> <fqdn> <alias>...`). Every alias must resolve here for verify-dns and for live alias changes. On a live site `updateSite` issues for the union of old + new names, rewrites the vhost, saves, then re-issues for exactly the new set (`match: 'exact'`); a failure of that last step is returned as `warning`. A hostname is served by at most one tunnel/site/alias (`expose-panel` also refuses a hostname a static site or alias serves)
 - mTLS: Certificate management and rotation
 - Access Control: Authelia access control sync
 - Provisioning: Provisioning orchestrator
@@ -127,14 +134,14 @@ import { createTunnel, rotateCert } from '@lamalibre/lamaste/server';
 
 ### Agent Side vs Server Side Symmetry
 
-| Layer                    | Agent side                            | Server side                          |
-| ------------------------ | ------------------------------------- | ------------------------------------ |
-| **Domain logic**         | `@lamalibre/lamaste/agent`            | `@lamalibre/lamaste/server`          |
-| **Operational CLI**      | `lamaste-agent`                       | `lamaste-server` (new)               |
-| **Long-running daemon**  | `lamaste-agentd` on :9393 (extracted) | `lamaste-serverd` on :3100 (renamed) |
-| **UI components**        | `lamaste-agent-ui` (renamed)          | `lamaste-server-ui` (merged)         |
-| **Provisioner**          | `create-lamaste-agent` (renamed)      | `create-lamaste`                     |
-| **Desktop consumes via** | REST to :9393 / CLI subprocess        | REST to :3100 / `curl_panel`         |
+| Layer                    | Agent side                                                                                            | Server side                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **Domain logic**         | `@lamalibre/lamaste/agent`                                                                            | `@lamalibre/lamaste/server`          |
+| **Operational CLI**      | `lamaste-agent`                                                                                       | `lamaste-server` (new)               |
+| **Long-running daemon**  | `lamaste-agentd` on :9393 (extracted)                                                                 | `lamaste-serverd` on :3100 (renamed) |
+| **UI components**        | `lamaste-agent-ui` (renamed)                                                                          | `lamaste-server-ui` (merged)         |
+| **Provisioner**          | `create-lamaste-agent` (renamed; hardware-bound cert upgrade — setup itself is `lamaste-agent setup`) | `create-lamaste`                     |
+| **Desktop consumes via** | REST to :9393 / CLI subprocess                                                                        | REST to :3100 / `curl_panel`         |
 
 ### Rules
 
@@ -377,7 +384,11 @@ than fragmenting this binary.
 
 - Thin orchestrator: imports from `@lamalibre/lamaste/agent`, adds CLI UX
 - `--json` global flag — NDJSON output for subprocess consumers (desktop, scripts)
-- Subcommands: `setup`, `status`, `logs`, `update`, `uninstall`, `list`, `switch`, `chisel`, `sites`, `deploy`, `plugin install/uninstall/status`, `panel --enable/--disable/--status`. Lifecycle (`start`/`stop`/`restart`) is handled via the REST daemon, not the CLI.
+- Subcommands: `setup`, `status`, `logs`, `update`, `sync`, `uninstall`, `list`, `switch`, `chisel`, `sites`, `deploy`, `plugin install/uninstall/status`, `panel --enable/--disable/--status`. Lifecycle (`start`/`stop`/`restart`) is handled via the REST daemon, not the CLI.
+- Agent setup is `npm install -g @lamalibre/lamaste-agent` then `lamaste-agent setup` (or the desktop app). `setup` and `update` refuse to run from `npx` (checked before an enrollment token is consumed) because they install the sync timer, which runs the installed program. Manual chisel/plist setup is not supported, and the panel no longer serves a plist (`GET /api/tunnels/mac-plist` removed). `setup` and `status` report Linux boot persistence (systemd user lingering; fix: `sudo loginctl enable-linger <user>`); `status` shows a `Sync:` line from `sync-state.json`
+- `sync` (timer, every 30 s) and `update` (now: converge + restart + (re)install the timer) fetch `GET /api/tunnels/agent-config`, which returns only the calling agent's enabled tunnels (admins pass `?agent=<label>`) plus `chiselCredentialIssuedAt`. Tunnel changes on the panel need no `update` on the agent
+- `uninstall` removes the sync timer too; so does the desktop app (which uses the real service names `com.lamalibre.lamaste.chisel-<label>` / `lamalibre-lamaste-chisel-<label>`)
+- Upgrade order: agents before the server (old agents reject the new `chiselArgs` shape); a new agent works against an old server and keeps its credential until the server offers rotation
 - NDJSON protocol: `{event:"step",step:"<key>",status:"running|complete|skipped|failed"}`, `{event:"error",message:"...",recoverable:false}`, `{event:"complete",agent:{label,panelUrl,authMethod,p12Path,p12Password,domain,chiselVersion}}`
 - No Fastify dependency — daemon code lives in `lamaste-agentd`
 
@@ -393,7 +404,7 @@ than fragmenting this binary.
 
 - Thin orchestrator: imports from `@lamalibre/lamaste/server`, adds CLI UX
 - `--json` flag for NDJSON output on all commands
-- Subcommands: `status`, `logs`, `restart`, `plugins list/install/enable/disable/uninstall`, `tunnels list/create/delete`, `sites list/create/delete`, `certs status/renew/list`, `chisel`, `reset-admin`, `uninstall`
+- Subcommands: `status`, `logs`, `restart`, `plugins list/install/enable/disable/uninstall`, `tunnels list/create --agent <label>/delete/toggle/assign --agent <label>/configure [--access-mode] [--max-body-mb]`, `sites list/create [--aliases a,b]/delete/aliases <id> --set a,b`, `certs status/renew/list`, `chisel`, `reset-admin`, `uninstall`
 - Absorbs standalone `lamaste-reset-admin` script
 - Installed globally on the server during provisioning (`create-lamaste` adds it)
 
@@ -404,6 +415,12 @@ than fragmenting this binary.
 - Routes are thin HTTP handlers — business logic in core library
 - Serves web SPA built from `lamaste-server-ui`
 - No CLI argument parsing
+- Startup chisel reconciliation (`lib/chisel-reconcile.js`, background, fail closed): mint missing credentials, `bindUnownedTunnels` (machine agents only — plugin-agents are not counted), log `withheldTunnels`, install the pinned chisel, rewrite unit + authfile, restart/start as needed. If the authfile or unit cannot be established, chisel is STOPPED and DISABLED (an older authfile may grant `.*`; disabled so a reboot cannot start it) and `/etc/lamalibre/lamaste/chisel-failed-closed` is written; reconciliation retries with backoff 30 s → 10 min, and on success re-enables + starts chisel and removes the marker (sudoers has `systemctl disable chisel`)
+- Tunnel routes: plugin-agent certificates cannot create tunnels (403 — they hold no chisel credential); `maxBodySizeMb` above `agentMax` (100) is admin-only; `PATCH /api/tunnels/:id` is one locked `updateTunnel`; `expose-panel` refuses a hostname a static site or alias serves. `agent-config` returns only `grantedTunnelsFor(tunnels, label)` (a tunnel on a reserved port or a shared port is withheld from everyone — one ungranted remote would get the whole session refused) plus `chiselCredentialIssuedAt`
+- Onboarding validates the Let's Encrypt email with `LETSENCRYPT_EMAIL_REGEX` (core constants) — the same rule `lamaste-certbot` enforces
+- Agent credential routes: `GET /api/agents/me/chisel-credential` (returns `createdAt`), `POST /api/agents/me/chisel-credential/rotate` (agent cert; 429 when the current credential is under 10 min old)
+- Revoking an agent certificate (`mtls.js revokeAgentCert`) calls `releaseAgentTunnels`: its app/plugin tunnels become unassigned and its `agent-<label>` panel tunnel is removed, so a later enrollment reusing the label inherits nothing
+- Tunnel vhosts (`lib/nginx.js` `TUNNEL_PROXY_HEADERS`): proxy headers are declared in each `location` (a location with any `proxy_set_header` inherits none from the server block), client-supplied `X-SSL-Client-*` are always cleared, and public vhosts also clear `Remote-*` identity headers
 
 **TypeScript (Ticket SDK):**
 
@@ -447,6 +464,7 @@ than fragmenting this binary.
 - Listr2 subtask lists with idempotent skip guards
 - `--json` flag replaces Listr2 rendering with NDJSON progress lines on stdout (used by the desktop app's local install feature via `pkexec`)
 - Imports from `@lamalibre/lamaste` for business logic — thin wrapper, not logic owner
+- Creates the `lamaste-chisel` group (`lib/chisel-group.js`) before the panel service starts, installs the root-owned `lamaste-certbot` / `lamaste-cert-info` wrappers in `/usr/local/sbin/`, and the port-80 redirect site (`lib/http-redirect.js`)
 
 ## Critical Constraints
 
@@ -493,7 +511,7 @@ than fragmenting this binary.
 
 - Plugin tunnel type (`type: 'plugin'`) enables Authelia-protected access to a specific agent plugin via dedicated subdomain (e.g., `herd.example.com`)
 - Created via `POST /api/tunnels` with `{ type: 'plugin', pluginName, agentLabel, subdomain, port }`. Admin-only
-- Uses `writeAppVhost` with `pathPrefix` option — nginx rewrites `herd.example.com/path` → `127.0.0.1:9393/herd/path`, matching the plugin mount point on the agent daemon
+- Uses the access-mode vhost writers (`writeRestrictedVhost` / `writeAuthenticatedVhost` / `writePublicVhost`) with the `pathPrefix` option — nginx rewrites `herd.example.com/path` → `127.0.0.1:9393/herd/path`, matching the plugin mount point on the agent daemon
 - Tunnel state gains fields: `pluginName` (full `@lamalibre/` package name), `agentLabel`, `pluginRoute` (derived short name, e.g., `herd` from `@lamalibre/herd-server`)
 - Authelia access control: `syncAllAccessControl()` in `@lamalibre/lamaste/server` merges site rules + plugin tunnel grant rules. Called on grant create/revoke, tunnel create/delete/toggle, and site updates. Admins group always allowed on restricted subdomains
 - Agent daemon auth: recognizes `Remote-User` header (set by nginx after Authelia forward auth) as a third auth path. Sets `request.certRole = 'user'` and `request.autheliaUser`. Trusts nginx/Authelia — port 9393 binds `127.0.0.1`, external traffic only arrives via nginx
@@ -630,22 +648,24 @@ than fragmenting this binary.
 
 - YAML writes: atomic (temp → rename) — Authelia reads `users.yml` live. Temp files use `lamalibre-lamaste-` prefix (sudoers restricts `mv` to this prefix for `/etc/authelia/` targets)
 - After `users.yml` change: `systemctl restart authelia`
-- Certbot library in `@lamalibre/lamaste/server`: `renewCert(domain, { forceRenewal })` accepts an options object; `forceRenewal: true` passes `--force-renewal` to certbot. `listCerts()` uses `certbot certificates --non-interactive`
+- Certbot library in `@lamalibre/lamaste/server`: every certbot call and every Let's Encrypt `openssl` read goes through root-owned wrappers with a fixed argv and validated hostnames/email — `sudo /usr/local/sbin/lamaste-certbot issue|renew|renew-all|list` and `sudo /usr/local/sbin/lamaste-cert-info <lineage> enddate|checkend|san` (sources in `packages/provisioners/server/scripts/`). The former wildcard sudoers rules (`certbot renew --cert-name * ...`, `openssl x509 ... -in /etc/letsencrypt/live/*`) let extra flags such as `--deploy-hook` or `-engine` run code as root — never add a sudoers rule with a trailing `*` over a program that takes flags; extend the wrapper instead. `renewCert(domain, { forceRenewal })` maps to `lamaste-certbot renew <name> [force]`; panel-triggered renewals pass `--no-random-sleep-on-renew`
+- Port 80: the provisioner installs `lamalibre-lamaste-http-redirect` (`listen 80 default_server` → `301 https://$host$request_uri`); compatible with `certbot --nginx` HTTP-01 and renewals (certbot clones the default server per name during a challenge and restores the file). Not fatal if another site owns :80's default server
 - Before nginx reload: `nginx -t` — rollback on failure
 - Never delete the last Authelia user
 
 ## Environment Variables
 
-| Variable                             | Package            | Purpose                                                                |
-| ------------------------------------ | ------------------ | ---------------------------------------------------------------------- |
-| `LAMALIBRE_LAMASTE_CONFIG`           | lamaste-serverd    | Path to panel.json (default: `/etc/lamalibre/lamaste/panel.json`)      |
-| `NODE_ENV`                           | lamaste-serverd    | `development` skips mTLS check                                         |
-| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | lamaste-agent      | Enrollment token for `setup --token` (avoids process listing exposure) |
-| `LAMALIBRE_CLOUD_TOKEN`              | lamaste-cloud      | Cloud provider API token (never CLI args)                              |
-| `LAMALIBRE_SPACES_ACCESS_KEY`        | lamaste-cloud      | Spaces access key for storage commands (never CLI args)                |
-| `LAMALIBRE_SPACES_SECRET_KEY`        | lamaste-cloud      | Spaces secret key for storage commands (never CLI args)                |
-| `LAMALIBRE_FERIA_BIN`                | lamaste-desktop    | Override path to feria-server binary (escape hatch)                    |
-| `LAMALIBRE_LAMASTE_DATA_DIR`         | lamaste-gatekeeper | Data directory (default: `/etc/lamalibre/lamaste`)                     |
+| Variable                             | Package            | Purpose                                                                                       |
+| ------------------------------------ | ------------------ | --------------------------------------------------------------------------------------------- |
+| `LAMALIBRE_LAMASTE_CONFIG`           | lamaste-serverd    | Path to panel.json (default: `/etc/lamalibre/lamaste/panel.json`)                             |
+| `NODE_ENV`                           | lamaste-serverd    | `development` skips mTLS check                                                                |
+| `LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN` | lamaste-agent      | Enrollment token for `setup --token` (avoids process listing exposure)                        |
+| `LAMALIBRE_LAMASTE_AGENT_CLI_PATH`   | lamaste-agent      | Script the sync timer runs, for installs npm does not manage (skips the global-install check) |
+| `LAMALIBRE_CLOUD_TOKEN`              | lamaste-cloud      | Cloud provider API token (never CLI args)                                                     |
+| `LAMALIBRE_SPACES_ACCESS_KEY`        | lamaste-cloud      | Spaces access key for storage commands (never CLI args)                                       |
+| `LAMALIBRE_SPACES_SECRET_KEY`        | lamaste-cloud      | Spaces secret key for storage commands (never CLI args)                                       |
+| `LAMALIBRE_FERIA_BIN`                | lamaste-desktop    | Override path to feria-server binary (escape hatch)                                           |
+| `LAMALIBRE_LAMASTE_DATA_DIR`         | lamaste-gatekeeper | Data directory (default: `/etc/lamalibre/lamaste`)                                            |
 
 ## License
 

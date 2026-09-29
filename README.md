@@ -29,6 +29,18 @@ npx @lamalibre/create-lamaste
 
 Run this on a fresh Ubuntu 24.04 droplet as root. The installer provisions everything with zero prompts, prints a client certificate and URL, and you disconnect SSH forever. All configuration happens through the browser-based management panel.
 
+### Connect an Agent
+
+An agent is the machine (macOS or Linux — a laptop, a server, a VM) that runs the apps you expose. Every tunnel is carried by exactly one agent. Create an enrollment token in the panel (**Certificates → Enrollment Token**), then on the agent:
+
+```bash
+npm install -g @lamalibre/lamaste-agent
+LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN=<token> \
+  lamaste-agent setup --label <name> --panel-url https://<ip>:9292
+```
+
+The agent must be installed globally: setup installs a timer that runs it every 30 seconds to pick up tunnel changes, so `npx` is refused. Create tunnels for that agent in the panel — the agent starts carrying them within 30 seconds, with nothing to run on it. On headless Linux machines, run `sudo loginctl enable-linger "$USER"` once so the tunnel survives reboots. The desktop app does all of this from its GUI. See the [Agent Setup guide](https://lamalibre.github.io/lamaste/02-guides/agent-setup).
+
 ## What It Does
 
 Lamaste is a self-hosted secure tunneling platform that exposes web apps running behind a firewall (e.g., on a Mac Studio) through a VPS via WebSocket-over-HTTPS tunnels. A single command sets up the entire stack on a cheap VPS, and a browser-based panel handles everything after that.
@@ -79,7 +91,8 @@ Browser (with imported client certificate):
 
 - **Zero-prompt installer** -- one command provisions the entire stack
 - **Browser-based onboarding** -- domain setup, DNS verification, and service provisioning through a wizard
-- **Tunnel management** -- create, list, and remove tunnels with automatic nginx vhost and TLS certificate generation
+- **Tunnel management** -- create, move, reconfigure, and remove tunnels with automatic nginx vhost and TLS certificate generation; each tunnel is carried by one agent and has its own request body limit
+- **Static sites** -- host static files on a managed subdomain or your own domain, with `www`-style redirect aliases on one certificate
 - **User management** -- Authelia user CRUD with TOTP enrollment and QR code generation
 - **Certificate management** -- Let's Encrypt certificate listing, renewal, and mTLS client certificate rotation
 - **Service control** -- start, stop, and restart services with live log streaming via WebSocket
@@ -100,6 +113,7 @@ Browser (with imported client certificate):
 - **Authelia 2FA for tunneled services** -- all services exposed through tunnels are protected by Authelia with TOTP two-factor authentication.
 - **Gatekeeper authorization** -- tunnel access modes (public, authenticated, restricted) with group-based grants, nginx auth_request caching, and user-friendly access-request pages.
 - **Certificate scoping** -- admin certs get full access; agent certs are capability-scoped (tunnels, services, sites, panel expose, identity, etc.).
+- **Tunnel ownership** -- the Chisel authfile grants each agent only the ports of the tunnels it carries, so one agent cannot take over another's hostname. Agents verify the relay's TLS certificate and keep their Chisel credential out of process arguments. The authfile is readable only by the group Chisel runs as, and ports of Lamaste's own services (3100, 9090, 9091, 9292, 9294) can never be tunnel ports.
 - **Service binding** -- all services bind to `127.0.0.1` only. nginx is the sole public-facing service.
 - **UFW firewall** -- only ports 22 (SSH, disabled after setup), 80 (HTTP redirect), 443 (HTTPS), and 9292 (panel) are open.
 - **fail2ban** -- brute-force protection for SSH and nginx.
@@ -153,14 +167,15 @@ All configuration lives under `/etc/lamalibre/lamaste/`:
 
 **Let's Encrypt certificate issuance fails:**
 
-- Port 80 must be open and reachable from the internet (certbot uses HTTP-01 challenge).
+- Port 80 must be open and reachable from the internet (certbot uses HTTP-01 challenge). The installer's port-80 catch-all redirect to HTTPS does not interfere: certbot answers its challenges ahead of it.
 - Verify DNS is pointing to the correct IP: `dig A yourdomain.com`.
 - Check certbot logs: `/var/log/letsencrypt/letsencrypt.log`.
 
-**Tunnel client cannot connect from Mac:**
+**Tunnel client cannot connect:**
 
 - **Recommended:** Install the desktop app with `npx @lamalibre/create-lamaste-desktop` — it manages agents and tunnels through a GUI.
-- **Alternative:** Install the agent CLI with `npx @lamalibre/create-lamaste-agent` and set up tunnels from the command line.
+- **Alternative:** Set up the agent from the command line with `npm install -g @lamalibre/lamaste-agent` and `lamaste-agent setup` (see [Agent Setup](https://lamalibre.github.io/lamaste/02-guides/agent-setup)).
+- Check `lamaste-agent status` (including its **Sync** line) and `lamaste-agent logs` on the agent. The tunnel must be carried by that agent (the **Agent** column on the Tunnels page); the agent applies tunnel changes within 30 seconds, and `lamaste-agent update` applies them at once.
 
 ## Documentation
 
@@ -170,7 +185,7 @@ Full documentation is available at [**lamalibre.github.io/lamaste**](https://lam
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [Introduction](https://lamalibre.github.io/lamaste/00-introduction/what-is-lamaste) | What is Lamaste, How It Works, Quick Start                                                |
 | [Concepts](https://lamalibre.github.io/lamaste/01-concepts/tunneling)               | Tunneling, mTLS, Authentication, Certificates, Security Model, DNS, nginx                 |
-| [Guides](https://lamalibre.github.io/lamaste/02-guides/installation)                | Installation, Onboarding, First Tunnel, Desktop App, Mac Client, Users, Certs, Sites, DR  |
+| [Guides](https://lamalibre.github.io/lamaste/02-guides/installation)                | Installation, Onboarding, First Tunnel, Desktop App, Agent Setup, Users, Certs, Sites, DR |
 | [Architecture](https://lamalibre.github.io/lamaste/03-architecture/overview)        | System Overview, Panel Server/Client, nginx, State Management, Installer/Onboarding Flows |
 | [API Reference](https://lamalibre.github.io/lamaste/04-api-reference/overview)      | Onboarding, Tunnels, Users, Sites, Certificates, Services, System                         |
 | [Operations](https://lamalibre.github.io/lamaste/05-operations/monitoring)          | Monitoring, Upgrades, Backup & Restore, Uninstalling                                      |

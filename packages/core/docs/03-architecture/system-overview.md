@@ -35,7 +35,7 @@
 │  │   └─ TOTP 2FA for proxied applications                         │  │
 │  │                                                                │  │
 │  │  Chisel Server (:9090 on 127.0.0.1)        ~20MB               │  │
-│  │   └─ WebSocket tunnel accepting Mac client connections          │  │
+│  │   └─ WebSocket tunnel; per-agent credentials + port grants     │  │
 │  │                                                                │  │
 │  │  PKI: /etc/lamalibre/lamaste/pki/                                    │  │
 │  │   ├─ ca.crt / ca.key       (Lamaste CA, 10yr validity)     │  │

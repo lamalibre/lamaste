@@ -42,8 +42,20 @@ Each line is a JSON object with one of these shapes:
 - **OS hardening** — swap, UFW, fail2ban, SSH lockdown
 - **Node.js 20 LTS**
 - **mTLS PKI** — CA, server cert, client cert + PKCS12 bundle
-- **nginx** — TLS on port 9292 with `ssl_verify_client on`
+- **nginx** — TLS on port 9292 with `ssl_verify_client on`, and a port-80
+  catch-all (`lamalibre-lamaste-http-redirect`) that redirects plain HTTP to
+  HTTPS without getting in the way of Let's Encrypt HTTP-01 challenges
 - **Panel server + client** — systemd service, static frontend
+- **`lamaste-chisel` group** — the group the Chisel server runs as; the panel
+  user is a member so it can write the 0640 Chisel authfile without sudo
+- **Sudo wrappers** — root-owned scripts in `/usr/local/sbin/`
+  (`lamaste-certbot`, `lamaste-cert-info`, `lamaste-sign-csr`,
+  `lamaste-pki-rename`) that validate every argument and run certbot / openssl
+  with a fixed argument vector, instead of wildcard sudoers rules
+
+Re-running the installer on an existing server (redeploy) refreshes the panel,
+its systemd unit, sudoers rules, the group, the wrappers and the port-80
+redirect. Upgrade agents before the server.
 
 Domain setup, Chisel tunnels, Authelia, and Let's Encrypt certificates are
 configured through the browser-based onboarding wizard after installation.

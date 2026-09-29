@@ -154,26 +154,31 @@ This phase creates a private certificate authority (CA), signs a client certific
   ✔ Writing IP-based panel vhost → Vhost written
   ✔ Deploying certificate help page → Certificate help page deployed
   ✔ Enabling site and cleaning up defaults → Site enabled, default removed
+  ✔ Redirecting plain HTTP to HTTPS → Port 80 answers every host with a redirect to https://
   ✔ Validating and starting nginx → nginx is running and listening on port 9292
 ```
 
 nginx is configured to listen on port 9292 with TLS and mTLS client certificate verification. A self-signed certificate is used for the IP-based connection (a proper Let's Encrypt certificate is issued later during onboarding when you configure a domain).
+
+Port 80 gets a catch-all site, `lamalibre-lamaste-http-redirect` (`listen 80 default_server`), that answers every plain-HTTP request with a `301` to `https://$host$request_uri`. It does not get in the way of Let's Encrypt: during an HTTP-01 challenge certbot's nginx plugin clones this default server for the name being validated, answers the challenge, and restores the file afterwards — for new certificates and renewals alike. If another site on the machine already owns port 80's default server, the step is skipped and the relay works without the redirect.
 
 **Phase 6 — Panel deployment**
 
 ```
 ✔ Deploying Lamaste panel
   ✔ Creating system user → Created system user: lamaste
+  ✔ Creating lamaste-chisel group → Created group lamaste-chisel; lamaste is a member
   ✔ Creating directory structure → Directories created
   ✔ Deploying lamalibre-lamaste-serverd → Panel server deployed
   ✔ Deploying lamaste-server-ui → Panel client deployed from pre-built dist
   ✔ Writing panel configuration → Configuration written to /etc/lamalibre/lamaste/panel.json
   ✔ Writing systemd service unit → Systemd service unit written
+  ✔ Installing sudoers wrapper scripts → Sudoers wrappers installed
   ✔ Writing sudoers rules → Sudoers rules written and validated
   ✔ Starting panel service → Panel service running. Health: {"status":"ok"}
 ```
 
-The panel server runs as the `lamaste` system user with restricted sudoers rules, deployed to `/opt/lamalibre/lamaste/`. Configuration lives in `/etc/lamalibre/lamaste/panel.json`.
+The panel server runs as the `lamaste` system user with restricted sudoers rules, deployed to `/opt/lamalibre/lamaste/`. The `lamaste-chisel` group is the group the Chisel server will run as; the panel is a member so it can hand Chisel its authfile without sudo. Privileged operations that take arguments — signing CSRs, renaming PKI files, running certbot, reading Let's Encrypt certificates — go through root-owned wrapper scripts in `/usr/local/sbin/` that validate every argument, rather than sudoers wildcards. Configuration lives in `/etc/lamalibre/lamaste/panel.json`.
 
 ### 5. Read the Summary
 
@@ -353,7 +358,9 @@ The panel runs as `lamalibre-lamaste-serverd.service`:
 [Service]
 User=lamaste
 Group=lamaste
-WorkingDirectory=/opt/lamalibre/lamaste/lamalibre-lamaste-serverd
+# Lets the panel hand the chisel authfile to the group chisel runs as.
+SupplementaryGroups=lamaste-chisel
+WorkingDirectory=/opt/lamalibre/lamaste/serverd
 ExecStart=/usr/bin/node src/index.js
 Environment=NODE_ENV=production
 Environment=CONFIG_FILE=/etc/lamalibre/lamaste/panel.json

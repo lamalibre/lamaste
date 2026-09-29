@@ -99,12 +99,16 @@ sequenceDiagram
     participant A as Agent VM
 
     note over Mac,H: Setup
-    Mac->>H: POST /api/tunnels {subdomain: e2etraffic, port: 18080} (mTLS)
-    H-->>Mac: { id, fqdn: e2etraffic.TEST_DOMAIN }
+    Mac->>H: POST /api/tunnels {subdomain: e2etraffic, port: 18080, agentLabel: test-agent} (mTLS)
+    H-->>Mac: { id, fqdn: e2etraffic.TEST_DOMAIN, agentLabel: test-agent }
+    Mac->>H: GET /api/tunnels/agent-config?agent=test-agent (mTLS)
+    H-->>Mac: tunnels include e2etraffic:18080
+    Mac->>H: read chisel-users (grant only, no password printed)
+    H-->>Mac: agent-test-agent grants ^R:127\.0\.0\.1:18080$
 
     Mac->>A: echo marker > /tmp/e2e-tunnel-index.html
     Mac->>A: python3 -m http.server 18080 --bind 127.0.0.1 &
-    Mac->>A: chisel client wss://tunnel.TEST_DOMAIN:443 R:18080:127.0.0.1:18080 &
+    Mac->>A: lamaste-agent update (rewrites + restarts the chisel user unit)
 
     note over Mac,A: Wait for tunnel
     loop Poll up to 15s
@@ -128,9 +132,20 @@ sequenceDiagram
     Mac->>H: curl https://e2etraffic.TEST_DOMAIN/ -b session (via nginx)
     H-->>Mac: 200 + marker content
 
+    note over Mac,A: Agent chisel client hygiene
+    Mac->>A: inspect unit + chisel.env + running argv
+    A-->>Mac: EnvironmentFile=chisel.env (0600), https://tunnel.TEST_DOMAIN:443, no --auth / password / --tls-skip-verify
+
+    note over Mac,H: Request body limit
+    Mac->>H: POST 2 MB body via nginx
+    H-->>Mac: not 413 (default limit 10 MB)
+    Mac->>H: POST 11 MB body via nginx
+    H-->>Mac: 413
+
     note over Mac,A: Cleanup
-    Mac->>A: pkill python3, pkill chisel
+    Mac->>A: pkill python3
     Mac->>H: DELETE /api/tunnels/{id} (mTLS)
+    Mac->>A: lamaste-agent update
 ```
 
 ## Test 03 — Tunnel Toggle
@@ -141,10 +156,10 @@ sequenceDiagram
     participant H as Host VM
     participant A as Agent VM
 
-    Mac->>H: POST /api/tunnels {subdomain: e2etoggle, port: 18081} (mTLS)
-    H-->>Mac: { id, fqdn }
+    Mac->>H: POST /api/tunnels {subdomain: e2etoggle, port: 18081, agentLabel: test-agent} (mTLS)
+    H-->>Mac: { id, fqdn, agentLabel: test-agent }
 
-    Mac->>A: start HTTP server + chisel client
+    Mac->>A: start HTTP server + lamaste-agent update
 
     note over Mac,H: Verify initial traffic
     Mac->>H: curl http://127.0.0.1:18081/
@@ -153,16 +168,27 @@ sequenceDiagram
     note over Mac,H: Disable tunnel
     Mac->>H: PATCH /api/tunnels/{id} {enabled: false} (mTLS)
     H-->>Mac: OK
-    Mac->>H: sleep 2 (nginx reload)
+    Mac->>H: read chisel-users grants
+    H-->>Mac: test-agent no longer granted ^R:127\.0\.0\.1:18081$
     Mac->>H: ls /etc/nginx/sites-enabled/lamalibre-lamaste-app-e2etoggle
-    H-->>Mac: not found (vhost removed)
+    H-->>Mac: not found (vhost symlink removed)
     Mac->>H: curl https://FQDN/
     H-->>Mac: marker NOT present
 
     note over Mac,H: Re-enable tunnel
     Mac->>H: PATCH /api/tunnels/{id} {enabled: true} (mTLS)
-    H-->>Mac: OK
-    Mac->>H: sleep 2 (nginx reload)
+    H-->>Mac: OK (grant restored)
+    Mac->>H: curl http://127.0.0.1:18081/
+    H-->>Mac: 200 + marker
+
+    note over Mac,H: Reassign to a second agent
+    Mac->>H: POST /api/certs/agent (second agent, no chisel client)
+    Mac->>H: PATCH /api/tunnels/{id} {agentLabel: <second agent>} (mTLS)
+    H-->>Mac: grant moved; test-agent's agent-config no longer lists the tunnel
+    Mac->>H: poll 127.0.0.1:18081 for 15s
+    H-->>Mac: stays closed (test-agent's client may no longer bind it)
+    Mac->>H: PATCH /api/tunnels/{id} {agentLabel: test-agent} (mTLS)
+    Mac->>A: lamaste-agent update
     Mac->>H: curl http://127.0.0.1:18081/
     H-->>Mac: 200 + marker
 
@@ -171,7 +197,7 @@ sequenceDiagram
     Mac->>H: curl https://FQDN/ -b session
     H-->>Mac: 200 + marker
 
-    Mac->>A: pkill python3, pkill chisel
+    Mac->>A: pkill python3
     Mac->>H: DELETE /api/tunnels/{id} (mTLS)
 ```
 
@@ -185,10 +211,10 @@ sequenceDiagram
     participant V as Visitor VM
 
     note over Mac,A: Setup tunnel + HTTP server
-    Mac->>H: POST /api/tunnels {subdomain: e2eauth, port: 18082} (mTLS)
+    Mac->>H: POST /api/tunnels {subdomain: e2eauth, port: 18082, agentLabel: test-agent} (mTLS)
     Mac->>H: POST /api/users/testuser/reset-totp (mTLS)
     H-->>Mac: TOTP secret
-    Mac->>A: start HTTP server + chisel client
+    Mac->>A: start HTTP server + lamaste-agent update
 
     note over Mac,V: Unauthenticated access
     Mac->>V: curl https://FQDN/ (no session)
@@ -222,7 +248,7 @@ sequenceDiagram
     H-->>V: 302/401 (rejected)
     V-->>Mac: marker NOT present
 
-    Mac->>A: pkill python3, pkill chisel
+    Mac->>A: pkill python3
     Mac->>H: DELETE /api/tunnels/{id}
 ```
 
@@ -246,8 +272,8 @@ sequenceDiagram
     H-->>Mac: { cpu, memory, disk }
 
     note over Mac,H: Tunnel CRUD
-    Mac->>H: POST /api/tunnels {subdomain, port}
-    H-->>Mac: { id }
+    Mac->>H: POST /api/tunnels {subdomain, port, agentLabel: test-agent}
+    H-->>Mac: { id, agentLabel }
     Mac->>H: GET /api/tunnels
     H-->>Mac: tunnel in list
     Mac->>H: PATCH /api/tunnels/{id} {enabled: false}
@@ -282,11 +308,11 @@ sequenceDiagram
     participant A as Agent VM
     participant V as Visitor VM
 
-    Mac->>H: POST /api/tunnels {subdomain: e2ejourney, port: 18090} (mTLS)
+    Mac->>H: POST /api/tunnels {subdomain: e2ejourney, port: 18090, agentLabel: test-agent} (mTLS)
     Mac->>H: POST /api/users/testuser/reset-totp (mTLS)
     H-->>Mac: TOTP secret
 
-    Mac->>A: write marker + start HTTP server + chisel client
+    Mac->>A: write marker + start HTTP server + lamaste-agent update
 
     note over Mac,V: Step 1 — Unauthenticated
     Mac->>V: curl https://FQDN/

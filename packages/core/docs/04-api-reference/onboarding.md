@@ -109,10 +109,10 @@ Sets the domain name and Let's Encrypt contact email. This is the first step in 
 }
 ```
 
-| Field    | Type     | Validation             | Description                                  |
-| -------- | -------- | ---------------------- | -------------------------------------------- |
-| `domain` | `string` | FQDN regex, min 1 char | Fully qualified domain name                  |
-| `email`  | `string` | Valid email format     | Contact email for Let's Encrypt registration |
+| Field    | Type     | Validation                | Description                                                                                                                                                                                                                                   |
+| -------- | -------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domain` | `string` | FQDN regex, min 1 char    | Fully qualified domain name                                                                                                                                                                                                                   |
+| `email`  | `string` | `LETSENCRYPT_EMAIL_REGEX` | Contact email for Let's Encrypt registration. The local part must start with a letter or digit; this is the same rule the root-owned `lamaste-certbot` wrapper enforces, so an address accepted here is never refused at certificate issuance |
 
 The domain is validated against this pattern:
 
@@ -140,11 +140,11 @@ curl -s -K ~/.curl-lamaste \
 
 **Errors:**
 
-| Status | Body                                                                               | When                                        |
-| ------ | ---------------------------------------------------------------------------------- | ------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                         | Invalid domain format or missing email      |
-| 409    | `{"error":"Cannot change domain in current state","onboardingStatus":"DNS_READY"}` | Onboarding has progressed past `DOMAIN_SET` |
-| 410    | `{"error":"Onboarding already completed"}`                                         | Onboarding is finished                      |
+| Status | Body                                                                               | When                                            |
+| ------ | ---------------------------------------------------------------------------------- | ----------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                         | Invalid domain format, missing or invalid email |
+| 409    | `{"error":"Cannot change domain in current state","onboardingStatus":"DNS_READY"}` | Onboarding has progressed past `DOMAIN_SET`     |
+| 410    | `{"error":"Onboarding already completed"}`                                         | Onboarding is finished                          |
 
 **State transition:** `FRESH` or `DOMAIN_SET` → `DOMAIN_SET`
 

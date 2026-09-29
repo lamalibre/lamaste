@@ -244,27 +244,9 @@ This takes 1-2 minutes. When it finishes, onboarding is complete. The page shows
 
 ---
 
-### Step 7: Create Your First Tunnel
+### Step 7: Enroll Your Machine as an Agent
 
-You are now in the management panel. Navigate to **Tunnels** and click **Create Tunnel**.
-
-Fill in the tunnel details:
-
-| Field       | Example      | Description                          |
-| ----------- | ------------ | ------------------------------------ |
-| Subdomain   | `myapp`      | Creates `myapp.example.com`          |
-| Local port  | `8001`       | The port your app listens on locally |
-| Description | `My web app` | Optional label                       |
-
-Click **Create**. The panel:
-
-1. Writes an nginx vhost for `myapp.example.com`
-2. Configures Chisel to route traffic to `localhost:8001`
-3. Reloads nginx
-
----
-
-### Step 8: Connect the Mac Client
+Every tunnel is carried by one **agent** — the machine that runs the app. Enroll that machine first.
 
 **Option A — Desktop App (recommended):**
 
@@ -276,22 +258,42 @@ npx @lamalibre/create-lamaste-desktop
 
 The app auto-detects local services (Ollama, ComfyUI, PostgreSQL, Docker containers, etc.) and lets you expose them with one click. See the [Desktop App Setup](../02-guides/desktop-app-setup.md) guide for details.
 
-**Option B — Launchd plist:**
+**Option B — Agent CLI (macOS, Linux servers and VMs):**
 
-After creating the tunnel, the panel shows a **Download plist** button. This downloads a macOS launchd configuration file that keeps the Chisel client running and auto-reconnecting. See the [Mac Client Setup](../02-guides/mac-client-setup.md) guide for details.
-
-**Option C — Manual Chisel:**
-
-Run the Chisel client directly:
+In the panel, go to **Certificates → Enrollment Token** and create a token for a label such as `laptop`. Then, on the machine that runs your app, install the agent globally and run setup:
 
 ```bash
-chisel client \
-  --tls-skip-verify \
-  https://tunnel.example.com:443 \
-  R:127.0.0.1:8001:127.0.0.1:8001
+npm install -g @lamalibre/lamaste-agent
+LAMALIBRE_LAMASTE_ENROLLMENT_TOKEN=<token> \
+  lamaste-agent setup --label laptop --panel-url https://203.0.113.42:9292
 ```
 
-The `R:127.0.0.1:8001:127.0.0.1:8001` part means: "Reverse-forward port 8001 on the server's localhost to port 8001 on my Mac."
+Setup refuses to run from `npx`: it installs a timer that runs the installed agent every 30 seconds, and an `npx` copy can vanish from npm's cache. Setup generates the agent's key locally, prepares the Chisel client as a background service (launchd on macOS, a systemd user unit on Linux) that connects to `https://tunnel.example.com:443`, verifying the server's TLS certificate, and installs the sync timer that picks up tunnel changes from the panel. Until a tunnel is assigned to the agent the Chisel client stays stopped — it has nothing to carry. See the [Agent Setup](../02-guides/agent-setup.md) guide for details, including the one-time `loginctl enable-linger` step on headless Linux machines.
+
+---
+
+### Step 8: Create Your First Tunnel
+
+In the management panel, navigate to **Tunnels** and click **Add Tunnel**.
+
+Fill in the tunnel details:
+
+| Field       | Example      | Description                                  |
+| ----------- | ------------ | -------------------------------------------- |
+| Subdomain   | `myapp`      | Creates `myapp.example.com`                  |
+| Port        | `8001`       | The port your app listens on (on the agent)  |
+| Agent       | `laptop`     | The agent that carries the tunnel (required) |
+| Description | `My web app` | Optional label                               |
+
+Click **Add Tunnel**. The panel:
+
+1. Issues a TLS certificate for `myapp.example.com`
+2. Writes an nginx vhost for `myapp.example.com` and reloads nginx
+3. Grants the agent `laptop` — and only that agent — port 8001 on the Chisel server
+
+There is nothing to run on the agent: its sync timer picks up the new tunnel within about 30 seconds and starts the Chisel client. (To apply it at once, run `lamaste-agent update` on the agent.)
+
+The agent's Chisel client then reverse-forwards `127.0.0.1:8001` on the server to `127.0.0.1:8001` on your machine.
 
 ---
 
@@ -442,8 +444,8 @@ scp root@203.0.113.42:/etc/lamalibre/lamaste/pki/client.p12 .
 #    https://203.0.113.42:9292
 
 # 5. Complete onboarding wizard (domain, DNS, provision)
-# 6. Create tunnel in management panel
-# 7. Connect tunnel agent on your machine
+# 6. Enroll your machine as an agent (desktop app or lamaste-agent setup)
+# 7. Create tunnel in management panel, carried by that agent (applied within ~30 s)
 # 8. Visit https://myapp.example.com
 # 9. Disconnect SSH forever
 ```
@@ -465,6 +467,6 @@ scp root@203.0.113.42:/etc/lamalibre/lamaste/pki/client.p12 .
 - [How It Works](./how-it-works.md) — architecture and data flow
 - [Installation Guide](../02-guides/installation.md) — detailed installation reference
 - [First Tunnel Guide](../02-guides/first-tunnel.md) — in-depth tunnel creation walkthrough
-- [Mac Client Setup](../02-guides/mac-client-setup.md) — launchd plist, auto-reconnect
+- [Agent Setup](../02-guides/agent-setup.md) — enroll macOS and Linux agents, boot persistence
 - [Troubleshooting](../06-reference/troubleshooting.md) — common issues and solutions
 - [Glossary](../06-reference/glossary.md) — A-Z term definitions

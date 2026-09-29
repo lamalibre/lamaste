@@ -101,14 +101,14 @@ When connecting a machine to Lamaste using `lamaste-agent`, you should **not** u
 2. Click "Generate" and enter a label (e.g., `macbook-pro`)
 3. Save the displayed password — it cannot be retrieved later
 4. Download the `.p12` file
-5. Share the `.p12` file and password with the Mac user through a secure channel
+5. Share the `.p12` file and password with the agent machine through a secure channel, then install the agent there (`npm install -g @lamalibre/lamaste-agent`) and run `lamaste-agent setup` (an enrollment token avoids moving the key at all — see [Agent Setup](../02-guides/agent-setup.md))
 
 Agent certificates have capability-based access. By default, a new agent can only read tunnel configuration. Admins can grant additional capabilities per-agent from the panel UI:
 
 | Capability       | What it grants                                                                         |
 | ---------------- | -------------------------------------------------------------------------------------- |
-| `tunnels:read`   | List tunnels, download plist (always-on)                                               |
-| `tunnels:write`  | Create and delete tunnels                                                              |
+| `tunnels:read`   | List the agent's own tunnels and fetch its Chisel config (always-on)                   |
+| `tunnels:write`  | Create, update and delete tunnels the agent carries (restricted access mode only)      |
 | `services:read`  | View service status                                                                    |
 | `services:write` | Start/stop/restart services                                                            |
 | `system:read`    | View system stats (CPU, RAM, disk)                                                     |

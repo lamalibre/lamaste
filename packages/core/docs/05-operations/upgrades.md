@@ -18,6 +18,19 @@ Always follow these steps before upgrading any component:
 2. **Note what is currently working** — check the dashboard, verify services are active
 3. **Plan for a brief outage** — most upgrades require a service restart (seconds, not minutes)
 
+### Upgrade Order: Agents First
+
+When a release changes both sides, upgrade every **agent before the server**. Agents from before this version reject the new shape of the relay's Chisel arguments; a current agent works against an older server and keeps its Chisel credential until the server offers rotation.
+
+On each agent machine:
+
+```bash
+npm install -g @lamalibre/lamaste-agent
+lamaste-agent update
+```
+
+`update` applies the panel's configuration, restarts the tunnel client, and installs the sync timer (which applies later tunnel changes within 30 seconds). An agent originally set up with `npx` must be installed globally first — the sync timer runs the installed program. On its first sync after the upgrade an agent from before this version rotates its Chisel credential once, because older versions exposed it in process arguments and 0644 unit files. The Desktop App updates the agents it manages.
+
 ### Updating Lamaste (Panel Server and Client)
 
 The Lamaste installer is idempotent — you can re-run it on an existing installation to update the panel server and client without losing your configuration.
@@ -42,7 +55,8 @@ The `@latest` tag ensures you get the newest published version. The `--yes` flag
 - It preserves your `/etc/lamalibre/lamaste/panel.json` configuration (domain, email, onboarding status)
 - It preserves your mTLS certificates (the PKI directory is not regenerated if it already exists)
 - It deploys updated lamalibre-lamaste-serverd and lamaste-server-ui files to `/opt/lamalibre/lamaste/`
-- It restarts the `lamalibre-lamaste-serverd` systemd service
+- It rewrites the panel's systemd unit and sudoers rules, ensures the `lamaste-chisel` group exists, reinstalls the root-owned wrapper scripts (`lamaste-certbot`, `lamaste-cert-info`, ...) in `/usr/local/sbin/`, and installs the port-80 redirect site
+- It restarts the `lamalibre-lamaste-serverd` systemd service, whose startup reconciliation then installs the pinned Chisel release, rewrites Chisel's unit and authfile, and restarts Chisel
 
 **Step 3: Verify the update**
 
@@ -60,51 +74,17 @@ exit
 
 ### Updating Chisel
 
-Chisel is the tunnel server binary at `/usr/local/bin/chisel`. It is installed during the onboarding provisioning step, not by the base installer.
+Chisel is the tunnel server binary at `/usr/local/bin/chisel`. Lamaste pins it: server and agents run Chisel 1.12.0 (`CHISEL_RELEASE` in `@lamalibre/lamaste`), downloaded from the fixed release URL and verified against a pinned SHA-256 before it is unpacked. **Do not replace the binary by hand** — on every start the panel replaces a binary that reports any other version, and each agent's sync does the same for its own copy.
 
-**Step 1: Check the current version**
-
-```bash
-/usr/local/bin/chisel --version
-```
-
-**Step 2: Check the latest release**
-
-Visit [https://github.com/jpillora/chisel/releases](https://github.com/jpillora/chisel/releases) or run:
-
-```bash
-curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep tag_name
-```
-
-**Step 3: Download and replace the binary**
-
-```bash
-# Download the latest linux_amd64 release
-curl -L -o /tmp/chisel.gz \
-  "https://github.com/jpillora/chisel/releases/latest/download/chisel_$(curl -s https://api.github.com/repos/jpillora/chisel/releases/latest | grep -oP '"tag_name":\s*"v?\K[^"]+')_linux_amd64.gz"
-
-# Extract
-gunzip -f /tmp/chisel.gz
-
-# Stop the service
-sudo systemctl stop chisel
-
-# Replace the binary
-sudo mv /tmp/chisel /usr/local/bin/chisel
-sudo chmod +x /usr/local/bin/chisel
-
-# Start the service
-sudo systemctl start chisel
-```
-
-**Step 4: Verify**
+A new Chisel version therefore arrives with a Lamaste release that changes the pin: re-run the installer, and the restarted panel installs it. To check what is running:
 
 ```bash
 /usr/local/bin/chisel --version
 sudo systemctl status chisel
+sudo journalctl -u lamalibre-lamaste-serverd --since "10 minutes ago" | grep -i chisel
 ```
 
-The service should be `active (running)`. Check that your tunnel clients can reconnect — they will automatically retry after the brief interruption.
+Tunnel clients reconnect on their own after the brief interruption (they retry at most every 30 seconds).
 
 ### Updating Authelia
 
@@ -292,10 +272,7 @@ The panel server and client are always redeployed (files overwritten), and the s
 
 ### Version Pinning
 
-Chisel and Authelia are downloaded from GitHub releases using the `latest` tag. For reproducible deployments, you could pin to specific versions by modifying the download URLs in:
-
-- `packages/lamaste-serverd/src/lib/chisel.js` — `GITHUB_API` constant
-- `packages/lamaste-serverd/src/lib/authelia.js` — `GITHUB_API` constant
+Chisel is pinned by version and SHA-256 (`CHISEL_RELEASE` in `packages/core/lib/src/constants.ts`); changing the pin means updating the version and all four digests there. Authelia is downloaded from GitHub releases using the `latest` tag; to pin it, modify the download URL in `packages/lamaste-serverd/src/lib/authelia.js` (`GITHUB_API` constant).
 
 ### Automated Updates
 
@@ -312,16 +289,17 @@ sudo dpkg-reconfigure -plow unattended-upgrades
 
 ## Quick Reference
 
-| Component    | Location                                    | Update Method                                 |
-| ------------ | ------------------------------------------- | --------------------------------------------- |
-| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`   | Re-run `npx @lamalibre/create-lamaste@latest` |
-| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/` | Re-run `npx @lamalibre/create-lamaste@latest` |
-| Chisel       | `/usr/local/bin/chisel`                     | Download binary from GitHub, replace, restart |
-| Authelia     | `/usr/local/bin/authelia`                   | Download binary from GitHub, replace, restart |
-| nginx        | System package                              | `sudo apt-get update && sudo apt-get upgrade` |
-| certbot      | System package                              | `sudo apt-get update && sudo apt-get upgrade` |
-| Node.js      | System package                              | Managed by installer (NodeSource repo)        |
-| Ubuntu       | System packages                             | `sudo apt-get update && sudo apt-get upgrade` |
+| Component    | Location                                    | Update Method                                          |
+| ------------ | ------------------------------------------- | ------------------------------------------------------ |
+| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`   | Re-run `npx @lamalibre/create-lamaste@latest`          |
+| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/` | Re-run `npx @lamalibre/create-lamaste@latest`          |
+| Chisel       | `/usr/local/bin/chisel`                     | Pinned; installed by the panel at startup              |
+| Agents       | `npm install -g @lamalibre/lamaste-agent`   | Upgrade before the server, then `lamaste-agent update` |
+| Authelia     | `/usr/local/bin/authelia`                   | Download binary from GitHub, replace, restart          |
+| nginx        | System package                              | `sudo apt-get update && sudo apt-get upgrade`          |
+| certbot      | System package                              | `sudo apt-get update && sudo apt-get upgrade`          |
+| Node.js      | System package                              | Managed by installer (NodeSource repo)                 |
+| Ubuntu       | System packages                             | `sudo apt-get update && sudo apt-get upgrade`          |
 
 | Post-Upgrade Check   | Command                                                                 |
 | -------------------- | ----------------------------------------------------------------------- |

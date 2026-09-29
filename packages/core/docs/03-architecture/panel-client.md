@@ -123,7 +123,7 @@ React Router handles navigation within the `Layout` component (sidebar + content
 | Path                     | Component           | Description                                                         |
 | ------------------------ | ------------------- | ------------------------------------------------------------------- |
 | `/`                      | `DashboardPage`     | System stats (CPU, RAM, disk, uptime) + service health indicators   |
-| `/tunnels`               | `TunnelsPage`       | Tunnel CRUD table + create form + Mac plist download                |
+| `/tunnels`               | `TunnelsPage`       | Tunnel CRUD table + create form (agent, access, body limit) + edit  |
 | `/sites`                 | `SitesPage`         | Static site CRUD + file browser + upload                            |
 | `/users`                 | `UsersPage`         | Authelia user table + create/edit/delete + TOTP enrollment          |
 | `/certificates`          | `CertificatesPage`  | Let's Encrypt + mTLS cert listing + renewal + rotation              |

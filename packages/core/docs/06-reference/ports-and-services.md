@@ -7,6 +7,7 @@
 | Port | Binding     | Service                      | Protocol | Purpose                                                 |
 | ---- | ----------- | ---------------------------- | -------- | ------------------------------------------------------- |
 | 22   | `0.0.0.0`   | sshd                         | TCP      | SSH access (installer only, disposable)                 |
+| 80   | `0.0.0.0`   | nginx                        | TCP      | HTTP — `301` to HTTPS; Let's Encrypt HTTP-01 challenges |
 | 443  | `0.0.0.0`   | nginx                        | TCP      | HTTPS — domain-based access (panel, auth, tunnel, apps) |
 | 9292 | `0.0.0.0`   | nginx                        | TCP      | HTTPS — IP-based panel access (mTLS, self-signed cert)  |
 | 3100 | `127.0.0.1` | lamalibre-lamaste-serverd    | TCP      | Panel server (Fastify API + static files)               |
@@ -19,19 +20,33 @@
 - Only nginx listens on public interfaces (`0.0.0.0`)
 - All backend services bind to `127.0.0.1` — they are never directly accessible from the internet
 - Port 9292 is the emergency fallback — it works even if your domain is lost or DNS breaks
-- The UFW firewall only allows ports 22, 80, 443, and 9292 (port 80 is for Let's Encrypt HTTP-01 challenges)
+- The UFW firewall only allows ports 22, 80, 443, and 9292. Port 80 serves Let's Encrypt HTTP-01 challenges and otherwise redirects every request to HTTPS (`lamalibre-lamaste-http-redirect`)
+
+### Reserved tunnel ports
+
+A tunnel's port is also a loopback port on the relay: its vhost proxies to `127.0.0.1:<port>`. The ports of Lamaste's own services can therefore never carry a tunnel:
+
+| Port | Service                 |
+| ---- | ----------------------- |
+| 3100 | Panel server            |
+| 9090 | Chisel server           |
+| 9091 | Authelia                |
+| 9292 | IP-based panel listener |
+| 9294 | Gatekeeper              |
+
+A tunnel on one of them would publish that internal service on a public hostname. For the panel that is an administrator takeover, not a leak: the panel trusts the client-certificate headers nginx sets. `RESERVED_TUNNEL_PORTS` in `@lamalibre/lamaste` is enforced by the request schema, inside the tunnel workflow, and again when the Chisel grants are rendered. Tunnel ports must also be 1024–65535.
 
 ## Systemd Units
 
-| Unit Name                              | Type   | User    | Description                                 |
-| -------------------------------------- | ------ | ------- | ------------------------------------------- |
-| `lamalibre-lamaste-serverd.service`    | simple | lamaste | Panel server (Fastify Node.js API)          |
-| `chisel.service`                       | simple | nobody  | Chisel tunnel server (reverse mode)         |
-| `authelia.service`                     | simple | root    | Authelia authentication server              |
-| `lamalibre-lamaste-gatekeeper.service` | simple | lamaste | Gatekeeper tunnel authorization service     |
-| `nginx.service`                        | —      | root    | nginx reverse proxy (system package)        |
-| `fail2ban.service`                     | —      | root    | Intrusion prevention (system package)       |
-| `certbot.timer`                        | timer  | root    | Automatic Let's Encrypt certificate renewal |
+| Unit Name                              | Type   | User                            | Description                                 |
+| -------------------------------------- | ------ | ------------------------------- | ------------------------------------------- |
+| `lamalibre-lamaste-serverd.service`    | simple | lamaste                         | Panel server (Fastify Node.js API)          |
+| `chisel.service`                       | simple | nobody (group `lamaste-chisel`) | Chisel tunnel server (reverse mode)         |
+| `authelia.service`                     | simple | root                            | Authelia authentication server              |
+| `lamalibre-lamaste-gatekeeper.service` | simple | lamaste                         | Gatekeeper tunnel authorization service     |
+| `nginx.service`                        | —      | root                            | nginx reverse proxy (system package)        |
+| `fail2ban.service`                     | —      | root                            | Intrusion prevention (system package)       |
+| `certbot.timer`                        | timer  | root                            | Automatic Let's Encrypt certificate renewal |
 
 ### Common systemctl Commands
 
@@ -71,29 +86,46 @@ network.target
 
 All services start after `network.target` and are independent of each other. If one service fails, the others continue running.
 
+On every start the panel reconciles Chisel in the background (pinned binary, unit, authfile). If the authfile or unit cannot be established it stops and disables `chisel.service` (marker: `/etc/lamalibre/lamaste/chisel-failed-closed`) and retries with backoff (30 s up to 10 min), re-enabling it on success — see [Tunneling](../01-concepts/tunneling.md#startup-reconciliation).
+
+### Agent-side services
+
+Per agent label, on the agent machine (user-level, no root):
+
+| Linux (systemd user units)                          | macOS (LaunchAgents)                   | Purpose                                      |
+| --------------------------------------------------- | -------------------------------------- | -------------------------------------------- |
+| `lamalibre-lamaste-chisel-<label>.service`          | `com.lamalibre.lamaste.chisel-<label>` | Chisel client; stopped while no tunnels      |
+| `lamalibre-lamaste-sync-<label>.service` + `.timer` | `com.lamalibre.lamaste.sync-<label>`   | `lamaste-agent sync` every 30 s              |
+| `lamalibre-lamaste-panel-<label>.service`           | `com.lamalibre.lamaste.panel-<label>`  | Optional agent panel (`lamaste-agent panel`) |
+
 ## Key File Paths
 
 ### Configuration
 
-| Path                                                     | Description                                            |
-| -------------------------------------------------------- | ------------------------------------------------------ |
-| `/etc/lamalibre/lamaste/panel.json`                      | Panel server configuration                             |
-| `/etc/lamalibre/lamaste/tunnels.json`                    | Tunnel definitions                                     |
-| `/etc/lamalibre/lamaste/sites.json`                      | Static site definitions                                |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`              | Ticket scope registry (scopes, instances, assignments) |
-| `/etc/lamalibre/lamaste/tickets.json`                    | Ticket and session store                               |
-| `/etc/lamalibre/lamaste/groups.json`                     | Lamaste group definitions and membership               |
-| `/etc/lamalibre/lamaste/access-grants.json`              | Generic access grants (principal → resource)           |
-| `/etc/lamalibre/lamaste/gatekeeper.json`                 | Gatekeeper settings (cache TTL, logging)               |
-| `/etc/lamalibre/lamaste/access-request-log.json`         | Optional denied access log                             |
-| `/etc/authelia/configuration.yml`                        | Authelia server configuration                          |
-| `/etc/authelia/users.yml`                                | Authelia user database                                 |
-| `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)            |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | mTLS configuration snippet                             |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                 |
-| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user                            |
-| `/etc/fail2ban/jail.d/lamaste.conf`                      | fail2ban jail configuration                            |
-| `/etc/sysctl.d/99-lamaste.conf`                          | Kernel parameter (swappiness)                          |
+| Path                                                     | Description                                                                         |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                      | Panel server configuration                                                          |
+| `/etc/lamalibre/lamaste/tunnels.json`                    | Tunnel definitions                                                                  |
+| `/etc/lamalibre/lamaste/sites.json`                      | Static site definitions                                                             |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`         | Per-agent Chisel credentials                                                        |
+| `/etc/lamalibre/lamaste/chisel-users`                    | Chisel authfile: per-agent credentials + port grants (0640, group `lamaste-chisel`) |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                 | Sentinel Chisel user password                                                       |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`              | Ticket scope registry (scopes, instances, assignments)                              |
+| `/etc/lamalibre/lamaste/tickets.json`                    | Ticket and session store                                                            |
+| `/etc/lamalibre/lamaste/groups.json`                     | Lamaste group definitions and membership                                            |
+| `/etc/lamalibre/lamaste/access-grants.json`              | Generic access grants (principal → resource)                                        |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                 | Gatekeeper settings (cache TTL, logging)                                            |
+| `/etc/lamalibre/lamaste/access-request-log.json`         | Optional denied access log                                                          |
+| `/etc/authelia/configuration.yml`                        | Authelia server configuration                                                       |
+| `/etc/authelia/users.yml`                                | Authelia user database                                                              |
+| `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)                                         |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | mTLS configuration snippet                                                          |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                              |
+| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user                                                         |
+| `/usr/local/sbin/lamaste-certbot`                        | Root-owned certbot wrapper (validated, fixed argv)                                  |
+| `/usr/local/sbin/lamaste-cert-info`                      | Root-owned read-only Let's Encrypt certificate queries                              |
+| `/etc/fail2ban/jail.d/lamaste.conf`                      | fail2ban jail configuration                                                         |
+| `/etc/sysctl.d/99-lamaste.conf`                          | Kernel parameter (swappiness)                                                       |
 
 ### PKI Certificates
 
@@ -121,6 +153,7 @@ All services start after `network.target` and are independent of each other. If 
 
 | Path                                                           | Description                              |
 | -------------------------------------------------------------- | ---------------------------------------- |
+| `/etc/nginx/sites-available/lamalibre-lamaste-http-redirect`   | Port 80 catch-all, `301` to HTTPS        |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-ip`        | IP:9292 panel vhost (mTLS, self-signed)  |
 | `/etc/nginx/sites-available/lamalibre-lamaste-panel-domain`    | Domain panel vhost (mTLS, Let's Encrypt) |
 | `/etc/nginx/sites-available/lamalibre-lamaste-auth`            | Authelia portal vhost                    |
@@ -165,15 +198,15 @@ All services start after `network.target` and are independent of each other. If 
 
 ## Binary Locations
 
-| Binary   | Path                      | Source          | Version Check        |
-| -------- | ------------------------- | --------------- | -------------------- |
-| Chisel   | `/usr/local/bin/chisel`   | GitHub releases | `chisel --version`   |
-| Authelia | `/usr/local/bin/authelia` | GitHub releases | `authelia --version` |
-| Node.js  | `/usr/bin/node`           | NodeSource repo | `node --version`     |
-| npm      | `/usr/bin/npm`            | NodeSource repo | `npm --version`      |
-| nginx    | `/usr/sbin/nginx`         | apt package     | `nginx -v`           |
-| certbot  | `/usr/bin/certbot`        | apt package     | `certbot --version`  |
-| openssl  | `/usr/bin/openssl`        | apt package     | `openssl version`    |
+| Binary   | Path                      | Source                                | Version Check        |
+| -------- | ------------------------- | ------------------------------------- | -------------------- |
+| Chisel   | `/usr/local/bin/chisel`   | GitHub release 1.12.0, SHA-256 pinned | `chisel --version`   |
+| Authelia | `/usr/local/bin/authelia` | GitHub releases                       | `authelia --version` |
+| Node.js  | `/usr/bin/node`           | NodeSource repo                       | `node --version`     |
+| npm      | `/usr/bin/npm`            | NodeSource repo                       | `npm --version`      |
+| nginx    | `/usr/sbin/nginx`         | apt package                           | `nginx -v`           |
+| certbot  | `/usr/bin/certbot`        | apt package                           | `certbot --version`  |
+| openssl  | `/usr/bin/openssl`        | apt package                           | `openssl version`    |
 
 ## Quick Reference
 
@@ -186,7 +219,7 @@ sudo systemctl status nginx chisel authelia lamalibre-lamaste-serverd lamalibre-
 **Check which ports are listening:**
 
 ```bash
-sudo ss -tlnp | grep -E ':(22|443|3100|9090|9091|9292|9294)\s'
+sudo ss -tlnp | grep -E ':(22|80|443|3100|9090|9091|9292|9294)\s'
 ```
 
 **Check disk usage of Lamaste directories:**

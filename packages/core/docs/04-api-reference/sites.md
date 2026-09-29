@@ -93,20 +93,21 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field               | Type       | Description                                                                                       |
-| ------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| `id`                | `string`   | UUID v4 identifier                                                                                |
-| `name`              | `string`   | Site name (used as subdomain for managed sites)                                                   |
-| `fqdn`              | `string`   | Fully qualified domain name                                                                       |
-| `type`              | `string`   | `"managed"` (subdomain) or `"custom"` (your own domain)                                           |
-| `spaMode`           | `boolean`  | If `true`, all routes serve `index.html` (for single-page apps)                                   |
-| `autheliaProtected` | `boolean`  | If `true`, Authelia authentication is required to access the site                                 |
-| `allowedUsers`      | `string[]` | List of Authelia usernames allowed to access the site (empty array means all authenticated users) |
-| `dnsVerified`       | `boolean`  | Whether DNS has been verified (always `true` for managed sites)                                   |
-| `certIssued`        | `boolean`  | Whether a TLS certificate has been issued                                                         |
-| `rootPath`          | `string`   | Filesystem path where uploaded files are stored                                                   |
-| `createdAt`         | `string`   | ISO 8601 timestamp                                                                                |
-| `totalSize`         | `number`   | Total size of uploaded files in bytes                                                             |
+| Field               | Type       | Description                                                                                               |
+| ------------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `id`                | `string`   | UUID v4 identifier                                                                                        |
+| `name`              | `string`   | Site name (used as subdomain for managed sites)                                                           |
+| `fqdn`              | `string`   | Fully qualified domain name                                                                               |
+| `type`              | `string`   | `"managed"` (subdomain) or `"custom"` (your own domain)                                                   |
+| `spaMode`           | `boolean`  | If `true`, all routes serve `index.html` (for single-page apps)                                           |
+| `autheliaProtected` | `boolean`  | If `true`, Authelia authentication is required to access the site                                         |
+| `allowedUsers`      | `string[]` | List of Authelia usernames allowed to access the site (empty array means all authenticated users)         |
+| `dnsVerified`       | `boolean`  | Whether DNS has been verified (always `true` for managed sites)                                           |
+| `certIssued`        | `boolean`  | Whether a TLS certificate has been issued                                                                 |
+| `rootPath`          | `string`   | Filesystem path where uploaded files are stored                                                           |
+| `createdAt`         | `string`   | ISO 8601 timestamp                                                                                        |
+| `totalSize`         | `number`   | Total size of uploaded files in bytes                                                                     |
+| `aliases`           | `string[]` | Custom-domain sites only, optional: hostnames answered with a 301 to `https://<fqdn>` (e.g. `www.<fqdn>`) |
 
 ---
 
@@ -141,13 +142,14 @@ For a custom domain:
 }
 ```
 
-| Field               | Type      | Validation                                                                         | Description                                    |
-| ------------------- | --------- | ---------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `name`              | `string`  | 1-100 chars, lowercase alphanumeric + hyphens, cannot start/end with hyphen        | Site name (used as subdomain for managed type) |
-| `type`              | `string`  | `"managed"` or `"custom"`                                                          | Site type                                      |
-| `customDomain`      | `string`  | Max 253 chars, lowercase alphanumeric + dots + hyphens; required for `custom` type | Your own domain                                |
-| `spaMode`           | `boolean` | Optional, defaults to `false`                                                      | Serve `index.html` for all routes              |
-| `autheliaProtected` | `boolean` | Optional, defaults to `false`                                                      | Require Authelia login                         |
+| Field               | Type       | Validation                                                                         | Description                                                                                                             |
+| ------------------- | ---------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `name`              | `string`   | 1-100 chars, lowercase alphanumeric + hyphens, cannot start/end with hyphen        | Site name (used as subdomain for managed type)                                                                          |
+| `type`              | `string`   | `"managed"` or `"custom"`                                                          | Site type                                                                                                               |
+| `customDomain`      | `string`   | Max 253 chars, lowercase alphanumeric + dots + hyphens; required for `custom` type | Your own domain                                                                                                         |
+| `aliases`           | `string[]` | Custom sites only, optional, at most 10 hostnames                                  | Hostnames that 301 to the site, e.g. `["www.myblog.net"]`. Each needs its own A record; one certificate covers them all |
+| `spaMode`           | `boolean`  | Optional, defaults to `false`                                                      | Serve `index.html` for all routes                                                                                       |
+| `autheliaProtected` | `boolean`  | Optional, defaults to `false`                                                      | Require Authelia login                                                                                                  |
 
 **Name regex:**
 
@@ -222,20 +224,23 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                             | When                                             |
-| ------ | -------------------------------------------------------------------------------- | ------------------------------------------------ |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                       | Invalid name format, type, or custom domain      |
-| 400    | `{"error":"Custom domain is required for custom type sites"}`                    | `type` is `custom` but `customDomain` is missing |
-| 400    | `{"error":"Site name 'docs' is already in use"}`                                 | Another site uses this name                      |
-| 400    | `{"error":"Name 'panel' is reserved"}`                                           | Name collides with a reserved subdomain          |
-| 400    | `{"error":"Name 'app' is already in use by a tunnel"}`                           | Name collides with an existing tunnel subdomain  |
-| 400    | `{"error":"Domain 'docs.example.com' is already in use by another site"}`        | FQDN collision with another site                 |
-| 400    | `{"error":"Domain 'app.example.com' is already in use by a tunnel"}`             | FQDN collision with an existing tunnel           |
-| 400    | `{"error":"Domain and email must be configured before creating sites"}`          | Domain not set in config                         |
-| 500    | `{"error":"Failed to create site","details":"Certificate issuance failed: ..."}` | certbot failed (managed sites)                   |
-| 500    | `{"error":"Failed to create site","details":"Nginx configuration failed: ..."}`  | nginx vhost failed (managed sites)               |
-| 500    | `{"error":"Failed to create site","details":"Directory creation failed: ..."}`   | Could not create site directory                  |
-| 500    | `{"error":"Failed to create site","details":"State persistence failed: ..."}`    | Could not write sites.json                       |
+| Status | Body                                                                                              | When                                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                        | Invalid name format, type, or custom domain                                                                   |
+| 400    | `{"error":"Custom domain is required for custom type sites"}`                                     | `type` is `custom` but `customDomain` is missing                                                              |
+| 400    | `{"error":"Site name 'docs' is already in use"}`                                                  | Another site uses this name                                                                                   |
+| 400    | `{"error":"Name 'panel' is reserved"}`                                                            | Name collides with a reserved subdomain                                                                       |
+| 400    | `{"error":"Name 'app' is already in use by a tunnel"}`                                            | Name collides with an existing tunnel subdomain                                                               |
+| 400    | `{"error":"Domain 'docs.example.com' is already in use by another site"}`                         | FQDN collision with another site                                                                              |
+| 400    | `{"error":"Failed to create site","details":"Invalid alias hostname '...'"}`                      | Malformed alias, the site's own domain, or a Lamaste hostname (`panel.`, `auth.`, `tunnel.`, the base domain) |
+| 400    | `{"error":"Failed to create site","details":"'x' is already served by site 'y'"}`                 | Alias collides with another site's domain or alias, or a tunnel                                               |
+| 400    | `{"error":"Failed to create site","details":"Aliases are only supported on custom-domain sites"}` | Aliases on a managed site                                                                                     |
+| 400    | `{"error":"Domain 'app.example.com' is already in use by a tunnel"}`                              | FQDN collision with an existing tunnel                                                                        |
+| 400    | `{"error":"Domain and email must be configured before creating sites"}`                           | Domain not set in config                                                                                      |
+| 500    | `{"error":"Failed to create site","details":"Certificate issuance failed: ..."}`                  | certbot failed (managed sites)                                                                                |
+| 500    | `{"error":"Failed to create site","details":"Nginx configuration failed: ..."}`                   | nginx vhost failed (managed sites)                                                                            |
+| 500    | `{"error":"Failed to create site","details":"Directory creation failed: ..."}`                    | Could not create site directory                                                                               |
+| 500    | `{"error":"Failed to create site","details":"State persistence failed: ..."}`                     | Could not write sites.json                                                                                    |
 
 **Reserved names** (for managed type):
 
@@ -288,11 +293,21 @@ Updates a site's settings. Any combination of fields can be sent; only provided 
 }
 ```
 
-| Field               | Type       | Validation                        | Description                                    |
-| ------------------- | ---------- | --------------------------------- | ---------------------------------------------- |
-| `spaMode`           | `boolean`  | Optional                          | Serve `index.html` for all routes              |
-| `autheliaProtected` | `boolean`  | Optional                          | Require Authelia login                         |
-| `allowedUsers`      | `string[]` | Optional, each element min 1 char | Authelia usernames allowed to access this site |
+| Field               | Type       | Validation                                                       | Description                                    |
+| ------------------- | ---------- | ---------------------------------------------------------------- | ---------------------------------------------- |
+| `spaMode`           | `boolean`  | Optional                                                         | Serve `index.html` for all routes              |
+| `autheliaProtected` | `boolean`  | Optional                                                         | Require Authelia login                         |
+| `allowedUsers`      | `string[]` | Optional, each element min 1 char                                | Authelia usernames allowed to access this site |
+| `aliases`           | `string[]` | Optional, custom sites only; the complete new list (`[]` clears) | Redirect aliases                               |
+
+**Changing aliases on a live site** takes effect immediately, in an order where the site serves correctly at every moment:
+
+1. Every newly added alias must already resolve to this server — otherwise `400` with `DNS_MISMATCH` details and nothing changes.
+2. The certificate lineage is issued for the **union** of the old and new names, so it is valid for whichever vhost nginx is serving.
+3. The vhost is rewritten (tested by nginx; the previous file is restored on failure), then the new list is saved.
+4. The certificate is re-issued for **exactly** the new set, so a later renewal never has to validate a name the site no longer serves (its DNS may already point elsewhere).
+
+A failure in steps 1–3 leaves the saved site unchanged. A failure in step 4 leaves a working site whose certificate still names the removed aliases: the response is still `200`, with a `warning` explaining that renewal will fail once those names stop resolving here; the next alias update retries it. On a site still awaiting DNS verification the list is simply saved; `verify-dns` then checks every name.
 
 ```bash
 curl -s --cert client.p12:password \
@@ -324,6 +339,16 @@ curl -s --cert client.p12:password \
 }
 ```
 
+**Response (200) — aliases changed, certificate not narrowed:**
+
+```json
+{
+  "ok": true,
+  "site": { ... },
+  "warning": "The site now serves the new alias list, but its certificate still names removed aliases, and renewing it will fail once they stop resolving here: ..."
+}
+```
+
 **Response (200) — no changes:**
 
 ```json
@@ -336,17 +361,20 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                                          | When                                  |
-| ------ | --------------------------------------------------------------------------------------------- | ------------------------------------- |
-| 404    | `{"error":"Site not found"}`                                                                  | No site with the given UUID           |
-| 500    | `{"error":"Failed to update site configuration","details":"Nginx configuration failed: ..."}` | nginx vhost regeneration failed       |
-| 500    | `{"error":"Site saved but Authelia configuration failed","details":"..."}`                    | Authelia access control update failed |
+| Status | Body                                                                                                                                              | When                                                                                       |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 400    | `{"error":"Failed to update site configuration","details":"Add A records pointing www.myblog.net to 203.0.113.42 before adding them as aliases"}` | A newly added alias on a live site does not resolve here (`DNS_MISMATCH`); nothing changed |
+| 400    | `{"error":"Failed to update site configuration","details":"'x' is already served by site 'y'"}`                                                   | Invalid or colliding alias (same rules as creation), or aliases on a managed site          |
+| 404    | `{"error":"Site not found"}`                                                                                                                      | No site with the given UUID                                                                |
+| 500    | `{"error":"Failed to update site configuration","details":"Certificate issuance failed: ..."}`                                                    | Re-issuing the certificate for the new alias set failed                                    |
+| 500    | `{"error":"Failed to update site configuration","details":"Nginx configuration failed: ..."}`                                                     | nginx vhost regeneration failed                                                            |
+| 500    | `{"error":"Site saved but Authelia configuration failed","details":"..."}`                                                                        | Authelia access control update failed                                                      |
 
 ---
 
 ### `POST /api/sites/:id/verify-dns`
 
-Verifies that a custom domain's DNS A record points to the droplet's IP address. On success, issues a Let's Encrypt certificate and configures the nginx vhost. The site becomes live immediately.
+Verifies that a custom domain's DNS A record — and the A record of every alias — points to the droplet's IP address. On success, issues one Let's Encrypt certificate lineage (named after the site's domain) covering the domain and every alias, and configures the nginx vhost with a redirect block for the aliases. The site becomes live immediately.
 
 This endpoint is only applicable to `custom` type sites. Managed sites have DNS verified automatically at creation.
 
@@ -390,6 +418,18 @@ curl -s --cert client.p12:password \
   "expectedIp": "203.0.113.42",
   "resolvedIps": ["198.51.100.1"],
   "message": "Domain resolves to 198.51.100.1 but your server IP is 203.0.113.42. Please update your A record."
+}
+```
+
+**Response (200) — an alias does not resolve yet:**
+
+```json
+{
+  "ok": false,
+  "fqdn": "www.myblog.net",
+  "expectedIp": "203.0.113.42",
+  "resolvedIps": [],
+  "message": "Add A records pointing www.myblog.net to 203.0.113.42 — every alias shares the site's certificate."
 }
 ```
 
@@ -582,16 +622,16 @@ curl -s --cert client.p12:password \
 
 ## Quick Reference
 
-| Method | Path                        | Description                                                     |
-| ------ | --------------------------- | --------------------------------------------------------------- |
-| GET    | `/api/sites`                | List all static sites (newest first)                            |
-| POST   | `/api/sites`                | Create a static site                                            |
-| PATCH  | `/api/sites/:id`            | Update site settings (spaMode, autheliaProtected, allowedUsers) |
-| DELETE | `/api/sites/:id`            | Delete a site and all its files                                 |
-| POST   | `/api/sites/:id/verify-dns` | Verify DNS for custom domain sites                              |
-| GET    | `/api/sites/:id/files`      | List files in a site directory                                  |
-| POST   | `/api/sites/:id/files`      | Upload files (multipart)                                        |
-| DELETE | `/api/sites/:id/files`      | Delete a file                                                   |
+| Method | Path                        | Description                                                              |
+| ------ | --------------------------- | ------------------------------------------------------------------------ |
+| GET    | `/api/sites`                | List all static sites (newest first)                                     |
+| POST   | `/api/sites`                | Create a static site                                                     |
+| PATCH  | `/api/sites/:id`            | Update site settings (spaMode, autheliaProtected, allowedUsers, aliases) |
+| DELETE | `/api/sites/:id`            | Delete a site and all its files                                          |
+| POST   | `/api/sites/:id/verify-dns` | Verify DNS for custom domain sites                                       |
+| GET    | `/api/sites/:id/files`      | List files in a site directory                                           |
+| POST   | `/api/sites/:id/files`      | Upload files (multipart)                                                 |
+| DELETE | `/api/sites/:id/files`      | Delete a file                                                            |
 
 ### Site Object Shape
 
@@ -620,13 +660,14 @@ Managed site:
     → cert issued → vhost written → directory created → LIVE
 
 Custom domain site:
-  POST /sites (name, type: "custom", customDomain: "myblog.net")
+  POST /sites (name, type: "custom", customDomain: "myblog.net", aliases: ["www.myblog.net"])
     → directory created → state saved → DNS PENDING
 
-  (user adds A record in their DNS provider)
+  (user adds A records for myblog.net and www.myblog.net)
 
   POST /sites/:id/verify-dns
-    → DNS checked → cert issued → vhost written → LIVE
+    → DNS checked for every name → one cert for all names
+    → vhost written (www.myblog.net → 301 https://myblog.net) → LIVE
 ```
 
 ### curl Cheat Sheet

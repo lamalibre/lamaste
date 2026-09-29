@@ -70,7 +70,7 @@ with HTTP 401. The 2FA status and verification endpoints are themselves exempt f
 
 All request and response bodies use `application/json` unless explicitly noted otherwise:
 
-- **File downloads** (plist, certificates) return their native MIME type
+- **File downloads** (certificates) return their native MIME type
 - **File uploads** use `multipart/form-data`
 - **WebSocket connections** use the standard WebSocket upgrade handshake
 
@@ -288,12 +288,14 @@ There are two exceptions:
 | GET    | `/api/system/stats`                                   | Management | System statistics                        |
 | POST   | `/api/system/update`                                  | Management | Trigger background server update         |
 | POST   | `/api/agents/plugins/report`                          | Management | Report agent plugin capabilities         |
-| GET    | `/api/tunnels/agent-config`                           | Management | Get agent tunnel configuration           |
+| GET    | `/api/agents/me/chisel-credential`                    | Management | The calling agent's Chisel credential    |
+| POST   | `/api/agents/me/chisel-credential/rotate`             | Management | Rotate own Chisel credential (agent)     |
+| POST   | `/api/agents/:label/chisel-credential/rotate`         | Management | Rotate an agent's Chisel credential      |
+| GET    | `/api/tunnels/agent-config`                           | Management | One agent's tunnel configuration         |
 | GET    | `/api/tunnels`                                        | Management | List tunnels                             |
 | POST   | `/api/tunnels`                                        | Management | Create tunnel                            |
-| PATCH  | `/api/tunnels/:id`                                    | Management | Toggle tunnel enabled/disabled           |
+| PATCH  | `/api/tunnels/:id`                                    | Management | Move, access mode, body limit, enable    |
 | DELETE | `/api/tunnels/:id`                                    | Management | Delete tunnel                            |
-| GET    | `/api/tunnels/mac-plist`                              | Management | Download Mac plist                       |
 | GET    | `/api/sites`                                          | Management | List static sites                        |
 | POST   | `/api/sites`                                          | Management | Create static site                       |
 | DELETE | `/api/sites/:id`                                      | Management | Delete static site                       |
@@ -384,18 +386,18 @@ Agent certificates use capability-based access control. Base capabilities are al
 
 **Base capabilities:**
 
-| Capability       | Description                                                     |
-| ---------------- | --------------------------------------------------------------- |
-| `tunnels:read`   | List tunnels, download Mac plist (always-on, cannot be removed) |
-| `tunnels:write`  | Create and delete tunnels                                       |
-| `services:read`  | View service status                                             |
-| `services:write` | Start, stop, and restart services                               |
-| `system:read`    | View system stats (CPU, RAM, disk)                              |
-| `sites:read`     | List sites and browse files                                     |
-| `sites:write`    | Upload and delete files on assigned sites                       |
-| `panel:expose`   | Expose agent management panel at `agent-<label>.<domain>`       |
-| `identity:read`  | Parse Authelia identity headers on plugin routes                |
-| `identity:query` | Query panel for Authelia user metadata                          |
+| Capability       | Description                                                              |
+| ---------------- | ------------------------------------------------------------------------ |
+| `tunnels:read`   | List own tunnels, fetch own Chisel config (always-on, cannot be removed) |
+| `tunnels:write`  | Create, update and delete tunnels the agent carries                      |
+| `services:read`  | View service status                                                      |
+| `services:write` | Start, stop, and restart services                                        |
+| `system:read`    | View system stats (CPU, RAM, disk)                                       |
+| `sites:read`     | List sites and browse files                                              |
+| `sites:write`    | Upload and delete files on assigned sites                                |
+| `panel:expose`   | Expose agent management panel at `agent-<label>.<domain>`                |
+| `identity:read`  | Parse Authelia identity headers on plugin routes                         |
+| `identity:query` | Query panel for Authelia user metadata                                   |
 
 **Plugin-declared capabilities:** Plugins can declare additional capabilities in their `lamaste-plugin.json` manifest using either a flat array (`"capabilities": ["scope:action"]`) or a nested object (`"capabilities": { "agent": ["scope:action"] }`). Both formats are normalized to a flat array internally. These are merged with base capabilities and available for assignment to agent certificates. Capabilities are validated dynamically via `getValidCapabilities()`.
 

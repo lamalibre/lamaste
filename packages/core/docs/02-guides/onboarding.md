@@ -32,7 +32,7 @@ The first step asks for two pieces of information:
 
 Enter your domain name (without `www.` or any prefix — just the base domain) and your email address, then click **Save & Continue**.
 
-The domain must be a valid fully qualified domain name. The email is registered with Let's Encrypt and receives expiry warnings if auto-renewal fails.
+The domain must be a valid fully qualified domain name. The email is registered with Let's Encrypt and receives expiry warnings if auto-renewal fails. It must start with a letter or digit (for example `admin@example.com`) — the panel applies the same rule as the certificate tooling, so an address it accepts here never fails later at issuance.
 
 **What happens behind the scenes:** The panel sends a `POST /api/onboarding/domain` request. The server validates the domain format and email, stores them in `/etc/lamalibre/lamaste/panel.json`, and advances the onboarding status from `FRESH` to `DOMAIN_SET`.
 

@@ -315,7 +315,7 @@ If you already have a Lamaste server set up (via the manual SSH method), you can
 
 The app checks that the panel is reachable before adding it. The server is added with `active: false` — click **Set Active** on its card to start using it.
 
-> **Note:** Adding an existing server registers it in the app but does not configure authentication. You will still need to set up your agent certificate separately using `npx @lamalibre/lamaste-agent setup` or by importing a certificate manually.
+> **Note:** Adding an existing server registers it in the app but does not configure authentication. You will still need to set up your agent certificate separately using `lamaste-agent setup` (after `npm install -g @lamalibre/lamaste-agent`) or by importing a certificate manually.
 
 ---
 

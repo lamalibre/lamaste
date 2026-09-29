@@ -63,33 +63,42 @@ A custom domain site uses a domain you own (e.g., `myblog.com`). You must config
 2. Select **Custom Domain** as the domain type.
 3. Enter a name and the custom domain:
 
-| Field             | Example      |
-| ----------------- | ------------ |
-| **Name**          | `myblog`     |
-| **Custom Domain** | `myblog.com` |
+| Field                           | Example          |
+| ------------------------------- | ---------------- |
+| **Name**                        | `myblog`         |
+| **Custom Domain**               | `myblog.com`     |
+| **Redirect aliases** (optional) | `www.myblog.com` |
 
-4. Configure SPA Mode and Authelia Protection as needed.
-5. Click **Create Site**.
+4. Optionally list **redirect aliases** — other hostnames (typically `www.<domain>`) that should answer with a permanent (301) redirect to the custom domain. Separate several with commas or spaces; up to 10.
+5. Configure SPA Mode and Authelia Protection as needed.
+6. Click **Create Site**.
 
 The site is created with a "DNS Pending" status. No certificate is issued yet because Let's Encrypt needs the domain to resolve to your server first.
 
 ### 4. Verify DNS for a Custom Domain
 
-1. Add an A record at your domain registrar:
+1. Add an A record at your domain registrar for the domain **and every alias**:
 
-| Type  | Name                  | Value                                 |
-| ----- | --------------------- | ------------------------------------- |
-| **A** | `myblog.com` (or `@`) | Your server IP (e.g., `203.0.113.42`) |
+| Type  | Name                     | Value                                 |
+| ----- | ------------------------ | ------------------------------------- |
+| **A** | `myblog.com` (or `@`)    | Your server IP (e.g., `203.0.113.42`) |
+| **A** | `www.myblog.com` (alias) | Your server IP (e.g., `203.0.113.42`) |
 
 2. Wait for DNS propagation (usually a few minutes).
 3. In the Lamaste panel, click **Verify DNS** next to the site.
-4. The panel checks if the domain resolves to your server.
+4. The panel checks that the domain and every alias resolve to your server — one certificate covers them all, so every name must pass Let's Encrypt's HTTP challenge.
 
 **If DNS is verified:**
 
-- A Let's Encrypt certificate is issued automatically.
-- An nginx vhost is configured.
+- One Let's Encrypt certificate, named after the domain, is issued for the domain and all its aliases.
+- An nginx vhost is configured; aliases redirect (301) to `https://myblog.com`.
 - The site status changes to "Live".
+
+### Change Aliases Later
+
+Open **Settings** on a custom-domain site and edit **Redirect aliases**. On a live site the change takes effect immediately: every newly added alias must already resolve to your server (otherwise nothing changes and the panel says which names are missing), the certificate is first issued for the old and new names together (so the site stays valid while the switch happens), the vhost is rewritten, and then the certificate is re-issued for exactly the new names — so a later renewal never has to validate a name you removed, whose DNS may already point elsewhere. If that last re-issue fails, the new aliases are live anyway and the API response (`PATCH /api/sites/:id`) carries a `warning`: the certificate still names the removed aliases, and renewing it will fail once they stop resolving to your server. The next alias change retries it. On a site still awaiting DNS verification the list is simply saved, and **Verify DNS** checks every name.
+
+An alias cannot be a Lamaste hostname (`panel.`, `auth.`, `tunnel.`, or the base domain), the site's own domain, or a name another site or a tunnel already serves. Managed-subdomain sites do not take aliases.
 
 **If DNS is not verified:**
 
@@ -197,18 +206,20 @@ Each site is stored in `/etc/lamalibre/lamaste/sites.json` as a JSON array:
 ]
 ```
 
+Custom-domain sites may also carry `"aliases": ["www.myblog.com"]` — present only when non-empty.
+
 ### API Endpoints
 
-| Method   | Path                        | Purpose                                                         |
-| -------- | --------------------------- | --------------------------------------------------------------- |
-| `GET`    | `/api/sites`                | List all sites                                                  |
-| `POST`   | `/api/sites`                | Create a new site                                               |
-| `PATCH`  | `/api/sites/:id`            | Update site settings (spaMode, autheliaProtected, allowedUsers) |
-| `DELETE` | `/api/sites/:id`            | Delete a site                                                   |
-| `POST`   | `/api/sites/:id/verify-dns` | Verify DNS for custom domain sites                              |
-| `GET`    | `/api/sites/:id/files`      | List files in a directory                                       |
-| `POST`   | `/api/sites/:id/files`      | Upload files (multipart)                                        |
-| `DELETE` | `/api/sites/:id/files`      | Delete a file                                                   |
+| Method   | Path                        | Purpose                                                                  |
+| -------- | --------------------------- | ------------------------------------------------------------------------ |
+| `GET`    | `/api/sites`                | List all sites                                                           |
+| `POST`   | `/api/sites`                | Create a new site                                                        |
+| `PATCH`  | `/api/sites/:id`            | Update site settings (spaMode, autheliaProtected, allowedUsers, aliases) |
+| `DELETE` | `/api/sites/:id`            | Delete a site                                                            |
+| `POST`   | `/api/sites/:id/verify-dns` | Verify DNS for custom domain sites                                       |
+| `GET`    | `/api/sites/:id/files`      | List files in a directory                                                |
+| `POST`   | `/api/sites/:id/files`      | Upload files (multipart)                                                 |
+| `DELETE` | `/api/sites/:id/files`      | Delete a file                                                            |
 
 ### Create Site Request
 
@@ -232,6 +243,7 @@ POST /api/sites
   "name": "myblog",
   "type": "custom",
   "customDomain": "myblog.com",
+  "aliases": ["www.myblog.com"],
   "spaMode": true,
   "autheliaProtected": false
 }
@@ -239,14 +251,15 @@ POST /api/sites
 
 ### Validation Rules
 
-| Field               | Rules                                                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `name`              | 1-100 chars, regex `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, unique across sites, not reserved, not colliding with tunnels |
-| `type`              | `managed` or `custom`                                                                                               |
-| `customDomain`      | Required for `custom` type, max 253 chars, valid domain format                                                      |
-| `spaMode`           | Boolean, defaults to `false`                                                                                        |
-| `autheliaProtected` | Boolean, defaults to `false`                                                                                        |
-| `allowedUsers`      | Array of strings (Authelia usernames), defaults to `[]`                                                             |
+| Field               | Rules                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `name`              | 1-100 chars, regex `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, unique across sites, not reserved, not colliding with tunnels          |
+| `type`              | `managed` or `custom`                                                                                                        |
+| `customDomain`      | Required for `custom` type, max 253 chars, valid domain format                                                               |
+| `aliases`           | Custom sites only, at most 10 hostnames; not the site's domain, not a Lamaste hostname, not served by another site or tunnel |
+| `spaMode`           | Boolean, defaults to `false`                                                                                                 |
+| `autheliaProtected` | Boolean, defaults to `false`                                                                                                 |
+| `allowedUsers`      | Array of strings (Authelia usernames), defaults to `[]`                                                                      |
 
 ### File Storage
 
@@ -275,7 +288,7 @@ Everything happens in one request. The site is immediately live after creation (
 ```
 Create → Create dir → Save state → DNS Pending
   ↓
-Verify DNS → Issue cert → Write vhost → Save state → Live
+Verify DNS (domain + every alias) → Issue one cert for all names → Write vhost (+ alias 301 block) → Save state → Live
 ```
 
 The site is created in a pending state. DNS verification is a separate step that triggers certificate issuance and vhost creation.
@@ -287,6 +300,7 @@ Each static site vhost includes:
 - TLS termination with Let's Encrypt certificate
 - Optional `try_files $uri $uri/ /index.html` for SPA mode
 - Optional Authelia `auth_request` for protected sites
+- For custom sites with aliases, a second server block on the same certificate returning `301 https://<domain>$request_uri`
 - Standard security headers
 - Gzip compression for text-based assets
 
@@ -296,7 +310,7 @@ As an alternative to the browser-based file management described above, you can 
 
 ### Prerequisites
 
-- The Lamaste agent CLI installed on your machine (see [Mac Client Setup](mac-client-setup.md))
+- The Lamaste agent CLI installed on your machine (see [Agent Setup](agent-setup.md))
 - An agent certificate with `sites:read` and `sites:write` capabilities. Generate one from the panel: **Certificates** > **Agent Certificates** > **Generate**, and check the `sites:read` and `sites:write` capability boxes.
 - The agent certificate must have the target site listed in its **Site Access** configuration. The admin assigns sites to agents from **Panel** > **Certificates** > edit agent > **Site Access**.
 
@@ -325,12 +339,13 @@ For the full list of flags and options, see the [agent CLI README](https://githu
 
 ## Quick Reference
 
-| Feature        | Managed Subdomain    | Custom Domain          |
-| -------------- | -------------------- | ---------------------- |
-| DNS setup      | Automatic (wildcard) | Manual (A record)      |
-| Certificate    | Automatic            | After DNS verification |
-| Goes live      | Immediately          | After DNS + cert       |
-| Example domain | `blog.example.com`   | `myblog.com`           |
+| Feature        | Managed Subdomain    | Custom Domain           |
+| -------------- | -------------------- | ----------------------- |
+| DNS setup      | Automatic (wildcard) | Manual (A record)       |
+| Certificate    | Automatic            | After DNS verification  |
+| Goes live      | Immediately          | After DNS + cert        |
+| Example domain | `blog.example.com`   | `myblog.com`            |
+| Aliases        | Not supported        | Optional, 301 to domain |
 
 | Action                  | Steps                                                |
 | ----------------------- | ---------------------------------------------------- |

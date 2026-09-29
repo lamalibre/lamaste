@@ -55,11 +55,11 @@ These three pieces interact through a clear lifecycle: the installer creates the
          │                                                                      │
          │                                                                      │
          │                  ┌──────────────────────────────────────────┐        │
-         │                  │        Home Network / Mac Studio         │        │
+         │                  │   Agent (Mac or Linux, behind NAT)       │        │
          │                  │                                          │        │
          │                  │  ┌──────────────────────┐               │        │
          │                  │  │   Chisel Client       │───────────────┼────────┘
-         │                  │  │   (launchd plist)     │               │
+         │                  │  │ (launchd / systemd)   │               │
          │                  │  │   auto-reconnect      │               │
          │                  │  └──────────┬───────────┘               │
          │                  │             │                            │
@@ -286,7 +286,7 @@ lamaste/
 │   │       │       ├── system.js     ← GET /api/system/stats
 │   │       │       ├── services.js   ← Service start/stop/restart
 │   │       │       ├── logs.js       ← WebSocket live log streaming
-│   │       │       ├── tunnels.js    ← Tunnel CRUD + plist download
+│   │       │       ├── tunnels.js    ← Tunnel CRUD, ownership, agent-config
 │   │       │       ├── sites.js      ← Static site CRUD + file management
 │   │       │       ├── users.js      ← Authelia user CRUD + TOTP
 │   │       │       ├── certs.js      ← Certificate listing + renewal + mTLS rotation
@@ -300,7 +300,11 @@ lamaste/
 │   │           ├── revocation.js     ← Certificate revocation list management (revoked.json)
 │   │           ├── invite-page.js    ← Invitation acceptance HTML page generator
 │   │           ├── nginx.js          ← Vhost generation + write-with-rollback + reload
-│   │           ├── chisel.js         ← Chisel install + service management
+│   │           ├── chisel.js         ← Chisel install + service management + syncChisel
+│   │           ├── chisel-users.js   ← Per-agent Chisel credentials + authfile grants
+│   │           ├── chisel-reconcile.js ← Startup reconciliation of Chisel (fail closed)
+│   │           ├── chisel-runtime.js ← Restart decision for authfile changes
+│   │           ├── tunnel-deps.js    ← Dependencies for the core tunnel workflows
 │   │           ├── authelia.js       ← Authelia install + config + user CRUD
 │   │           ├── certbot.js        ← Let's Encrypt issuance + renewal
 │   │           ├── mtls.js           ← mTLS cert info + rotation + dynamic capabilities
@@ -308,7 +312,6 @@ lamaste/
 │   │           ├── push-install.js   ← Push install config, policies, sessions, agent enable/disable
 │   │           ├── services.js       ← systemctl wrapper for managed services
 │   │           ├── system-stats.js   ← CPU, memory, disk stats via systeminformation
-│   │           ├── plist.js          ← macOS launchd plist generator
 │   │           ├── files.js          ← Static site file operations (upload, delete, list)
 │   │           └── app-error.js      ← Operational error class (AppError)
 │   │

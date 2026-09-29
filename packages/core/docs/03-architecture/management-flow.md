@@ -22,22 +22,25 @@ Full lifecycle management of tunneled applications.
 User fills form:
   Subdomain: [app1]  .example.com
   Local port: [8001]
+  Agent:     [laptop]
   Description: [My web app]
            [Add Tunnel]
          │
          ▼
 POST /api/tunnels
+  ├─ tunnel lock taken (held until the response)
+  ├─ agentLabel checked against the agent registry; port not reserved, not in use
   ├─ certbot issues TLS cert for app1.example.com
   ├─ nginx vhost written + symlinked + tested
   ├─ systemctl reload nginx
-  ├─ chisel.service rewritten with updated -R flags
-  ├─ systemctl restart chisel
   ├─ tunnels.json updated
-  └─ response: { ok: true, fqdn: "app1.example.com" }
+  ├─ chisel-users re-rendered: agent-laptop may bind ^R:127\.0\.0\.1:8001$
+  │    (Chisel reloads the file itself — an added grant needs no restart)
+  └─ response: { ok: true, tunnel: { ..., agentLabel: "laptop" } }
          │
          ▼
-UI updates: new tunnel appears in list
-  └─ Download Mac plist button (regenerated with all tunnel ports)
+UI updates: new tunnel appears in list with its agent
+  └─ within ~30 s laptop's sync timer fetches agent-config and starts forwarding 8001
 ```
 
 **Remove Tunnel Flow:**
@@ -45,17 +48,21 @@ UI updates: new tunnel appears in list
 ```
 DELETE /api/tunnels/:id
   ├─ nginx vhost removed + reload
-  ├─ chisel.service updated (port removed)
-  ├─ systemctl restart chisel
   ├─ tunnels.json updated
+  ├─ chisel-users re-rendered (owner's grant for the port withdrawn)
+  ├─ systemctl try-restart chisel (a withdrawn grant must end live sessions)
   └─ response: { ok: true }
+         │
+         ▼
+  within ~30 s the owner's sync timer drops the remote — otherwise Chisel would
+  reject the owner's whole session, and all its other tunnels with it
 ```
 
 **Agent Integration:**
 
-- `lamaste-agent update` fetches the latest config via `GET /api/tunnels/agent-config` and restarts the service
-- On macOS, the agent writes a launchd plist; on Linux, a systemd unit
-- "Download Mac Agent Config" button generates a launchd plist for manual macOS setup
+- Every tunnel is carried by one agent (`agentLabel`). The Chisel authfile grants each agent only the ports of the enabled tunnels it carries, so no agent can bind another's port
+- Each agent's sync timer (`lamaste-agent sync`, every 30 s) fetches that agent's config via `GET /api/tunnels/agent-config` and converges its Chisel client; `lamaste-agent update` does the same at once and restarts the client
+- On macOS, the agent writes a launchd plist; on Linux, a systemd user unit. An agent with no tunnels keeps the client stopped
 
 ### Users (Authelia)
 
@@ -158,12 +165,11 @@ Host static websites directly on the Lamaste server, served via nginx.
 
 | Method | Path                              | Description                                    | Roles                          |
 | ------ | --------------------------------- | ---------------------------------------------- | ------------------------------ |
-| GET    | `/api/tunnels`                    | List all tunnels                               | admin, agent                   |
+| GET    | `/api/tunnels`                    | List tunnels (an agent sees only its own)      | admin, agent                   |
 | POST   | `/api/tunnels`                    | Add tunnel (triggers nginx + certbot + chisel) | admin, agent (`tunnels:write`) |
-| PATCH  | `/api/tunnels/:id`                | Toggle tunnel enabled/disabled                 | admin, agent (`tunnels:write`) |
+| PATCH  | `/api/tunnels/:id`                | Move (admin), access mode, body limit, enable  | admin, agent (`tunnels:write`) |
 | DELETE | `/api/tunnels/:id`                | Remove tunnel                                  | admin, agent (`tunnels:write`) |
-| GET    | `/api/tunnels/agent-config`       | Platform-agnostic agent config                 | admin, agent (`tunnels:read`)  |
-| GET    | `/api/tunnels/mac-plist`          | Download Mac launchd plist                     | admin, agent                   |
+| GET    | `/api/tunnels/agent-config`       | One agent's Chisel config                      | admin, agent (`tunnels:read`)  |
 | GET    | `/api/tunnels/agent-panel-status` | Check agent panel expose status                | admin, agent (`panel:expose`)  |
 | POST   | `/api/tunnels/expose-panel`       | Expose agent management panel as subdomain     | admin, agent (`panel:expose`)  |
 | DELETE | `/api/tunnels/retract-panel`      | Retract agent management panel                 | admin, agent (`panel:expose`)  |
@@ -239,29 +245,44 @@ Host static websites directly on the Lamaste server, served via nginx.
 
 ## Sudoers Rules
 
-The panel runs as a non-root user (`lamaste`) with specific sudo permissions:
+The panel runs as a non-root user (`lamaste`) with specific sudo permissions, written to `/etc/sudoers.d/lamaste` by `generateSudoersContent()` in `packages/provisioners/server/src/lib/service-config.js`. There is no blanket `certbot *` or `systemctl *`. A sudoers `*` matches spaces too, so a rule like `certbot renew --cert-name * --non-interactive` would also accept `--deploy-hook <command>` — root code execution. Certbot and the Let's Encrypt `openssl` reads therefore go through root-owned wrappers in `/usr/local/sbin/` that validate every argument and run the program with a fixed argument vector. An excerpt:
 
 ```sudoers
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl start nginx
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl stop nginx
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl restart nginx
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl reload nginx
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl start chisel
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl stop chisel
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl restart chisel
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl start authelia
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl stop authelia
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl restart authelia
-lamaste ALL=(ALL) NOPASSWD: /bin/systemctl reload authelia
-lamaste ALL=(ALL) NOPASSWD: /usr/sbin/nginx -t
-lamaste ALL=(ALL) NOPASSWD: /usr/bin/certbot *
+# --- systemctl: managed services (bare service names, no wildcards) ---
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl try-restart chisel
+# fail-closed startup reconciliation disables chisel, and re-enables it on success
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl disable chisel
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reload authelia
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+# ... start/stop/restart/enable for nginx, chisel, authelia, certbot.timer, lamalibre-lamaste-serverd
+
+# --- nginx config test ---
+lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+
+# --- Let's Encrypt: root-owned wrappers with fixed argument vectors ---
+#   lamaste-certbot issue <email> <cert-name> <domain>...   certbot certonly --nginx
+#   lamaste-certbot renew <cert-name> [force]               never with certbot's random delay
+#   lamaste-certbot renew-all | list
+#   lamaste-cert-info <lineage> enddate|checkend|san        read-only openssl queries
+lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-certbot
+lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-cert-info
+
+# ... plus scoped mv/cp/rm/chmod/chown rules for vhosts, Authelia config and
+#     the PKI helpers (lamaste-sign-csr, lamaste-pki-rename)
+# The chisel-users authfile needs no rule: the panel writes it itself, 0640,
+# group lamaste-chisel (the group chisel runs as; the lamaste user is a member).
 ```
+
+The wrappers accept only lowercase DNS hostnames (no wildcards or path characters, at most 100 per certificate) and a syntactically valid email address. Renewals the panel triggers pass `--no-random-sleep-on-renew`, because certbot otherwise sleeps up to about 8 minutes before a non-interactive renewal (a delay meant for `certbot.timer`) while an operator waits.
+
+Redeploying the panel (`npx @lamalibre/create-lamaste` on an existing install) rewrites this file and reinstalls the wrappers, so upgrades pick up new rules.
 
 ## File Operation Safety
 
 - **YAML writes** (users.yml): write to temp file, then atomic rename
 - **nginx changes**: always run `nginx -t` before reload; rollback on failure
 - **Authelia changes**: reload service after users.yml update
-- **Chisel changes**: restart service after port list update
+- **Chisel changes**: tunnel state is written first, then the authfile is re-rendered from it (per-agent port grants) and the service restarted
 - **Last-user protection**: never delete the last Authelia user
 - **State persistence**: tunnels.json updated atomically after each tunnel operation

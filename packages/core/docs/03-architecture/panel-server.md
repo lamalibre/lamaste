@@ -215,11 +215,11 @@ protectedContext (mTLS + role-guard):
 
   server.register(managementRoutes, { prefix: '/api' })
     └── [guarded: managementOnly()]
+        ├── GET    /api/tunnels/agent-config
         ├── GET    /api/tunnels
         ├── POST   /api/tunnels
         ├── PATCH  /api/tunnels/:id
         ├── DELETE  /api/tunnels/:id
-        ├── GET    /api/tunnels/mac-plist
         ├── GET    /api/tunnels/agent-panel-status
         ├── POST   /api/tunnels/expose-panel
         ├── DELETE /api/tunnels/retract-panel
@@ -438,16 +438,56 @@ Provides functions for writing, enabling, disabling, testing, and reloading ngin
 5. On success: `systemctl reload nginx`, delete backup
 6. On failure: restore backup, remove new file
 
+Tunnel vhosts (`writePublicVhost`, `writeAuthenticatedVhost`, `writeRestrictedVhost`) declare their proxy headers inside each `location` (`TUNNEL_PROXY_HEADERS`: `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, WebSocket upgrade), always clear client-supplied `X-SSL-Client-*` headers, and — on public vhosts — clear the `Remote-*` identity headers.
+
 Additional functions `disableIpVhost()` and `enableIpVhost()` manage the IP-based panel vhost. When built-in 2FA is enabled, the IP vhost is disabled to prevent bypassing the domain-based 2FA session; disabling 2FA re-enables it.
 
 See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 
 ### chisel.js — Tunnel Server Management
 
-- Downloads Chisel binary from GitHub releases (`linux_amd64` asset)
-- Writes systemd service unit (binds `127.0.0.1:9090`, `--reverse` mode)
-- Manages service lifecycle (start, stop, restart)
-- Serializes concurrent config updates via a promise-chain mutex
+- Installs the pinned Chisel release (1.12.0) from its fixed GitHub URL, verified against a pinned SHA-256 (`chisel-download.ts` in core); replaces an installed binary reporting another version
+- Writes systemd service unit (binds `127.0.0.1:9090`, `--reverse` mode, `--keyfile`, `--authfile`; `User=nobody`, `Group=lamaste-chisel`)
+- Manages service lifecycle (start, stop, `try-restart`)
+- `syncChisel()` — called after every tunnel state write: re-renders the authfile (via `chisel-users.js`). Chisel reloads it for new sessions; when the render withdrew a grant or password, Chisel is restarted so live sessions drop what they no longer hold (`chisel-runtime.js`). Throws if that restart fails, since a withdrawn grant would otherwise stay live
+
+### chisel-users.js — Chisel Credentials and Grants
+
+- Thin shim over `@lamalibre/lamaste/server`: per-agent credentials in `chisel-credentials.json` (0600)
+- Renders the authfile `chisel-users` from the credentials and `tunnels.json`: each `agent-<label>` may bind exactly `^R:127\.0\.0\.1:<port>$` for its enabled tunnels
+- Adds the `lamaste-no-grants` sentinel user (password in `chisel-sentinel`, 0600) so the authfile is never empty — Chisel disables authentication on an empty authfile
+- Never grants a reserved port (3100, 9090, 9091, 9292, 9294) or a port claimed by two tunnels
+- Writes the authfile itself, no sudo: `0600` temp file → `chgrp lamaste-chisel` → `chmod 0640` → fsync → rename. The serverd unit has `SupplementaryGroups=lamaste-chisel`
+- Reports whether each render `revoked` something; the caller decides on the restart
+
+### chisel-runtime.js — When an Authfile Change Needs a Restart
+
+- Additions take effect by Chisel's own reload; revocations call `systemctl try-restart chisel`, which leaves a deliberately stopped Chisel stopped
+- Until this process has seen Chisel running the pinned release (older releases do not reload reliably across atomic renames), every change restarts it
+
+### chisel-reconcile.js — Startup Reconciliation (Fail Closed)
+
+Runs in the background on every start (`startChiselReconciler`), so the panel stays reachable while it works:
+
+1. Mints a Chisel credential for every active agent that lacks one
+2. Under the tunnel lock, binds ownerless tunnels where the owner is certain (`bindUnownedTunnels`): an `agent-<label>` panel tunnel only to the agent it names, when active; other tunnels only when exactly one machine agent is active (plugin-agents are not counted). The rest stay unassigned and are logged, as are tunnels withheld from everyone (`withheldTunnels`: a reserved port or a port two tunnels share)
+3. Once onboarding has provisioned Chisel: installs the pinned release, rewrites the unit and the authfile (ownership and mode re-applied)
+4. Restarts Chisel when the binary, unit or a revocation requires it; starts it if enabled but not running
+
+If the authfile or unit cannot be established, Chisel is **stopped and disabled** and the marker `/etc/lamalibre/lamaste/chisel-failed-closed` is written — an authfile from an older version may grant every agent every port, and a disabled unit keeps a reboot from starting it on that file. Reconciliation retries with exponential backoff from 30 seconds to 10 minutes; a successful pass re-enables (`sudo systemctl enable chisel`) and starts Chisel and removes the marker. A failed binary download alone keeps Chisel running and is retried the same way.
+
+### tunnel-deps.js — Tunnel Workflow Dependencies
+
+- The nginx, certbot, chisel and state objects the core tunnel workflows (`createTunnel`, `updateTunnel`, `releaseAgentTunnels`, ...) receive; shared by the tunnel routes and agent revocation
+
+### Tunnel routes — HTTP rules on top of the core workflows
+
+- All tunnel workflows run under the core's single tunnel lock; `PATCH /api/tunnels/:id` is one `updateTunnel` call applying `agentLabel` → `accessMode`/`maxBodySizeMb` → `enabled`
+- Plugin-agent certificates cannot create tunnels (403) — they hold no Chisel credential
+- `maxBodySizeMb` above 100 MiB is admin-only (admins up to 10240)
+- Reserved ports are rejected by the request schema
+- `POST /api/tunnels` and `POST /api/tunnels/expose-panel` refuse a hostname a static site or site alias already serves
+- `GET /api/tunnels/agent-config` returns only the tunnels Chisel actually grants the agent (`grantedTunnelsFor`) — never a withheld one, since asking for a single ungranted port gets the agent's whole session refused — and includes `chiselCredentialIssuedAt`
 
 ### authelia.js — Authentication Management
 
@@ -460,7 +500,10 @@ See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 
 ### certbot.js — Certificate Management
 
+- Every certbot call goes through `sudo /usr/local/sbin/lamaste-certbot issue|renew|renew-all|list`, and every read of a Let's Encrypt certificate through `sudo /usr/local/sbin/lamaste-cert-info <lineage> enddate|checkend|san` — root-owned wrappers that validate hostnames and email and run certbot/openssl with a fixed argument vector (the wildcard sudoers rules they replace accepted extra flags such as `--deploy-hook`)
 - Issues Let's Encrypt certificates using the nginx plugin (`certbot certonly --nginx`)
+- Issues one lineage per custom site covering its aliases (`lamaste-certbot issue <email> <fqdn> <fqdn> <alias> ...`), reading the current SANs (`lamaste-cert-info <fqdn> san`) to skip re-issuance when the certificate already covers every name — or, with `match: 'exact'`, exactly the requested names
+- Panel-triggered renewals pass `--no-random-sleep-on-renew`
 - Handles rate limit, DNS, and server block errors with specific error messages
 - Supports wildcard certificate detection (skips individual issuance if wildcard covers the FQDN)
 - Lists all managed certificates by parsing `certbot certificates` output
@@ -472,6 +515,8 @@ See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 - Rotates admin client certificates: generate new key → CSR → sign with CA → PKCS12 → backup old → swap
 - Generates agent-scoped client certificates with capability-based access
 - Manages the agent registry: create, list, revoke, update capabilities and allowed sites
+- Revoking a regular agent removes its Chisel credential and releases its tunnels (`releaseAgentTunnels`): app/plugin tunnels become unassigned, its `agent-<label>` panel tunnel is removed
+- `rotateAgentChiselCredential` backs `POST /api/agents/:label/chisel-credential/rotate` (admin) and `POST /api/agents/me/chisel-credential/rotate` (agent, refused with 429 while the current credential is under 10 minutes old)
 - Provides the PKCS12 download path for the certs API
 - Manages dynamic capability sets: base capabilities + plugin capabilities + ticket scope capabilities via `getValidCapabilities()`
 - Base capabilities: `tunnels:read`, `tunnels:write`, `services:read`, `services:write`, `system:read`, `sites:read`, `sites:write`, `panel:expose`, `identity:read`, `identity:query`
@@ -612,7 +657,10 @@ The shutdown sequence stops the periodic instance liveness check (`livenessInter
 | `packages/lamaste-serverd/src/lib/services.js`                  | systemctl wrapper with allowlists                                           |
 | `packages/lamaste-serverd/src/lib/system-stats.js`              | CPU, memory, disk stats (cached)                                            |
 | `packages/lamaste-serverd/src/lib/files.js`                     | Static site file operations with path validation                            |
-| `packages/lamaste-serverd/src/lib/plist.js`                     | macOS launchd plist generator                                               |
+| `packages/lamaste-serverd/src/lib/chisel-users.js`              | Per-agent Chisel credentials and authfile port grants (core shim)           |
+| `packages/lamaste-serverd/src/lib/chisel-reconcile.js`          | Startup reconciliation of Chisel (fail closed)                              |
+| `packages/lamaste-serverd/src/lib/chisel-runtime.js`            | Restart decision for authfile changes                                       |
+| `packages/lamaste-serverd/src/lib/tunnel-deps.js`               | Dependency objects for the core tunnel workflows                            |
 | `packages/lamaste-serverd/src/lib/totp.js`                      | TOTP code generation and verification                                       |
 | `packages/lamaste-serverd/src/lib/session.js`                   | Signed session cookie creation and validation                               |
 | `packages/lamaste-serverd/src/lib/tickets.js`                   | Ticket system: scopes, instances, assignments, sessions                     |

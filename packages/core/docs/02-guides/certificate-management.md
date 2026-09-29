@@ -75,7 +75,7 @@ To force-renew a certificate:
 
 1. Find the certificate in the list.
 2. Click the **Renew** button next to it.
-3. The panel runs `certbot renew --cert-name <domain> --force-renewal`.
+3. The panel runs `certbot renew --cert-name <domain> --force-renewal --no-random-sleep-on-renew` (through its root-owned `lamaste-certbot` wrapper). The renewal starts immediately — certbot's usual random delay before a non-interactive renewal is skipped.
 4. After renewal, nginx is reloaded to use the new certificate.
 
 **Expected duration:** 10-30 seconds. Certbot contacts Let's Encrypt to verify domain ownership and issue a new certificate.
@@ -84,7 +84,7 @@ To force-renew a certificate:
 
 - **DNS issue:** The domain must still resolve to your server. Verify with `dig <domain>`.
 - **Rate limit:** Let's Encrypt has rate limits (50 certificates per registered domain per week). If you hit a limit, wait and try again later.
-- **Port 80 blocked:** Certbot uses HTTP-01 challenges by default, which require port 80. Lamaste's UFW rules allow port 443 but not 80 — however, certbot is configured with the `--nginx` plugin, which handles validation through the existing nginx configuration on port 443.
+- **Port 80 blocked:** Certbot's nginx plugin validates with HTTP-01 challenges on port 80, for renewals as well as first issuance. Lamaste's UFW rules allow port 80; check that no provider-level firewall blocks it. The port-80 redirect site Lamaste installs does not interfere — certbot answers its challenges ahead of the redirect.
 
 ### 5. Rotate the mTLS Client Certificate
 
@@ -185,8 +185,8 @@ The admin certificate (`CN=admin`) has unrestricted access to all panel endpoint
 3. Click **Generate**.
 4. Enter a label (e.g., `macbook-pro`, `office-imac`). Labels must be lowercase letters, numbers, and hyphens only.
 5. Select capabilities:
-   - **tunnels:read** — always enabled, cannot be removed. Allows listing tunnels and downloading the Mac plist.
-   - **tunnels:write** — create and delete tunnels.
+   - **tunnels:read** — always enabled, cannot be removed. Allows listing the agent's own tunnels and fetching its Chisel configuration.
+   - **tunnels:write** — create, update and delete tunnels the agent carries (restricted access mode only; moving a tunnel between agents stays admin-only).
    - **services:read** — view service status.
    - **services:write** — start, stop, and restart services.
    - **system:read** — view system stats (CPU, RAM, disk).
@@ -196,9 +196,9 @@ The admin certificate (`CN=admin`) has unrestricted access to all panel endpoint
 7. **Save the P12 password immediately** — it is only shown once and cannot be retrieved later.
 8. Click **Download** to save the `.p12` file.
 
-### Distribute to a Mac User
+### Distribute to the Agent Machine
 
-Send the `.p12` file and password to the Mac user securely. They use it with the Lamaste agent CLI or import it for manual Chisel setup. See [Mac Client Setup](mac-client-setup.md) for details.
+Send the `.p12` file and password to the agent machine (macOS or Linux) securely, and install the agent there with `npm install -g @lamalibre/lamaste-agent` and run `lamaste-agent setup --label <label>` — or import it into the Desktop App. An enrollment token is preferable where possible, because the private key is then generated on the agent and never travels. See [Agent Setup](agent-setup.md) for details.
 
 ### Update Capabilities
 

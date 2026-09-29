@@ -23,6 +23,9 @@ This approach works because Lamaste manages a small amount of state (one admin, 
 ├── panel.json              ← Central config (IP, domain, onboarding state)
 ├── tunnels.json            ← Tunnel definitions
 ├── sites.json              ← Static site definitions
+├── chisel-credentials.json ← Per-agent Chisel credentials
+├── chisel-users            ← Chisel authfile, rendered from credentials + tunnels.json (0640, group lamaste-chisel)
+├── chisel-sentinel         ← Password of the no-grants sentinel Chisel user
 ├── invitations.json        ← Pending user invitations
 ├── plugins.json            ← Plugin registry (installed plugins, enabled state)
 ├── ticket-scopes.json      ← Ticket scope registry (scopes, instances, assignments)
@@ -286,15 +289,27 @@ Stored at `/etc/lamalibre/lamaste/tunnels.json`. An array of tunnel objects.
   {
     "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "subdomain": "myapp",
+    "fqdn": "myapp.example.com",
     "port": 3000,
     "description": "My Web App",
+    "type": "app",
+    "accessMode": "restricted",
+    "agentLabel": "laptop",
+    "maxBodySizeMb": 10,
+    "enabled": true,
     "createdAt": "2024-03-14T10:30:00.000Z"
   },
   {
     "id": "f9e8d7c6-b5a4-3210-fedc-ba0987654321",
     "subdomain": "api",
+    "fqdn": "api.example.com",
     "port": 8080,
     "description": "API Server",
+    "type": "app",
+    "accessMode": "authenticated",
+    "agentLabel": "build-server",
+    "maxBodySizeMb": 100,
+    "enabled": true,
     "createdAt": "2024-03-14T11:00:00.000Z"
   }
 ]
@@ -309,9 +324,14 @@ Read returns `[]` for missing files (ENOENT), enabling the system to start with 
 
 **Tunnel lifecycle:**
 
-1. `POST /api/tunnels` — adds a tunnel object, issues TLS cert, writes nginx vhost
-2. `DELETE /api/tunnels/:id` — removes the tunnel object, removes nginx vhost
-3. On both: the full array is written atomically after modification
+1. `POST /api/tunnels` — issues TLS cert, writes nginx vhost, adds the tunnel object (with its `agentLabel`)
+2. `PATCH /api/tunnels/:id` — moves the tunnel to another agent, re-renders its vhost (access mode, body limit), or enables/disables it
+3. `DELETE /api/tunnels/:id` — removes nginx vhost, removes the tunnel object
+4. On all: the full array is written atomically, **then** Chisel is synced — `chisel-users` is re-rendered from the new state (each agent may bind only its enabled tunnels' ports). Chisel reloads the file itself; it is restarted only when a grant or password was withdrawn. The authfile is derived state; `tunnels.json` and `chisel-credentials.json` are the sources of truth
+5. `DELETE /api/certs/agent/:label` (revocation) — the agent's app and plugin tunnels lose their `agentLabel` (unassigned), and its `agent-<label>` panel tunnel is removed
+6. At startup (background, fail closed): an ownerless `agent-<label>` panel tunnel is bound to the agent it names when that agent is active; other ownerless tunnels (from versions before tunnel ownership) are bound to the sole active agent, or left unassigned when there are several. Then the pinned Chisel binary, the unit and the authfile are re-established — and Chisel is stopped if they cannot be
+
+Every one of these workflows runs under the single tunnel lock (`withTunnelLock` in `@lamalibre/lamaste/server`), with its validation inside the lock.
 
 ## Site State (`sites.json`)
 
@@ -323,9 +343,9 @@ Stored at `/etc/lamalibre/lamaste/sites.json`. An array of site objects.
 [
   {
     "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-    "name": "My Blog",
-    "subdomain": "blog",
+    "name": "blog",
     "fqdn": "blog.example.com",
+    "type": "managed",
     "spaMode": false,
     "autheliaProtected": false,
     "rootPath": "/var/www/lamaste/b2c3d4e5-f6a7-8901-bcde-f12345678901",
@@ -340,6 +360,8 @@ Stored at `/etc/lamalibre/lamaste/sites.json`. An array of site objects.
 - `writeSites(sites)` — atomic write of the full array
 
 Same atomic write pattern and ENOENT handling as tunnels.
+
+Custom-domain sites may also carry `aliases` (hostnames redirected with a 301 to the site's `fqdn`); see the [Sites API](../04-api-reference/sites.md). The full field list is in [Config Files](../06-reference/config-files.md).
 
 ## YAML Writes for Authelia (`users.yml`)
 
@@ -449,58 +471,42 @@ Environment variables allow overriding paths for development and testing without
 
 ## File Permissions
 
-| File                      | Mode   | Owner             | Rationale                                            |
-| ------------------------- | ------ | ----------------- | ---------------------------------------------------- |
-| `panel.json`              | `0600` | `lamaste:lamaste` | Contains sensitive config, owner-only access         |
-| `tunnels.json`            | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
-| `sites.json`              | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
-| `invitations.json`        | `0600` | `lamaste:lamaste` | Written by Panel Server                              |
-| `storage-config.json`     | `0600` | `lamaste:lamaste` | Storage registry (credentials AES-256-GCM encrypted) |
-| `storage-master.key`      | `0600` | `lamaste:lamaste` | 32-byte master key for storage encryption            |
-| `groups.json`             | `0600` | `lamaste:lamaste` | Lamaste group definitions and membership             |
-| `access-grants.json`      | `0600` | `lamaste:lamaste` | Generic access grants (principal → resource)         |
-| `gatekeeper.json`         | `0600` | `lamaste:lamaste` | Gatekeeper settings (cache TTL, logging)             |
-| `access-request-log.json` | `0600` | `lamaste:lamaste` | Optional denied access log                           |
-| `pki/ca.key`              | `0600` | `root:root`       | CA private key — most sensitive file                 |
-| `pki/ca.crt`              | `0644` | `root:root`       | CA cert — needs to be readable by nginx              |
-| `pki/client.key`          | `0600` | `root:root`       | Client private key                                   |
-| `pki/client.crt`          | `0644` | `root:root`       | Client cert                                          |
-| `pki/client.p12`          | `0600` | `root:root`       | PKCS12 bundle with private key                       |
-| `pki/.p12-password`       | `0600` | `root:root`       | Password for PKCS12 bundle                           |
-| `users.yml`               | `0600` | `root:root`       | Contains bcrypt password hashes                      |
-| `configuration.yml`       | `0600` | `root:root`       | Contains JWT and session secrets                     |
-| `.secrets.json`           | `0600` | `root:root`       | Encryption keys                                      |
+| File                      | Mode   | Owner                    | Rationale                                                            |
+| ------------------------- | ------ | ------------------------ | -------------------------------------------------------------------- |
+| `panel.json`              | `0600` | `lamaste:lamaste`        | Contains sensitive config, owner-only access                         |
+| `tunnels.json`            | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
+| `sites.json`              | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
+| `chisel-credentials.json` | `0600` | `lamaste:lamaste`        | Per-agent Chisel passwords                                           |
+| `chisel-users`            | `0640` | `lamaste:lamaste-chisel` | Chisel authfile (read by the Chisel process, group `lamaste-chisel`) |
+| `chisel-sentinel`         | `0600` | `lamaste:lamaste`        | Sentinel Chisel user password                                        |
+| `invitations.json`        | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
+| `storage-config.json`     | `0600` | `lamaste:lamaste`        | Storage registry (credentials AES-256-GCM encrypted)                 |
+| `storage-master.key`      | `0600` | `lamaste:lamaste`        | 32-byte master key for storage encryption                            |
+| `groups.json`             | `0600` | `lamaste:lamaste`        | Lamaste group definitions and membership                             |
+| `access-grants.json`      | `0600` | `lamaste:lamaste`        | Generic access grants (principal → resource)                         |
+| `gatekeeper.json`         | `0600` | `lamaste:lamaste`        | Gatekeeper settings (cache TTL, logging)                             |
+| `access-request-log.json` | `0600` | `lamaste:lamaste`        | Optional denied access log                                           |
+| `pki/ca.key`              | `0600` | `root:root`              | CA private key — most sensitive file                                 |
+| `pki/ca.crt`              | `0644` | `root:root`              | CA cert — needs to be readable by nginx                              |
+| `pki/client.key`          | `0600` | `root:root`              | Client private key                                                   |
+| `pki/client.crt`          | `0644` | `root:root`              | Client cert                                                          |
+| `pki/client.p12`          | `0600` | `root:root`              | PKCS12 bundle with private key                                       |
+| `pki/.p12-password`       | `0600` | `root:root`              | Password for PKCS12 bundle                                           |
+| `users.yml`               | `0600` | `root:root`              | Contains bcrypt password hashes                                      |
+| `configuration.yml`       | `0600` | `root:root`              | Contains JWT and session secrets                                     |
+| `.secrets.json`           | `0600` | `root:root`              | Encryption keys                                                      |
 
 PKI and Authelia files are owned by root because they are written during installation (as root) or via `sudo` commands. The Panel Server reads them using `sudo` when needed (e.g., reading `users.yml` for the users API).
 
 ## Concurrency Safety
 
-The Panel Server is a single-process Node.js application (single-threaded event loop). This provides natural serialization for most operations — two concurrent API requests that modify `tunnels.json` will execute sequentially within the event loop.
+The Panel Server is a single-process Node.js application, but a single-threaded event loop does not serialize asynchronous workflows: two requests that each read `tunnels.json`, await a certificate or an nginx test, and then write it back would interleave, and both could pass the same uniqueness check. Serialization is therefore explicit:
 
-For operations that spawn external processes with side effects, additional serialization is implemented:
+**Tunnel state** is guarded by one promise-chain lock, `withTunnelLock` in `@lamalibre/lamaste/server`'s `tunnels.ts`. Every tunnel workflow — create, delete, toggle, assign, reconfigure, the combined `PATCH /api/tunnels/:id`, releasing a revoked agent's tunnels, and startup reconciliation — takes it for its whole duration, and does its validation (subdomain and port uniqueness, reserved ports, agent checks, authorization against the current entry) inside it.
 
-**Chisel config updates** use a promise-chain mutex:
+**Chisel authfile renders** are serialized by a promise-chain mutex in `chisel-users.ts`, keyed by the credentials file, around every render (enroll, revoke, rotate, tunnel change). The daemon's `syncChisel()` renders after the tunnel state is written and restarts Chisel (`systemctl try-restart`) only when the render withdrew something.
 
-```javascript
-let chiselUpdateLock = Promise.resolve();
-
-export async function updateChiselConfig(tunnels) {
-  const previousLock = chiselUpdateLock;
-  let resolveLock;
-  chiselUpdateLock = new Promise((resolve) => {
-    resolveLock = resolve;
-  });
-
-  try {
-    await previousLock;
-    await _doUpdateChiselConfig(tunnels);
-  } finally {
-    resolveLock();
-  }
-}
-```
-
-This ensures that concurrent tunnel creation requests do not trigger multiple simultaneous Chisel restarts.
+This ensures that concurrent tunnel or credential operations never interleave state or authfile writes.
 
 ## Key Files
 

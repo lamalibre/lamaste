@@ -4,7 +4,7 @@
 
 ## In Plain English
 
-The Lamaste Desktop app is a native application (built with Tauri) that replaces the manual Chisel client setup. Instead of downloading plists, editing configuration files, and running terminal commands, you get a graphical interface that:
+The Lamaste Desktop app is a native application (built with Tauri) that wraps the Lamaste agent in a graphical interface. Instead of running `lamaste-agent` commands in a terminal, you get a graphical interface that:
 
 - **Discovers local services automatically** — it scans your machine for well-known services (Ollama, ComfyUI, PostgreSQL, Redis, Docker containers, etc.) and shows them in a marketplace-style UI
 - **Creates tunnels with one click** — select a detected service, click "Expose," and the app creates the tunnel, updates the Chisel config, and reloads the connection
@@ -53,13 +53,14 @@ After the app launches, it shows a setup screen with two options:
 
 **Option A: Connect to an existing server**
 
-Run the agent setup command:
+Install the agent globally and run its setup command:
 
 ```bash
-npx @lamalibre/lamaste-agent setup --label my-server
+npm install -g @lamalibre/lamaste-agent
+lamaste-agent setup --label my-server
 ```
 
-The `--label` flag names this agent connection (used for multi-agent support). This command connects to your VPS panel using the agent certificate and configures the local Chisel client. During setup, the client certificate and key are extracted from the P12 bundle for mTLS client authentication. Once setup completes, the app detects the configuration and switches to the main interface.
+The agent must be a global install — setup installs a sync timer that runs it every 30 seconds to pick up tunnel changes, and refuses to run from `npx`. (When the app sets up an agent itself, it installs `@lamalibre/lamaste-agent` globally for you.) The `--label` flag names this agent connection (used for multi-agent support). This command connects to your VPS panel using the agent certificate and configures the local Chisel client. During setup, the client certificate and key are extracted from the P12 bundle for mTLS client authentication. Once setup completes, the app detects the configuration and switches to the main interface.
 
 **Option B: Create a new server**
 
@@ -86,7 +87,7 @@ Agent mode provides local agent management. The agent-mode pages (Dashboard, Tun
 Server mode provides the full admin panel — the same management pages available in the browser-based panel UI. These pages are imported from the shared `@lamalibre/lamaste-server-ui` package:
 
 - **Dashboard** — system stats (CPU, RAM, disk, uptime) + service health
-- **Tunnels** — tunnel CRUD + Mac plist download
+- **Tunnels** — tunnel CRUD, carrying agent, access mode, body limit
 - **Services** — service control + live log viewer
 - **Static Sites** — site CRUD + file browser + upload
 - **Users** — Authelia user CRUD + TOTP enrollment
@@ -159,7 +160,9 @@ View Chisel client stdout and stderr logs.
 
 ### Settings
 
-Certificate management — rotate or re-download the agent certificate, uninstall the agent.
+Certificate management — rotate or re-download the agent certificate, uninstall the agent. Uninstalling an agent from the app stops and removes its Chisel service (`com.lamalibre.lamaste.chisel-<label>` on macOS, `lamalibre-lamaste-chisel-<label>` on Linux) and its sync timer (`…sync-<label>`).
+
+Stopping an agent's tunnels from the app is remembered: the agent's sync timer keeps them stopped until you start them again.
 
 ## Updating
 
@@ -187,35 +190,37 @@ rm ~/.local/bin/lamaste-desktop
 rm -rf ~/.lamalibre/lamaste/desktop/
 ```
 
-To also remove the agent configuration:
+To also remove every agent — its tunnel service, sync timer and configuration:
 
 ```bash
-rm -rf ~/.lamalibre/lamaste/
+lamaste-agent uninstall --all
 ```
+
+Deleting `~/.lamalibre/lamaste/` by hand instead would leave the agents' services and sync timers installed.
 
 ## Quick Reference
 
-| Action               | Command / Location                                    |
-| -------------------- | ----------------------------------------------------- |
-| **Install**          | `npx @lamalibre/create-lamaste-desktop`               |
-| **Update**           | `npx @lamalibre/create-lamaste-desktop`               |
-| **Agent setup**      | `npx @lamalibre/lamaste-agent setup --label <name>`   |
-| **App location**     | `/Applications/Lamaste.app` (macOS)                   |
-| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                    |
-| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`                |
-| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                     |
-| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                   |
-| **Service registry** | `~/.lamalibre/lamaste/services.json`                  |
-| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                       |
-| **Chisel logs**      | `~/.lamalibre/lamaste/agents/<label>/logs/chisel.log` |
-| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`)           |
-| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`)  |
-| **npm package**      | `@lamalibre/create-lamaste-desktop`                   |
+| Action               | Command / Location                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| **Install**          | `npx @lamalibre/create-lamaste-desktop`                                              |
+| **Update**           | `npx @lamalibre/create-lamaste-desktop`                                              |
+| **Agent setup**      | `npm install -g @lamalibre/lamaste-agent`, then `lamaste-agent setup --label <name>` |
+| **App location**     | `/Applications/Lamaste.app` (macOS)                                                  |
+| **Agent registry**   | `~/.lamalibre/lamaste/agents.json`                                                   |
+| **Per-agent data**   | `~/.lamalibre/lamaste/agents/<label>/`                                               |
+| **Config (legacy)**  | `~/.lamalibre/lamaste/agent.json`                                                    |
+| **Server registry**  | `~/.lamalibre/lamaste/servers.json`                                                  |
+| **Service registry** | `~/.lamalibre/lamaste/services.json`                                                 |
+| **Download cache**   | `~/.lamalibre/lamaste/desktop/`                                                      |
+| **Chisel logs**      | `~/.lamalibre/lamaste/agents/<label>/logs/chisel.log`                                |
+| **Cloud tokens**     | OS credential store (`com.lamalibre.cloud`)                                          |
+| **P12 passwords**    | OS credential store (`com.lamalibre.lamaste.server`)                                 |
+| **npm package**      | `@lamalibre/create-lamaste-desktop`                                                  |
 
 ### Related Documentation
 
 - [Cloud Provisioning](cloud-provisioning.md) — step-by-step guide to creating a server from the desktop app
-- [Mac Client Setup](mac-client-setup.md) — manual CLI-based Chisel setup (alternative)
+- [Agent Setup](agent-setup.md) — command-line agent setup (alternative, and for headless machines)
 - [Certificate Management](certificate-management.md) — generating agent certificates
 - [First Tunnel](first-tunnel.md) — creating tunnels via the panel UI
 - [Quick Start](../00-introduction/quickstart.md) — full setup walkthrough

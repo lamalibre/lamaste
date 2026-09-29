@@ -31,7 +31,8 @@ For the IP-based admin panel (`https://<ip>:9292`), there is no domain to verify
 
 - **Self-signed + mTLS certs** — created during `npx @lamalibre/create-lamaste` installation
 - **Core Let's Encrypt certs** — issued during onboarding for `panel`, `auth`, and `tunnel` subdomains
-- **App Let's Encrypt certs** — issued when you create a new tunnel
+- **App Let's Encrypt certs** — issued when you create a new tunnel or a managed static site
+- **Custom-domain site certs** — issued when a custom-domain site's DNS is verified: one certificate lineage, named after the site's domain, covering the domain and every redirect alias (re-issued when aliases change)
 
 ### Viewing certificates
 
@@ -51,7 +52,7 @@ You can also manually trigger renewal from the Certificates page:
 
 1. Find the certificate in the list
 2. Click "Renew"
-3. Lamaste runs `certbot renew` for that certificate
+3. Lamaste runs `certbot renew --force-renewal` for that certificate — without the random delay of up to about 8 minutes certbot otherwise adds before a non-interactive renewal (that delay is meant for `certbot.timer`, not for an operator waiting on the page)
 4. nginx reloads to pick up the new certificate
 
 ### mTLS client certificate rotation
@@ -81,24 +82,25 @@ The most critical scenario is the mTLS CA expiring, but it has a 10-year validit
 
 ### Let's Encrypt implementation
 
-Lamaste uses certbot with the nginx plugin for certificate issuance. The implementation lives in `packages/lamaste-serverd/src/lib/certbot.js`.
+Lamaste uses certbot with the nginx plugin for certificate issuance. The implementation lives in `@lamalibre/lamaste/server` (`packages/core/lib/src/server/certbot.ts`), wrapped by `packages/server/daemon/src/lib/certbot.js`.
+
+The panel runs as the unprivileged `lamaste` user and never runs `certbot` or `openssl` on Let's Encrypt files directly. It calls two root-owned wrapper scripts through sudo:
+
+| Wrapper                             | Commands                                                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `/usr/local/sbin/lamaste-certbot`   | `issue <email> <cert-name> <domain>...`, `renew <cert-name> [force]`, `renew-all`, `list`      |
+| `/usr/local/sbin/lamaste-cert-info` | `<lineage> enddate` (expiry), `<lineage> checkend` (valid 24 h more?), `<lineage> san` (names) |
+
+Each wrapper validates every argument — lowercase DNS hostnames only (no wildcards, no path characters, at most 100 per certificate), a syntactically valid email — and executes certbot or openssl with a fixed argument vector. They replace sudoers rules such as `certbot renew --cert-name * --non-interactive` and `openssl x509 -enddate -noout -in /etc/letsencrypt/live/*`: a sudoers `*` also matches spaces, so those rules accepted extra flags like `--deploy-hook <command>` or `-engine <library>` — root code execution for the `lamaste` user. The wrappers ship in `packages/provisioners/server/scripts/` and are installed (`root:root`, 0755) by the installer and by every redeploy.
 
 #### Issuing a certificate
 
 ```javascript
-export async function issueCert(fqdn, email) {
+export async function issueCert(fqdn, email, exec) {
   try {
-    await execa('sudo', [
-      'certbot',
-      'certonly',
-      '--nginx',
-      '-d',
-      fqdn,
-      '--email',
-      email,
-      '--agree-tos',
-      '--non-interactive',
-    ]);
+    // lamaste-certbot runs: certbot certonly --nginx --cert-name <fqdn> -d <fqdn>
+    //                       --email <email> --agree-tos --non-interactive
+    await exec('sudo', ['/usr/local/sbin/lamaste-certbot', 'issue', email, fqdn, fqdn]);
   } catch (err) {
     const stderr = err.stderr || err.message;
 
@@ -129,15 +131,16 @@ The error handling distinguishes between rate limits, DNS problems, and nginx co
 The `--nginx` plugin uses the HTTP-01 challenge method:
 
 ```
-1. Certbot creates a challenge file at /.well-known/acme-challenge/<token>
-2. Certbot temporarily modifies nginx to serve this file
-3. Let's Encrypt's servers request https://fqdn/.well-known/acme-challenge/<token>
+1. Certbot creates a challenge response for /.well-known/acme-challenge/<token>
+2. Certbot temporarily adds a port-80 server block for the name to nginx
+   (cloned from the lamalibre-lamaste-http-redirect default server)
+3. Let's Encrypt's servers request http://fqdn/.well-known/acme-challenge/<token>
 4. If the response matches, the domain is verified
 5. Let's Encrypt issues the certificate
 6. Certbot restores the nginx configuration
 ```
 
-This requires that the FQDN resolves to the VPS IP and that port 443 is accessible from the internet. See [DNS and Domains](dns-and-domains.md) for DNS configuration details.
+This requires that the FQDN resolves to the VPS IP and that port 80 is reachable from the internet — for the first issuance and for every renewal. The installer's port-80 catch-all, which redirects every other plain-HTTP request to HTTPS, does not interfere: certbot answers the challenge path ahead of the redirect and restores the file afterwards. See [DNS and Domains](dns-and-domains.md) for DNS configuration details.
 
 #### Core certificate issuance
 
@@ -186,6 +189,20 @@ export async function issueTunnelCert(fqdn, email) {
 
 This three-step check prevents unnecessary certificate issuance and respects rate limits.
 
+#### Custom-domain site certificate issuance
+
+A custom-domain static site may have redirect aliases (e.g. `www.myblog.net`). `issueSiteCert(fqdn, aliases, email)` in `@lamalibre/lamaste/server` keeps them on **one** lineage named after the primary domain:
+
+```bash
+sudo /usr/local/sbin/lamaste-certbot issue admin@example.com myblog.net myblog.net www.myblog.net
+# runs: certbot certonly --nginx --cert-name myblog.net -d myblog.net -d www.myblog.net \
+#         --email admin@example.com --agree-tos --non-interactive
+```
+
+`--cert-name` pins the lineage directory to `/etc/letsencrypt/live/myblog.net/`, so re-issuing for a changed alias set never drifts to `myblog.net-0001`. Before issuing, it reads the current certificate's names (`lamaste-cert-info myblog.net san`) and skips issuance when the certificate already covers every name — or, with `{ match: 'exact' }`, when it holds exactly those names.
+
+When the aliases of a live site change, the certificate is first issued for the **union** of the old and new names (valid whichever vhost nginx serves during the switch), the vhost is rewritten and the site saved, and then the certificate is re-issued for **exactly** the new names (`match: 'exact'`), so a renewal never has to validate a name the site no longer serves. If that last step fails, `PATCH /api/sites/:id` still succeeds and returns a `warning` — see the [Sites API](../04-api-reference/sites.md).
+
 #### Input validation
 
 The `issueTunnelCert` function validates both the FQDN and email before proceeding:
@@ -200,55 +217,45 @@ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
 }
 ```
 
-These checks prevent command injection through the certbot CLI arguments.
+These checks prevent command injection through the certbot CLI arguments. The `lamaste-certbot` wrapper repeats them as root, so a compromised panel process cannot pass anything else either.
 
 ### Certificate validity checks
 
 The `isCertValid` function uses OpenSSL to check if a certificate exists and is valid for at least 24 more hours:
 
 ```javascript
-export async function isCertValid(fqdn) {
+export async function isCertValid(fqdn, exec) {
   const certPath = `/etc/letsencrypt/live/${fqdn}/fullchain.pem`;
+  if (!HOSTNAME_RE.test(fqdn)) {
+    return { valid: false, certPath: null, expiryDate: null };
+  }
 
   try {
-    // Check if cert is valid for at least 24 more hours
-    await execa('sudo', ['openssl', 'x509', '-checkend', '86400', '-noout', '-in', certPath]);
-
-    // Get expiry date
-    const { stdout } = await execa('sudo', [
-      'openssl',
-      'x509',
-      '-enddate',
-      '-noout',
-      '-in',
-      certPath,
-    ]);
-    const match = stdout.match(/notAfter=(.+)/);
-    const expiryDate = match ? new Date(match[1]).toISOString() : null;
-
-    return { valid: true, certPath, expiryDate };
+    // lamaste-cert-info runs: openssl x509 -checkend 86400 -noout -in <lineage>/fullchain.pem
+    await exec('sudo', ['/usr/local/sbin/lamaste-cert-info', fqdn, 'checkend']);
   } catch (err) {
-    if (err.stderr?.includes('No such file')) {
-      return { valid: false, certPath: null, expiryDate: null };
-    }
+    // Exit 1: the certificate exists but expires within a day.
+    // Anything else (3: no certificate, 2: refused) means there is none to use.
     if (err.exitCode === 1) {
-      // Certificate expires within 24 hours
       return { valid: false, certPath, expiryDate: null };
     }
     return { valid: false, certPath: null, expiryDate: null };
   }
+
+  const expiry = await readLetsEncryptExpiry(fqdn, exec); // lamaste-cert-info <fqdn> enddate
+  return { valid: true, certPath, expiryDate: expiry?.expiresAt ?? null };
 }
 ```
 
-The `openssl x509 -checkend 86400` command exits with code 0 if the certificate is valid for at least 86400 seconds (24 hours) and code 1 otherwise. This provides a simple binary check without parsing dates.
+`openssl x509 -checkend 86400` exits with code 0 if the certificate is valid for at least 86400 seconds (24 hours) and code 1 otherwise; the wrapper passes that through and uses exit code 3 for a lineage with no certificate. This provides a simple binary check without parsing dates.
 
 ### Listing certificates
 
-The `listCerts` function parses the output of `certbot certificates` to build a structured list:
+The `listCerts` function parses the output of `certbot certificates` (`lamaste-certbot list`) to build a structured list:
 
 ```javascript
-export async function listCerts() {
-  const { stdout } = await execa('sudo', ['certbot', 'certificates']);
+export async function listCerts(exec) {
+  const { stdout } = await exec('sudo', ['/usr/local/sbin/lamaste-certbot', 'list']);
 
   if (stdout.includes('No certificates found')) return [];
 

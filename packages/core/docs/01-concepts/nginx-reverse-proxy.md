@@ -26,6 +26,10 @@ You do not interact with nginx directly. The management panel handles all nginx 
 - When TLS certificates are renewed, nginx reloads to pick up the new certificates
 - When you delete a tunnel, the vhost is removed and nginx reloads
 
+### Plain HTTP
+
+Port 80 answers every hostname with a redirect to the same address over HTTPS, so an `http://` link to your panel, a tunnel or a site still works. Let's Encrypt validation, which also uses port 80, is not affected by the redirect.
+
 ### The IP fallback
 
 The panel is always accessible at `https://<your-ip>:9292`, even if your domain's DNS is misconfigured or your Let's Encrypt certificates expire. This IP-based vhost uses a self-signed certificate (your browser shows a warning) and requires the [mTLS client certificate](mtls.md).
@@ -36,13 +40,15 @@ This is your emergency backdoor. If everything goes wrong with domains and certi
 
 Each service gets its own virtual host (vhost) — a configuration block that tells nginx how to handle requests for a specific domain:
 
-| Domain               | Internal service                | Authentication                     | Port |
-| -------------------- | ------------------------------- | ---------------------------------- | ---- |
-| `https://<ip>:9292`  | Panel server (`:3100`)          | mTLS client certificate            | 9292 |
-| `panel.example.com`  | Panel server (`:3100`)          | mTLS client certificate            | 443  |
-| `auth.example.com`   | Authelia (`:9091`)              | None (it is the auth service)      | 443  |
-| `tunnel.example.com` | Chisel server (`:9090`)         | None (Chisel handles its own auth) | 443  |
-| `myapp.example.com`  | Chisel → your machine (`:3000`) | Authelia TOTP 2FA                  | 443  |
+| Domain               | Internal service                  | Authentication                          | Port |
+| -------------------- | --------------------------------- | --------------------------------------- | ---- |
+| `http://<anything>`  | None — `301` to `https://`        | None                                    | 80   |
+| `https://<ip>:9292`  | Panel server (`:3100`)            | mTLS client certificate                 | 9292 |
+| `panel.example.com`  | Panel server (`:3100`)            | mTLS client certificate                 | 443  |
+| `auth.example.com`   | Authelia (`:9091`)                | None (it is the auth service)           | 443  |
+| `tunnel.example.com` | Chisel server (`:9090`)           | None (Chisel handles its own auth)      | 443  |
+| `myapp.example.com`  | Chisel → carrying agent (`:3000`) | Gatekeeper + Authelia (per access mode) | 443  |
+| `blog.example.com`   | Files on disk (static site)       | Optional Authelia                       | 443  |
 
 ### When things go wrong
 
@@ -60,6 +66,7 @@ nginx vhost files live in the standard Debian layout:
 ├── snippets/
 │   └── lamalibre-lamaste-mtls.conf             # mTLS snippet (included by panel vhosts)
 ├── sites-available/
+│   ├── lamalibre-lamaste-http-redirect         # :80 catch-all → HTTPS (installer)
 │   ├── lamalibre-lamaste-panel-ip              # IP:9292 vhost (always present)
 │   ├── lamalibre-lamaste-panel-domain          # panel.example.com (after onboarding)
 │   ├── lamalibre-lamaste-auth        # auth.example.com (after onboarding)
@@ -224,9 +231,9 @@ server {
 
 The difference from the IP vhost: port 443 instead of 9292, Let's Encrypt certificates instead of self-signed, and a specific `server_name` instead of catch-all. Requires the same `map $http_upgrade $connection_upgrade` block to be present.
 
-### App tunnel vhost with Authelia
+### App tunnel vhost
 
-Each tunneled app gets a vhost with the [Authelia forward-auth pattern](authentication.md):
+Each tunneled app gets its own vhost. Which template is used depends on the tunnel's access mode: `public` proxies directly, while `authenticated` and `restricted` (the default) delegate each request to Gatekeeper, which validates the Authelia session and — for restricted tunnels — the user's grant:
 
 ```nginx
 server {
@@ -240,59 +247,60 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 10m;
 
-    # Authelia forward authentication (AuthRequest implementation for nginx)
-    location /internal/authelia/authz {
+    # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
+    location /internal/lamaste/authz {
         internal;
 
-        proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
+        proxy_pass http://127.0.0.1:9294/authz/check;
         proxy_pass_request_body off;
-
-        proxy_set_header Content-Length "";
-        proxy_set_header Connection "";
-        proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
-
-        proxy_http_version 1.1;
-        proxy_buffers 4 32k;
-        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+        # ... X-Original-URL, X-Original-Method, Cookie headers ...
     }
 
     location / {
-        auth_request /internal/authelia/authz;
+        # Identity headers come from Gatekeeper's answer, replacing any
+        # the client sent (a public tunnel sets them all to "")
+        auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
-        auth_request_set $groups $upstream_http_remote_groups;
-        auth_request_set $name $upstream_http_remote_name;
-        auth_request_set $email $upstream_http_remote_email;
-        auth_request_set $redirection_url $upstream_http_location;
-
         proxy_set_header Remote-User $user;
-        proxy_set_header Remote-Groups $groups;
-        proxy_set_header Remote-Name $name;
-        proxy_set_header Remote-Email $email;
+        # ... Remote-Groups, Remote-Name, Remote-Email ...
 
-        proxy_pass http://127.0.0.1:PORT;
-        proxy_http_version 1.1;
+        # Proxy headers are declared here, in the location: a location with
+        # any proxy_set_header of its own inherits none from the server block
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Never pass client-supplied certificate headers to the app
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
 
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
 
+        proxy_pass http://127.0.0.1:PORT;
+        proxy_http_version 1.1;
+
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
-    }
 
-    # Redirect unauthenticated requests to Authelia login portal
-    error_page 401 =302 $redirection_url;
+        # Not logged in -> Authelia portal
+        error_page 401 =302 https://auth.example.com/?rd=$scheme://$http_host$request_uri;
+        # Restricted only: no grant -> Gatekeeper's access-request page
+        error_page 403 = /internal/lamaste/authz;
+    }
 }
 ```
 
-The `location /internal/authelia/authz` block is marked `internal`, meaning it cannot be accessed directly by clients. It is only triggered by the `auth_request` directive in the main `location /` block.
+The `location /internal/lamaste/authz` block is marked `internal`, meaning it cannot be accessed directly by clients. It is only triggered by the `auth_request` directive in the main `location /` block.
+
+The `127.0.0.1:PORT` target is also why a tunnel can never use the port of a Lamaste service (3100, 9090, 9091, 9292, 9294): that vhost would publish the internal service. For the panel it would be worse than a leak, because the panel trusts the `X-SSL-Client-*` headers nginx sets as proof of a client certificate — which is also why tunnel vhosts always clear them.
+
+`client_max_body_size` comes from the tunnel's `maxBodySizeMb` (1–10240 MiB, default 10; an agent may set at most 100). Requests above it get HTTP 413. Tunnels created before the setting existed carry no directive and so nginx's built-in 1 MiB limit, until a body limit is set on them (`PATCH /api/tunnels/:id` with `maxBodySizeMb`, or **Edit** in the panel). `127.0.0.1:PORT` is the listener Chisel opens on the server for the tunnel's carrying agent — see [Tunneling](tunneling.md#ownership-and-grants).
 
 ### Tunnel (Chisel) vhost
 
@@ -350,7 +358,7 @@ These headers appear in three places: the panel vhost (for live log streaming), 
 
 ### Proxy headers
 
-Every vhost sets standard proxy headers so backend services know about the original request:
+Every vhost sets standard proxy headers so backend services know about the original request. In tunnel vhosts they are declared inside each `location` — nginx inherits `proxy_set_header` from the server level only into locations that declare none of their own, and every tunnel location declares some — so apps behind a tunnel see the real `Host` and client address:
 
 | Header              | nginx variable               | Purpose                           |
 | ------------------- | ---------------------------- | --------------------------------- |
@@ -359,7 +367,7 @@ Every vhost sets standard proxy headers so backend services know about the origi
 | `X-Forwarded-For`   | `$proxy_add_x_forwarded_for` | Chain of proxy IPs                |
 | `X-Forwarded-Proto` | `$scheme`                    | Original protocol (http or https) |
 
-For mTLS vhosts, three additional headers are set:
+For mTLS vhosts, three additional headers are set (tunnel vhosts and the panel's public, certificate-less locations set them to empty instead, so a client cannot forge them):
 
 | Header                | nginx variable       | Purpose                          |
 | --------------------- | -------------------- | -------------------------------- |
@@ -380,12 +388,10 @@ All vhost writes follow a safe sequence to prevent nginx from entering a broken 
 5b. If test fails → restore backup, remove new file, throw error
 ```
 
-This pattern is implemented in `packages/lamaste-serverd/src/lib/nginx.js`:
+This pattern is implemented in `packages/server/daemon/src/lib/nginx.js`, shared by the tunnel vhost writers (`writePublicVhost`, `writeAuthenticatedVhost`, `writeRestrictedVhost`):
 
 ```javascript
-export async function writeAppVhost(subdomain, domain, port, certPath) {
-  // ... build config string ...
-
+async function safeWriteVhost(name, config, fqdn) {
   const existed = await fileExistsSudo(availablePath);
   if (existed) {
     await execa('sudo', ['cp', availablePath, bakPath]); // Backup
@@ -458,11 +464,13 @@ server {
 
 Static sites can optionally include Authelia forward-auth protection if the `autheliaProtected` flag is set.
 
+A custom-domain site can also have **aliases** (for example `www.myblog.net`). They get a second server block on the same certificate that answers with `return 301 https://myblog.net$request_uri;`. A hostname is served by at most one vhost: a tunnel cannot take a name a site or alias already serves, and an alias cannot take a tunnel's or another site's name.
+
 ### Source files
 
 | File                                          | Purpose                                             |
 | --------------------------------------------- | --------------------------------------------------- |
-| `packages/lamaste-serverd/src/lib/nginx.js`   | Vhost write, enable/disable, test, reload, rollback |
+| `packages/server/daemon/src/lib/nginx.js`     | Vhost write, enable/disable, test, reload, rollback |
 | `packages/create-lamaste/src/tasks/nginx.js`  | IP-based vhost, mTLS snippet, self-signed cert      |
 | `packages/create-lamaste/src/tasks/harden.js` | nginx package installation                          |
 
@@ -519,15 +527,16 @@ ls /etc/nginx/sites-enabled/lamaste-*
 
 ### Key nginx directives
 
-| Directive                               | Purpose                                    |
-| --------------------------------------- | ------------------------------------------ |
-| `ssl_verify_client on`                  | Require client certificate (mTLS)          |
-| `auth_request /internal/authelia/authz` | Delegate auth to Authelia subrequest       |
-| `proxy_http_version 1.1`                | Required for WebSocket upgrade             |
-| `proxy_read_timeout 86400s`             | Keep WebSocket connections alive (24h)     |
-| `error_page 495 496`                    | Handle missing/invalid client cert         |
-| `error_page 401 =302`                   | Redirect unauthenticated users to Authelia |
-| `internal`                              | Location accessible only via subrequests   |
+| Directive                              | Purpose                                    |
+| -------------------------------------- | ------------------------------------------ |
+| `ssl_verify_client on`                 | Require client certificate (mTLS)          |
+| `auth_request /internal/lamaste/authz` | Delegate auth to Gatekeeper subrequest     |
+| `client_max_body_size`                 | Per-tunnel request body limit              |
+| `proxy_http_version 1.1`               | Required for WebSocket upgrade             |
+| `proxy_read_timeout 86400s`            | Keep WebSocket connections alive (24h)     |
+| `error_page 495 496`                   | Handle missing/invalid client cert         |
+| `error_page 401 =302`                  | Redirect unauthenticated users to Authelia |
+| `internal`                             | Location accessible only via subrequests   |
 
 ### Related documentation
 

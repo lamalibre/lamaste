@@ -79,7 +79,7 @@ The onboarding wizard walks you through:
 After onboarding, the same URL shows the management panel:
 
 - **Dashboard**: System stats, service health, resource usage
-- **Tunnels**: Create, edit, delete tunnels. Download Mac client configs.
+- **Tunnels**: Create, edit, move, delete tunnels. Each tunnel is carried by one enrolled agent.
 - **Users**: Add people who can access your tunneled apps (each gets TOTP 2FA)
 - **Certificates**: Monitor Let's Encrypt expiry, rotate mTLS certificates
 - **Services**: Start, stop, restart Chisel/Authelia/nginx. View live logs.
@@ -166,14 +166,14 @@ Here is every piece of software running on the droplet after onboarding:
          │ WebSocket tunnel (encrypted, inside HTTPS)
          │
 ┌────────┴─────────────────────────────────────────────────────────┐
-│  Your Mac (behind firewall)                                      │
+│  Agent: your Mac or Linux machine (behind firewall)              │
 │                                                                  │
 │  ┌──────────────────┐       ┌──────────────────────────────────┐ │
 │  │ Chisel Client    │       │ Your Web Apps                    │ │
-│  │ (launchd plist,  │──────→│ localhost:8001 (blog)            │ │
-│  │  auto-reconnect) │       │ localhost:3000 (dashboard)       │ │
-│  └──────────────────┘       │ localhost:5173 (dev server)      │ │
-│                             └──────────────────────────────────┘ │
+│  │ (launchd/systemd │──────→│ localhost:8001 (blog)            │ │
+│  │  auto-reconnect, │       │ localhost:3000 (dashboard)       │ │
+│  │  30 s sync timer)│       │ localhost:5173 (dev server)      │ │
+│  └──────────────────┘       └──────────────────────────────────┘ │
 │  ┌──────────────────────────────────────────────────────────────┐ │
 │  │ Lamaste Desktop (Tauri v2)                                  │ │
 │  │  ├─ Service discovery + tunnel management                    │ │
@@ -269,15 +269,18 @@ Phase 2: Installation
 │   ├── Write IP-based panel vhost (port 9292)
 │   ├── Deploy certificate help page
 │   ├── Enable site, remove default
+│   ├── Port 80 catch-all: redirect plain HTTP to HTTPS
 │   └── Validate config and start nginx
 │
 └── Deploy Panel
     ├── Create lamaste system user
+    ├── Create lamaste-chisel group (Chisel reads its authfile through it)
     ├── Create directory structure (/opt/lamalibre/lamaste, /etc/lamalibre/lamaste, /var/www/lamaste)
     ├── Deploy lamalibre-lamaste-serverd (copy + npm install --production)
     ├── Deploy lamaste-server-ui (copy pre-built dist or build from source)
     ├── Write panel.json configuration
     ├── Write systemd service unit (lamalibre-lamaste-serverd.service)
+    ├── Install root-owned sudo wrappers (lamaste-certbot, lamaste-cert-info, ...)
     ├── Write sudoers rules (least-privilege for lamaste user)
     └── Start panel service + health check
 ```
@@ -293,7 +296,7 @@ Onboarding Wizard
 ├── Domain Step: user enters domain + email
 ├── DNS Step: panel shows required DNS records, user verifies
 └── Provisioning Step: panel installs remaining components
-    ├── Download and install Chisel binary
+    ├── Download the pinned Chisel release (1.12.0), verify its SHA-256, install
     ├── Download and install Authelia binary
     ├── Create Authelia configuration + first admin user
     ├── Issue Let's Encrypt certificate via certbot
@@ -330,7 +333,8 @@ Layer 6: Systemd hardening
   └─ NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp
 
 Layer 7: Least-privilege sudoers
-  └─ lamaste user can only run specific commands (nginx -t, systemctl for known services, certbot)
+  └─ lamaste user can only run specific commands (nginx -t, systemctl for known services);
+     certbot and certificate reads only through validating root-owned wrappers
 ```
 
 ### Key File Locations on the Droplet

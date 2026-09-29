@@ -76,6 +76,21 @@ Create DNS A record:
 
 Lamaste then issues a Let's Encrypt certificate for the subdomain (which requires DNS to be pointing correctly) and creates an nginx vhost.
 
+### Custom domains and aliases for static sites
+
+A [static site](../02-guides/static-sites.md) can use a domain you own instead of a subdomain of your Lamaste domain — for example `myblog.net`. You create the A record for it at that domain's registrar, then click **Verify DNS** in the panel.
+
+Such a site can also have **aliases**: further hostnames, typically `www.myblog.net`, that answer with a permanent (301) redirect to the primary domain. Every alias needs its own A record pointing at your VPS, because one Let's Encrypt certificate covers the domain and all its aliases and each name must pass the HTTP-01 challenge:
+
+| Type | Name             | Value          |
+| ---- | ---------------- | -------------- |
+| A    | `myblog.net`     | `203.0.113.42` |
+| A    | `www.myblog.net` | `203.0.113.42` |
+
+Verification checks every name. Adding an alias to a live site later requires its record to resolve first; otherwise the panel refuses the change and nothing is modified.
+
+A hostname is served by exactly one thing: a tunnel cannot use a name a site or alias already serves, and an alias cannot be a tunnel's name, another site's name or alias, or one of Lamaste's own hostnames (`panel.`, `auth.`, `tunnel.`, the base domain).
+
 ### Using a DNS provider with an API
 
 Some DNS providers (Cloudflare, DigitalOcean DNS, Route 53) offer APIs that could automate DNS record creation. Lamaste currently requires manual DNS record creation, but the architecture supports adding API-based automation in the future.
@@ -260,6 +275,13 @@ Once set during onboarding, the domain is used throughout the system for constru
 | Type | Name                      | Value  |
 | ---- | ------------------------- | ------ |
 | A    | `<subdomain>.example.com` | VPS IP |
+
+### Custom-domain static site
+
+| Type | Name                             | Value  |
+| ---- | -------------------------------- | ------ |
+| A    | `<custom domain>`                | VPS IP |
+| A    | each alias (e.g. `www.<domain>`) | VPS IP |
 
 ### Optional wildcard record
 

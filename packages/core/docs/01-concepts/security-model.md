@@ -61,7 +61,7 @@ Every connection to your VPS is encrypted with TLS 1.2 or 1.3. Even if someone i
 
 The admin panel requires a client certificate at the TLS layer. Without the certificate, nginx rejects the connection before any HTTP traffic is exchanged. See [mTLS](mtls.md) for full details.
 
-**Agent-side TLS verification:** The panel uses a self-signed TLS server certificate that is separate from the mTLS CA used to sign client certificates. Because these are different PKI chains, the agent currently uses `-k` (curl) and `rejectUnauthorized: false` (WebSocket) for server TLS verification. The mTLS client certificate still authenticates the agent to the panel. Server certificate distribution (so the agent can verify the panel's identity) is planned as a future improvement.
+**Agent-side TLS verification:** The agent verifies both servers it talks to. The panel uses a self-signed TLS server certificate that is separate from the mTLS CA used to sign client certificates, so `lamaste-agent setup` pins the panel's public key on first contact (trust on first use) and every later panel call rejects any other key; `lamaste-agent panel reset-pin` re-captures it after a deliberate rotation. The tunnel relay, `tunnel.<domain>`, has a publicly trusted Let's Encrypt certificate that the agent's Chisel client verifies normally (see 5a below).
 
 **P12 password security:** The agent never passes the P12 password as a command-line argument. Curl calls use a temporary config file (created with mode `0600`, deleted after use), and openssl calls use the `LAMALIBRE_LAMASTE_P12_PASS` environment variable. This prevents the password from being visible in process listings (`ps aux`).
 
@@ -77,8 +77,8 @@ Agent certificates are generated from the panel UI and should be used instead of
 
 | Capability       | Grants                                                                                 |
 | ---------------- | -------------------------------------------------------------------------------------- |
-| `tunnels:read`   | List tunnels, download plist (always-on)                                               |
-| `tunnels:write`  | Create and delete tunnels                                                              |
+| `tunnels:read`   | List the agent's own tunnels and fetch its Chisel config (always-on)                   |
+| `tunnels:write`  | Create, update and delete tunnels the agent carries (restricted access mode only)      |
 | `services:read`  | View service status                                                                    |
 | `services:write` | Start/stop/restart services                                                            |
 | `system:read`    | View system stats (CPU, RAM, disk)                                                     |
@@ -95,6 +95,19 @@ In addition to capabilities, regular agent certificates support **per-site scopi
 **Cascade revocation:** When a regular agent is revoked, all plugin-agents it delegated are automatically cascade-revoked in the same atomic operation. This ensures that revoking a compromised agent immediately terminates all downstream identities.
 
 This three-level model (certificate type + capabilities + site scoping) means that even if a machine is compromised, the attacker is limited to whichever capabilities and sites were assigned to that agent — and the admin can revoke or reduce them immediately.
+
+#### 5a. Tunnel ownership and the tunnel relay
+
+Every tunnel is carried by exactly one agent (its `agentLabel`), and three things enforce that:
+
+- **The panel API.** An agent certificate sees and acts on only its own tunnels — others are absent from its list and answer `404`. `GET /api/tunnels/agent-config` returns only the caller's tunnels. An agent cannot create a tunnel for another agent or move one; only an admin can. A plugin-agent certificate cannot create tunnels at all (it holds no Chisel credential). Every tunnel change runs under one lock with its validation inside it, so two concurrent requests cannot both claim a subdomain or port.
+- **The Chisel authfile.** Each `agent-<label>` Chisel user may reverse-bind exactly `^R:127\.0\.0\.1:<port>$` for the enabled tunnels it owns, and nothing else. A second enrolled machine cannot bind another agent's port and take over its hostname. A `lamaste-no-grants` sentinel user keeps the authfile non-empty, because Chisel disables authentication outright on an empty authfile. The authfile holds every agent's password, so it is `0640`, group `lamaste-chisel` — readable by the Chisel process (`User=nobody`, `Group=lamaste-chisel`) and by nobody else.
+- **Reserved ports.** A tunnel vhost proxies to `127.0.0.1:<port>` on the relay, so the ports of Lamaste's own services — 3100 (panel), 9090 (Chisel), 9091 (Authelia), 9292 (IP panel listener), 9294 (Gatekeeper) — can never be tunnel ports. A tunnel on 3100 or 9292 would otherwise publish the panel API, which trusts the client-certificate headers nginx sets: an administrator takeover. The rule is enforced by the request schema, inside the tunnel workflow, and again when the authfile grants are rendered; a port claimed by two tunnels is never granted either.
+- **TLS verification on the agent.** The agent's Chisel client connects to `https://tunnel.<domain>:443` and verifies its Let's Encrypt certificate — there is no `--tls-skip-verify`. A machine on the path cannot impersonate the relay to collect the agent's credential or read tunnelled traffic. The credential itself is delivered through a 0600 environment file (Linux) or 0600 plist (macOS), never on the command line. The agent only ever connects to `tunnel.<enrolled domain>` and refuses a panel that reports a different domain. Agents upgraded from a version that exposed the credential in process arguments and 0644 unit files rotate it once, automatically.
+- **Revocation releases tunnels.** Revoking an agent certificate removes its Chisel credential and detaches it from its tunnels (app tunnels become unassigned, its panel tunnel is removed), so a later enrollment reusing the label inherits nothing.
+- **Fail closed at startup.** On every start the panel rewrites the Chisel unit and authfile from its state in the background. If that fails, Chisel is **stopped and disabled** (so a reboot cannot start it either) rather than left running with an authfile from an older version that may grant more than it should; reconciliation retries with backoff until it succeeds, then re-enables and starts it.
+
+See [Tunneling](tunneling.md#ownership-and-grants) for the mechanics.
 
 #### 5b. Tickets for agent-to-agent authorization
 
@@ -199,7 +212,7 @@ Lamaste does not include:
 │  Layer 3: nginx TLS Termination                                 │
 │  TLS 1.2/1.3 only, strong ciphers                              │
 │  Panel vhosts: mTLS (client cert required)                      │
-│  App vhosts: Authelia forward auth                              │
+│  App vhosts: Gatekeeper/Authelia (per access mode)              │
 └────────────────────────────┬────────────────────────────────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -207,7 +220,7 @@ Lamaste does not include:
 ┌─────────────▼──┐  ┌───────▼───────┐  ┌──▼──────────────┐
 │ Panel Server   │  │ Authelia      │  │ Chisel Server   │
 │ 127.0.0.1:3100 │  │ 127.0.0.1:9091│  │ 127.0.0.1:9090  │
-│ mTLS verified  │  │ TOTP verified │  │ Tunnel relay    │
+│ mTLS verified  │  │ TOTP verified │  │ per-agent grants│
 └────────────────┘  └───────────────┘  └─────────────────┘
 ```
 
@@ -354,11 +367,17 @@ At cost 12, an attacker with a stolen hash trying 4 passwords per second would n
 
 All internal services bind to `127.0.0.1`, which means they only accept connections from the same machine. Even if an attacker gains network access to the VPS (e.g., through a compromised container on the same network segment), they cannot reach these services.
 
-The Chisel server explicitly sets `--host 127.0.0.1` in its systemd unit:
+The Chisel server explicitly sets `--host 127.0.0.1` in its systemd unit, and runs unprivileged:
 
 ```ini
-ExecStart=/usr/local/bin/chisel server --reverse --port 9090 --host 127.0.0.1
+User=nobody
+Group=lamaste-chisel
+ExecStart=/usr/local/bin/chisel server --reverse --port 9090 --host 127.0.0.1 --keyfile /etc/lamalibre/lamaste/chisel-server.key --authfile /etc/lamalibre/lamaste/chisel-users
 ```
+
+The binary is Chisel 1.12.0, downloaded from its fixed release URL and verified against a pinned SHA-256 before it is unpacked; a different installed version is replaced at the next panel start.
+
+`--authfile` restricts every connecting client to its own credential and port grants. The reverse listeners Chisel opens for agents also bind `127.0.0.1` only: agents may only request `R:127.0.0.1:<port>` remotes.
 
 Authelia is configured in its YAML:
 
@@ -371,25 +390,47 @@ The panel server binds to localhost in its Fastify configuration.
 
 nginx is the only service with a public-facing socket. It listens on:
 
+- `0.0.0.0:80`, which only redirects to HTTPS (and answers Let's Encrypt HTTP-01 challenges while certbot runs)
 - `0.0.0.0:443` for domain-based vhosts
 - `0.0.0.0:9292` for the IP-based admin panel
+
+Tunnel vhosts never pass client-supplied `X-SSL-Client-*` headers to the app (the panel treats those headers from nginx as proof of a client certificate), and public tunnel vhosts also clear the `Remote-*` identity headers, which only an authenticated vhost may set.
 
 ### File permissions
 
 Sensitive files use restrictive permissions:
 
-| File                                       | Mode  | Rationale                                  |
-| ------------------------------------------ | ----- | ------------------------------------------ |
-| `/etc/lamalibre/lamaste/pki/ca.key`        | `600` | CA private key — can sign new client certs |
-| `/etc/lamalibre/lamaste/pki/client.key`    | `600` | Client private key                         |
-| `/etc/lamalibre/lamaste/pki/client.p12`    | `600` | PKCS12 bundle with private key             |
-| `/etc/lamalibre/lamaste/pki/.p12-password` | `600` | Password for the .p12 file                 |
-| `/etc/authelia/configuration.yml`          | `600` | Contains JWT and session secrets           |
-| `/etc/authelia/.secrets.json`              | `600` | Secret backup                              |
-| `/etc/authelia/users.yml`                  | `600` | Password hashes                            |
-| `/etc/lamalibre/lamaste/pki/`              | `700` | PKI directory itself                       |
+| File                                                                | Mode  | Rationale                                       |
+| ------------------------------------------------------------------- | ----- | ----------------------------------------------- |
+| `/etc/lamalibre/lamaste/pki/ca.key`                                 | `600` | CA private key — can sign new client certs      |
+| `/etc/lamalibre/lamaste/pki/client.key`                             | `600` | Client private key                              |
+| `/etc/lamalibre/lamaste/pki/client.p12`                             | `600` | PKCS12 bundle with private key                  |
+| `/etc/lamalibre/lamaste/pki/.p12-password`                          | `600` | Password for the .p12 file                      |
+| `/etc/authelia/configuration.yml`                                   | `600` | Contains JWT and session secrets                |
+| `/etc/authelia/.secrets.json`                                       | `600` | Secret backup                                   |
+| `/etc/authelia/users.yml`                                           | `600` | Password hashes                                 |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`                    | `600` | Per-agent Chisel passwords                      |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                            | `600` | Sentinel Chisel user password                   |
+| `/etc/lamalibre/lamaste/chisel-users`                               | `640` | Chisel authfile; group `lamaste-chisel` only    |
+| `~/.lamalibre/lamaste/agents/<label>/`                              | `700` | Agent data directory (agent machine)            |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.json`, `chisel.env`     | `600` | Agent's Chisel credential (agent machine)       |
+| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist` | `600` | Carries `AUTH` in its environment (macOS agent) |
+| `/etc/lamalibre/lamaste/pki/`                                       | `700` | PKI directory itself                            |
 
-Mode `600` means only the file owner (root) can read or write. Mode `700` means only the directory owner can list, read, or modify contents.
+Mode `600` means only the file owner can read or write. Mode `640` adds read access for the file's group. Mode `700` means only the directory owner can list, read, or modify contents.
+
+### Privileged operations
+
+The panel runs as the unprivileged `lamaste` user; what needs root goes through `/etc/sudoers.d/lamaste`. A sudoers `*` matches any characters, spaces included, so a rule such as `certbot renew --cert-name * --non-interactive` would also accept `--deploy-hook <command>` — code execution as root. Certbot, the Let's Encrypt certificate reads, CSR signing and PKI renames therefore go through root-owned wrapper scripts in `/usr/local/sbin/` that validate every argument and run the real program with a fixed argument vector:
+
+| Wrapper              | Runs                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| `lamaste-certbot`    | `certbot certonly --nginx` (validated hostnames and email), `renew`, `renew-all`, `list` |
+| `lamaste-cert-info`  | Read-only `openssl` queries (expiry, 24 h validity, SAN) on a Let's Encrypt lineage      |
+| `lamaste-sign-csr`   | Signing an agent CSR with the panel CA                                                   |
+| `lamaste-pki-rename` | Renaming files inside the PKI directory                                                  |
+
+The Chisel authfile needs no sudo at all: the panel writes it itself and hands it to the `lamaste-chisel` group, of which it is a member.
 
 ### Secret generation
 
@@ -462,19 +503,23 @@ The `mv` command is atomic on the same filesystem — the file appears at its fi
 
 ### Security layers
 
-| Layer                | Technology                         | Blocks                             |
-| -------------------- | ---------------------------------- | ---------------------------------- |
-| Firewall             | UFW                                | Connections to non-allowed ports   |
-| Intrusion prevention | fail2ban                           | Repeated failed login attempts     |
-| SSH hardening        | sshd_config                        | Password-based SSH access          |
-| TLS encryption       | Let's Encrypt / self-signed        | Traffic interception and tampering |
-| Admin auth           | mTLS client certificates           | Unauthorized admin access          |
-| Admin 2FA (optional) | Built-in TOTP                      | Stolen certificate abuse           |
-| Agent-to-agent auth  | Tickets (time-limited, single-use) | Unauthorized cross-agent access    |
-| App auth             | Authelia TOTP 2FA                  | Unauthorized app access            |
-| Service isolation    | `127.0.0.1` binding                | Direct access to internal services |
-| File permissions     | `chmod 600`                        | Unauthorized secret access         |
-| Atomic writes        | `mv` pattern                       | Partial file reads by services     |
+| Layer                | Technology                           | Blocks                                |
+| -------------------- | ------------------------------------ | ------------------------------------- |
+| Firewall             | UFW                                  | Connections to non-allowed ports      |
+| Intrusion prevention | fail2ban                             | Repeated failed login attempts        |
+| SSH hardening        | sshd_config                          | Password-based SSH access             |
+| TLS encryption       | Let's Encrypt / self-signed          | Traffic interception and tampering    |
+| Admin auth           | mTLS client certificates             | Unauthorized admin access             |
+| Admin 2FA (optional) | Built-in TOTP                        | Stolen certificate abuse              |
+| Agent-to-agent auth  | Tickets (time-limited, single-use)   | Unauthorized cross-agent access       |
+| Tunnel ownership     | Chisel authfile per-agent grants     | One agent hijacking another's host    |
+| Reserved ports       | Tunnel port validation               | Publishing internal services          |
+| Privileged commands  | Validating wrappers, pinned sudoers  | Root code execution via extra flags   |
+| Relay authenticity   | Agent verifies `tunnel.<domain>` TLS | Relay impersonation, credential theft |
+| App auth             | Authelia TOTP 2FA                    | Unauthorized app access               |
+| Service isolation    | `127.0.0.1` binding                  | Direct access to internal services    |
+| File permissions     | `chmod 600`                          | Unauthorized secret access            |
+| Atomic writes        | `mv` pattern                         | Partial file reads by services        |
 
 ### Firewall rules
 
