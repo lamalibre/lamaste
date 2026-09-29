@@ -215,7 +215,7 @@
           },
           "capture": [
             {
-              "variable": "GROUPS",
+              "variable": "GATEKEEPER_GROUPS",
               "from": {
                 "kind": "body"
               }
@@ -228,7 +228,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "echo \"$GROUPS\" | jq '.groups | length' 2>/dev/null || echo \"0\""
+            "command": "echo \"$GATEKEEPER_GROUPS\" | jq '.groups | length' 2>/dev/null || echo \"0\""
           },
           "capture": [
             {
@@ -682,7 +682,7 @@
           }
         }
       ],
-      "bash": "# ===========================================================================\nlog_section \"1. Group CRUD\"\n# ===========================================================================\n\n# Create a group\nCREATE_GROUP=$(api_post \"gatekeeper/groups\" '{\"name\":\"e2e-devs\",\"description\":\"E2E test group\"}')\nCREATE_STATUS=$(echo \"$CREATE_GROUP\" | jq -r '.ok // empty')\nassert_eq \"$CREATE_STATUS\" \"true\" \"Create group e2e-devs\" || true\n\n# Duplicate group should fail with 409\nDUP_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"e2e-devs\",\"description\":\"dup\"}')\nassert_eq \"$DUP_STATUS\" \"409\" \"Duplicate group returns 409\" || true\n\n# Create a second group\napi_post \"gatekeeper/groups\" '{\"name\":\"e2e-viewers\",\"description\":\"E2E viewer group\"}' > /dev/null 2>&1\n\n# List groups\nGROUPS=$(api_get \"gatekeeper/groups\")\nGROUP_COUNT=$(echo \"$GROUPS\" | jq '.groups | length' 2>/dev/null || echo \"0\")\nif [ \"$GROUP_COUNT\" -ge 2 ]; then\n  log_pass \"List groups returns >= 2 groups (got: ${GROUP_COUNT})\"\nelse\n  log_fail \"List groups expected >= 2, got: ${GROUP_COUNT}\"\nfi\n\n# Get specific group\nGROUP=$(api_get \"gatekeeper/groups/e2e-devs\")\nGROUP_NAME=$(echo \"$GROUP\" | jq -r '.group.name' 2>/dev/null || echo \"\")\nassert_eq \"$GROUP_NAME\" \"e2e-devs\" \"Get group by name\" || true\n\n# Update group description\nUPDATED=$(api_patch \"gatekeeper/groups/e2e-devs\" '{\"description\":\"Updated description\"}')\nUPDATED_OK=$(echo \"$UPDATED\" | jq -r '.ok // empty')\nassert_eq \"$UPDATED_OK\" \"true\" \"Update group description\" || true\n\n# Add members\nADD_MEMBERS=$(api_post \"gatekeeper/groups/e2e-devs/members\" '{\"usernames\":[\"alice\",\"bob\",\"charlie\"]}')\nADD_OK=$(echo \"$ADD_MEMBERS\" | jq -r '.ok // empty')\nassert_eq \"$ADD_OK\" \"true\" \"Add 3 members to e2e-devs\" || true\n\n# Verify members\nGROUP_WITH_MEMBERS=$(api_get \"gatekeeper/groups/e2e-devs\")\nMEMBER_COUNT=$(echo \"$GROUP_WITH_MEMBERS\" | jq '.group.members | length' 2>/dev/null || echo \"0\")\nassert_eq \"$MEMBER_COUNT\" \"3\" \"Group has 3 members\" || true\n\n# Remove a member\nREMOVE_STATUS=$(api_delete_status \"gatekeeper/groups/e2e-devs/members/bob\")\nassert_eq \"$REMOVE_STATUS\" \"200\" \"Remove member bob\" || true\n\n# Verify member removed\nGROUP_AFTER_REMOVE=$(api_get \"gatekeeper/groups/e2e-devs\")\nMEMBER_COUNT=$(echo \"$GROUP_AFTER_REMOVE\" | jq '.group.members | length' 2>/dev/null || echo \"0\")\nassert_eq \"$MEMBER_COUNT\" \"2\" \"Group now has 2 members\" || true\n\n# Reserved group name should fail\nRESERVED_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"admins\"}')\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved group name 'admins' rejected\" || true\n\n# Invalid group name should fail\nINVALID_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"A\"}')\nassert_eq \"$INVALID_STATUS\" \"400\" \"Too-short group name rejected\" || true"
+      "bash": "# ===========================================================================\nlog_section \"1. Group CRUD\"\n# ===========================================================================\n\n# Create a group\nCREATE_GROUP=$(api_post \"gatekeeper/groups\" '{\"name\":\"e2e-devs\",\"description\":\"E2E test group\"}')\nCREATE_STATUS=$(echo \"$CREATE_GROUP\" | jq -r '.ok // empty')\nassert_eq \"$CREATE_STATUS\" \"true\" \"Create group e2e-devs\" || true\n\n# Duplicate group should fail with 409\nDUP_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"e2e-devs\",\"description\":\"dup\"}')\nassert_eq \"$DUP_STATUS\" \"409\" \"Duplicate group returns 409\" || true\n\n# Create a second group\napi_post \"gatekeeper/groups\" '{\"name\":\"e2e-viewers\",\"description\":\"E2E viewer group\"}' > /dev/null 2>&1\n\n# List groups\nGATEKEEPER_GROUPS=$(api_get \"gatekeeper/groups\")\nGROUP_COUNT=$(echo \"$GATEKEEPER_GROUPS\" | jq '.groups | length' 2>/dev/null || echo \"0\")\nif [ \"$GROUP_COUNT\" -ge 2 ]; then\n  log_pass \"List groups returns >= 2 groups (got: ${GROUP_COUNT})\"\nelse\n  log_fail \"List groups expected >= 2, got: ${GROUP_COUNT}\"\nfi\n\n# Get specific group\nGROUP=$(api_get \"gatekeeper/groups/e2e-devs\")\nGROUP_NAME=$(echo \"$GROUP\" | jq -r '.group.name' 2>/dev/null || echo \"\")\nassert_eq \"$GROUP_NAME\" \"e2e-devs\" \"Get group by name\" || true\n\n# Update group description\nUPDATED=$(api_patch \"gatekeeper/groups/e2e-devs\" '{\"description\":\"Updated description\"}')\nUPDATED_OK=$(echo \"$UPDATED\" | jq -r '.ok // empty')\nassert_eq \"$UPDATED_OK\" \"true\" \"Update group description\" || true\n\n# Add members\nADD_MEMBERS=$(api_post \"gatekeeper/groups/e2e-devs/members\" '{\"usernames\":[\"alice\",\"bob\",\"charlie\"]}')\nADD_OK=$(echo \"$ADD_MEMBERS\" | jq -r '.ok // empty')\nassert_eq \"$ADD_OK\" \"true\" \"Add 3 members to e2e-devs\" || true\n\n# Verify members\nGROUP_WITH_MEMBERS=$(api_get \"gatekeeper/groups/e2e-devs\")\nMEMBER_COUNT=$(echo \"$GROUP_WITH_MEMBERS\" | jq '.group.members | length' 2>/dev/null || echo \"0\")\nassert_eq \"$MEMBER_COUNT\" \"3\" \"Group has 3 members\" || true\n\n# Remove a member\nREMOVE_STATUS=$(api_delete_status \"gatekeeper/groups/e2e-devs/members/bob\")\nassert_eq \"$REMOVE_STATUS\" \"200\" \"Remove member bob\" || true\n\n# Verify member removed\nGROUP_AFTER_REMOVE=$(api_get \"gatekeeper/groups/e2e-devs\")\nMEMBER_COUNT=$(echo \"$GROUP_AFTER_REMOVE\" | jq '.group.members | length' 2>/dev/null || echo \"0\")\nassert_eq \"$MEMBER_COUNT\" \"2\" \"Group now has 2 members\" || true\n\n# Reserved group name should fail\nRESERVED_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"admins\"}')\nassert_eq \"$RESERVED_STATUS\" \"400\" \"Reserved group name 'admins' rejected\" || true\n\n# Invalid group name should fail\nINVALID_STATUS=$(api_post_status \"gatekeeper/groups\" '{\"name\":\"A\"}')\nassert_eq \"$INVALID_STATUS\" \"400\" \"Too-short group name rejected\" || true"
     },
     {
       "id": "2-grant-crud",
@@ -1128,7 +1128,7 @@
                 "kind": "var",
                 "name": "ACCESS"
               },
-              "expression": ".allowed // empty"
+              "expression": ".allowed"
             }
           }
         },
@@ -1184,7 +1184,7 @@
                 "kind": "var",
                 "name": "ACCESS_GROUP"
               },
-              "expression": ".allowed // empty"
+              "expression": ".allowed"
             }
           }
         },
@@ -1240,7 +1240,7 @@
                 "kind": "var",
                 "name": "ACCESS_DENIED"
               },
-              "expression": ".allowed // empty"
+              "expression": ".allowed"
             }
           }
         },
@@ -1334,7 +1334,7 @@
           }
         }
       ],
-      "bash": "# ===========================================================================\nlog_section \"3. Access Check (Diagnostics)\"\n# ===========================================================================\n\n# Check access for alice on test-tunnel-001 (should be allowed via direct grant)\nACCESS=$(api_get \"gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=test-tunnel-001\")\nACCESS_ALLOWED=$(echo \"$ACCESS\" | jq -r '.allowed // empty')\nassert_eq \"$ACCESS_ALLOWED\" \"true\" \"Alice has access to test-tunnel-001 (direct grant)\" || true\n\n# Check access for charlie on test-tunnel-002 (should be allowed via group)\n# charlie is a member of e2e-devs, which has a grant for test-tunnel-002\nACCESS_GROUP=$(api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002\")\nACCESS_GROUP_ALLOWED=$(echo \"$ACCESS_GROUP\" | jq -r '.allowed // empty')\nassert_eq \"$ACCESS_GROUP_ALLOWED\" \"true\" \"Charlie has access to test-tunnel-002 (via e2e-devs group)\" || true\n\n# Check access for unknown user on test-tunnel-001 (should be denied)\nACCESS_DENIED=$(api_get \"gatekeeper/access/check?username=unknown-user&resourceType=tunnel&resourceId=test-tunnel-001\")\nACCESS_DENIED_VAL=$(echo \"$ACCESS_DENIED\" | jq -r '.allowed // empty')\nassert_eq \"$ACCESS_DENIED_VAL\" \"false\" \"Unknown user denied access to test-tunnel-001\" || true\n\n# Denied response should include templates\nTEMPLATES=$(echo \"$ACCESS_DENIED\" | jq -r '.templates // empty')\nif [ -n \"$TEMPLATES\" ] && [ \"$TEMPLATES\" != \"null\" ]; then\n  log_pass \"Denied response includes access-request templates\"\nelse\n  log_fail \"Denied response missing templates\"\nfi"
+      "bash": "# ===========================================================================\nlog_section \"3. Access Check (Diagnostics)\"\n# ===========================================================================\n\n# Check access for alice on test-tunnel-001 (should be allowed via direct grant)\nACCESS=$(api_get \"gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=test-tunnel-001\")\nACCESS_ALLOWED=$(echo \"$ACCESS\" | jq -r '.allowed')\nassert_eq \"$ACCESS_ALLOWED\" \"true\" \"Alice has access to test-tunnel-001 (direct grant)\" || true\n\n# Check access for charlie on test-tunnel-002 (should be allowed via group)\n# charlie is a member of e2e-devs, which has a grant for test-tunnel-002\nACCESS_GROUP=$(api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002\")\nACCESS_GROUP_ALLOWED=$(echo \"$ACCESS_GROUP\" | jq -r '.allowed')\nassert_eq \"$ACCESS_GROUP_ALLOWED\" \"true\" \"Charlie has access to test-tunnel-002 (via e2e-devs group)\" || true\n\n# Check access for unknown user on test-tunnel-001 (should be denied)\nACCESS_DENIED=$(api_get \"gatekeeper/access/check?username=unknown-user&resourceType=tunnel&resourceId=test-tunnel-001\")\nACCESS_DENIED_VAL=$(echo \"$ACCESS_DENIED\" | jq -r '.allowed')\nassert_eq \"$ACCESS_DENIED_VAL\" \"false\" \"Unknown user denied access to test-tunnel-001\" || true\n\n# Denied response should include templates\nTEMPLATES=$(echo \"$ACCESS_DENIED\" | jq -r '.templates // empty')\nif [ -n \"$TEMPLATES\" ] && [ \"$TEMPLATES\" != \"null\" ]; then\n  log_pass \"Denied response includes access-request templates\"\nelse\n  log_fail \"Denied response missing templates\"\nfi"
     },
     {
       "id": "4-settings",
@@ -1915,7 +1915,7 @@
                 "kind": "var",
                 "name": "ACCESS_AFTER_DELETE"
               },
-              "expression": ".allowed // empty"
+              "expression": ".allowed"
             }
           }
         },
@@ -1941,7 +1941,7 @@
           }
         }
       ],
-      "bash": "# ===========================================================================\nlog_section \"7. Group Cascade Delete\"\n# ===========================================================================\n\n# Delete e2e-devs group (should cascade-delete grants referencing it)\nDELETE_RESULT=$(api_delete \"gatekeeper/groups/e2e-devs\")\nDELETE_OK=$(echo \"$DELETE_RESULT\" | jq -r '.ok // empty')\nassert_eq \"$DELETE_OK\" \"true\" \"Delete group e2e-devs\" || true\n\nDELETED_GRANTS=$(echo \"$DELETE_RESULT\" | jq -r '.deletedGrants // \"0\"')\nif [ \"$DELETED_GRANTS\" -ge 1 ]; then\n  log_pass \"Group deletion cascade-deleted ${DELETED_GRANTS} grant(s)\"\nelse\n  log_fail \"Expected cascade grant deletion, got: ${DELETED_GRANTS}\"\nfi\n\n# Verify the group grant is gone\nif [ -n \"$GROUP_GRANT_ID\" ]; then\n  GONE_STATUS=$(api_get_status \"gatekeeper/grants/${GROUP_GRANT_ID}\")\n  assert_eq \"$GONE_STATUS\" \"404\" \"Group grant removed after group deletion\" || true\nfi\n\n# charlie should no longer have access to test-tunnel-002\nACCESS_AFTER_DELETE=$(api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002\")\nACCESS_AFTER_VAL=$(echo \"$ACCESS_AFTER_DELETE\" | jq -r '.allowed // empty')\nassert_eq \"$ACCESS_AFTER_VAL\" \"false\" \"Charlie denied after group deletion\" || true"
+      "bash": "# ===========================================================================\nlog_section \"7. Group Cascade Delete\"\n# ===========================================================================\n\n# Delete e2e-devs group (should cascade-delete grants referencing it)\nDELETE_RESULT=$(api_delete \"gatekeeper/groups/e2e-devs\")\nDELETE_OK=$(echo \"$DELETE_RESULT\" | jq -r '.ok // empty')\nassert_eq \"$DELETE_OK\" \"true\" \"Delete group e2e-devs\" || true\n\nDELETED_GRANTS=$(echo \"$DELETE_RESULT\" | jq -r '.deletedGrants // \"0\"')\nif [ \"$DELETED_GRANTS\" -ge 1 ]; then\n  log_pass \"Group deletion cascade-deleted ${DELETED_GRANTS} grant(s)\"\nelse\n  log_fail \"Expected cascade grant deletion, got: ${DELETED_GRANTS}\"\nfi\n\n# Verify the group grant is gone\nif [ -n \"$GROUP_GRANT_ID\" ]; then\n  GONE_STATUS=$(api_get_status \"gatekeeper/grants/${GROUP_GRANT_ID}\")\n  assert_eq \"$GONE_STATUS\" \"404\" \"Group grant removed after group deletion\" || true\nfi\n\n# charlie should no longer have access to test-tunnel-002\nACCESS_AFTER_DELETE=$(api_get \"gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002\")\nACCESS_AFTER_VAL=$(echo \"$ACCESS_AFTER_DELETE\" | jq -r '.allowed')\nassert_eq \"$ACCESS_AFTER_VAL\" \"false\" \"Charlie denied after group deletion\" || true"
     },
     {
       "id": "8-tunnel-access-modes-agent-only",

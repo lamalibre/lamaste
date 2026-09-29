@@ -11,6 +11,17 @@
 
 set -euo pipefail
 
+# `multipass exec` (1.16 on macOS) never exits when its stdout or stderr is
+# /dev/null and the remote command writes after a delay — e.g.
+# `multipass exec vm -- bash -c "sleep 1; echo x" >/dev/null` hangs forever,
+# the same command into a pipe returns. Tests routinely discard output that
+# way (cleanup calls), so every multipass client gets pipes: its output goes
+# through `cat`, which writes to /dev/null without trouble. `$(...)` still
+# captures stdout (it waits for cat), and the exit status is multipass's.
+multipass() {
+  command multipass "$@" > >(cat) 2> >(cat >&2)
+}
+
 # ---------------------------------------------------------------------------
 # Configuration — override via environment variables before sourcing
 # ---------------------------------------------------------------------------
@@ -133,7 +144,7 @@ assert_contains() {
   local substring="$2"
   local message="$3"
 
-  if echo "$output" | grep -qF "$substring"; then
+  if printf '%s\n' "$output" | grep -qF -e "$substring"; then
     log_pass "$message"
     return 0
   else
@@ -148,7 +159,7 @@ assert_not_contains() {
   local substring="$2"
   local message="$3"
 
-  if ! echo "$output" | grep -qF "$substring"; then
+  if ! printf '%s\n' "$output" | grep -qF -e "$substring"; then
     log_pass "$message"
     return 0
   else

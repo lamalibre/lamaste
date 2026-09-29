@@ -51,9 +51,10 @@ user_systemctl() {
 }
 
 # agentd_post <path> — POST to the local agent daemon with the owner's Bearer
-# token (~/.lamalibre/lamaste/agentd.token, 0600); prints the HTTP status
+# token (the `token` field of ~/.lamalibre/lamaste/agentd.token, 0600);
+# prints the HTTP status
 agentd_post() {
-  agent_exec "curl -s -o /tmp/e2e-30-agentd.json -w '%{http_code}' --max-time 60 -X POST -H \"Authorization: Bearer \$(cat /root/.lamalibre/lamaste/agentd.token)\" http://127.0.0.1:${AGENTD_PORT}/api/$1" 2>/dev/null || echo "000"
+  agent_exec "curl -s -o /tmp/e2e-30-agentd.json -w '%{http_code}' --max-time 60 -X POST -H \"Authorization: Bearer \$(jq -r .token /root/.lamalibre/lamaste/agentd.token)\" http://127.0.0.1:${AGENTD_PORT}/api/$1" 2>/dev/null || echo "000"
 }
 
 # direct_status — HTTP status of the marker page through the host's chisel
@@ -97,6 +98,10 @@ AGENT_CONFIG="${AGENT_DIR}/config.json"
 CHISEL_ENV="${AGENT_DIR}/chisel.env"
 SYNC_STATE="${AGENT_DIR}/sync-state.json"
 SYNC_LOG="${AGENT_DIR}/logs/sync.log"
+# sync.log spans every earlier test on this agent (a panel restart elsewhere
+# legitimately logs "sync failed"); judge only what this test adds to it
+SYNC_LOG_START=$(agent_exec "wc -l < '${SYNC_LOG}' 2>/dev/null || echo 0" 2>/dev/null || echo "0")
+SYNC_LOG_START=${SYNC_LOG_START//[^0-9]/}
 CHISEL_SERVICE="lamalibre-lamaste-chisel-${AGENT_LOCAL_LABEL}.service"
 SYNC_TIMER="lamalibre-lamaste-sync-${AGENT_LOCAL_LABEL}.timer"
 AGENTD_PORT=9393
@@ -147,8 +152,8 @@ assert_eq "$TIMER_STATE" "active" "Sync timer ${SYNC_TIMER} is active" || true
 # A fresh setup marks its credential sealed and never rotates it
 SEALED_AT=$(agent_config_field "chiselCredentialSealedAt")
 assert_not_eq "$SEALED_AT" "" "Fresh setup recorded chiselCredentialSealedAt" || true
+# Rotations already in the log (an earlier run of this test simulated an upgrade)
 ROTATED_BEFORE=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
-assert_eq "${ROTATED_BEFORE:-0}" "0" "A sealed credential has never been rotated by sync" || true
 
 # ---------------------------------------------------------------------------
 log_section "A tunnel assigned on the panel is carried by the timer"
@@ -186,7 +191,7 @@ else
   log_fail "sync-state.json records ${CARRIED} carried tunnels (expected at least 1)"
 fi
 
-SYNC_LOG_TAIL=$(agent_exec "tail -20 '${SYNC_LOG}' 2>/dev/null" 2>/dev/null || echo "")
+SYNC_LOG_TAIL=$(agent_exec "tail -n +$(( ${SYNC_LOG_START:-0} + 1 )) '${SYNC_LOG}' 2>/dev/null" 2>/dev/null || echo "")
 assert_contains "$SYNC_LOG_TAIL" "${AGENT_LOCAL_LABEL}: carrying" "sync.log records the change it applied" || true
 assert_not_contains "$SYNC_LOG_TAIL" "sync failed" "sync.log records no failure" || true
 
@@ -275,6 +280,10 @@ else
   fi
 fi
 
+# Two sections of syncs ran with the credential sealed: none may rotate it
+ROTATED_SEALED=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
+assert_eq "$(( ${ROTATED_SEALED:-0} - ${ROTATED_BEFORE:-0} ))" "0" "Syncs never rotate a sealed credential" || true
+
 # ---------------------------------------------------------------------------
 log_section "An upgraded agent rotates its chisel credential once"
 # ---------------------------------------------------------------------------
@@ -301,7 +310,7 @@ done
 assert_not_eq "$RESEALED" "" "The next sync rotated the credential and sealed it (within 60 seconds)" || true
 
 ROTATED_LOG=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
-assert_eq "${ROTATED_LOG:-0}" "1" "sync.log records exactly one credential rotation" || true
+assert_eq "$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))" "1" "sync.log records exactly one credential rotation" || true
 ISSUED_AFTER=$(host_api_get "tunnels/agent-config?agent=${TUNNEL_AGENT}" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo "")
 assert_not_eq "$ISSUED_AFTER" "$ISSUED_BEFORE" "The panel issued a new credential (chiselCredentialIssuedAt changed)" || true
 ENV_AFTER=$(chisel_env_digest)

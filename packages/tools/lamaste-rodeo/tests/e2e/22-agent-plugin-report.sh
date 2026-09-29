@@ -4,7 +4,7 @@
 # ============================================================================
 # Verifies the server-side agent plugin capability reporting endpoint:
 # - POST /api/agents/plugins/report accepts valid reports
-# - Capability format validation (must be pluginName:action)
+# - Capability format validation (must be plugin:<name>:<action>)
 # - Capabilities are scoped to the reporting plugin's name prefix
 # - Invalid report format rejected with 400
 # - 'agents' is a reserved plugin name
@@ -41,7 +41,7 @@ REPORT_RESPONSE=$(api_post "agents/plugins/report" '{
   "plugins": [{
     "name": "test-plugin",
     "version": "0.1.0",
-    "capabilities": ["test-plugin:connect"]
+    "capabilities": ["plugin:test-plugin:connect"]
   }]
 }')
 assert_json_field "$REPORT_RESPONSE" '.ok' 'true' "Plugin report accepted" || true
@@ -64,7 +64,7 @@ assert_json_field "$EMPTY_RESPONSE" '.ok' 'true' "Empty report accepted" || true
 assert_json_field "$EMPTY_RESPONSE" '.merged' '0' "Zero capabilities merged" || true
 
 # ===========================================================================
-# 3. Capabilities must be scoped to plugin name prefix
+# 3. Capabilities must be scoped to the reporting plugin (plugin:<name>:...)
 # ===========================================================================
 
 log_section "Capability prefix scoping"
@@ -73,10 +73,10 @@ SCOPED_RESPONSE=$(api_post "agents/plugins/report" '{
   "plugins": [{
     "name": "myplugin",
     "version": "1.0.0",
-    "capabilities": ["myplugin:read", "otherplugin:write"]
+    "capabilities": ["plugin:myplugin:read", "plugin:otherplugin:write"]
   }]
 }')
-assert_json_field "$SCOPED_RESPONSE" '.merged' '1' "Only plugin-prefixed capability accepted (otherplugin:write rejected)" || true
+assert_json_field "$SCOPED_RESPONSE" '.merged' '1' "Only the reporting plugin's own capability merged (plugin:otherplugin:write ignored)" || true
 
 # ===========================================================================
 # 4. Invalid capability format rejected
@@ -91,7 +91,7 @@ INVALID_STATUS=$(api_post_status "agents/plugins/report" '{
     "capabilities": ["no-colon-here"]
   }]
 }')
-assert_eq "$INVALID_STATUS" "400" "Capability without colon separator rejected" || true
+assert_eq "$INVALID_STATUS" "400" "Capability outside plugin:<name>:<action> rejected" || true
 
 # ===========================================================================
 # 5. Invalid plugin name format rejected

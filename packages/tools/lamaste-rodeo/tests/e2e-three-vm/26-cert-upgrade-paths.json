@@ -300,38 +300,21 @@
       "label": "Agent upgrade-cert: generate new CSR, post with agent cert, assert new cert issued",
       "steps": [
         {
-          "id": "step-snapshot-revoked-before",
-          "label": "Snapshot revoked.json before upgrade-cert (count entries for our label)",
+          "id": "step-count-revoked-before",
+          "label": "Count revoked_certs rows for cert-upgrade-agent BEFORE upgrade (state.db, read as lamaste)",
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'"
+            "command": "runuser -u lamaste -- sqlite3 -readonly /etc/lamalibre/lamaste/state.db \"SELECT count(*) FROM revoked_certs WHERE label LIKE 'agent:cert-upgrade-agent%'\" 2>/dev/null || echo 0"
           },
           "capture": [
             {
-              "variable": "REVOKED_JSON_BEFORE",
+              "variable": "REVOKED_BEFORE_COUNT",
               "from": {
                 "kind": "body"
               }
             }
           ]
-        },
-        {
-          "id": "step-count-revoked-before",
-          "label": "Count revoked entries for cert-upgrade-agent BEFORE upgrade",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "REVOKED_BEFORE_COUNT",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "REVOKED_JSON_BEFORE"
-              },
-              "expression": "[.revoked[]? | select(.label | startswith(\"agent:cert-upgrade-agent\"))] | length"
-            }
-          }
         },
         {
           "id": "step-gen-new-key",
@@ -544,38 +527,21 @@
           }
         },
         {
-          "id": "step-read-revoked-json",
-          "label": "Read /etc/lamalibre/lamaste/pki/revoked.json AFTER upgrade",
+          "id": "step-count-revoked-after",
+          "label": "Count revoked_certs rows for cert-upgrade-agent AFTER upgrade (state.db, read as lamaste)",
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'"
+            "command": "runuser -u lamaste -- sqlite3 -readonly /etc/lamalibre/lamaste/state.db \"SELECT count(*) FROM revoked_certs WHERE label LIKE 'agent:cert-upgrade-agent%'\" 2>/dev/null || echo 0"
           },
           "capture": [
             {
-              "variable": "REVOKED_JSON_AFTER",
+              "variable": "REVOKED_AFTER_COUNT",
               "from": {
                 "kind": "body"
               }
             }
           ]
-        },
-        {
-          "id": "step-count-revoked-after",
-          "label": "Count revoked entries for cert-upgrade-agent AFTER upgrade",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "REVOKED_AFTER_COUNT",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "REVOKED_JSON_AFTER"
-              },
-              "expression": "[.revoked[]? | select(.label | startswith(\"agent:cert-upgrade-agent\"))] | length"
-            }
-          }
         },
         {
           "id": "step-compute-revoked-delta",
@@ -596,7 +562,7 @@
         },
         {
           "id": "step-old-revoked",
-          "label": "Upgrade-cert added the old serial to revoked.json (delta >= 1)",
+          "label": "Upgrade-cert added the old serial to revoked_certs (delta >= 1)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -611,7 +577,7 @@
                 "kind": "literal",
                 "value": "0"
               },
-              "message": "Old agent cert has been revoked during upgrade (revoked.json count grew)"
+              "message": "Old agent cert has been revoked during upgrade (revoked_certs grew)"
             }
           }
         }
@@ -627,7 +593,7 @@
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop:connect\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
           },
           "capture": [
             {
@@ -729,7 +695,7 @@
           "target": "host",
           "op": {
             "type": "exec",
-            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-26-agent.crt --key /tmp/e2e-26-agent.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-26-agent.crt --key /tmp/e2e-26-agent.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop:connect\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000"
           },
           "capture": [
             {

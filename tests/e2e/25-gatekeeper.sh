@@ -52,8 +52,8 @@ assert_eq "$DUP_STATUS" "409" "Duplicate group returns 409" || true
 api_post "gatekeeper/groups" '{"name":"e2e-viewers","description":"E2E viewer group"}' > /dev/null 2>&1
 
 # List groups
-GROUPS=$(api_get "gatekeeper/groups")
-GROUP_COUNT=$(echo "$GROUPS" | jq '.groups | length' 2>/dev/null || echo "0")
+GATEKEEPER_GROUPS=$(api_get "gatekeeper/groups")
+GROUP_COUNT=$(echo "$GATEKEEPER_GROUPS" | jq '.groups | length' 2>/dev/null || echo "0")
 if [ "$GROUP_COUNT" -ge 2 ]; then
   log_pass "List groups returns >= 2 groups (got: ${GROUP_COUNT})"
 else
@@ -148,18 +148,18 @@ log_section "3. Access Check (Diagnostics)"
 
 # Check access for alice on test-tunnel-001 (should be allowed via direct grant)
 ACCESS=$(api_get "gatekeeper/access/check?username=alice&resourceType=tunnel&resourceId=test-tunnel-001")
-ACCESS_ALLOWED=$(echo "$ACCESS" | jq -r '.allowed // empty')
+ACCESS_ALLOWED=$(echo "$ACCESS" | jq -r '.allowed')
 assert_eq "$ACCESS_ALLOWED" "true" "Alice has access to test-tunnel-001 (direct grant)" || true
 
 # Check access for charlie on test-tunnel-002 (should be allowed via group)
 # charlie is a member of e2e-devs, which has a grant for test-tunnel-002
 ACCESS_GROUP=$(api_get "gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002")
-ACCESS_GROUP_ALLOWED=$(echo "$ACCESS_GROUP" | jq -r '.allowed // empty')
+ACCESS_GROUP_ALLOWED=$(echo "$ACCESS_GROUP" | jq -r '.allowed')
 assert_eq "$ACCESS_GROUP_ALLOWED" "true" "Charlie has access to test-tunnel-002 (via e2e-devs group)" || true
 
 # Check access for unknown user on test-tunnel-001 (should be denied)
 ACCESS_DENIED=$(api_get "gatekeeper/access/check?username=unknown-user&resourceType=tunnel&resourceId=test-tunnel-001")
-ACCESS_DENIED_VAL=$(echo "$ACCESS_DENIED" | jq -r '.allowed // empty')
+ACCESS_DENIED_VAL=$(echo "$ACCESS_DENIED" | jq -r '.allowed')
 assert_eq "$ACCESS_DENIED_VAL" "false" "Unknown user denied access to test-tunnel-001" || true
 
 # Denied response should include templates
@@ -240,7 +240,7 @@ fi
 
 # charlie should no longer have access to test-tunnel-002
 ACCESS_AFTER_DELETE=$(api_get "gatekeeper/access/check?username=charlie&resourceType=tunnel&resourceId=test-tunnel-002")
-ACCESS_AFTER_VAL=$(echo "$ACCESS_AFTER_DELETE" | jq -r '.allowed // empty')
+ACCESS_AFTER_VAL=$(echo "$ACCESS_AFTER_DELETE" | jq -r '.allowed')
 assert_eq "$ACCESS_AFTER_VAL" "false" "Charlie denied after group deletion" || true
 
 # ===========================================================================

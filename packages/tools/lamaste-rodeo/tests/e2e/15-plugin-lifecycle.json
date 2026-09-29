@@ -35,6 +35,17 @@
           "enabled": false
         }
       }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
     }
   ],
   "sections": [
@@ -77,7 +88,7 @@
         "variable": "ONBOARDING_STATUS",
         "value": "COMPLETED"
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Track created resources for cleanup\nCREATED_POLICY_ID=\"\"\n\ncleanup() {\n  # Delete test push install policy if it still exists\n  if [ -n \"$CREATED_POLICY_ID\" ]; then\n    api_delete \"plugins/push-install/policies/${CREATED_POLICY_ID}\" 2>/dev/null || true\n  fi\n  # Disable push install globally\n  api_patch \"plugins/push-install/config\" '{\"enabled\":false}' 2>/dev/null || true\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Empty initial plugin list\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# Track created resources for cleanup\nCREATED_POLICY_ID=\"\"\n\ncleanup() {\n  # Delete test push install policy if it still exists\n  if [ -n \"$CREATED_POLICY_ID\" ]; then\n    api_delete \"plugins/push-install/policies/${CREATED_POLICY_ID}\" 2>/dev/null || true\n  fi\n  # Disable push install globally\n  api_patch \"plugins/push-install/config\" '{\"enabled\":false}' 2>/dev/null || true\n  # Revoke the agent created for the push install checks\n  if [ -n \"${AGENT_LABEL:-}\" ]; then\n    api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  fi\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Empty initial plugin list\n# ==========================================================================="
     },
     {
       "id": "empty-initial-plugin-list",
@@ -1189,34 +1200,18 @@
       "label": "Push install enable/disable for agent",
       "steps": [
         {
-          "id": "step-56",
-          "label": "GET /api/certs/agent",
+          "id": "step-57",
+          "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
             "type": "api",
-            "method": "GET",
-            "path": "certs/agent"
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
           },
           "capture": [
             {
-              "variable": "AGENT_CERTS_RESPONSE",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-57",
-          "label": "Set AGENT_COUNT",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "echo \"$AGENT_CERTS_RESPONSE\" | jq '.agents | length' 2>/dev/null || echo \"0\""
-          },
-          "capture": [
-            {
-              "variable": "AGENT_COUNT",
+              "variable": "PI_AGENT_RESPONSE",
               "from": {
                 "kind": "body"
               }
@@ -1225,43 +1220,24 @@
         },
         {
           "id": "step-58",
-          "label": "Extract AGENT_LABEL",
+          "label": "Agent ${AGENT_LABEL} created for the push install checks",
           "target": "local",
+          "continueOnError": true,
           "op": {
-            "type": "set",
-            "variable": "AGENT_LABEL",
-            "from": {
-              "kind": "jq",
-              "input": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
                 "kind": "var",
-                "name": "AGENT_CERTS_RESPONSE"
+                "name": "PI_AGENT_RESPONSE"
               },
-              "expression": ".agents[0].label"
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent ${AGENT_LABEL} created for the push install checks"
             }
-          }
-        },
-        {
-          "id": "step-59",
-          "label": "Found agent: ${AGENT_LABEL}",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Found agent: ${AGENT_LABEL}"
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
           }
         },
         {
@@ -1283,21 +1259,7 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
           "id": "step-61",
@@ -1319,20 +1281,6 @@
               },
               "message": "Push install enable for agent returned ok: true"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
           }
         },
         {
@@ -1351,20 +1299,6 @@
               "path": ".pushInstallEnabledUntil",
               "message": "pushInstallEnabledUntil is set"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
           }
         },
         {
@@ -1383,21 +1317,7 @@
                 "kind": "body"
               }
             }
-          ],
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
-          }
+          ]
         },
         {
           "id": "step-64",
@@ -1419,68 +1339,17 @@
               },
               "message": "Push install disable for agent returned ok: true"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "AGENT_LABEL"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
-          }
-        },
-        {
-          "id": "step-65",
-          "label": "Agent label is empty — skipping agent push install tests",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "skip",
-            "message": "Agent label is empty — skipping agent push install tests"
-          },
-          "when": {
-            "kind": "or",
-            "conditions": [
-              {
-                "kind": "not",
-                "condition": {
-                  "kind": "var_not_empty",
-                  "variable": "AGENT_LABEL"
-                }
-              },
-              {
-                "kind": "var_eq",
-                "variable": "AGENT_LABEL",
-                "value": "null"
-              }
-            ]
-          }
-        },
-        {
-          "id": "step-66",
-          "label": "No agent certificates — skipping agent push install tests",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "skip",
-            "message": "No agent certificates — skipping agent push install tests"
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install enable/disable for agent\"\n# ---------------------------------------------------------------------------\n\nAGENT_CERTS_RESPONSE=$(api_get \"certs/agent\")\nAGENT_COUNT=$(echo \"$AGENT_CERTS_RESPONSE\" | jq '.agents | length' 2>/dev/null || echo \"0\")\n\nif [ \"$AGENT_COUNT\" -gt 0 ]; then\n  AGENT_LABEL=$(echo \"$AGENT_CERTS_RESPONSE\" | jq -r '.agents[0].label' 2>/dev/null || echo \"\")\n\n  if [ -n \"$AGENT_LABEL\" ] && [ \"$AGENT_LABEL\" != \"null\" ]; then\n    log_info \"Found agent: ${AGENT_LABEL}\"\n\n    # Enable push install for agent\n    ENABLE_PI_AGENT=$(api_post \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\n    assert_json_field \"$ENABLE_PI_AGENT\" '.ok' 'true' \"Push install enable for agent returned ok: true\" || true\n    assert_json_field_not_empty \"$ENABLE_PI_AGENT\" '.pushInstallEnabledUntil' \"pushInstallEnabledUntil is set\" || true\n\n    # Disable push install for agent\n    DISABLE_PI_AGENT=$(api_delete \"plugins/push-install/enable/${AGENT_LABEL}\")\n    assert_json_field \"$DISABLE_PI_AGENT\" '.ok' 'true' \"Push install disable for agent returned ok: true\" || true\n  else\n    log_skip \"Agent label is empty — skipping agent push install tests\"\n  fi\nelse\n  log_skip \"No agent certificates — skipping agent push install tests\"\nfi\n\n# ===========================================================================\n# 11. Push install without global toggle\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Push install enable/disable for agent\"\n# ---------------------------------------------------------------------------\n\n# A live agent certificate of this test's own: agents left by earlier tests\n# may all be revoked, and push install applies to live agents only.\nAGENT_LABEL=\"pi-e2e-$(date +%s)\"\nPI_AGENT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$PI_AGENT_RESPONSE\" '.ok' 'true' \"Agent ${AGENT_LABEL} created for the push install checks\" || true\nAGENT_COUNT=1\n\n# Enable push install for agent\nENABLE_PI_AGENT=$(api_post \"plugins/push-install/enable/${AGENT_LABEL}\" '{\"durationMinutes\":5}')\nassert_json_field \"$ENABLE_PI_AGENT\" '.ok' 'true' \"Push install enable for agent returned ok: true\" || true\nassert_json_field_not_empty \"$ENABLE_PI_AGENT\" '.pushInstallEnabledUntil' \"pushInstallEnabledUntil is set\" || true\n\n# Disable push install for agent\nDISABLE_PI_AGENT=$(api_delete \"plugins/push-install/enable/${AGENT_LABEL}\")\nassert_json_field \"$DISABLE_PI_AGENT\" '.ok' 'true' \"Push install disable for agent returned ok: true\" || true\n\n# ===========================================================================\n# 11. Push install without global toggle\n# ==========================================================================="
     },
     {
       "id": "push-install-without-global-toggle",
       "label": "Push install without global toggle",
       "steps": [
         {
-          "id": "step-67",
+          "id": "step-65",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -1493,7 +1362,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-66",
           "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -1520,7 +1389,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-67",
           "label": "Cannot enable push install when globally disabled (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1546,7 +1415,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-68",
           "label": "No agent certificates — skipping global toggle guard test",
           "target": "local",
           "op": {
@@ -1568,7 +1437,7 @@
       "label": "Push install sessions audit log",
       "steps": [
         {
-          "id": "step-71",
+          "id": "step-69",
           "label": "GET /api/plugins/push-install/sessions",
           "target": "host",
           "op": {
@@ -1586,7 +1455,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-70",
           "label": "Extract SESSIONS_TYPE",
           "target": "local",
           "op": {
@@ -1603,7 +1472,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-71",
           "label": "GET push-install sessions returns a sessions array",
           "target": "local",
           "continueOnError": true,
@@ -1631,7 +1500,7 @@
       "label": "Push install input validation",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-72",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -1649,7 +1518,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-73",
           "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -1676,7 +1545,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-74",
           "label": "POST enable with durationMinutes: 0 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1702,7 +1571,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-75",
           "label": "POST /api/plugins/push-install/enable/${AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -1729,7 +1598,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-76",
           "label": "POST enable with durationMinutes: 9999 rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1755,7 +1624,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-77",
           "label": "No agent certificates — skipping push install enable validation tests",
           "target": "local",
           "op": {
@@ -1770,7 +1639,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-78",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -1792,7 +1661,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-79",
           "label": "PATCH config with non-existent defaultPolicy rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1813,7 +1682,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-80",
           "label": "POST /api/plugins/push-install/enable/does-not-exist",
           "target": "host",
           "op": {
@@ -1835,7 +1704,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-81",
           "label": "POST enable for non-existent agent returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1856,7 +1725,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-82",
           "label": "DELETE /api/plugins/push-install/enable/does-not-exist",
           "target": "host",
           "op": {
@@ -1875,7 +1744,7 @@
           ]
         },
         {
-          "id": "step-85",
+          "id": "step-83",
           "label": "DELETE enable for non-existent agent returns 404",
           "target": "local",
           "continueOnError": true,
@@ -1896,7 +1765,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-84",
           "label": "POST /api/plugins/push-install/enable/INVALID_LABEL!",
           "target": "host",
           "op": {
@@ -1918,7 +1787,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-85",
           "label": "POST enable with invalid label format rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1939,7 +1808,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-86",
           "label": "GET /api/plugins/INVALID_NAME!",
           "target": "host",
           "op": {
@@ -1958,7 +1827,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-87",
           "label": "GET plugin with invalid name rejected (HTTP 400)",
           "target": "local",
           "continueOnError": true,
@@ -1986,7 +1855,18 @@
       "label": "Cleanup",
       "steps": [
         {
-          "id": "step-90",
+          "id": "step-88",
+          "label": "DELETE /api/certs/agent/${AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "certs/agent/${AGENT_LABEL}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-89",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -2007,7 +1887,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-90",
           "label": "Push install disabled globally for cleanup",
           "target": "local",
           "continueOnError": true,
@@ -2029,7 +1909,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-91",
           "label": "GET /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -2047,7 +1927,7 @@
           ]
         },
         {
-          "id": "step-93",
+          "id": "step-92",
           "label": "Push install is disabled after cleanup",
           "target": "local",
           "continueOnError": true,
@@ -2069,7 +1949,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-93",
           "label": "Cleanup complete — plugin state restored",
           "target": "local",
           "op": {
@@ -2079,7 +1959,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup\"\n# ---------------------------------------------------------------------------\n\nDISABLE_PI_RESPONSE=$(api_patch \"plugins/push-install/config\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_PI_RESPONSE\" '.ok' 'true' \"Push install disabled globally for cleanup\" || true\n\nFINAL_PI_CONFIG=$(api_get \"plugins/push-install/config\")\nassert_json_field \"$FINAL_PI_CONFIG\" '.enabled' 'false' \"Push install is disabled after cleanup\" || true\n\n# Remove trap since cleanup is done\ntrap - EXIT\n\nlog_pass \"Cleanup complete — plugin state restored\""
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Cleanup\"\n# ---------------------------------------------------------------------------\n\napi_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n\nDISABLE_PI_RESPONSE=$(api_patch \"plugins/push-install/config\" '{\"enabled\":false}')\nassert_json_field \"$DISABLE_PI_RESPONSE\" '.ok' 'true' \"Push install disabled globally for cleanup\" || true\n\nFINAL_PI_CONFIG=$(api_get \"plugins/push-install/config\")\nassert_json_field \"$FINAL_PI_CONFIG\" '.enabled' 'false' \"Push install is disabled after cleanup\" || true\n\n# Remove trap since cleanup is done\ntrap - EXIT\n\nlog_pass \"Cleanup complete — plugin state restored\""
     }
   ],
   "apiHelpers": [],

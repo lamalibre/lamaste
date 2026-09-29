@@ -2,9 +2,9 @@
   "version": 1,
   "meta": {
     "number": 8,
-    "name": "mTLS Rotation",
+    "name": "Admin Certificate Rotation",
     "suite": "e2e",
-    "description": "08 — mTLS Rotation",
+    "description": "08 — Admin Certificate Rotation",
     "deps": [],
     "requires": ["curl", "jq", "openssl"]
   },
@@ -44,16 +44,102 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Skipping mTLS rotation tests — onboarding not complete\"\n  end_test\n  exit $?\nfi"
     },
     {
-      "id": "current-cert-fingerprint-before-rotation",
-      "label": "Current cert fingerprint (before rotation)",
+      "id": "panel-side-rotation-is-refused",
+      "label": "Panel-side rotation is refused",
       "steps": [
         {
+          "id": "step-1",
+          "label": "POST /api/certs/mtls/rotate",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/mtls/rotate",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
           "id": "step-2",
+          "label": "POST /api/certs/mtls/rotate is refused with 503",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ROTATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "POST /api/certs/mtls/rotate is refused with 503"
+            }
+          }
+        },
+        {
+          "id": "step-3",
+          "label": "POST /api/certs/mtls/rotate",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/mtls/rotate"
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-4",
+          "label": "The refusal points to lamaste-server reset-admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "ROTATE_BODY"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "reset-admin"
+              },
+              "message": "The refusal points to lamaste-server reset-admin"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Panel-side rotation is refused\"\n# ---------------------------------------------------------------------------\n\nROTATE_STATUS=$(api_post_status \"certs/mtls/rotate\")\nassert_eq \"$ROTATE_STATUS\" \"503\" \"POST /api/certs/mtls/rotate is refused with 503\" || true\nROTATE_BODY=$(api_post \"certs/mtls/rotate\" 2>/dev/null || echo \"{}\")\nassert_contains \"$ROTATE_BODY\" \"reset-admin\" \"The refusal points to lamaste-server reset-admin\" || true"
+    },
+    {
+      "id": "reset-admin-rotates-the-admin-certificate",
+      "label": "reset-admin rotates the admin certificate",
+      "steps": [
+        {
+          "id": "step-8",
           "label": "Set OLD_FINGERPRINT",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\""
+            "command": "openssl x509 -fingerprint -sha256 -noout -in \"$TEMP_DIR/old.crt\" 2>/dev/null || echo \"unknown\""
           },
           "capture": [
             {
@@ -65,44 +151,16 @@
           ]
         },
         {
-          "id": "step-3",
-          "label": "Current cert fingerprint: $OLD_FINGERPRINT",
+          "id": "step-9",
+          "label": "Set RESET_OUTPUT",
           "target": "local",
           "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Current cert fingerprint: $OLD_FINGERPRINT"
-          }
-        },
-        {
-          "id": "step-4",
-          "label": "Client cert not found at $CERT_PATH — continuing",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Client cert not found at $CERT_PATH — continuing"
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Current cert fingerprint (before rotation)\"\n# ---------------------------------------------------------------------------\n\nOLD_FINGERPRINT=\"\"\nif [ -f \"$CERT_PATH\" ]; then\n  OLD_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\")\n  log_info \"Current cert fingerprint: $OLD_FINGERPRINT\"\nelse\n  log_info \"Client cert not found at $CERT_PATH — continuing\"\nfi"
-    },
-    {
-      "id": "rotate-mtls-certificate",
-      "label": "Rotate mTLS certificate",
-      "steps": [
-        {
-          "id": "step-5",
-          "label": "POST /api/certs/mtls/rotate",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "POST",
-            "path": "certs/mtls/rotate"
+            "type": "exec",
+            "command": "sudo lamaste-server reset-admin --json 2>&1 || true"
           },
           "capture": [
             {
-              "variable": "ROTATE_RESPONSE",
+              "variable": "RESET_OUTPUT",
               "from": {
                 "kind": "body"
               }
@@ -110,150 +168,58 @@
           ]
         },
         {
-          "id": "step-6",
-          "label": "Extract P12_PASSWORD",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "P12_PASSWORD",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "ROTATE_RESPONSE"
-              },
-              "expression": ".p12Password // .password // empty"
-            }
-          }
-        },
-        {
-          "id": "step-7",
-          "label": "Extract EXPIRES_AT",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "EXPIRES_AT",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "ROTATE_RESPONSE"
-              },
-              "expression": ".expiresAt // .expiry // empty"
-            }
-          }
-        },
-        {
-          "id": "step-8",
-          "label": "Rotation response contains p12 password",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Rotation response contains p12 password"
-          },
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "P12_PASSWORD"
-          }
-        },
-        {
-          "id": "step-9",
-          "label": "Rotation response missing p12 password",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Rotation response missing p12 password"
-          },
-          "when": {
-            "kind": "not",
-            "condition": {
-              "kind": "var_not_empty",
-              "variable": "P12_PASSWORD"
-            }
-          }
-        },
-        {
           "id": "step-10",
-          "label": "Rotation response contains expiry: $EXPIRES_AT",
+          "label": "reset-admin revoked the previous certificate",
           "target": "local",
+          "continueOnError": true,
           "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Rotation response contains expiry: $EXPIRES_AT"
-          },
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "EXPIRES_AT"
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESET_OUTPUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "\"step\":\"revoke-old\",\"status\":\"complete\""
+              },
+              "message": "reset-admin revoked the previous certificate"
+            }
           }
         },
         {
           "id": "step-11",
-          "label": "Rotation response missing expiry date",
+          "label": "reset-admin completed",
           "target": "local",
+          "continueOnError": true,
           "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Rotation response missing expiry date"
-          },
-          "when": {
-            "kind": "not",
-            "condition": {
-              "kind": "var_not_empty",
-              "variable": "EXPIRES_AT"
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "RESET_OUTPUT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "\"event\":\"complete\""
+              },
+              "message": "reset-admin completed"
             }
           }
         },
         {
           "id": "step-12",
-          "label": "Extract WARNING",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "WARNING",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "ROTATE_RESPONSE"
-              },
-              "expression": ".warning // empty"
-            }
-          }
-        },
-        {
-          "id": "step-13",
-          "label": "Rotation warning: $WARNING",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Rotation warning: $WARNING"
-          },
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "WARNING"
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Rotate mTLS certificate\"\n# ---------------------------------------------------------------------------\n\nROTATE_RESPONSE=$(api_post \"certs/mtls/rotate\")\n\n# The response may contain different field names depending on implementation.\n# Check for common patterns.\nP12_PASSWORD=$(echo \"$ROTATE_RESPONSE\" | jq -r '.p12Password // .password // empty' 2>/dev/null || echo \"\")\nEXPIRES_AT=$(echo \"$ROTATE_RESPONSE\" | jq -r '.expiresAt // .expiry // empty' 2>/dev/null || echo \"\")\n\nif [ -n \"$P12_PASSWORD\" ]; then\n  log_pass \"Rotation response contains p12 password\"\nelse\n  log_fail \"Rotation response missing p12 password\"\nfi\n\nif [ -n \"$EXPIRES_AT\" ]; then\n  log_pass \"Rotation response contains expiry: $EXPIRES_AT\"\nelse\n  log_fail \"Rotation response missing expiry date\"\nfi\n\n# Check for warnings in the rotation response\nWARNING=$(echo \"$ROTATE_RESPONSE\" | jq -r '.warning // empty' 2>/dev/null || echo \"\")\nif [ -n \"$WARNING\" ]; then\n  log_info \"Rotation warning: $WARNING\"\nfi"
-    },
-    {
-      "id": "download-rotated-certificate",
-      "label": "Download rotated certificate",
-      "steps": [
-        {
-          "id": "step-14",
-          "label": "Set TEMP_DIR",
+          "label": "Set NEW_FINGERPRINT",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "mktemp -d"
+            "command": "sudo openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\""
           },
           "capture": [
             {
-              "variable": "TEMP_DIR",
+              "variable": "NEW_FINGERPRINT",
               "from": {
                 "kind": "body"
               }
@@ -261,7 +227,165 @@
           ]
         },
         {
+          "id": "step-13",
+          "label": "A new admin certificate is installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_FINGERPRINT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "OLD_FINGERPRINT"
+              },
+              "message": "A new admin certificate is installed"
+            }
+          }
+        },
+        {
           "id": "step-16",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"reset-admin rotates the admin certificate\"\n# ---------------------------------------------------------------------------\n\n# Keep the current certificate to prove it is revoked afterwards\nsudo cp \"$CERT_PATH\" \"$TEMP_DIR/old.crt\"\nsudo cp \"$KEY_PATH\" \"$TEMP_DIR/old.key\"\nsudo chown \"$(id -u):$(id -g)\" \"$TEMP_DIR/old.crt\" \"$TEMP_DIR/old.key\"\nOLD_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in \"$TEMP_DIR/old.crt\" 2>/dev/null || echo \"unknown\")\n\nRESET_OUTPUT=$(sudo lamaste-server reset-admin --json 2>&1 || true)\nassert_contains \"$RESET_OUTPUT\" '\"step\":\"revoke-old\",\"status\":\"complete\"' \"reset-admin revoked the previous certificate\" || true\nassert_contains \"$RESET_OUTPUT\" '\"event\":\"complete\"' \"reset-admin completed\" || true\n\nNEW_FINGERPRINT=$(sudo openssl x509 -fingerprint -sha256 -noout -in \"$CERT_PATH\" 2>/dev/null || echo \"unknown\")\nassert_not_eq \"$NEW_FINGERPRINT\" \"$OLD_FINGERPRINT\" \"A new admin certificate is installed\" || true\n\n# reset-admin restarts the panel\nfor _ in $(seq 1 30); do\n  [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ] && break\n  sleep 2\ndone"
+    },
+    {
+      "id": "the-old-certificate-is-revoked-the-new-one-works",
+      "label": "The old certificate is revoked, the new one works",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "Set OLD_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --cert \"$TEMP_DIR/old.crt\" --key \"$TEMP_DIR/old.key\" --cacert \"$CA_PATH\" \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OLD_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "The previous admin certificate is refused on the admin API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OLD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The previous admin certificate is refused on the admin API"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set NEW_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NEW_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "The new admin certificate is accepted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The new admin certificate is accepted"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The old certificate is revoked, the new one works\"\n# ---------------------------------------------------------------------------\n\nOLD_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" \\\n  --cert \"$TEMP_DIR/old.crt\" --key \"$TEMP_DIR/old.key\" --cacert \"$CA_PATH\" \\\n  \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\")\nassert_eq \"$OLD_STATUS\" \"403\" \"The previous admin certificate is refused on the admin API\" || true\n\nNEW_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo \"000\")\nassert_eq \"$NEW_STATUS\" \"200\" \"The new admin certificate is accepted\" || true"
+    },
+    {
+      "id": "the-p12-download-serves-the-new-certificate",
+      "label": "The P12 download serves the new certificate",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "Set P12_PASSWORD",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo cat /etc/lamalibre/lamaste/pki/.p12-password 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "P12_PASSWORD",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "reset-admin stored the P12 password",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "P12_PASSWORD"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "reset-admin stored the P12 password"
+            }
+          }
+        },
+        {
+          "id": "step-25",
           "label": "Set HTTP_STATUS",
           "target": "local",
           "op": {
@@ -278,197 +402,37 @@
           ]
         },
         {
-          "id": "step-17",
+          "id": "step-26",
           "label": "Downloaded client.p12 (HTTP 200)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Downloaded client.p12 (HTTP 200)"
-          },
-          "when": {
-            "kind": "var_eq",
-            "variable": "HTTP_STATUS",
-            "value": "200"
-          }
-        },
-        {
-          "id": "step-18",
-          "label": "Set P12_VERIFY",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "openssl pkcs12 -in \"$P12_FILE\" -noout -passin \"pass:${P12_PASSWORD}\" 2>&1 || true"
-          },
-          "capture": [
-            {
-              "variable": "P12_VERIFY",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ],
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "P12_PASSWORD"
-          }
-        },
-        {
-          "id": "step-19",
-          "label": "Downloaded file is not a valid PKCS12: $P12_VERIFY",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Downloaded file is not a valid PKCS12: $P12_VERIFY"
-          }
-        },
-        {
-          "id": "step-20",
-          "label": "Downloaded file is a valid PKCS12",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Downloaded file is a valid PKCS12"
-          }
-        },
-        {
-          "id": "step-21",
-          "label": "Set NEW_CERT",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null || echo \"\""
-          },
-          "capture": [
-            {
-              "variable": "NEW_CERT",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-22",
-          "label": "Set NEW_FINGERPRINT",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "echo \"$NEW_CERT\" | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unknown\""
-          },
-          "capture": [
-            {
-              "variable": "NEW_FINGERPRINT",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ],
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "NEW_CERT"
-          }
-        },
-        {
-          "id": "step-23",
-          "label": "New cert fingerprint: $NEW_FINGERPRINT",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "New cert fingerprint: $NEW_FINGERPRINT"
-          },
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "NEW_CERT"
-          }
-        },
-        {
-          "id": "step-24",
-          "label": "New cert has different fingerprint than old cert",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "not_eq",
+              "kind": "eq",
               "actual": {
                 "kind": "var",
-                "name": "NEW_FINGERPRINT"
+                "name": "HTTP_STATUS"
               },
               "expected": {
-                "kind": "var",
-                "name": "OLD_FINGERPRINT"
+                "kind": "literal",
+                "value": "200"
               },
-              "message": "New cert has different fingerprint than old cert"
+              "message": "Downloaded client.p12 (HTTP 200)"
             }
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_empty",
-                "variable": "OLD_FINGERPRINT"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "OLD_FINGERPRINT",
-                "value": "unknown"
-              }
-            ]
-          }
-        },
-        {
-          "id": "step-25",
-          "label": "Could not extract cert from P12 for fingerprint comparison",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "Could not extract cert from P12 for fingerprint comparison"
-          }
-        },
-        {
-          "id": "step-26",
-          "label": "No p12 password available — cannot verify PKCS12 contents",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "info",
-            "message": "No p12 password available — cannot verify PKCS12 contents"
           }
         },
         {
           "id": "step-27",
-          "label": "Failed to download client.p12 (HTTP $HTTP_STATUS)",
+          "label": "Set P12_FINGERPRINT",
           "target": "local",
           "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Failed to download client.p12 (HTTP $HTTP_STATUS)"
-          }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Download rotated certificate\"\n# ---------------------------------------------------------------------------\n\nTEMP_DIR=$(mktemp -d)\ntrap 'rm -rf \"$TEMP_DIR\"' EXIT\n\nP12_FILE=\"$TEMP_DIR/client.p12\"\n\nHTTP_STATUS=$(_curl_mtls -o \"$P12_FILE\" -w '%{http_code}' \"${BASE_URL}/api/certs/mtls/download\" 2>/dev/null || echo \"000\")\n\nif [ \"$HTTP_STATUS\" = \"200\" ]; then\n  log_pass \"Downloaded client.p12 (HTTP 200)\"\n\n  # Verify it is a valid PKCS12 file\n  if [ -n \"$P12_PASSWORD\" ]; then\n    P12_VERIFY=$(openssl pkcs12 -in \"$P12_FILE\" -noout -passin \"pass:${P12_PASSWORD}\" 2>&1 || true)\n    if echo \"$P12_VERIFY\" | grep -qiE \"error|invalid\"; then\n      log_fail \"Downloaded file is not a valid PKCS12: $P12_VERIFY\"\n    else\n      log_pass \"Downloaded file is a valid PKCS12\"\n    fi\n\n    # Extract the cert from the P12 and check its fingerprint\n    NEW_CERT=$(openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null || echo \"\")\n    if [ -n \"$NEW_CERT\" ]; then\n      NEW_FINGERPRINT=$(echo \"$NEW_CERT\" | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unknown\")\n      log_info \"New cert fingerprint: $NEW_FINGERPRINT\"\n\n      if [ -n \"$OLD_FINGERPRINT\" ] && [ \"$OLD_FINGERPRINT\" != \"unknown\" ]; then\n        assert_not_eq \"$NEW_FINGERPRINT\" \"$OLD_FINGERPRINT\" \"New cert has different fingerprint than old cert\" || true\n      fi\n    else\n      log_info \"Could not extract cert from P12 for fingerprint comparison\"\n    fi\n  else\n    log_info \"No p12 password available — cannot verify PKCS12 contents\"\n  fi\nelse\n  log_fail \"Failed to download client.p12 (HTTP $HTTP_STATUS)\"\nfi"
-    },
-    {
-      "id": "verify-api-access-with-current-credentials",
-      "label": "Verify API access with current credentials",
-      "steps": [
-        {
-          "id": "step-28",
-          "label": "GET /api/health",
-          "target": "host",
-          "op": {
-            "type": "api",
-            "method": "GET",
-            "path": "health"
+            "type": "exec",
+            "command": "openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unreadable\""
           },
           "capture": [
             {
-              "variable": "HEALTH_AFTER",
+              "variable": "P12_FINGERPRINT",
               "from": {
                 "kind": "body"
               }
@@ -476,34 +440,33 @@
           ]
         },
         {
-          "id": "step-29",
-          "label": "API still accessible after rotation",
+          "id": "step-28",
+          "label": "The P12 holds the new certificate",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "json_field",
-              "source": {
+              "kind": "eq",
+              "actual": {
                 "kind": "var",
-                "name": "HEALTH_AFTER"
+                "name": "P12_FINGERPRINT"
               },
-              "path": ".status",
               "expected": {
-                "kind": "literal",
-                "value": "ok"
+                "kind": "var",
+                "name": "NEW_FINGERPRINT"
               },
-              "message": "API still accessible after rotation"
+              "message": "The P12 holds the new certificate"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify API access with current credentials\"\n# ---------------------------------------------------------------------------\n\n# After rotation, the certs on disk should be updated. Verify access still works.\nHEALTH_AFTER=$(api_get \"health\")\nassert_json_field \"$HEALTH_AFTER\" '.status' 'ok' \"API still accessible after rotation\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The P12 download serves the new certificate\"\n# ---------------------------------------------------------------------------\n\nP12_FILE=\"$TEMP_DIR/client.p12\"\nP12_PASSWORD=$(sudo cat /etc/lamalibre/lamaste/pki/.p12-password 2>/dev/null || echo \"\")\nassert_not_eq \"$P12_PASSWORD\" \"\" \"reset-admin stored the P12 password\" || true\nHTTP_STATUS=$(_curl_mtls -o \"$P12_FILE\" -w '%{http_code}' \"${BASE_URL}/api/certs/mtls/download\" 2>/dev/null || echo \"000\")\nassert_eq \"$HTTP_STATUS\" \"200\" \"Downloaded client.p12 (HTTP 200)\" || true\nP12_FINGERPRINT=$(openssl pkcs12 -in \"$P12_FILE\" -clcerts -nokeys -passin \"pass:${P12_PASSWORD}\" 2>/dev/null \\\n  | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo \"unreadable\")\nassert_eq \"$P12_FINGERPRINT\" \"$NEW_FINGERPRINT\" \"The P12 holds the new certificate\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 08 — mTLS Rotation\n# ============================================================================\n# Verifies mTLS client certificate rotation:\n# - Rotate via POST /api/certs/mtls/rotate\n# - Verify response contains p12Password and expiresAt\n# - Download new cert via GET /api/certs/mtls/download\n# - Verify downloaded file is valid PKCS12\n# - Verify new cert works for API access\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"08 — mTLS Rotation\"\n",
+  "headerRaw": "# ============================================================================\n# 08 — Admin Certificate Rotation\n# ============================================================================\n# The panel does not issue admin certificates (B9): a compromised panel or\n# plugin must not be able to mint one. Rotation is `lamaste-server\n# reset-admin`, run as root on the server. Verifies:\n# - POST /api/certs/mtls/rotate is refused (503) and points to reset-admin\n# - reset-admin issues a new admin certificate and P12\n# - the previous admin certificate is revoked: refused on the admin API\n# - the new certificate works, and GET /api/certs/mtls/download serves it\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"08 — Admin Certificate Rotation\"\n\nTEMP_DIR=$(mktemp -d)\ntrap 'rm -rf \"$TEMP_DIR\"' EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

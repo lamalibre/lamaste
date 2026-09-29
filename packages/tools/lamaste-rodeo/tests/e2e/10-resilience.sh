@@ -7,10 +7,12 @@
 # - Restart nginx from API, verify it recovers
 # - Stop chisel, verify dashboard shows it as inactive
 # - Restart chisel from API, verify it recovers
-# - Loosen the chisel authfile to 0644 and point chisel.service at the wrong
-#   group; a panel restart's background reconciliation restores 0640
-#   lamaste:lamaste-chisel and Group=lamaste-chisel, and chisel keeps running
-#   (not failed closed)
+# - Loosen the chisel authfile to 0644: a panel restart's background
+#   reconciliation restores 0640 lamaste:lamaste-chisel, and chisel keeps
+#   running (not failed closed)
+# - Point chisel.service at the wrong group: the unit is create-lamaste's (the
+#   panel cannot write it); a redeploy restores Group=lamaste-chisel and
+#   restarts chisel onto it
 # - Verify panel stays up throughout
 # ============================================================================
 
@@ -156,7 +158,7 @@ AUTH_STATUS_UP=$(systemctl is-active authelia 2>/dev/null || echo "unknown")
 assert_eq "$AUTH_STATUS_UP" "active" "authelia is active after API restart" || true
 
 # ---------------------------------------------------------------------------
-log_section "Chisel authfile and unit are healed on panel start"
+log_section "Chisel authfile is healed on panel start"
 # ---------------------------------------------------------------------------
 
 AUTHFILE="/etc/lamalibre/lamaste/chisel-users"
@@ -165,13 +167,10 @@ CHISEL_UNIT_FILE="/etc/systemd/system/chisel.service"
 AUTHFILE_BEFORE=$(sudo stat -c '%a %U %G' "$AUTHFILE" 2>/dev/null || echo "missing")
 assert_eq "$AUTHFILE_BEFORE" "640 lamaste lamaste-chisel" "Chisel authfile starts as 0640 lamaste:lamaste-chisel" || true
 
-# Loosen the authfile (every agent's tunnel password) and put the unit on the
-# wrong group, as an older version or a careless operator might
+# Loosen the authfile (every agent's tunnel password), as an older version or
+# a careless operator might
 sudo chmod 644 "$AUTHFILE"
-sudo sed -i 's/^Group=.*/Group=nogroup/' "$CHISEL_UNIT_FILE"
-sudo systemctl daemon-reload
 assert_eq "$(sudo stat -c '%a' "$AUTHFILE" 2>/dev/null || echo "missing")" "644" "Authfile loosened to 0644 for the test" || true
-assert_eq "$(systemctl show -p Group --value chisel 2>/dev/null || echo "")" "nogroup" "chisel.service pointed at Group=nogroup for the test" || true
 
 sudo systemctl restart lamalibre-lamaste-serverd
 PANEL_BACK=false
@@ -192,25 +191,45 @@ fi
 AUTHFILE_HEALED=""
 for _ in $(seq 1 30); do
   AUTHFILE_HEALED=$(sudo stat -c '%a %U %G' "$AUTHFILE" 2>/dev/null || echo "missing")
-  UNIT_GROUP=$(systemctl show -p Group --value chisel 2>/dev/null || echo "")
-  if [ "$AUTHFILE_HEALED" = "640 lamaste lamaste-chisel" ] && [ "$UNIT_GROUP" = "lamaste-chisel" ]; then
-    break
-  fi
+  [ "$AUTHFILE_HEALED" = "640 lamaste lamaste-chisel" ] && break
   sleep 2
 done
 assert_eq "$AUTHFILE_HEALED" "640 lamaste lamaste-chisel" "Reconciliation restored the authfile to 0640 lamaste:lamaste-chisel" || true
-assert_eq "$(systemctl show -p Group --value chisel 2>/dev/null || echo "")" "lamaste-chisel" "Reconciliation restored Group=lamaste-chisel in chisel.service" || true
-assert_eq "$(systemctl show -p User --value chisel 2>/dev/null || echo "")" "nobody" "chisel.service still runs as User=nobody" || true
-
 if wait_for_service chisel 30; then
-  log_pass "chisel is active after reconciliation (restarted onto the healed unit)"
+  log_pass "chisel is active after reconciliation"
 else
   log_fail "chisel is not active after reconciliation"
 fi
+assert_eq "$(sudo test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no)" "no" "Reconciliation did not fail closed" || true
+
+# ---------------------------------------------------------------------------
+log_section "Chisel unit is create-lamaste's: a redeploy heals it"
+# ---------------------------------------------------------------------------
+
+assert_eq "$(sudo stat -c '%U' "$CHISEL_UNIT_FILE")" "root" "chisel.service is root-owned" || true
+UNIT_WRITE=$(sudo -u lamaste sh -c "echo x >> $CHISEL_UNIT_FILE" 2>/dev/null && echo allowed || echo denied)
+assert_eq "$UNIT_WRITE" "denied" "The panel user cannot modify chisel.service" || true
+
+sudo sed -i 's/^Group=.*/Group=nogroup/' "$CHISEL_UNIT_FILE"
+sudo systemctl daemon-reload
+assert_eq "$(systemctl show -p Group --value chisel 2>/dev/null || echo "")" "nogroup" "chisel.service pointed at Group=nogroup for the test" || true
+CHISEL_PID_BEFORE=$(systemctl show -p MainPID --value chisel 2>/dev/null || echo 0)
+
+# Redeploy (create-lamaste on an existing install); its output is not needed
+sudo create-lamaste --dev --yes --json >/dev/null 2>&1 || true
+
+assert_eq "$(systemctl show -p Group --value chisel 2>/dev/null || echo "")" "lamaste-chisel" "Redeploy restored Group=lamaste-chisel in chisel.service" || true
+assert_eq "$(systemctl show -p User --value chisel 2>/dev/null || echo "")" "nobody" "chisel.service still runs as User=nobody" || true
+if wait_for_service chisel 30; then
+  log_pass "chisel is active after the redeploy"
+else
+  log_fail "chisel is not active after the redeploy"
+fi
+assert_not_eq "$(systemctl show -p MainPID --value chisel 2>/dev/null || echo 0)" "$CHISEL_PID_BEFORE" "Redeploy restarted chisel onto the restored unit" || true
 CHISEL_GROUP_NOW=$(ps -o group= -p "$(systemctl show -p MainPID --value chisel 2>/dev/null || echo 0)" 2>/dev/null | tr -d ' ' || echo "")
 assert_eq "$CHISEL_GROUP_NOW" "lamaste-chisel" "Running chisel process has group lamaste-chisel" || true
-assert_eq "$(sudo test -e /etc/lamalibre/lamaste/chisel-failed-closed && echo yes || echo no)" "no" "Reconciliation did not fail closed" || true
 assert_eq "$(systemctl is-enabled chisel 2>/dev/null || true)" "enabled" "chisel.service is enabled" || true
+assert_eq "$(api_get "health" 2>/dev/null | jq -r '.status' 2>/dev/null || echo "")" "ok" "Panel healthy after the redeploy" || true
 
 # ---------------------------------------------------------------------------
 log_section "Panel survives all service disruptions"

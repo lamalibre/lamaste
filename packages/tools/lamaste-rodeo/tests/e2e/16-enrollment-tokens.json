@@ -483,7 +483,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enrollment with invalid token rejected\"\n# ---------------------------------------------------------------------------\n\n# Generate a valid CSR for the enrollment test\nopenssl genrsa -out \"$TEMP_DIR/agent.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/agent.key\" -out \"$TEMP_DIR/agent.csr\" \\\n  -subj \"/CN=agent:pending/O=Lamaste\" 2>/dev/null\nCSR_PEM=$(cat \"$TEMP_DIR/agent.csr\")\n\nINVALID_TOKEN_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}')\n\nassert_contains \"$INVALID_TOKEN_RESPONSE\" \"Invalid enrollment token\" \"Invalid token rejected with correct message\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Enrollment with invalid token rejected\"\n# ---------------------------------------------------------------------------\n\n# Generate a valid CSR for the enrollment test. Its CN must be exactly\n# agent:<token label> — the panel signs the CSR's subject as is and refuses\n# any other CN (B9).\nopenssl genrsa -out \"$TEMP_DIR/agent.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/agent.key\" -out \"$TEMP_DIR/agent.csr\" \\\n  -subj \"/CN=agent:${TOKEN_LABEL}/O=Lamaste\" 2>/dev/null\nCSR_PEM=$(cat \"$TEMP_DIR/agent.csr\")\n\nINVALID_TOKEN_RESPONSE=$(curl -s \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  -X POST \\\n  -H \"Content-Type: application/json\" \\\n  -d \"{\\\"token\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"csr\\\":$(echo \"$CSR_PEM\" | jq -Rs .)}\" \\\n  \"${BASE_URL}/api/enroll\" 2>/dev/null || echo '{\"error\":\"request failed\"}')\n\nassert_contains \"$INVALID_TOKEN_RESPONSE\" \"Invalid enrollment token\" \"Invalid token rejected with correct message\" || true"
     },
     {
       "id": "enroll-agent-with-valid-token-csr",
@@ -906,8 +906,8 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Clean up: revoke test agent\"\n# ---------------------------------------------------------------------------\n\nREVOKE_RESPONSE=$(api_delete \"certs/agent/${TOKEN_LABEL}\")\nassert_json_field \"$REVOKE_RESPONSE\" '.ok' 'true' \"Revoked enrollment test agent\" || true"
     },
     {
-      "id": "admin-upgrade-to-hardware-bound",
-      "label": "Admin upgrade to hardware-bound",
+      "id": "the-panel-does-not-issue-admin-certificates",
+      "label": "The panel does not issue admin certificates",
       "steps": [
         {
           "id": "step-49",
@@ -927,14 +927,55 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "POST /api/certs/admin/upgrade-to-hardware-bound",
           "target": "host",
           "op": {
             "type": "api",
             "method": "POST",
             "path": "certs/admin/upgrade-to-hardware-bound",
-            "body": "{\\"
+            "body": "$UPGRADE_BODY",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "UPGRADE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Admin upgrade through the panel is refused with 503",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UPGRADE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "Admin upgrade through the panel is refused with 503"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "POST /api/certs/admin/upgrade-to-hardware-bound",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/admin/upgrade-to-hardware-bound",
+            "body": "$UPGRADE_BODY"
           },
           "capture": [
             {
@@ -946,184 +987,28 @@
           ]
         },
         {
-          "id": "step-51",
-          "label": "Admin upgrade returns ok: true",
+          "id": "step-54",
+          "label": "The refusal points to lamaste-server reset-admin",
           "target": "local",
           "continueOnError": true,
           "op": {
             "type": "assert",
             "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "UPGRADE_RESPONSE"
-              },
-              "path": ".ok",
-              "expected": {
-                "kind": "literal",
-                "value": "true"
-              },
-              "message": "Admin upgrade returns ok: true"
-            }
-          }
-        },
-        {
-          "id": "step-52",
-          "label": "Extract UPGRADE_CERT",
-          "target": "local",
-          "op": {
-            "type": "set",
-            "variable": "UPGRADE_CERT",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "UPGRADE_RESPONSE"
-              },
-              "expression": ".cert"
-            }
-          }
-        },
-        {
-          "id": "step-53",
-          "label": "Admin upgrade returns signed certificate",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "not_eq",
+              "kind": "contains",
               "actual": {
                 "kind": "var",
-                "name": "UPGRADE_CERT"
+                "name": "UPGRADE_RESPONSE"
               },
-              "expected": {
+              "substring": {
                 "kind": "literal",
-                "value": ""
+                "value": "reset-admin"
               },
-              "message": "Admin upgrade returns signed certificate"
+              "message": "The refusal points to lamaste-server reset-admin"
             }
           }
-        }
-      ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Admin upgrade to hardware-bound\"\n# ---------------------------------------------------------------------------\n\n# Generate admin CSR\nopenssl genrsa -out \"$TEMP_DIR/admin.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/admin.key\" -out \"$TEMP_DIR/admin.csr\" \\\n  -subj \"/CN=admin/O=Lamaste\" 2>/dev/null\nADMIN_CSR_PEM=$(cat \"$TEMP_DIR/admin.csr\")\n\nUPGRADE_RESPONSE=$(api_post \"certs/admin/upgrade-to-hardware-bound\" \"{\\\"csr\\\":$(echo \"$ADMIN_CSR_PEM\" | jq -Rs .)}\")\nassert_json_field \"$UPGRADE_RESPONSE\" '.ok' 'true' \"Admin upgrade returns ok: true\" || true\n\nUPGRADE_CERT=$(echo \"$UPGRADE_RESPONSE\" | jq -r '.cert' 2>/dev/null || echo \"\")\nassert_not_eq \"$UPGRADE_CERT\" \"\" \"Admin upgrade returns signed certificate\" || true\n\n# After admin upgrade, the old admin cert is revoked — subsequent mTLS API\n# calls will fail at the nginx level. We verify the lockdown by checking that\n# the old cert can no longer access P12 endpoints (connection failure = lockout).\n# We skip the auth-mode check since it requires a valid admin cert."
-    },
-    {
-      "id": "p12-lockdown-after-admin-upgrade",
-      "label": "P12 lockdown after admin upgrade",
-      "steps": [
-        {
-          "id": "step-54",
-          "label": "Set ROTATE_LOCKDOWN_STATUS",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time \"$CURL_TIMEOUT\" --insecure --cert \"$CERT_PATH\" --key \"$KEY_PATH\" --cacert \"$CA_PATH\" -X POST \"${BASE_URL}/api/certs/mtls/rotate\" 2>/dev/null || echo \"000\""
-          },
-          "capture": [
-            {
-              "variable": "ROTATE_LOCKDOWN_STATUS",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
         },
         {
           "id": "step-55",
-          "label": "P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)"
-          },
-          "when": {
-            "kind": "or",
-            "conditions": [
-              {
-                "kind": "var_eq",
-                "variable": "ROTATE_LOCKDOWN_STATUS",
-                "value": "410"
-              },
-              {
-                "kind": "var_eq",
-                "variable": "ROTATE_LOCKDOWN_STATUS",
-                "value": "496"
-              }
-            ]
-          }
-        },
-        {
-          "id": "step-56",
-          "label": "Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "fail",
-            "message": "Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS"
-          },
-          "when": {
-            "kind": "and",
-            "conditions": [
-              {
-                "kind": "var_not_eq",
-                "variable": "ROTATE_LOCKDOWN_STATUS",
-                "value": "410"
-              },
-              {
-                "kind": "var_not_eq",
-                "variable": "ROTATE_LOCKDOWN_STATUS",
-                "value": "496"
-              }
-            ]
-          }
-        }
-      ],
-      "bash": "log_section \"P12 lockdown after admin upgrade\"\n\nROTATE_LOCKDOWN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n  --max-time \"$CURL_TIMEOUT\" \\\n  --insecure \\\n  --cert \"$CERT_PATH\" \\\n  --key \"$KEY_PATH\" \\\n  --cacert \"$CA_PATH\" \\\n  -X POST \\\n  \"${BASE_URL}/api/certs/mtls/rotate\" 2>/dev/null || echo \"000\")\n\n# 410 = panel enforced lockdown, 000*/496 = old cert rejected at nginx (also proves lockdown)\nif [ \"$ROTATE_LOCKDOWN_STATUS\" = \"410\" ] || [[ \"$ROTATE_LOCKDOWN_STATUS\" =~ ^0+$ ]] || [ \"$ROTATE_LOCKDOWN_STATUS\" = \"496\" ]; then\n  log_pass \"P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)\"\nelse\n  log_fail \"Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS\"\nfi"
-    },
-    {
-      "id": "revert-admin-to-p12-mode-for-other-tests",
-      "label": "Revert admin to P12 mode (for other tests)",
-      "steps": [
-        {
-          "id": "step-68",
-          "label": "Set TMP_CONFIG",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "mktemp"
-          },
-          "capture": [
-            {
-              "variable": "TMP_CONFIG",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ]
-        },
-        {
-          "id": "step-75",
-          "label": "Sleep 3s",
-          "target": "local",
-          "op": {
-            "type": "sleep",
-            "seconds": 3
-          }
-        },
-        {
-          "id": "step-76",
-          "label": "Reverted admin to P12 mode with fresh cert",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Reverted admin to P12 mode with fresh cert"
-          }
-        },
-        {
-          "id": "step-77",
           "label": "GET /api/certs/admin/auth-mode",
           "target": "host",
           "op": {
@@ -1133,7 +1018,7 @@
           },
           "capture": [
             {
-              "variable": "AUTH_MODE_REVERTED",
+              "variable": "AUTH_MODE_AFTER",
               "from": {
                 "kind": "body"
               }
@@ -1141,8 +1026,8 @@
           ]
         },
         {
-          "id": "step-78",
-          "label": "Admin auth mode reverted to p12",
+          "id": "step-56",
+          "label": "Admin auth mode is still p12",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -1151,23 +1036,44 @@
               "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "AUTH_MODE_REVERTED"
+                "name": "AUTH_MODE_AFTER"
               },
               "path": ".adminAuthMode",
               "expected": {
                 "kind": "literal",
                 "value": "p12"
               },
-              "message": "Admin auth mode reverted to p12"
+              "message": "Admin auth mode is still p12"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "The admin certificate still works",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo 000)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The admin certificate still works"
             }
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Revert admin to P12 mode (for other tests)\"\n# ---------------------------------------------------------------------------\n\n# Directly patch the config to revert — in real scenario this would be lamaste-reset-admin\n# We use the panel direct URL to bypass mTLS for this reset\n# Actually we need to update the config file. Since this is a single-VM test,\n# we can update panel.json directly.\nPKI_DIR=\"/etc/lamalibre/lamaste/pki\"\nPANEL_CONFIG=\"${LAMALIBRE_LAMASTE_CONFIG:-/etc/lamalibre/lamaste/panel.json}\"\n\n# Regenerate a valid admin cert (the upgrade revoked the old one)\nsudo openssl genrsa -out \"${PKI_DIR}/client.key\" 4096 2>/dev/null\nsudo openssl req -new -key \"${PKI_DIR}/client.key\" -out \"${PKI_DIR}/client.csr\" \\\n  -subj \"/CN=Lamaste Client/O=Lamaste\" 2>/dev/null\nsudo openssl x509 -req -in \"${PKI_DIR}/client.csr\" \\\n  -CA \"${PKI_DIR}/ca.crt\" -CAkey \"${PKI_DIR}/ca.key\" -CAcreateserial \\\n  -out \"${PKI_DIR}/client.crt\" -days 730 -sha256 2>/dev/null\nsudo rm -f \"${PKI_DIR}/client.csr\" \"${PKI_DIR}/ca.srl\"\nsudo chmod 600 \"${PKI_DIR}/client.key\"\nsudo chmod 644 \"${PKI_DIR}/client.crt\"\nsudo chown lamaste:lamaste \"${PKI_DIR}/client.key\" \"${PKI_DIR}/client.crt\"\n\n# Clear revocation list (admin upgrade entries would block the new cert)\necho '{\"revoked\":[]}' | sudo tee \"${PKI_DIR}/revoked.json\" > /dev/null\nsudo chown lamaste:lamaste \"${PKI_DIR}/revoked.json\"\n\n# Revert adminAuthMode to p12\nTMP_CONFIG=$(mktemp)\nsudo jq '.adminAuthMode = \"p12\"' \"$PANEL_CONFIG\" > \"$TMP_CONFIG\"\nsudo mv \"$TMP_CONFIG\" \"$PANEL_CONFIG\"\nsudo chmod 640 \"$PANEL_CONFIG\"\nsudo chown lamaste:lamaste \"$PANEL_CONFIG\"\n\n# Reload nginx to pick up ssl_verify_client optional after any config changes\nsudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null || true\n\n# Restart panel to pick up the new cert and config\nsudo systemctl restart lamalibre-lamaste-serverd 2>/dev/null || true\nsleep 3\n\nlog_pass \"Reverted admin to P12 mode with fresh cert\"\n\n# Verify the revert\nAUTH_MODE_REVERTED=$(api_get \"certs/admin/auth-mode\")\nassert_json_field \"$AUTH_MODE_REVERTED\" '.adminAuthMode' 'p12' \"Admin auth mode reverted to p12\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The panel does not issue admin certificates\"\n# ---------------------------------------------------------------------------\n\n# B9: a compromised panel or plugin must not be able to mint an admin\n# certificate. Upgrading the admin to a hardware-bound certificate is done\n# with `lamaste-server reset-admin` on the server; the panel refuses.\nopenssl genrsa -out \"$TEMP_DIR/admin.key\" 2048 2>/dev/null\nopenssl req -new -key \"$TEMP_DIR/admin.key\" -out \"$TEMP_DIR/admin.csr\" \\\n  -subj \"/CN=admin/O=Lamaste\" 2>/dev/null\nADMIN_CSR_PEM=$(cat \"$TEMP_DIR/admin.csr\")\nUPGRADE_BODY=\"{\\\"csr\\\":$(echo \"$ADMIN_CSR_PEM\" | jq -Rs .)}\"\n\nUPGRADE_STATUS=$(api_post_status \"certs/admin/upgrade-to-hardware-bound\" \"$UPGRADE_BODY\")\nassert_eq \"$UPGRADE_STATUS\" \"503\" \"Admin upgrade through the panel is refused with 503\" || true\nUPGRADE_RESPONSE=$(api_post \"certs/admin/upgrade-to-hardware-bound\" \"$UPGRADE_BODY\")\nassert_contains \"$UPGRADE_RESPONSE\" \"reset-admin\" \"The refusal points to lamaste-server reset-admin\" || true\n\nAUTH_MODE_AFTER=$(api_get \"certs/admin/auth-mode\")\nassert_json_field \"$AUTH_MODE_AFTER\" '.adminAuthMode' 'p12' \"Admin auth mode is still p12\" || true\nassert_eq \"$(_curl_mtls -o /dev/null -w '%{http_code}' \"${BASE_URL}/api/tunnels\" 2>/dev/null || echo 000)\" \"200\" \"The admin certificate still works\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 16 — Hardware-Bound Certificate Enrollment\n# ============================================================================\n# Verifies the enrollment token system and CSR-based agent enrollment:\n# - Token creation via POST /api/certs/agent/enroll\n# - Public enrollment endpoint (POST /api/enroll) reachable without mTLS\n# - Token validation: invalid, used, and expired tokens rejected\n# - Enrolled agent appears in registry with enrollmentMethod: hardware-bound\n# - Admin auth mode API\n# - Admin upgrade to hardware-bound and P12 lockdown\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 16 — Hardware-Bound Certificate Enrollment\n# ============================================================================\n# Verifies the enrollment token system and CSR-based agent enrollment:\n# - Token creation via POST /api/certs/agent/enroll\n# - Public enrollment endpoint (POST /api/enroll) reachable without mTLS\n# - Token validation: invalid, used, and expired tokens rejected\n# - Enrolled agent appears in registry with enrollmentMethod: hardware-bound\n# - Admin auth mode API\n# - The panel refuses to issue admin certificates (B9); the admin keeps P12\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq openssl\n\nbegin_test \"16 — Hardware-Bound Certificate Enrollment\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\n# ---------------------------------------------------------------------------\nend_test\n"

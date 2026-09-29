@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 08 — mTLS Rotation
+# 08 — Admin Certificate Rotation
 # ============================================================================
-# Verifies mTLS client certificate rotation:
-# - Rotate via POST /api/certs/mtls/rotate
-# - Verify response contains p12Password and expiresAt
-# - Download new cert via GET /api/certs/mtls/download
-# - Verify downloaded file is valid PKCS12
-# - Verify new cert works for API access
+# The panel does not issue admin certificates (B9): a compromised panel or
+# plugin must not be able to mint one. Rotation is `lamaste-server
+# reset-admin`, run as root on the server. Verifies:
+# - POST /api/certs/mtls/rotate is refused (503) and points to reset-admin
+# - reset-admin issues a new admin certificate and P12
+# - the previous admin certificate is revoked: refused on the admin API
+# - the new certificate works, and GET /api/certs/mtls/download serves it
 # ============================================================================
 
 set -euo pipefail
@@ -16,7 +17,10 @@ source "${SCRIPT_DIR}/helpers.sh"
 
 require_commands curl jq openssl
 
-begin_test "08 — mTLS Rotation"
+begin_test "08 — Admin Certificate Rotation"
+
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # ---------------------------------------------------------------------------
 log_section "Pre-flight: check onboarding is complete"
@@ -30,94 +34,60 @@ if [ "$ONBOARDING_STATUS" != "COMPLETED" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-log_section "Current cert fingerprint (before rotation)"
+log_section "Panel-side rotation is refused"
 # ---------------------------------------------------------------------------
 
-OLD_FINGERPRINT=""
-if [ -f "$CERT_PATH" ]; then
-  OLD_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$CERT_PATH" 2>/dev/null || echo "unknown")
-  log_info "Current cert fingerprint: $OLD_FINGERPRINT"
-else
-  log_info "Client cert not found at $CERT_PATH — continuing"
-fi
+ROTATE_STATUS=$(api_post_status "certs/mtls/rotate")
+assert_eq "$ROTATE_STATUS" "503" "POST /api/certs/mtls/rotate is refused with 503" || true
+ROTATE_BODY=$(api_post "certs/mtls/rotate" 2>/dev/null || echo "{}")
+assert_contains "$ROTATE_BODY" "reset-admin" "The refusal points to lamaste-server reset-admin" || true
 
 # ---------------------------------------------------------------------------
-log_section "Rotate mTLS certificate"
+log_section "reset-admin rotates the admin certificate"
 # ---------------------------------------------------------------------------
 
-ROTATE_RESPONSE=$(api_post "certs/mtls/rotate")
+# Keep the current certificate to prove it is revoked afterwards
+sudo cp "$CERT_PATH" "$TEMP_DIR/old.crt"
+sudo cp "$KEY_PATH" "$TEMP_DIR/old.key"
+sudo chown "$(id -u):$(id -g)" "$TEMP_DIR/old.crt" "$TEMP_DIR/old.key"
+OLD_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$TEMP_DIR/old.crt" 2>/dev/null || echo "unknown")
 
-# The response may contain different field names depending on implementation.
-# Check for common patterns.
-P12_PASSWORD=$(echo "$ROTATE_RESPONSE" | jq -r '.p12Password // .password // empty' 2>/dev/null || echo "")
-EXPIRES_AT=$(echo "$ROTATE_RESPONSE" | jq -r '.expiresAt // .expiry // empty' 2>/dev/null || echo "")
+RESET_OUTPUT=$(sudo lamaste-server reset-admin --json 2>&1 || true)
+assert_contains "$RESET_OUTPUT" '"step":"revoke-old","status":"complete"' "reset-admin revoked the previous certificate" || true
+assert_contains "$RESET_OUTPUT" '"event":"complete"' "reset-admin completed" || true
 
-if [ -n "$P12_PASSWORD" ]; then
-  log_pass "Rotation response contains p12 password"
-else
-  log_fail "Rotation response missing p12 password"
-fi
+NEW_FINGERPRINT=$(sudo openssl x509 -fingerprint -sha256 -noout -in "$CERT_PATH" 2>/dev/null || echo "unknown")
+assert_not_eq "$NEW_FINGERPRINT" "$OLD_FINGERPRINT" "A new admin certificate is installed" || true
 
-if [ -n "$EXPIRES_AT" ]; then
-  log_pass "Rotation response contains expiry: $EXPIRES_AT"
-else
-  log_fail "Rotation response missing expiry date"
-fi
-
-# Check for warnings in the rotation response
-WARNING=$(echo "$ROTATE_RESPONSE" | jq -r '.warning // empty' 2>/dev/null || echo "")
-if [ -n "$WARNING" ]; then
-  log_info "Rotation warning: $WARNING"
-fi
+# reset-admin restarts the panel
+for _ in $(seq 1 30); do
+  [ "$(api_get "health" 2>/dev/null | jq -r '.status' 2>/dev/null || echo "")" = "ok" ] && break
+  sleep 2
+done
 
 # ---------------------------------------------------------------------------
-log_section "Download rotated certificate"
+log_section "The old certificate is revoked, the new one works"
 # ---------------------------------------------------------------------------
 
-TEMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TEMP_DIR"' EXIT
+OLD_STATUS=$(curl -sk -o /dev/null -w '%{http_code}' --max-time "$CURL_TIMEOUT" \
+  --cert "$TEMP_DIR/old.crt" --key "$TEMP_DIR/old.key" --cacert "$CA_PATH" \
+  "${BASE_URL}/api/tunnels" 2>/dev/null || echo "000")
+assert_eq "$OLD_STATUS" "403" "The previous admin certificate is refused on the admin API" || true
+
+NEW_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' "${BASE_URL}/api/tunnels" 2>/dev/null || echo "000")
+assert_eq "$NEW_STATUS" "200" "The new admin certificate is accepted" || true
+
+# ---------------------------------------------------------------------------
+log_section "The P12 download serves the new certificate"
+# ---------------------------------------------------------------------------
 
 P12_FILE="$TEMP_DIR/client.p12"
-
+P12_PASSWORD=$(sudo cat /etc/lamalibre/lamaste/pki/.p12-password 2>/dev/null || echo "")
+assert_not_eq "$P12_PASSWORD" "" "reset-admin stored the P12 password" || true
 HTTP_STATUS=$(_curl_mtls -o "$P12_FILE" -w '%{http_code}' "${BASE_URL}/api/certs/mtls/download" 2>/dev/null || echo "000")
-
-if [ "$HTTP_STATUS" = "200" ]; then
-  log_pass "Downloaded client.p12 (HTTP 200)"
-
-  # Verify it is a valid PKCS12 file
-  if [ -n "$P12_PASSWORD" ]; then
-    P12_VERIFY=$(openssl pkcs12 -in "$P12_FILE" -noout -passin "pass:${P12_PASSWORD}" 2>&1 || true)
-    if echo "$P12_VERIFY" | grep -qiE "error|invalid"; then
-      log_fail "Downloaded file is not a valid PKCS12: $P12_VERIFY"
-    else
-      log_pass "Downloaded file is a valid PKCS12"
-    fi
-
-    # Extract the cert from the P12 and check its fingerprint
-    NEW_CERT=$(openssl pkcs12 -in "$P12_FILE" -clcerts -nokeys -passin "pass:${P12_PASSWORD}" 2>/dev/null || echo "")
-    if [ -n "$NEW_CERT" ]; then
-      NEW_FINGERPRINT=$(echo "$NEW_CERT" | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo "unknown")
-      log_info "New cert fingerprint: $NEW_FINGERPRINT"
-
-      if [ -n "$OLD_FINGERPRINT" ] && [ "$OLD_FINGERPRINT" != "unknown" ]; then
-        assert_not_eq "$NEW_FINGERPRINT" "$OLD_FINGERPRINT" "New cert has different fingerprint than old cert" || true
-      fi
-    else
-      log_info "Could not extract cert from P12 for fingerprint comparison"
-    fi
-  else
-    log_info "No p12 password available — cannot verify PKCS12 contents"
-  fi
-else
-  log_fail "Failed to download client.p12 (HTTP $HTTP_STATUS)"
-fi
-
-# ---------------------------------------------------------------------------
-log_section "Verify API access with current credentials"
-# ---------------------------------------------------------------------------
-
-# After rotation, the certs on disk should be updated. Verify access still works.
-HEALTH_AFTER=$(api_get "health")
-assert_json_field "$HEALTH_AFTER" '.status' 'ok' "API still accessible after rotation" || true
+assert_eq "$HTTP_STATUS" "200" "Downloaded client.p12 (HTTP 200)" || true
+P12_FINGERPRINT=$(openssl pkcs12 -in "$P12_FILE" -clcerts -nokeys -passin "pass:${P12_PASSWORD}" 2>/dev/null \
+  | openssl x509 -fingerprint -sha256 -noout 2>/dev/null || echo "unreadable")
+assert_eq "$P12_FINGERPRINT" "$NEW_FINGERPRINT" "The P12 holds the new certificate" || true
 
 end_test

@@ -91,8 +91,9 @@ host_exec "chmod 0600 /tmp/e2e-26-key.pem && rm -f /tmp/e2e-26-p12pass"
 log_section "Agent upgrade-cert: generate new CSR, post with agent cert, assert new cert issued"
 # ---------------------------------------------------------------------------
 
-REVOKED_JSON_BEFORE=$(host_exec "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'")
-REVOKED_BEFORE_COUNT=$(echo "$REVOKED_JSON_BEFORE" | jq -r '[.revoked[]? | select(.label | startswith("agent:cert-upgrade-agent"))] | length' 2>/dev/null || echo "")
+# Revocations live in the panel's state.db (revoked_certs); read it as the
+# panel user, read-only (the database is in WAL mode)
+REVOKED_BEFORE_COUNT=$(host_exec "runuser -u lamaste -- sqlite3 -readonly /etc/lamalibre/lamaste/state.db \"SELECT count(*) FROM revoked_certs WHERE label LIKE 'agent:cert-upgrade-agent%'\" 2>/dev/null || echo 0")
 host_exec "openssl genrsa -out /tmp/e2e-26-new.key 2048 2>/dev/null"
 host_exec "openssl req -new -key /tmp/e2e-26-new.key -out /tmp/e2e-26-new.csr -subj '/CN=agent:cert-upgrade-agent/O=Lamaste' 2>/dev/null"
 BUILD_BODY_OK=$(host_exec "jq -n --arg csr \"\$(cat /tmp/e2e-26-new.csr)\" '{csr: \$csr}' > /tmp/e2e-26-upgrade-body.json && echo ok")
@@ -105,22 +106,21 @@ assert_contains "$UPGRADE_RESPONSE" "BEGIN CERTIFICATE" "upgrade-cert response c
 AGENTS_LIST=$(host_api_get "certs/agent")
 NEW_METHOD=$(echo "$AGENTS_LIST" | jq -r '[.agents[] | select(.label=="cert-upgrade-agent" and .revoked==false)] | last | .enrollmentMethod // "unknown"')
 assert_eq "$NEW_METHOD" "hardware-bound" "After upgrade-cert, agent registry shows enrollmentMethod=hardware-bound" || true
-REVOKED_JSON_AFTER=$(host_exec "cat /etc/lamalibre/lamaste/pki/revoked.json 2>/dev/null || echo '{\"revoked\":[]}'")
-REVOKED_AFTER_COUNT=$(echo "$REVOKED_JSON_AFTER" | jq -r '[.revoked[]? | select(.label | startswith("agent:cert-upgrade-agent"))] | length' 2>/dev/null || echo "")
+REVOKED_AFTER_COUNT=$(host_exec "runuser -u lamaste -- sqlite3 -readonly /etc/lamalibre/lamaste/state.db \"SELECT count(*) FROM revoked_certs WHERE label LIKE 'agent:cert-upgrade-agent%'\" 2>/dev/null || echo 0")
 REVOKED_DELTA=$(echo $(( REVOKED_AFTER_COUNT - REVOKED_BEFORE_COUNT )))
-assert_not_eq "$REVOKED_DELTA" "0" "Old agent cert has been revoked during upgrade (revoked.json count grew)" || true
+assert_not_eq "$REVOKED_DELTA" "0" "Old agent cert has been revoked during upgrade (revoked_certs grew)" || true
 
 # ---------------------------------------------------------------------------
 log_section "enroll-delegated: validate role guards"
 # ---------------------------------------------------------------------------
 
-DELEGATED_ADMIN_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000")
+DELEGATED_ADMIN_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop:connect\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000")
 assert_eq "$DELEGATED_ADMIN_STATUS" "403" "enroll-delegated rejects admin cert with 403 (route requires agent role)" || true
 host_exec "cp /tmp/e2e-26-new.key /tmp/e2e-26-agent.key && chmod 0600 /tmp/e2e-26-agent.key"
 LOCAL_CERT_PATH=$(LOCAL_CERT=$(mktemp /tmp/e2e-26-agent-cert-XXXXXXXX.crt) && echo "$UPGRADE_RESPONSE" | jq -r '.cert' > "$LOCAL_CERT" && echo "$LOCAL_CERT")
 NEW_CERT_WRITTEN=$(multipass transfer "$LOCAL_CERT_PATH" lamaste-host:/tmp/e2e-26-agent.crt && multipass exec lamaste-host -- sudo chmod 0644 /tmp/e2e-26-agent.crt && rm -f "$LOCAL_CERT_PATH" && echo ok)
 assert_eq "$NEW_CERT_WRITTEN" "ok" "New cert PEM successfully written to host" || true
-DELEGATED_AGENT_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-26-agent.crt --key /tmp/e2e-26-agent.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000")
+DELEGATED_AGENT_STATUS=$(host_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 30 --cert /tmp/e2e-26-agent.crt --key /tmp/e2e-26-agent.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{\"pluginAgentLabel\":\"never-used\",\"scope\":\"plugin:noop:connect\"}' https://127.0.0.1:9292/api/certs/agent/enroll-delegated 2>/dev/null || echo 000")
 assert_contains "$DELEGATED_AGENT_STATUS" "4" "enroll-delegated returns 4xx for agent without ticket scope/instance" || true
 log_info "enroll-delegated with agent cert (no ticket instance) returned HTTP $DELEGATED_AGENT_STATUS"
 

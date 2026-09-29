@@ -43,6 +43,10 @@ cleanup() {
   fi
   # Disable push install globally
   api_patch "plugins/push-install/config" '{"enabled":false}' 2>/dev/null || true
+  # Revoke the agent created for the push install checks
+  if [ -n "${AGENT_LABEL:-}" ]; then
+    api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -226,29 +230,21 @@ assert_eq "$DELETE_MISSING_PI_STATUS" "404" "DELETE non-existent policy returns 
 log_section "Push install enable/disable for agent"
 # ---------------------------------------------------------------------------
 
-AGENT_CERTS_RESPONSE=$(api_get "certs/agent")
-AGENT_COUNT=$(echo "$AGENT_CERTS_RESPONSE" | jq '.agents | length' 2>/dev/null || echo "0")
+# A live agent certificate of this test's own: agents left by earlier tests
+# may all be revoked, and push install applies to live agents only.
+AGENT_LABEL="pi-e2e-$(date +%s)"
+PI_AGENT_RESPONSE=$(api_post "certs/agent" "{\"label\":\"${AGENT_LABEL}\",\"capabilities\":[\"tunnels:read\"]}")
+assert_json_field "$PI_AGENT_RESPONSE" '.ok' 'true' "Agent ${AGENT_LABEL} created for the push install checks" || true
+AGENT_COUNT=1
 
-if [ "$AGENT_COUNT" -gt 0 ]; then
-  AGENT_LABEL=$(echo "$AGENT_CERTS_RESPONSE" | jq -r '.agents[0].label' 2>/dev/null || echo "")
+# Enable push install for agent
+ENABLE_PI_AGENT=$(api_post "plugins/push-install/enable/${AGENT_LABEL}" '{"durationMinutes":5}')
+assert_json_field "$ENABLE_PI_AGENT" '.ok' 'true' "Push install enable for agent returned ok: true" || true
+assert_json_field_not_empty "$ENABLE_PI_AGENT" '.pushInstallEnabledUntil' "pushInstallEnabledUntil is set" || true
 
-  if [ -n "$AGENT_LABEL" ] && [ "$AGENT_LABEL" != "null" ]; then
-    log_info "Found agent: ${AGENT_LABEL}"
-
-    # Enable push install for agent
-    ENABLE_PI_AGENT=$(api_post "plugins/push-install/enable/${AGENT_LABEL}" '{"durationMinutes":5}')
-    assert_json_field "$ENABLE_PI_AGENT" '.ok' 'true' "Push install enable for agent returned ok: true" || true
-    assert_json_field_not_empty "$ENABLE_PI_AGENT" '.pushInstallEnabledUntil' "pushInstallEnabledUntil is set" || true
-
-    # Disable push install for agent
-    DISABLE_PI_AGENT=$(api_delete "plugins/push-install/enable/${AGENT_LABEL}")
-    assert_json_field "$DISABLE_PI_AGENT" '.ok' 'true' "Push install disable for agent returned ok: true" || true
-  else
-    log_skip "Agent label is empty — skipping agent push install tests"
-  fi
-else
-  log_skip "No agent certificates — skipping agent push install tests"
-fi
+# Disable push install for agent
+DISABLE_PI_AGENT=$(api_delete "plugins/push-install/enable/${AGENT_LABEL}")
+assert_json_field "$DISABLE_PI_AGENT" '.ok' 'true' "Push install disable for agent returned ok: true" || true
 
 # ===========================================================================
 # 11. Push install without global toggle
@@ -329,6 +325,8 @@ assert_eq "$INVALID_NAME_STATUS" "400" "GET plugin with invalid name rejected (H
 # ---------------------------------------------------------------------------
 log_section "Cleanup"
 # ---------------------------------------------------------------------------
+
+api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
 
 DISABLE_PI_RESPONSE=$(api_patch "plugins/push-install/config" '{"enabled":false}')
 assert_json_field "$DISABLE_PI_RESPONSE" '.ok' 'true' "Push install disabled globally for cleanup" || true

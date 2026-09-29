@@ -8,7 +8,7 @@
 # - Token validation: invalid, used, and expired tokens rejected
 # - Enrolled agent appears in registry with enrollmentMethod: hardware-bound
 # - Admin auth mode API
-# - Admin upgrade to hardware-bound and P12 lockdown
+# - The panel refuses to issue admin certificates (B9); the admin keeps P12
 # ============================================================================
 
 set -euo pipefail
@@ -111,10 +111,12 @@ fi
 log_section "Enrollment with invalid token rejected"
 # ---------------------------------------------------------------------------
 
-# Generate a valid CSR for the enrollment test
+# Generate a valid CSR for the enrollment test. Its CN must be exactly
+# agent:<token label> — the panel signs the CSR's subject as is and refuses
+# any other CN (B9).
 openssl genrsa -out "$TEMP_DIR/agent.key" 2048 2>/dev/null
 openssl req -new -key "$TEMP_DIR/agent.key" -out "$TEMP_DIR/agent.csr" \
-  -subj "/CN=agent:pending/O=Lamaste" 2>/dev/null
+  -subj "/CN=agent:${TOKEN_LABEL}/O=Lamaste" 2>/dev/null
 CSR_PEM=$(cat "$TEMP_DIR/agent.csr")
 
 INVALID_TOKEN_RESPONSE=$(curl -s \
@@ -200,90 +202,26 @@ REVOKE_RESPONSE=$(api_delete "certs/agent/${TOKEN_LABEL}")
 assert_json_field "$REVOKE_RESPONSE" '.ok' 'true' "Revoked enrollment test agent" || true
 
 # ---------------------------------------------------------------------------
-log_section "Admin upgrade to hardware-bound"
+log_section "The panel does not issue admin certificates"
 # ---------------------------------------------------------------------------
 
-# Generate admin CSR
+# B9: a compromised panel or plugin must not be able to mint an admin
+# certificate. Upgrading the admin to a hardware-bound certificate is done
+# with `lamaste-server reset-admin` on the server; the panel refuses.
 openssl genrsa -out "$TEMP_DIR/admin.key" 2048 2>/dev/null
 openssl req -new -key "$TEMP_DIR/admin.key" -out "$TEMP_DIR/admin.csr" \
   -subj "/CN=admin/O=Lamaste" 2>/dev/null
 ADMIN_CSR_PEM=$(cat "$TEMP_DIR/admin.csr")
+UPGRADE_BODY="{\"csr\":$(echo "$ADMIN_CSR_PEM" | jq -Rs .)}"
 
-UPGRADE_RESPONSE=$(api_post "certs/admin/upgrade-to-hardware-bound" "{\"csr\":$(echo "$ADMIN_CSR_PEM" | jq -Rs .)}")
-assert_json_field "$UPGRADE_RESPONSE" '.ok' 'true' "Admin upgrade returns ok: true" || true
+UPGRADE_STATUS=$(api_post_status "certs/admin/upgrade-to-hardware-bound" "$UPGRADE_BODY")
+assert_eq "$UPGRADE_STATUS" "503" "Admin upgrade through the panel is refused with 503" || true
+UPGRADE_RESPONSE=$(api_post "certs/admin/upgrade-to-hardware-bound" "$UPGRADE_BODY")
+assert_contains "$UPGRADE_RESPONSE" "reset-admin" "The refusal points to lamaste-server reset-admin" || true
 
-UPGRADE_CERT=$(echo "$UPGRADE_RESPONSE" | jq -r '.cert' 2>/dev/null || echo "")
-assert_not_eq "$UPGRADE_CERT" "" "Admin upgrade returns signed certificate" || true
-
-# After admin upgrade, the old admin cert is revoked — subsequent mTLS API
-# calls will fail at the nginx level. We verify the lockdown by checking that
-# the old cert can no longer access P12 endpoints (connection failure = lockout).
-# We skip the auth-mode check since it requires a valid admin cert.
-
-log_section "P12 lockdown after admin upgrade"
-
-ROTATE_LOCKDOWN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
-  --max-time "$CURL_TIMEOUT" \
-  --insecure \
-  --cert "$CERT_PATH" \
-  --key "$KEY_PATH" \
-  --cacert "$CA_PATH" \
-  -X POST \
-  "${BASE_URL}/api/certs/mtls/rotate" 2>/dev/null || echo "000")
-
-# 410 = panel enforced lockdown, 000*/496 = old cert rejected at nginx (also proves lockdown)
-if [ "$ROTATE_LOCKDOWN_STATUS" = "410" ] || [[ "$ROTATE_LOCKDOWN_STATUS" =~ ^0+$ ]] || [ "$ROTATE_LOCKDOWN_STATUS" = "496" ]; then
-  log_pass "P12 rotation blocked after admin upgrade (HTTP $ROTATE_LOCKDOWN_STATUS)"
-else
-  log_fail "Unexpected status for P12 rotation lockdown: HTTP $ROTATE_LOCKDOWN_STATUS"
-fi
-
-# ---------------------------------------------------------------------------
-log_section "Revert admin to P12 mode (for other tests)"
-# ---------------------------------------------------------------------------
-
-# Directly patch the config to revert — in real scenario this would be lamaste-reset-admin
-# We use the panel direct URL to bypass mTLS for this reset
-# Actually we need to update the config file. Since this is a single-VM test,
-# we can update panel.json directly.
-PKI_DIR="/etc/lamalibre/lamaste/pki"
-PANEL_CONFIG="${LAMALIBRE_LAMASTE_CONFIG:-/etc/lamalibre/lamaste/panel.json}"
-
-# Regenerate a valid admin cert (the upgrade revoked the old one)
-sudo openssl genrsa -out "${PKI_DIR}/client.key" 4096 2>/dev/null
-sudo openssl req -new -key "${PKI_DIR}/client.key" -out "${PKI_DIR}/client.csr" \
-  -subj "/CN=Lamaste Client/O=Lamaste" 2>/dev/null
-sudo openssl x509 -req -in "${PKI_DIR}/client.csr" \
-  -CA "${PKI_DIR}/ca.crt" -CAkey "${PKI_DIR}/ca.key" -CAcreateserial \
-  -out "${PKI_DIR}/client.crt" -days 730 -sha256 2>/dev/null
-sudo rm -f "${PKI_DIR}/client.csr" "${PKI_DIR}/ca.srl"
-sudo chmod 600 "${PKI_DIR}/client.key"
-sudo chmod 644 "${PKI_DIR}/client.crt"
-sudo chown lamaste:lamaste "${PKI_DIR}/client.key" "${PKI_DIR}/client.crt"
-
-# Clear revocation list (admin upgrade entries would block the new cert)
-echo '{"revoked":[]}' | sudo tee "${PKI_DIR}/revoked.json" > /dev/null
-sudo chown lamaste:lamaste "${PKI_DIR}/revoked.json"
-
-# Revert adminAuthMode to p12
-TMP_CONFIG=$(mktemp)
-sudo jq '.adminAuthMode = "p12"' "$PANEL_CONFIG" > "$TMP_CONFIG"
-sudo mv "$TMP_CONFIG" "$PANEL_CONFIG"
-sudo chmod 640 "$PANEL_CONFIG"
-sudo chown lamaste:lamaste "$PANEL_CONFIG"
-
-# Reload nginx to pick up ssl_verify_client optional after any config changes
-sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null || true
-
-# Restart panel to pick up the new cert and config
-sudo systemctl restart lamalibre-lamaste-serverd 2>/dev/null || true
-sleep 3
-
-log_pass "Reverted admin to P12 mode with fresh cert"
-
-# Verify the revert
-AUTH_MODE_REVERTED=$(api_get "certs/admin/auth-mode")
-assert_json_field "$AUTH_MODE_REVERTED" '.adminAuthMode' 'p12' "Admin auth mode reverted to p12" || true
+AUTH_MODE_AFTER=$(api_get "certs/admin/auth-mode")
+assert_json_field "$AUTH_MODE_AFTER" '.adminAuthMode' 'p12' "Admin auth mode is still p12" || true
+assert_eq "$(_curl_mtls -o /dev/null -w '%{http_code}' "${BASE_URL}/api/tunnels" 2>/dev/null || echo 000)" "200" "The admin certificate still works" || true
 
 # ---------------------------------------------------------------------------
 end_test

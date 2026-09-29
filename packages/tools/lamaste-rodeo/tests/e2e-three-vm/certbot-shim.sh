@@ -289,6 +289,13 @@ cmd_renew() {
     return
   fi
 
+  # Like certbot: renewing a lineage that does not exist is an error, not an
+  # issuance.
+  if [[ ! -f "${LIVE_DIR}/${lineage}/fullchain.pem" ]]; then
+    echo "No certificate found with name ${lineage} (expected /etc/letsencrypt/renewal/${lineage}.conf)." >&2
+    exit 1
+  fi
+
   local names
   names="$(lineage_names "${lineage}")"
   [[ -n "${names}" ]] || names="${lineage}"

@@ -39,6 +39,21 @@ require_commands curl jq
 
 begin_test "13 — Site Lifecycle"
 
+# redirect_after_reload <host> <path> <expected> — "<code> <location>" for
+# https://<host><path>, retried for up to 10 s until it equals <expected>:
+# `systemctl reload nginx` returns once nginx is signalled, and the old
+# workers answer with the previous configuration for a moment.
+redirect_after_reload() {
+  local host="$1" path="$2" expected="$3" got=""
+  for _ in $(seq 1 20); do
+    got=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 \
+      --resolve "${host}:443:127.0.0.1" "https://${host}${path}" 2>/dev/null || echo "000")
+    [ "$got" = "$expected" ] && break
+    sleep 0.5
+  done
+  echo "$got"
+}
+
 # ---------------------------------------------------------------------------
 log_section "Pre-flight: check onboarding is complete"
 # ---------------------------------------------------------------------------
@@ -360,8 +375,7 @@ else
   NGINX_TEST=$(sudo nginx -t 2>&1 || true)
   assert_contains "$NGINX_TEST" "syntax is ok" "nginx -t passes with the alias redirect block" || true
 
-  REDIRECT=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 \
-    --resolve "${ALIAS_WWW}:443:127.0.0.1" "https://${ALIAS_WWW}/docs/page?x=1" 2>/dev/null || echo "000")
+  REDIRECT=$(redirect_after_reload "${ALIAS_WWW}" "/docs/page?x=1" "301 https://${CUSTOM_DOMAIN}/docs/page?x=1")
   assert_eq "$REDIRECT" "301 https://${CUSTOM_DOMAIN}/docs/page?x=1" "Alias answers 301 to the same path on the site's domain" || true
 
   # A new alias that does not resolve here is refused and nothing changes
@@ -385,8 +399,7 @@ else
   ADD_ISSUES=$(sudo tail -n +$((CALLS_BEFORE_ADD + 1)) "$CERTBOT_CALLS" 2>/dev/null | grep ' certonly ' || true)
   assert_eq "$(echo "$ADD_ISSUES" | grep -c ' certonly ' || true)" "1" "Adding an alias issues the certificate once" || true
   assert_contains "$ADD_ISSUES" "--cert-name ${CUSTOM_DOMAIN} " "The issue keeps the site's lineage (--cert-name ${CUSTOM_DOMAIN})" || true
-  BLOG_REDIRECT=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 \
-    --resolve "${ALIAS_BLOG}:443:127.0.0.1" "https://${ALIAS_BLOG}/" 2>/dev/null || echo "000")
+  BLOG_REDIRECT=$(redirect_after_reload "${ALIAS_BLOG}" "/" "301 https://${CUSTOM_DOMAIN}/")
   assert_eq "$BLOG_REDIRECT" "301 https://${CUSTOM_DOMAIN}/" "New alias answers 301 to the site's domain" || true
 
   # Swapping aliases (adding one while removing others) keeps the live site
