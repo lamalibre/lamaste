@@ -552,12 +552,10 @@ export async function main() {
     } else if (flags.json) {
       // JSON mode: run each install step individually with NDJSON progress
       const installSteps = [
-        {
-          key: 'harden_system',
-          title: 'Hardening operating system',
-          fn: hardenTasks,
-          skip: () => ctx.skipHarden,
-        },
+        // Not skipped as a whole with --skip-harden: the group also installs
+        // nginx, certbot and openssl. Its hardening subtasks (UFW, fail2ban,
+        // SSH) skip themselves — the same as the interactive install.
+        { key: 'harden_system', title: 'Hardening operating system', fn: hardenTasks },
         { key: 'install_node', title: 'Installing Node.js 20', fn: nodeTasks },
         { key: 'generate_certs', title: 'Generating mTLS certificates', fn: mtlsTasks },
         { key: 'configure_nginx', title: 'Configuring nginx', fn: nginxTasks },

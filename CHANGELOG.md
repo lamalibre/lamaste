@@ -90,6 +90,7 @@ Not yet published; the date is set at release. All lockstep packages move to 4.0
 ### Fixed
 
 - The redeploy never updated the gatekeeper; it now redeploys it with the rest.
+- `create-lamaste --json --skip-harden` skipped installing nginx, certbot and openssl along with the hardening, so the install failed at "Configuring nginx"; `--skip-harden` now skips only the hardening in both output modes.
 - `lamaste-server uninstall` left the chisel and Authelia units, the Authelia binary and log behind.
 - `POST /api/services/{chisel,lamalibre-lamaste-serverd}/reload` answers 400 ("use restart"); neither unit supports reload, and the request used to fail inside sudo as a 500.
 
