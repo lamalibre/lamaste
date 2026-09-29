@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { writeFile as fsWriteFile, readdir } from 'node:fs/promises';
+import { writeFile as fsWriteFile, readdir, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -359,163 +359,61 @@ export async function writeTunnelVhost(domain) {
 }
 
 /**
- * Write an app tunnel vhost with Authelia forward auth.
+ * Request headers every tunnel location sends upstream.
  *
- * Performs a safe write-with-rollback sequence:
- * 1. Backup existing vhost (if any)
- * 2. Write the new vhost config
- * 3. Create symlink in sites-enabled
- * 4. Test nginx config
- * 5. On success: reload nginx; on failure: rollback to backup
+ * They are declared inside each `location`, not at server level: nginx
+ * inherits `proxy_set_header` from the enclosing level only when a level
+ * declares none of its own, and every tunnel location declares some — so
+ * server-level headers never reached the app (it saw `Host: 127.0.0.1:<port>`).
  *
- * @param {string} subdomain - The subdomain name (e.g., "myapp")
- * @param {string} domain - The base domain (e.g., "example.com")
- * @param {number} port - The local port to proxy to
- * @param {string} [certPath] - Optional cert directory path override (e.g. for wildcard certs)
- * @param {{ pathPrefix?: string }} [options] - Optional: pathPrefix rewrites root to /{pathPrefix}/ (used for plugin tunnels)
+ * The client-certificate headers are cleared. The panel trusts
+ * `X-SSL-Client-*` from nginx as proof of an mTLS client certificate; a
+ * tunnel vhost must never pass client-supplied values through, whatever
+ * listens on its port.
  */
-export async function writeAppVhost(subdomain, domain, port, certPath, { pathPrefix } = {}) {
-  // Defense-in-depth: validate pathPrefix to prevent nginx config injection
-  if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
-    throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
-  }
+const TUNNEL_PROXY_HEADERS = `
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
 
-  const fqdn = `${subdomain}.${domain}`;
-  const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
-  // Normalize: remove trailing slash if present
-  let certDirClean = certDir;
-  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
-
-  const config = `server {
-    listen 443 ssl;
-    server_name ${fqdn};
-
-    ssl_certificate ${certDirClean}/fullchain.pem;
-    ssl_certificate_key ${certDirClean}/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # Authelia forward authentication (AuthRequest implementation for nginx)
-    location /internal/authelia/authz {
-        internal;
-
-        proxy_pass http://127.0.0.1:9091/api/authz/auth-request;
-        proxy_pass_request_body off;
-
-        proxy_set_header Content-Length "";
-        proxy_set_header Connection "";
-        proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
-
-        proxy_http_version 1.1;
-        proxy_buffers 4 32k;
-        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
-    }
-
-    location / {
-        # Clear client-supplied identity headers (Authelia re-injects on success)
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Groups "";
-        proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
-
-        auth_request /internal/authelia/authz;
-        auth_request_set $user $upstream_http_remote_user;
-        auth_request_set $groups $upstream_http_remote_groups;
-        auth_request_set $name $upstream_http_remote_name;
-        auth_request_set $email $upstream_http_remote_email;
-        auth_request_set $redirection_url $upstream_http_location;
-
-        proxy_set_header Remote-User $user;
-        proxy_set_header Remote-Groups $groups;
-        proxy_set_header Remote-Name $name;
-        proxy_set_header Remote-Email $email;
-
-        ${pathPrefix ? `# Rewrite root to plugin prefix on agent panel server\n        rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n` : ''}proxy_pass http://127.0.0.1:${port};
-        proxy_http_version 1.1;
+        # Never forward client-supplied certificate headers (see above)
+        proxy_set_header X-SSL-Client-Verify "";
+        proxy_set_header X-SSL-Client-DN "";
+        proxy_set_header X-SSL-Client-Serial "";
 
         # WebSocket support
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection "upgrade";`;
 
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-    }
-
-    # Redirect unauthenticated requests to Authelia login portal
-    error_page 401 =302 $redirection_url;
-}
-`;
-
-  const name = `lamalibre-lamaste-app-${subdomain}`;
-  const availablePath = path.join(SITES_AVAILABLE, name);
-  const bakPath = `${availablePath}.bak`;
-
-  // 1. Backup existing vhost if present
-  const existed = await fileExistsSudo(availablePath);
-  if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]);
+/**
+ * Render the per-tunnel `client_max_body_size` directive. Without it nginx
+ * applies its built-in 1 MiB limit, which rejects ordinary uploads with 413.
+ * Validated here as well as in the tunnel workflow because the value is
+ * interpolated into nginx configuration.
+ *
+ * @param {number | undefined} maxBodySizeMb
+ * @returns {string} a directive line, or '' when no limit was given
+ */
+function bodySizeDirective(maxBodySizeMb) {
+  if (maxBodySizeMb === undefined) return '';
+  if (!Number.isInteger(maxBodySizeMb) || maxBodySizeMb < 1 || maxBodySizeMb > 10240) {
+    throw new Error(`Invalid maxBodySizeMb for nginx vhost: ${maxBodySizeMb}`);
   }
-
-  try {
-    // 2. Write new vhost
-    await writeVhostFile(name, config);
-
-    // 3. Create symlink in sites-enabled
-    await enableSite(name);
-
-    // 4. Test nginx config
-    const result = await testConfig();
-    if (!result.valid) {
-      // Rollback: restore backup or remove new file
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-      }
-      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`);
-    }
-
-    // 5. Reload nginx
-    await reload();
-
-    // Clean up backup on success
-    if (existed) {
-      await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
-    }
-
-    return availablePath;
-  } catch (err) {
-    // If the error is already from our config test, re-throw it
-    if (err.message.includes('Nginx config test failed')) {
-      throw err;
-    }
-
-    // Rollback on unexpected errors
-    if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
-    } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
-      await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]).catch(() => {});
-    }
-    throw err;
-  }
+  return `\n    client_max_body_size ${maxBodySizeMb}m;\n`;
 }
 
 /**
  * Write a public vhost — no authentication, direct proxy.
  * Used for tunnels with accessMode='public'.
  */
-export async function writePublicVhost(subdomain, domain, port, certPath, { pathPrefix } = {}) {
+export async function writePublicVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { pathPrefix, maxBodySizeMb, enabled = true } = {},
+) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
@@ -535,18 +433,18 @@ export async function writePublicVhost(subdomain, domain, port, certPath, { path
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
-
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
+${bodySizeDirective(maxBodySizeMb)}
     location / {
+        # A public tunnel has no authenticated user: clear identity headers
+        # an app might trust from an authenticated vhost.
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+${TUNNEL_PROXY_HEADERS}
+
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
-
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
 
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
@@ -555,7 +453,7 @@ export async function writePublicVhost(subdomain, domain, port, certPath, { path
 `;
 
   const name = `lamalibre-lamaste-app-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn);
+  return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
 /**
@@ -568,7 +466,7 @@ export async function writeAuthenticatedVhost(
   domain,
   port,
   certPath,
-  { pathPrefix } = {},
+  { pathPrefix, maxBodySizeMb, enabled = true } = {},
 ) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
@@ -581,11 +479,12 @@ export async function writeAuthenticatedVhost(
 
   const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
     pathPrefix,
+    maxBodySizeMb,
     restricted: false,
   });
 
   const name = `lamalibre-lamaste-app-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn);
+  return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
 /**
@@ -593,7 +492,13 @@ export async function writeAuthenticatedVhost(
  * Used for tunnels with accessMode='restricted'.
  * On 403, Gatekeeper returns the inline access-request HTML page.
  */
-export async function writeRestrictedVhost(subdomain, domain, port, certPath, { pathPrefix } = {}) {
+export async function writeRestrictedVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { pathPrefix, maxBodySizeMb, enabled = true } = {},
+) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
@@ -605,11 +510,12 @@ export async function writeRestrictedVhost(subdomain, domain, port, certPath, { 
 
   const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
     pathPrefix,
+    maxBodySizeMb,
     restricted: true,
   });
 
   const name = `lamalibre-lamaste-app-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn);
+  return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
 /**
@@ -618,7 +524,13 @@ export async function writeRestrictedVhost(subdomain, domain, port, certPath, { 
  * is handled server-side by Gatekeeper based on the tunnel's accessMode.
  * For restricted mode, the 403 body from Gatekeeper is served inline.
  */
-function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, restricted } = {}) {
+function buildGatekeeperVhost(
+  fqdn,
+  certDirClean,
+  port,
+  domain,
+  { pathPrefix, maxBodySizeMb, restricted } = {},
+) {
   return `server {
     listen 443 ssl;
     server_name ${fqdn};
@@ -629,12 +541,7 @@ function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, re
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
-
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
+${bodySizeDirective(maxBodySizeMb)}
     # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
     location /internal/lamaste/authz {
         internal;
@@ -656,12 +563,6 @@ function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, re
     }
 
     location / {
-        # Clear client-supplied identity headers
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Groups "";
-        proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
-
         auth_request /internal/lamaste/authz;
         auth_request_set $user $upstream_http_remote_user;
         auth_request_set $groups $upstream_http_remote_groups;
@@ -672,12 +573,10 @@ function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, re
         proxy_set_header Remote-Groups $groups;
         proxy_set_header Remote-Name $name;
         proxy_set_header Remote-Email $email;
+${TUNNEL_PROXY_HEADERS}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
-
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
 
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
@@ -696,31 +595,69 @@ function buildGatekeeperVhost(fqdn, certDirClean, port, domain, { pathPrefix, re
 `;
 }
 
+/** True when `name` is linked into sites-enabled. The directory is world-readable. */
+async function isSiteEnabled(name) {
+  try {
+    await lstat(path.join(SITES_ENABLED, name));
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
 /**
- * Shared safe-write logic: backup -> write -> test -> reload with rollback.
+ * Shared safe-write logic: backup -> write -> link state -> test -> reload,
+ * with rollback.
+ *
+ * `enabled` decides whether the site is linked into sites-enabled after the
+ * write. On any failure the previous file (or its absence) and the previous
+ * link state are restored, so rewriting a disabled tunnel's vhost can never
+ * publish it — not even through a failed write.
+ *
+ * @param {string} name
+ * @param {string} config
+ * @param {string} fqdn
+ * @param {{ enabled?: boolean }} [opts]
  */
-async function safeWriteVhost(name, config, fqdn) {
+async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
   const availablePath = path.join(SITES_AVAILABLE, name);
   const bakPath = `${availablePath}.bak`;
 
   const existed = await fileExistsSudo(availablePath);
+  const wasEnabled = await isSiteEnabled(name);
   if (existed) {
     await execa('sudo', ['cp', availablePath, bakPath]);
   }
 
+  const restore = async () => {
+    if (existed) {
+      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
+    } else {
+      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
+    }
+    if (existed && wasEnabled) {
+      await enableSite(name).catch(() => {});
+    } else {
+      await disableSite(name).catch(() => {});
+    }
+  };
+
   try {
     await writeVhostFile(name, config);
-    await enableSite(name);
+    if (enabled) {
+      await enableSite(name);
+    } else {
+      await disableSite(name);
+    }
 
     const result = await testConfig();
     if (!result.valid) {
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-      }
-      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`);
+      await restore();
+      throw Object.assign(
+        new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`),
+        { restored: true },
+      );
     }
 
     await reload();
@@ -731,15 +668,7 @@ async function safeWriteVhost(name, config, fqdn) {
 
     return availablePath;
   } catch (err) {
-    if (err.message.includes('Nginx config test failed')) {
-      throw err;
-    }
-    if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
-    } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
-      await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]).catch(() => {});
-    }
+    if (!err.restored) await restore();
     throw err;
   }
 }
@@ -747,7 +676,7 @@ async function safeWriteVhost(name, config, fqdn) {
 /**
  * Write a static site vhost with optional Authelia forward auth.
  *
- * Performs a safe write-with-rollback sequence (same as writeAppVhost):
+ * Performs a safe write-with-rollback sequence (same as safeWriteVhost):
  * 1. Backup existing vhost (if any)
  * 2. Write the new vhost config
  * 3. Create symlink in sites-enabled
@@ -766,6 +695,7 @@ async function safeWriteVhost(name, config, fqdn) {
 export async function writeStaticSiteVhost(site, certDir, domain) {
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
+  const aliasBlock = buildAliasRedirectBlock(site, certDirClean);
   const tryFiles = site.spaMode ? 'try_files $uri $uri/ /index.html' : 'try_files $uri $uri/ =404';
 
   let autheliaBlock = '';
@@ -837,7 +767,7 @@ ${
     : ''
 }
 }
-`;
+${aliasBlock}`;
 
   const name = `lamalibre-lamaste-site-${site.id}`;
   const availablePath = path.join(SITES_AVAILABLE, name);
@@ -893,6 +823,42 @@ ${
     }
     throw err;
   }
+}
+
+/**
+ * Server block answering a site's aliases with a permanent redirect to the
+ * primary hostname, on the same certificate (its lineage covers every alias).
+ * Hostnames are interpolated into nginx configuration, so they are validated
+ * here as well as in the site workflow.
+ *
+ * @param {{ fqdn: string, aliases?: string[] }} site
+ * @param {string} certDirClean
+ * @returns {string} the server block, or '' when the site has no aliases
+ */
+function buildAliasRedirectBlock(site, certDirClean) {
+  const aliases = site.aliases ?? [];
+  if (aliases.length === 0) return '';
+  const hostname = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+  for (const name of [site.fqdn, ...aliases]) {
+    if (!hostname.test(name)) {
+      throw new Error(`Invalid hostname for nginx vhost: ${name}`);
+    }
+  }
+  return `
+server {
+    listen 443 ssl;
+    server_name ${aliases.join(' ')};
+
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    return 301 https://${site.fqdn}$request_uri;
+}
+`;
 }
 
 /**
@@ -1064,14 +1030,20 @@ export async function enableIpVhost() {
 /**
  * Write an agent panel vhost with mTLS authentication (not Authelia).
  *
- * Same backup/rollback pattern as writeAppVhost.
+ * Written through safeWriteVhost (backup, test, rollback).
  *
  * @param {string} subdomain - The subdomain name (e.g., "agent-my-agent")
  * @param {string} domain - The base domain (e.g., "example.com")
  * @param {number} port - The local port to proxy to
  * @param {string} [certPath] - Optional cert directory path override (e.g. for wildcard certs)
  */
-export async function writeAgentPanelVhost(subdomain, domain, port, certPath) {
+export async function writeAgentPanelVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { enabled = true } = {},
+) {
   const fqdn = `${subdomain}.${domain}`;
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   let certDirClean = certDir;
@@ -1127,49 +1099,7 @@ export async function writeAgentPanelVhost(subdomain, domain, port, certPath) {
 `;
 
   const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
-  const availablePath = path.join(SITES_AVAILABLE, name);
-  const bakPath = `${availablePath}.bak`;
-
-  const existed = await fileExistsSudo(availablePath);
-  if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]);
-  }
-
-  try {
-    await writeVhostFile(name, config);
-    await enableSite(name);
-
-    const result = await testConfig();
-    if (!result.valid) {
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-      }
-      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`);
-    }
-
-    await reload();
-
-    if (existed) {
-      await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
-    }
-
-    return availablePath;
-  } catch (err) {
-    if (err.message.includes('Nginx config test failed')) {
-      throw err;
-    }
-
-    if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
-    } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
-      await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]).catch(() => {});
-    }
-    throw err;
-  }
+  return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
 /**

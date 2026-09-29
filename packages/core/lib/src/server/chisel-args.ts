@@ -1,9 +1,8 @@
 /**
  * Chisel client argument builder (pure, no shell).
  *
- * Used by endpoints that generate the agent's chisel client command line:
- * the mac-plist endpoint renders it into plist XML, the agent-config endpoint
- * returns it as raw args for any platform.
+ * Used by the agent-config endpoint, which returns the args for the tunnels
+ * one agent carries; the agent renders them into its own service definition.
  */
 
 export interface ChiselTunnel {
@@ -18,7 +17,10 @@ export interface ChiselTunnel {
  * @returns Chisel client argument array, suitable for `chisel <args...>`
  */
 export function buildChiselArgs(tunnels: readonly ChiselTunnel[], domain: string): string[] {
-  const args = ['client', '--tls-skip-verify', `https://tunnel.${domain}:443`];
+  // No --tls-skip-verify: tunnel.<domain> carries a publicly trusted
+  // certificate and the agent verifies it. No --auth either: the agent
+  // supplies its credential through the environment, never the panel.
+  const args = ['client', `https://tunnel.${domain}:443`];
 
   for (const tunnel of tunnels) {
     args.push(`R:127.0.0.1:${tunnel.port}:127.0.0.1:${tunnel.port}`);

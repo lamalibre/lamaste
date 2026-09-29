@@ -17,10 +17,8 @@ import {
   isAgentLoaded,
   getAgentPid,
   listLoadedAgentsCached,
-  loadAgent,
   unloadAgent,
   loadAgentConfig,
-  saveAgentConfig,
   agentLogFile,
   agentPluginConfig,
   readPluginRegistry,
@@ -55,13 +53,12 @@ import {
   setServerMode,
   hasAdminCert,
   getActiveServerId,
+  convergeChiselService,
+  removeSyncService,
+  setAgentTunnelsStopped,
+  updateAgentConfig,
 } from '@lamalibre/lamaste/agent';
-
-import {
-  generateServiceConfig,
-  writeServiceConfigFile,
-  injectChiselFingerprint,
-} from './service-config.js';
+import { createPanelApiClient } from './panel-api.js';
 
 // UUID regex for validating :id params before proxying to panel server
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -141,6 +138,28 @@ export default async function routes(fastify, opts) {
 
   const pluginCfg = agentPluginConfig(label);
 
+  /**
+   * Converge an agent's tunnel client with its panel — the same path as
+   * `lamaste-agent sync` (see convergeChiselService).
+   * @param {string} targetLabel
+   * @param {{ forceRestart?: boolean }} [options]
+   */
+  async function convergeAgent(targetLabel, options = {}) {
+    const config = await loadAgentConfig(targetLabel);
+    if (!config) throw new Error(`Agent "${targetLabel}" is not configured`);
+    const api = targetLabel === label ? panelApi : createPanelApiClient(targetLabel);
+    const response = await api.fetchAgentConfig(config);
+    return convergeChiselService(
+      targetLabel,
+      response,
+      {
+        fetchChiselCredential: () => api.fetchChiselCredential(config),
+        rotateChiselCredential: () => api.rotateChiselCredential(config),
+      },
+      options,
+    );
+  }
+
   // -----------------------------------------------------------------------
   // Status & Control
   // -----------------------------------------------------------------------
@@ -163,46 +182,36 @@ export default async function routes(fastify, opts) {
   // start/stop/restart/update manage the chisel tunnel daemon. We classify
   // them under tunnels:write because controlling chisel is equivalent to
   // controlling all tunnel state (a stopped agent breaks every tunnel).
+  // Stop is remembered (tunnelsStopped) so the sync timer does not start the
+  // client again; start and restart clear it and converge with the panel,
+  // which also keeps a client with no tunnels to carry from crash-looping.
   fastify.post('/start', { preHandler: requireCap('tunnels:write') }, async () => {
-    await loadAgent(label);
-    return { ok: true };
+    await setAgentTunnelsStopped(label, false);
+    const result = await convergeAgent(label);
+    return { ok: true, state: result.state, tunnels: result.tunnels };
   });
 
   fastify.post('/stop', { preHandler: requireCap('tunnels:write') }, async () => {
-    await unloadAgent(label);
+    await setAgentTunnelsStopped(label, true);
     return { ok: true };
   });
 
   fastify.post('/restart', { preHandler: requireCap('tunnels:write') }, async () => {
-    await unloadAgent(label);
-    await loadAgent(label);
-    return { ok: true };
+    await setAgentTunnelsStopped(label, false);
+    const result = await convergeAgent(label, { forceRestart: true });
+    return { ok: true, state: result.state, tunnels: result.tunnels };
   });
 
   fastify.post('/update', { preHandler: requireCap('tunnels:write') }, async (request) => {
-    const config = await getConfig();
-    const agentConfig = await panelApi.fetchAgentConfig(config);
+    // The enrolled domain is never taken from the panel here: convergence
+    // refuses a panel that reports a different one.
+    const result = await convergeAgent(label, { forceRestart: true });
+    await updateAgentConfig(label, (config) => {
+      config.updatedAt = new Date().toISOString();
+    });
 
-    // Regenerate service config and restart. Re-inject the chisel TLS pin
-    // (B10) if the agent has one on file — otherwise leave the args as
-    // returned by the panel (which still has --tls-skip-verify).
-    const chiselArgs = config.chiselServerCertSha256Hex
-      ? injectChiselFingerprint(agentConfig.chiselArgs, config.chiselServerCertSha256Hex)
-      : agentConfig.chiselArgs;
-    const content = generateServiceConfig(chiselArgs, label);
-    await writeServiceConfigFile(content, label);
-
-    // Update stored config
-    config.domain = agentConfig.domain;
-    config.updatedAt = new Date().toISOString();
-    await saveAgentConfig(label, config);
-
-    // Restart chisel
-    await unloadAgent(label);
-    await loadAgent(label);
-
-    request.log.info({ label }, 'Agent updated');
-    return { ok: true };
+    request.log.info({ label, state: result.state, tunnels: result.tunnels }, 'Agent updated');
+    return { ok: true, state: result.state, tunnels: result.tunnels, warnings: result.warnings };
   });
 
   // -----------------------------------------------------------------------
@@ -488,6 +497,8 @@ export default async function routes(fastify, opts) {
   // Uninstall is a destructive lifecycle operation — owner/admin only.
   fastify.post('/uninstall', { preHandler: requireOwner }, async (request) => {
     request.log.warn({ label }, 'Uninstall requested via web panel');
+    // The sync timer would start the tunnel client again.
+    await removeSyncService(label);
     await unloadAgent(label);
     return { ok: true, message: 'Agent stopped. Run lamaste-agent uninstall for full removal.' };
   });
@@ -763,9 +774,10 @@ export default async function routes(fastify, opts) {
       return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
     }
 
-    await loadAgent(targetLabel);
-    request.log.info({ label: targetLabel }, 'Agent started');
-    return { ok: true };
+    await setAgentTunnelsStopped(targetLabel, false);
+    const result = await convergeAgent(targetLabel);
+    request.log.info({ label: targetLabel, state: result.state }, 'Agent started');
+    return { ok: true, state: result.state, tunnels: result.tunnels };
   });
 
   fastify.post('/agents/:label/stop', { preHandler: requireOwner }, async (request, reply) => {
@@ -779,7 +791,7 @@ export default async function routes(fastify, opts) {
       return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
     }
 
-    await unloadAgent(targetLabel);
+    await setAgentTunnelsStopped(targetLabel, true);
     request.log.info({ label: targetLabel }, 'Agent stopped');
     return { ok: true };
   });
@@ -795,10 +807,10 @@ export default async function routes(fastify, opts) {
       return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
     }
 
-    await unloadAgent(targetLabel);
-    await loadAgent(targetLabel);
-    request.log.info({ label: targetLabel }, 'Agent restarted');
-    return { ok: true };
+    await setAgentTunnelsStopped(targetLabel, false);
+    const result = await convergeAgent(targetLabel, { forceRestart: true });
+    request.log.info({ label: targetLabel, state: result.state }, 'Agent restarted');
+    return { ok: true, state: result.state, tunnels: result.tunnels };
   });
 
   fastify.patch('/agents/current', { preHandler: requireOwner }, async (request, reply) => {
@@ -830,8 +842,9 @@ export default async function routes(fastify, opts) {
       return reply.code(404).send({ error: `Agent "${targetLabel}" not found` });
     }
 
-    // Stop the agent service before removal
+    // Stop the sync timer (it would restart the client), then the agent service
     try {
+      await removeSyncService(targetLabel);
       await unloadAgent(targetLabel);
     } catch {
       // May not be running — continue with removal

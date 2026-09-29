@@ -78,6 +78,14 @@ export {
   createTunnel,
   deleteTunnel,
   toggleTunnel,
+  assignTunnel,
+  reconfigureTunnel,
+  updateTunnel,
+  releaseAgentTunnels,
+  withTunnelLock,
+  TUNNEL_MAX_BODY_MB,
+  tunnelsCarriedBy,
+  bindUnownedTunnels,
 } from './tunnels.js';
 export type {
   TunnelType,
@@ -89,9 +97,18 @@ export type {
   CertbotDeps,
   ChiselDeps,
   TunnelStateDeps,
+  TunnelAgentDeps,
   CreateTunnelOptions,
   DeleteTunnelOptions,
   ToggleTunnelOptions,
+  AssignTunnelOptions,
+  ReconfigureTunnelOptions,
+  VhostOptions,
+  BindUnownedResult,
+  UpdateTunnelOptions,
+  AuthorizeTunnel,
+  ReleaseAgentTunnelsOptions,
+  ReleaseAgentTunnelsResult,
 } from './tunnels.js';
 
 // --- Sites ---
@@ -159,8 +176,14 @@ export {
   issueTunnelCert,
   getCertPath,
   isCertValid,
+  certNames,
+  issueSiteCert,
+  readLetsEncryptExpiry,
+  CERTBOT_WRAPPER,
+  CERT_INFO_WRAPPER,
 } from './certbot.js';
 export type {
+  IssueSiteCertOptions,
   IssueCertResult,
   CertInfo,
   RenewCertOptions,
@@ -233,16 +256,19 @@ export type {
 export {
   CHISEL_BIN,
   CHISEL_SERVICE,
+  CHISEL_UNIT_PATH,
   installChisel,
+  getInstalledChiselVersion,
   ensureChiselKey,
   buildChiselUnit,
   writeChiselService,
+  ensureChiselService,
+  isChiselProvisioned,
   startChisel,
   reloadChisel,
   stopChisel,
   isChiselRunning,
   getChiselStatus,
-  updateChiselConfig,
 } from './chisel.js';
 export type {
   InstallResult as ChiselInstallResult,
@@ -261,9 +287,17 @@ export {
   removeChiselCredential,
   rotateChiselCredential,
   getChiselCredential,
+  getChiselCredentialIssuedAt,
   reloadChiselAuth,
+  authfileRevokes,
+  CHISEL_AUTHFILE_GROUP,
   migrateChiselCredentialsIfNeeded,
   loadChiselCredentials,
+  syncChiselAuthfile,
+  chiselGrants,
+  grantedTunnelsFor,
+  withheldTunnels,
+  renderAuthfile as renderChiselAuthfile,
 } from './chisel-users.js';
 export type {
   ChiselCredential,
@@ -271,9 +305,12 @@ export type {
   ChiselPaths,
   ChiselCredentialResult,
   RemoveCredentialResult,
+  AuthfileChange as ChiselAuthfileChange,
   MigrationResult as ChiselMigrationResult,
   AgentRegistrySnapshot as ChiselAgentRegistrySnapshot,
   ChiselLogger,
+  ChiselGrantTunnel,
+  LoadGrantTunnels,
 } from './chisel-users.js';
 
 // --- User plugin access ---

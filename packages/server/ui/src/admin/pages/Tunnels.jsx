@@ -1,17 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { errorMessage } from '../lib/errorMessage.js';
-import {
-  Plus,
-  Trash2,
-  Download,
-  ChevronDown,
-  ChevronRight,
-  ExternalLink,
-  Loader2,
-  Network,
-  Power,
-} from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Loader2, Network, Power, Settings2 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 
@@ -48,13 +38,61 @@ function validateSubdomain(value) {
   return null;
 }
 
+const MAX_BODY_MB = { default: 10, min: 1, max: 10240 };
+
+function validateMaxBody(value) {
+  const num = Number(value);
+  if (value === '' || !Number.isInteger(num)) return 'Must be a whole number of MiB';
+  if (num < MAX_BODY_MB.min) return `Minimum ${MAX_BODY_MB.min}`;
+  if (num > MAX_BODY_MB.max) return `Maximum ${MAX_BODY_MB.max}`;
+  return null;
+}
+
+// Tunnels created before the setting existed carry nginx's built-in 1 MiB.
+function effectiveMaxBody(tunnel) {
+  return tunnel.maxBodySizeMb ?? 1;
+}
+
+const ACCESS_OPTIONS = [
+  { value: 'restricted', label: 'Restricted', desc: 'Only granted users and groups' },
+  {
+    value: 'authenticated',
+    label: 'All Authelia Users',
+    desc: 'Any authenticated user can access',
+  },
+  { value: 'public', label: 'Public', desc: 'No authentication required' },
+];
+
+// Mirrors RESERVED_TUNNEL_PORTS in @lamalibre/lamaste — the relay's own
+// services (panel, chisel, Authelia, IP panel, Gatekeeper). The panel rejects
+// them too; this only explains why before the request is sent.
+const RESERVED_TUNNEL_PORTS = [3100, 9090, 9091, 9292, 9294];
+
 function validatePort(value) {
   const num = Number(value);
   if (!value && value !== 0) return 'Port is required';
   if (!Number.isInteger(num)) return 'Must be an integer';
   if (num < 1024) return 'Minimum 1024';
   if (num > 65535) return 'Maximum 65535';
+  if (RESERVED_TUNNEL_PORTS.includes(num)) return 'Reserved for a Lamaste service on the relay';
   return null;
+}
+
+// --- Agents that can carry a tunnel ---
+
+// Enrolled, non-revoked regular agents. Plugin-agent certificates never carry
+// tunnels, so they are not offered.
+function useCarrierAgents() {
+  const client = useAdminClient();
+  const query = useQuery({
+    queryKey: ['admin-agents'],
+    queryFn: () => client.getAgents(),
+  });
+  const agents = (query.data?.agents || [])
+    .filter((a) => !a.revoked && a.certType !== 'plugin-agent')
+    .map((a) => a.label)
+    .sort();
+  return { agents, isLoading: query.isLoading };
 }
 
 // --- Add Tunnel Form ---
@@ -68,6 +106,9 @@ function AddTunnelForm({ domain, onClose }) {
   const [port, setPort] = useState('');
   const [description, setDescription] = useState('');
   const [accessMode, setAccessMode] = useState('restricted');
+  const [agentLabel, setAgentLabel] = useState('');
+  const [maxBody, setMaxBody] = useState(String(MAX_BODY_MB.default));
+  const { agents, isLoading: agentsLoading } = useCarrierAgents();
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState(null);
 
@@ -93,6 +134,9 @@ function AddTunnelForm({ domain, onClose }) {
       const newErrors = {};
       if (subdomainErr) newErrors.subdomain = subdomainErr;
       if (portErr) newErrors.port = portErr;
+      if (!agentLabel) newErrors.agentLabel = 'Choose the agent that carries this tunnel';
+      const maxBodyErr = validateMaxBody(maxBody);
+      if (maxBodyErr) newErrors.maxBody = maxBodyErr;
 
       if (Object.keys(newErrors).length > 0) {
         setErrors(newErrors);
@@ -105,9 +149,11 @@ function AddTunnelForm({ domain, onClose }) {
         port: Number(port),
         description: description || undefined,
         accessMode,
+        agentLabel,
+        maxBodySizeMb: Number(maxBody),
       });
     },
-    [subdomain, port, description, accessMode, mutation],
+    [subdomain, port, description, accessMode, agentLabel, maxBody, mutation],
   );
 
   return (
@@ -159,6 +205,57 @@ function AddTunnelForm({ domain, onClose }) {
           {errors.port && <p className="text-red-400 text-xs mt-1">{errors.port}</p>}
         </div>
 
+        {/* Carrying agent */}
+        <div>
+          <label className="block text-xs text-zinc-400 mb-1">Agent</label>
+          <select
+            value={agentLabel}
+            onChange={(e) => {
+              setAgentLabel(e.target.value);
+              setErrors((prev) => ({ ...prev, agentLabel: undefined }));
+            }}
+            disabled={mutation.isPending || agentsLoading}
+            className="w-64 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+          >
+            <option value="">{agentsLoading ? 'Loading agents…' : 'Select an agent'}</option>
+            {agents.map((label) => (
+              <option key={label} value={label}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-500 mt-1">
+            Only this agent forwards the port. It starts carrying the tunnel within 30 seconds.
+          </p>
+          {!agentsLoading && agents.length === 0 && (
+            <p className="text-yellow-400 text-xs mt-1">
+              No agents enrolled yet — enroll one under Certificates first.
+            </p>
+          )}
+          {errors.agentLabel && <p className="text-red-400 text-xs mt-1">{errors.agentLabel}</p>}
+        </div>
+
+        {/* Request body limit */}
+        <div>
+          <label className="block text-xs text-zinc-400 mb-1">Largest request body (MiB)</label>
+          <input
+            type="number"
+            value={maxBody}
+            onChange={(e) => {
+              setMaxBody(e.target.value);
+              setErrors((prev) => ({ ...prev, maxBody: undefined }));
+            }}
+            disabled={mutation.isPending}
+            min={MAX_BODY_MB.min}
+            max={MAX_BODY_MB.max}
+            className="w-40 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            Larger uploads are rejected with 413. Raise it for apps that accept big files.
+          </p>
+          {errors.maxBody && <p className="text-red-400 text-xs mt-1">{errors.maxBody}</p>}
+        </div>
+
         {/* Description */}
         <div>
           <label className="block text-xs text-zinc-400 mb-1">
@@ -179,15 +276,7 @@ function AddTunnelForm({ domain, onClose }) {
         <div>
           <label className="block text-xs text-zinc-400 mb-2">Access</label>
           <div className="space-y-2">
-            {[
-              { value: 'restricted', label: 'Restricted', desc: 'Only granted users and groups' },
-              {
-                value: 'authenticated',
-                label: 'All Authelia Users',
-                desc: 'Any authenticated user can access',
-              },
-              { value: 'public', label: 'Public', desc: 'No authentication required' },
-            ].map((opt) => (
+            {ACCESS_OPTIONS.map((opt) => (
               <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -289,9 +378,135 @@ function DeleteConfirmation({ tunnel, onConfirm, onCancel, isPending }) {
   );
 }
 
+// --- Edit dialog (carrier, access mode, body limit) ---
+
+function EditTunnelDialog({ tunnel, onConfirm, onCancel, isPending }) {
+  const { agents, isLoading } = useCarrierAgents();
+  const [agentLabel, setAgentLabel] = useState(tunnel.agentLabel || '');
+  const [accessMode, setAccessMode] = useState(tunnel.accessMode || 'restricted');
+  const initialMaxBody = effectiveMaxBody(tunnel);
+  const [maxBody, setMaxBody] = useState(String(initialMaxBody));
+  const maxBodyErr = validateMaxBody(maxBody);
+
+  const changes = {};
+  if (agentLabel && agentLabel !== tunnel.agentLabel) changes.agentLabel = agentLabel;
+  if (accessMode !== (tunnel.accessMode || 'restricted')) changes.accessMode = accessMode;
+  // Compare with what the field started at: a tunnel from before the setting
+  // shows nginx's implicit 1 MiB, and leaving that untouched is not a change.
+  if (!maxBodyErr && Number(maxBody) !== initialMaxBody) {
+    changes.maxBodySizeMb = Number(maxBody);
+  }
+  const hasChanges = Object.keys(changes).length > 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+        <h3 className="text-lg font-semibold text-white mb-1">Edit Tunnel</h3>
+        <p className="text-cyan-400 font-mono text-sm mb-5">{tunnel.fqdn}</p>
+
+        <label className="block text-xs text-zinc-400 mb-1">Agent</label>
+        <select
+          value={agentLabel}
+          onChange={(e) => setAgentLabel(e.target.value)}
+          disabled={isPending || isLoading}
+          className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+        >
+          {!tunnel.agentLabel && <option value="">Unassigned — select an agent</option>}
+          {agents.map((label) => (
+            <option key={label} value={label}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {changes.agentLabel && (
+          <p className="text-xs text-zinc-500 mt-1">
+            {tunnel.agentLabel ? 'Both agents pick' : `${changes.agentLabel} picks`} the change up
+            within 30 seconds.
+          </p>
+        )}
+
+        <label className="block text-xs text-zinc-400 mt-4 mb-2">Access</label>
+        <div className="space-y-2">
+          {ACCESS_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="editAccessMode"
+                value={opt.value}
+                checked={accessMode === opt.value}
+                onChange={(e) => setAccessMode(e.target.value)}
+                disabled={isPending}
+                className="mt-1 text-cyan-500 focus:ring-cyan-500 bg-zinc-800 border-zinc-700"
+              />
+              <div>
+                <span className="text-sm text-zinc-200">{opt.label}</span>
+                <p className="text-xs text-zinc-500">{opt.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <label className="block text-xs text-zinc-400 mt-4 mb-1">Largest request body (MiB)</label>
+        <input
+          type="number"
+          value={maxBody}
+          onChange={(e) => setMaxBody(e.target.value)}
+          disabled={isPending}
+          min={MAX_BODY_MB.min}
+          max={MAX_BODY_MB.max}
+          className="w-40 rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+        />
+        {maxBodyErr && <p className="text-red-400 text-xs mt-1">{maxBodyErr}</p>}
+
+        <div className="flex items-center justify-end gap-3 mt-6">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isPending}
+            className="rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(changes)}
+            disabled={isPending || !hasChanges || Boolean(maxBodyErr)}
+            className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+          >
+            {isPending ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Carrying agent badge ---
+
+function CarrierBadge({ tunnel }) {
+  if (tunnel.agentLabel) {
+    return <span className="text-sm text-zinc-300 font-mono">{tunnel.agentLabel}</span>;
+  }
+  return (
+    <span
+      className="inline-block px-2 py-0.5 rounded text-xs bg-red-500/10 text-red-400"
+      title="No agent carries this tunnel. Move it to an agent to bring it back."
+    >
+      unassigned
+    </span>
+  );
+}
+
 // --- Tunnel Table (desktop) ---
 
-function TunnelTable({ tunnels, onDelete, onToggle }) {
+function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
   return (
     <div className="hidden md:block overflow-x-auto">
       <table className="w-full">
@@ -310,7 +525,13 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
               Port
             </th>
             <th className="text-left text-zinc-400 text-xs uppercase font-semibold py-3 px-4">
+              Agent
+            </th>
+            <th className="text-left text-zinc-400 text-xs uppercase font-semibold py-3 px-4">
               Access
+            </th>
+            <th className="text-left text-zinc-400 text-xs uppercase font-semibold py-3 px-4">
+              Body limit
             </th>
             <th className="text-left text-zinc-400 text-xs uppercase font-semibold py-3 px-4">
               Description
@@ -355,6 +576,9 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
                   </a>
                 </td>
                 <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{tunnel.port}</td>
+                <td className="py-3 px-4">
+                  <CarrierBadge tunnel={tunnel} />
+                </td>
                 <td className="py-3 px-4 text-sm">
                   {tunnel.type !== 'panel' && (
                     <span
@@ -374,6 +598,9 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
                     </span>
                   )}
                 </td>
+                <td className="py-3 px-4 text-sm text-zinc-400 font-mono">
+                  {tunnel.type !== 'panel' ? `${effectiveMaxBody(tunnel)} MiB` : '\u2014'}
+                </td>
                 <td className="py-3 px-4 text-sm text-zinc-400">
                   {tunnel.description || '\u2014'}
                 </td>
@@ -382,6 +609,17 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
                 </td>
                 <td className="py-3 px-4 text-right">
                   <div className="inline-flex items-center gap-2">
+                    {tunnel.type !== 'panel' && (
+                      <button
+                        type="button"
+                        onClick={() => onEdit(tunnel)}
+                        className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
+                        title="Agent, access mode, body limit"
+                      >
+                        <Settings2 size={12} />
+                        Edit
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onToggle(tunnel)}
@@ -414,7 +652,7 @@ function TunnelTable({ tunnels, onDelete, onToggle }) {
 
 // --- Tunnel Cards (mobile) ---
 
-function TunnelCards({ tunnels, onDelete, onToggle }) {
+function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
   return (
     <div className="md:hidden space-y-3">
       {tunnels.map((tunnel) => {
@@ -440,6 +678,16 @@ function TunnelCards({ tunnels, onDelete, onToggle }) {
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {tunnel.type !== 'panel' && (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(tunnel)}
+                    className="text-xs text-zinc-300"
+                    title="Agent, access mode, body limit"
+                  >
+                    <Settings2 size={14} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => onToggle(tunnel)}
@@ -469,6 +717,9 @@ function TunnelCards({ tunnels, onDelete, onToggle }) {
               <span>
                 Port: <span className="text-zinc-300 font-mono">{tunnel.port}</span>
               </span>
+              <span>
+                Agent: <CarrierBadge tunnel={tunnel} />
+              </span>
               <span>{relativeTime(tunnel.createdAt)}</span>
             </div>
             {tunnel.description && (
@@ -477,96 +728,6 @@ function TunnelCards({ tunnels, onDelete, onToggle }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-// --- Mac Config Section ---
-
-function MacConfigSection({ hasTunnels }) {
-  const client = useAdminClient();
-  const [instructionsOpen, setInstructionsOpen] = useState(false);
-
-  const handleDownload = useCallback(async () => {
-    try {
-      await client.getMacPlist();
-    } catch {
-      // Errors are non-critical for download
-    }
-  }, [client]);
-
-  const instructions = [
-    {
-      step: 'Install Chisel:',
-      code: 'brew install chisel',
-      note: 'or download from https://github.com/jpillora/chisel/releases',
-    },
-    {
-      step: 'Save the downloaded file to:',
-      code: '~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist',
-    },
-    {
-      step: 'Load the agent:',
-      code: 'launchctl load ~/Library/LaunchAgents/com.lamalibre.lamaste.chisel.plist',
-    },
-    { step: 'Check status:', code: 'launchctl list | grep chisel' },
-    { step: 'View logs:', code: 'tail -f /usr/local/var/log/chisel.log' },
-    {
-      step: 'To update after adding/removing tunnels:',
-      note: 'Download a new plist, unload the old one, load the new one.',
-    },
-  ];
-
-  return (
-    <div className="mt-8 border-t border-zinc-800 pt-6">
-      <h2 className="text-sm font-semibold text-zinc-300 mb-4">Mac Client Configuration</h2>
-
-      <button
-        type="button"
-        onClick={handleDownload}
-        disabled={!hasTunnels}
-        title={!hasTunnels ? 'Add at least one tunnel first' : 'Download launchd plist'}
-        className="flex items-center gap-2 rounded bg-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <Download size={14} />
-        Download Mac Config
-      </button>
-
-      {!hasTunnels && (
-        <p className="text-xs text-zinc-500 mt-2">
-          Add at least one tunnel to download the config.
-        </p>
-      )}
-
-      {/* Collapsible instructions */}
-      <button
-        type="button"
-        onClick={() => setInstructionsOpen((prev) => !prev)}
-        className="flex items-center gap-1 mt-4 text-sm text-zinc-400 hover:text-zinc-300"
-      >
-        {instructionsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        Mac Setup Instructions
-      </button>
-
-      {instructionsOpen && (
-        <div className="mt-3 bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-          <ol className="space-y-3 text-sm text-zinc-400 list-decimal list-inside">
-            {instructions.map((item, i) => (
-              <li key={i}>
-                {item.step}
-                {item.code && (
-                  <code className="ml-2 bg-zinc-800 px-2 py-0.5 rounded text-xs font-mono text-cyan-400">
-                    {item.code}
-                  </code>
-                )}
-                {item.note && (
-                  <span className="block ml-5 text-xs text-zinc-500 mt-0.5">{item.note}</span>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
     </div>
   );
 }
@@ -580,6 +741,7 @@ export default function Tunnels() {
 
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const tunnelsQuery = useQuery({
     queryKey: ['tunnels'],
@@ -609,7 +771,7 @@ export default function Tunnels() {
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, enabled }) => client.toggleTunnel(id, { enabled }),
+    mutationFn: ({ id, enabled }) => client.updateTunnel(id, { enabled }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['tunnels'] });
       const t = data.tunnel;
@@ -619,6 +781,23 @@ export default function Tunnels() {
       addToast(errorMessage(err), 'error');
     },
   });
+
+  const editMutation = useMutation({
+    mutationFn: ({ id, changes }) => client.updateTunnel(id, changes),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+      addToast(`Tunnel ${data.tunnel.fqdn} updated`);
+      setEditTarget(null);
+    },
+    onError: (err) => {
+      addToast(errorMessage(err), 'error');
+      setEditTarget(null);
+    },
+  });
+
+  const handleEdit = useCallback((tunnel) => {
+    setEditTarget(tunnel);
+  }, []);
 
   const handleDelete = useCallback((tunnel) => {
     setDeleteTarget(tunnel);
@@ -685,13 +864,30 @@ export default function Tunnels() {
         </div>
       ) : (
         <>
-          <TunnelTable tunnels={tunnels} onDelete={handleDelete} onToggle={handleToggle} />
-          <TunnelCards tunnels={tunnels} onDelete={handleDelete} onToggle={handleToggle} />
+          <TunnelTable
+            tunnels={tunnels}
+            onDelete={handleDelete}
+            onToggle={handleToggle}
+            onEdit={handleEdit}
+          />
+          <TunnelCards
+            tunnels={tunnels}
+            onDelete={handleDelete}
+            onToggle={handleToggle}
+            onEdit={handleEdit}
+          />
         </>
       )}
 
-      {/* Mac Config Download */}
-      <MacConfigSection hasTunnels={tunnels.length > 0} />
+      {/* Edit Modal */}
+      {editTarget && (
+        <EditTunnelDialog
+          tunnel={editTarget}
+          onConfirm={(changes) => editMutation.mutate({ id: editTarget.id, changes })}
+          onCancel={() => setEditTarget(null)}
+          isPending={editMutation.isPending}
+        />
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteTarget && (

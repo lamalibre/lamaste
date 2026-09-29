@@ -54,28 +54,33 @@ export interface AgentConfig {
    * the same key does not break the pin.
    *
    * `panelServerCertSha256Hex` — hex SHA-256 of the panel TLS server leaf
-   * cert DER. Used by chisel `--fingerprint <hex>` for tunnel-server cert
-   * pinning. The chisel server runs behind nginx on `tunnel.<domain>` so
-   * this is the same TLS endpoint as the panel for fingerprinting purposes.
+   * cert DER, shown to the operator for out-of-band verification.
    *
    * `panelServerCertPinnedAt` — ISO timestamp of the TOFU capture, used in
    * status output and audit logs.
    *
-   * Legacy agents lacking these fields fall back to `-k` / `--tls-skip-verify`
-   * with a one-shot warning and should re-enroll (or run `lamaste-agent panel
-   * reset-pin`) to capture the pin.
+   * Legacy agents lacking these fields fall back to `-k` with a one-shot
+   * warning and should re-enroll (or run `lamaste-agent panel reset-pin`) to
+   * capture the pin. The chisel tunnel itself is not pinned here: it verifies
+   * the relay's publicly trusted `tunnel.<domain>` certificate.
    */
   panelServerPubkeySha256?: string | undefined;
   panelServerCertSha256Hex?: string | undefined;
   panelServerCertPinnedAt?: string | undefined;
   /**
-   * Hex SHA-256 of the chisel TLS server's leaf cert at `tunnel.<domain>:443`.
-   * Captured by TOFU during enrollment and re-injected into chisel client
-   * args as `--fingerprint <hex>`. Stored separately from
-   * `panelServerCertSha256Hex` because the chisel server typically has its
-   * own LE cert (different subdomain, different cert).
+   * When this agent last received a chisel credential that has only ever
+   * been kept in 0600 files (ISO 8601). Absent on agents set up by versions
+   * that passed the credential as a process argument and wrote it into a
+   * world-readable unit file; `lamaste-agent sync` rotates such a credential
+   * once and then sets this.
    */
-  chiselServerCertSha256Hex?: string | undefined;
+  chiselCredentialSealedAt?: string | undefined;
+  /**
+   * True when the operator stopped this agent's tunnels (agent panel or
+   * desktop "stop"). Sync then keeps the chisel client stopped instead of
+   * restarting it; "start" clears it.
+   */
+  tunnelsStopped?: boolean | undefined;
 }
 
 // ---------------------------------------------------------------------------

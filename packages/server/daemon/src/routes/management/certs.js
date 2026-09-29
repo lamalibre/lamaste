@@ -1,9 +1,8 @@
 import { z } from 'zod';
 import { execa } from 'execa';
-import { listCerts, renewCert } from '../../lib/certbot.js';
+import { listCerts, renewCert, readLetsEncryptExpiry } from '../../lib/certbot.js';
 import {
   getMtlsCerts,
-  readCertExpiry,
   rotateClientCert,
   getP12Path,
   generateAgentCert,
@@ -872,8 +871,7 @@ export default async function certsRoutes(fastify, _opts) {
       }
 
       // Read the new expiry date
-      const certPath = `/etc/letsencrypt/live/${domain}/fullchain.pem`;
-      const expiry = await readCertExpiry(certPath);
+      const expiry = await readLetsEncryptExpiry(domain);
       const newExpiry = expiry?.expiresAt || null;
 
       // Reload nginx

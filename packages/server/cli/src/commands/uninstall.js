@@ -139,8 +139,15 @@ async function removeServices() {
 
   await execa('systemctl', ['daemon-reload']).catch(() => {});
 
-  // Remove sudoers file
+  // Remove sudoers file and the root-owned wrappers it referenced
   await execa('rm', ['-f', '/etc/sudoers.d/lamaste']).catch(() => {});
+  await execa('rm', [
+    '-f',
+    '/usr/local/sbin/lamaste-sign-csr',
+    '/usr/local/sbin/lamaste-pki-rename',
+    '/usr/local/sbin/lamaste-certbot',
+    '/usr/local/sbin/lamaste-cert-info',
+  ]).catch(() => {});
 }
 
 /**
@@ -281,8 +288,9 @@ async function removeUser() {
   // Remove the user and its home directory
   await execa('userdel', ['-r', 'lamaste']).catch(() => {});
 
-  // Remove group if it still exists
+  // Remove groups if they still exist
   await execa('groupdel', ['lamaste']).catch(() => {});
+  await execa('groupdel', ['lamaste-chisel']).catch(() => {});
 }
 
 /**

@@ -258,7 +258,8 @@ pub async fn get_status() -> Result<Value, String> {
         });
         if !configured {
             payload["setupMessage"] = Value::String(
-                "Run `npx @lamalibre/lamaste-agent setup` to connect to a Lamaste server, \
+                "Install the agent with `npm install -g @lamalibre/lamaste-agent`, then run \
+                 `lamaste-agent setup` to connect to a Lamaste server, \
                  or use \"Create a new server\" to provision one."
                     .to_string(),
             );

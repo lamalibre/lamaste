@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# lamaste-cert-info — root-only, read-only queries about a Let's Encrypt
+# certificate lineage.
+#
+# This script is invoked via sudo from the lamaste service user. It replaces
+# sudoers entries of the form
+#
+#   lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -enddate -noout -in /etc/letsencrypt/live/*
+#
+# whose trailing `*` also matched extra openssl arguments — `-engine <lib.so>`
+# loads a shared object as root, and a traversing path reads any file. Here the
+# lineage name is validated and openssl runs with a fixed argument vector on
+# /etc/letsencrypt/live/<lineage>/fullchain.pem.
+#
+# Usage:
+#   lamaste-cert-info <lineage> enddate     # prints notAfter=<date>
+#   lamaste-cert-info <lineage> checkend    # exit 0 if valid for 24h more, 1 if not
+#   lamaste-cert-info <lineage> san         # prints the subjectAltName extension
+#
+# Exit status 3 means the lineage has no certificate.
+
+set -euo pipefail
+
+OPENSSL=/usr/bin/openssl
+LIVE_DIR=/etc/letsencrypt/live
+
+err() {
+  printf '%s: %s\n' "lamaste-cert-info" "$1" >&2
+  exit 2
+}
+
+hostname_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+
+[[ $# -eq 2 ]] || err "usage: lamaste-cert-info <lineage> enddate|checkend|san"
+lineage="$1"
+query="$2"
+
+if (( ${#lineage} > 253 )) || ! [[ "$lineage" =~ $hostname_re ]]; then
+  err "invalid lineage name: $lineage"
+fi
+
+cert="$LIVE_DIR/$lineage/fullchain.pem"
+if [[ ! -f "$cert" ]]; then
+  printf '%s: no certificate for %s\n' "lamaste-cert-info" "$lineage" >&2
+  exit 3
+fi
+
+case "$query" in
+  enddate)
+    exec "$OPENSSL" x509 -noout -enddate -in "$cert"
+    ;;
+  checkend)
+    exec "$OPENSSL" x509 -noout -checkend 86400 -in "$cert"
+    ;;
+  san)
+    exec "$OPENSSL" x509 -noout -ext subjectAltName -in "$cert"
+    ;;
+  *)
+    err "unknown query: $query"
+    ;;
+esac

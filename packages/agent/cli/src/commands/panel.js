@@ -11,7 +11,7 @@
 import chalk from 'chalk';
 import {
   loadAgentConfig,
-  saveAgentConfig,
+  updateAgentConfig,
   assertSupportedPlatform,
   isPanelServiceLoaded,
   loadPanelService,
@@ -101,24 +101,12 @@ async function resetPin(label, config, isJson) {
     process.exit(1);
   }
 
-  let chiselDigests = null;
-  if (config.domain) {
-    try {
-      chiselDigests = await fetchPanelServerCertDigests(`https://tunnel.${config.domain}:443`);
-    } catch {
-      chiselDigests = null;
-    }
-  }
-
-  const updated = {
-    ...config,
-    panelServerPubkeySha256: digests.pubkeySha256Base64,
-    panelServerCertSha256Hex: digests.certSha256Hex,
-    panelServerCertPinnedAt: new Date().toISOString(),
-    chiselServerCertSha256Hex: chiselDigests?.certSha256Hex || config.chiselServerCertSha256Hex,
-    updatedAt: new Date().toISOString(),
-  };
-  await saveAgentConfig(label, updated);
+  await updateAgentConfig(label, (current) => {
+    current.panelServerPubkeySha256 = digests.pubkeySha256Base64;
+    current.panelServerCertSha256Hex = digests.certSha256Hex;
+    current.panelServerCertPinnedAt = new Date().toISOString();
+    current.updatedAt = new Date().toISOString();
+  });
 
   if (isJson) {
     console.log(
@@ -127,7 +115,6 @@ async function resetPin(label, config, isJson) {
         previousPin: oldPin,
         panelServerPubkeySha256: digests.pubkeySha256Base64,
         panelServerCertSha256Hex: digests.certSha256Hex,
-        chiselServerCertSha256Hex: updated.chiselServerCertSha256Hex || null,
       }),
     );
     return;
@@ -135,17 +122,7 @@ async function resetPin(label, config, isJson) {
 
   console.log(`  New pin:   ${chalk.cyan(`sha256//${digests.pubkeySha256Base64}`)}`);
   console.log(`  Cert hash: ${chalk.cyan(digests.certSha256Hex)}`);
-  if (updated.chiselServerCertSha256Hex) {
-    console.log(`  Chisel hash: ${chalk.cyan(updated.chiselServerCertSha256Hex)}`);
-  } else {
-    console.log(
-      chalk.yellow(
-        `  Chisel server pin not refreshed (tunnel.${config.domain || '?'} unreachable)`,
-      ),
-    );
-  }
-  console.log(chalk.dim('\n  Verify the new pin out-of-band before continuing.'));
-  console.log(chalk.dim('  Run `lamaste-agent update` to apply the chisel pin.\n'));
+  console.log(chalk.dim('\n  Verify the new pin out-of-band before continuing.\n'));
 }
 
 async function enablePanel(label, config, port, isJson, localOnly = false) {
@@ -170,10 +147,11 @@ async function enablePanel(label, config, port, isJson, localOnly = false) {
   await loadPanelService(label);
 
   // 4. Save panel config
-  config.panelPort = port;
-  config.panelEnabled = true;
-  config.updatedAt = new Date().toISOString();
-  await saveAgentConfig(label, config);
+  await updateAgentConfig(label, (current) => {
+    current.panelPort = port;
+    current.panelEnabled = true;
+    current.updatedAt = new Date().toISOString();
+  });
 
   // 5. If local-only, skip tunnel exposure and chisel restart
   if (localOnly) {
@@ -195,9 +173,10 @@ async function enablePanel(label, config, port, isJson, localOnly = false) {
     // Rollback: stop the panel service we just started
     await unloadPanelService(label);
     await removePanelServiceConfig(label);
-    config.panelEnabled = false;
-    delete config.panelPort;
-    await saveAgentConfig(label, config);
+    await updateAgentConfig(label, (current) => {
+      current.panelEnabled = false;
+      delete current.panelPort;
+    });
     const msg = err instanceof Error ? err.message : 'Unknown error';
     if (isJson) {
       console.log(JSON.stringify({ error: msg }));
@@ -207,20 +186,10 @@ async function enablePanel(label, config, port, isJson, localOnly = false) {
     process.exit(1);
   }
 
-  // 7. Update the agent's chisel service (needs new tunnel mapping)
+  // 7. Carry the new tunnel now rather than at the next sync
   try {
-    const { fetchAgentConfig } = await import('../lib/panel-api.js');
-    const { generateServiceConfig, writeServiceConfigFile, injectChiselFingerprint } =
-      await import('../lib/service-config.js');
-    const { unloadAgent, loadAgent } = await import('@lamalibre/lamaste/agent');
-    const agentConfig = await fetchAgentConfig(config);
-    const chiselArgs = config.chiselServerCertSha256Hex
-      ? injectChiselFingerprint(agentConfig.chiselArgs, config.chiselServerCertSha256Hex)
-      : agentConfig.chiselArgs;
-    const serviceContent = generateServiceConfig(chiselArgs, label);
-    await writeServiceConfigFile(serviceContent, label);
-    await unloadAgent(label);
-    await loadAgent(label);
+    const { convergeWithPanel } = await import('../lib/converge.js');
+    await convergeWithPanel(label);
   } catch (err) {
     if (!isJson) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -259,21 +228,12 @@ async function disablePanel(label, config, isJson, localOnly = false) {
   // 3. Remove service config
   await removePanelServiceConfig(label);
 
-  // 4. Update chisel (remove the panel tunnel mapping) — skip in local-only mode
+  // 4. Stop carrying the panel tunnel now rather than at the next sync —
+  // skip in local-only mode
   if (!localOnly) {
     try {
-      const { fetchAgentConfig } = await import('../lib/panel-api.js');
-      const { generateServiceConfig, writeServiceConfigFile, injectChiselFingerprint } =
-        await import('../lib/service-config.js');
-      const { unloadAgent, loadAgent } = await import('@lamalibre/lamaste/agent');
-      const agentConfig = await fetchAgentConfig(config);
-      const chiselArgs = config.chiselServerCertSha256Hex
-        ? injectChiselFingerprint(agentConfig.chiselArgs, config.chiselServerCertSha256Hex)
-        : agentConfig.chiselArgs;
-      const serviceContent = generateServiceConfig(chiselArgs, label);
-      await writeServiceConfigFile(serviceContent, label);
-      await unloadAgent(label);
-      await loadAgent(label);
+      const { convergeWithPanel } = await import('../lib/converge.js');
+      await convergeWithPanel(label);
     } catch (err) {
       if (!isJson) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -282,11 +242,12 @@ async function disablePanel(label, config, isJson, localOnly = false) {
     }
   }
 
-  // 5. Update config
-  config.panelEnabled = false;
-  delete config.panelPort;
-  config.updatedAt = new Date().toISOString();
-  await saveAgentConfig(label, config);
+  // 5. Update config under the agent lock: a sync may be updating other fields
+  await updateAgentConfig(label, (latest) => {
+    latest.panelEnabled = false;
+    delete latest.panelPort;
+    latest.updatedAt = new Date().toISOString();
+  });
 
   if (isJson) {
     console.log(JSON.stringify({ ok: true }));

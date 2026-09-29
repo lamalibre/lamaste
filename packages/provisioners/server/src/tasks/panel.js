@@ -4,7 +4,13 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
+import {
+  generateServiceUnit,
+  generateSudoersContent,
+  SUDOERS_WRAPPERS,
+  CHISEL_GROUP,
+} from '../lib/service-config.js';
+import { ensureChiselGroup } from '../lib/chisel-group.js';
 
 /**
  * Panel deployment subtasks: system user, directories, server + client deploy,
@@ -43,6 +49,16 @@ export function panelTasks(ctx, task) {
           ]);
           subtask.output = 'Created system user: lamaste';
         }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: `Creating ${CHISEL_GROUP} group`,
+      task: async (_ctx, subtask) => {
+        const { created } = await ensureChiselGroup();
+        subtask.output = created
+          ? `Created group ${CHISEL_GROUP}; lamaste is a member`
+          : `Group ${CHISEL_GROUP} exists; lamaste is a member`;
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -307,19 +323,16 @@ export function panelTasks(ctx, task) {
       rendererOptions: { persistentOutput: true },
     },
     {
-      title: 'Installing PKI sudoers wrapper scripts',
+      title: 'Installing sudoers wrapper scripts',
       task: async (_ctx, subtask) => {
-        // The two wrappers below replace previous sudoers wildcards that were
+        // The wrappers replace previous sudoers wildcards that were
         // exploitable (see service-config.js comments). They MUST be installed
         // before the sudoers file is written — the sudoers entries reference
         // these absolute paths and visudo will reject the file otherwise (well,
         // it doesn't actually verify existence, but we want them in place
         // before the panel service starts and tries to call them).
         const scriptsSrc = join(packageRoot, 'scripts');
-        const wrappers = [
-          { name: 'lamaste-sign-csr', dest: '/usr/local/sbin/lamaste-sign-csr' },
-          { name: 'lamaste-pki-rename', dest: '/usr/local/sbin/lamaste-pki-rename' },
-        ];
+        const wrappers = SUDOERS_WRAPPERS;
 
         for (const w of wrappers) {
           const src = join(scriptsSrc, w.name);
@@ -341,7 +354,7 @@ export function panelTasks(ctx, task) {
           await execa('install', ['-o', 'root', '-g', 'root', '-m', '0755', src, w.dest]);
         }
 
-        subtask.output = 'PKI sudoers wrappers installed';
+        subtask.output = 'Sudoers wrappers installed';
       },
       rendererOptions: { persistentOutput: true },
     },

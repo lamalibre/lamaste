@@ -88,6 +88,18 @@ function TypeBadge({ type }) {
 
 const NAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
+// Aliases are typed as a comma/space separated list of hostnames.
+function parseAliases(text) {
+  return [
+    ...new Set(
+      text
+        .split(/[\s,]+/)
+        .map((a) => a.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 function AddSiteForm({ domain, onClose }) {
   const queryClient = useQueryClient();
   const addToast = useToast();
@@ -96,6 +108,7 @@ function AddSiteForm({ domain, onClose }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('managed');
   const [customDomain, setCustomDomain] = useState('');
+  const [aliasText, setAliasText] = useState('');
   const [spaMode, setSpaMode] = useState(false);
   const [autheliaProtected, setAutheliaProtected] = useState(false);
   const [errors, setErrors] = useState({});
@@ -143,10 +156,12 @@ function AddSiteForm({ domain, onClose }) {
       };
       if (type === 'custom') {
         body.customDomain = customDomain.toLowerCase();
+        const aliases = parseAliases(aliasText);
+        if (aliases.length > 0) body.aliases = aliases;
       }
       mutation.mutate(body);
     },
-    [name, type, customDomain, spaMode, autheliaProtected, mutation],
+    [name, type, customDomain, aliasText, spaMode, autheliaProtected, mutation],
   );
 
   return (
@@ -228,6 +243,21 @@ function AddSiteForm({ domain, onClose }) {
             {errors.customDomain && (
               <p className="text-red-400 text-xs mt-1">{errors.customDomain}</p>
             )}
+            <label className="block text-xs text-zinc-400 mt-3 mb-1">
+              Redirect aliases <span className="text-zinc-600">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={aliasText}
+              onChange={(e) => setAliasText(e.target.value)}
+              disabled={mutation.isPending}
+              placeholder={customDomain ? `www.${customDomain}` : 'www.example.com'}
+              className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono placeholder:text-zinc-600 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              These hostnames redirect to the site and share its certificate. Each needs its own A
+              record.
+            </p>
           </div>
         )}
 
@@ -325,8 +355,14 @@ function DnsVerificationModal({ site, onClose }) {
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-lg w-full mx-4 shadow-xl">
         <h3 className="text-lg font-semibold text-white mb-2">DNS Verification</h3>
         <p className="text-zinc-400 text-sm mb-4">
-          Add an A record pointing <span className="text-cyan-400 font-mono">{site.fqdn}</span> to
-          your server IP.
+          Add an A record pointing{' '}
+          {[site.fqdn, ...(site.aliases || [])].map((name, i, all) => (
+            <span key={name}>
+              <span className="text-cyan-400 font-mono">{name}</span>
+              {i < all.length - 1 ? ', ' : ''}
+            </span>
+          ))}{' '}
+          to your server IP.
         </p>
 
         <div className="bg-zinc-800 rounded-lg p-4 mb-4">
@@ -338,7 +374,9 @@ function DnsVerificationModal({ site, onClose }) {
               </tr>
               <tr>
                 <td className="text-zinc-500 py-1 pr-4">Name</td>
-                <td className="text-zinc-200 font-mono">{site.fqdn}</td>
+                <td className="text-zinc-200 font-mono">
+                  {[site.fqdn, ...(site.aliases || [])].join(', ')}
+                </td>
               </tr>
               <tr>
                 <td className="text-zinc-500 py-1 pr-4">Value</td>
@@ -443,6 +481,10 @@ function SiteSettingsModal({ site, onClose }) {
   const [spaMode, setSpaMode] = useState(site.spaMode);
   const [autheliaProtected, setAutheliaProtected] = useState(site.autheliaProtected);
   const [allowedUsers, setAllowedUsers] = useState(site.allowedUsers || []);
+  const [aliasText, setAliasText] = useState((site.aliases || []).join(', '));
+  const aliases = parseAliases(aliasText);
+  const aliasesChanged =
+    JSON.stringify(aliases.slice().sort()) !== JSON.stringify((site.aliases || []).slice().sort());
 
   const usersQuery = useQuery({
     queryKey: ['users'],
@@ -451,9 +493,12 @@ function SiteSettingsModal({ site, onClose }) {
 
   const mutation = useMutation({
     mutationFn: (body) => client.updateSite(site.id, body),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['sites'] });
       addToast(`Site ${site.fqdn} settings updated`);
+      // Applied, but a follow-up step needs attention (e.g. the certificate
+      // could not be narrowed to the new alias list).
+      if (data?.warning) addToast(data.warning, 'error');
       onClose();
     },
     onError: (err) => {
@@ -465,6 +510,7 @@ function SiteSettingsModal({ site, onClose }) {
   const hasChanges =
     spaMode !== site.spaMode ||
     autheliaProtected !== site.autheliaProtected ||
+    aliasesChanged ||
     JSON.stringify(allowedUsers.slice().sort()) !== JSON.stringify(origAllowedUsers.slice().sort());
 
   const availableUsers = (usersQuery.data?.users || []).filter(
@@ -515,6 +561,24 @@ function SiteSettingsModal({ site, onClose }) {
               className="rounded border-zinc-700 bg-zinc-800 text-cyan-400 focus:ring-cyan-400 h-5 w-5"
             />
           </label>
+
+          {site.type === 'custom' && (
+            <div>
+              <span className="text-sm text-zinc-200">Redirect aliases</span>
+              <p className="text-xs text-zinc-500 mt-0.5 mb-2">
+                Hostnames that redirect to {site.fqdn}. On a live site each new alias must already
+                resolve to this server; the certificate is re-issued to cover it.
+              </p>
+              <input
+                type="text"
+                value={aliasText}
+                onChange={(e) => setAliasText(e.target.value)}
+                disabled={mutation.isPending}
+                placeholder={`www.${site.fqdn}`}
+                className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-200 font-mono placeholder:text-zinc-600 focus:outline-none focus:border-cyan-400 disabled:opacity-50"
+              />
+            </div>
+          )}
 
           {/* User access control — only visible when Authelia is enabled */}
           {autheliaProtected && (
@@ -588,7 +652,14 @@ function SiteSettingsModal({ site, onClose }) {
           </button>
           <button
             type="button"
-            onClick={() => mutation.mutate({ spaMode, autheliaProtected, allowedUsers })}
+            onClick={() =>
+              mutation.mutate({
+                spaMode,
+                autheliaProtected,
+                allowedUsers,
+                ...(aliasesChanged ? { aliases } : {}),
+              })
+            }
             disabled={mutation.isPending || !hasChanges}
             className="flex items-center gap-2 rounded bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -655,6 +726,11 @@ function SiteTable({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
                   </a>
                 ) : (
                   <span className="text-zinc-400 font-mono">{site.fqdn}</span>
+                )}
+                {(site.aliases || []).length > 0 && (
+                  <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                    also {site.aliases.join(', ')}
+                  </p>
                 )}
               </td>
               <td className="py-3 px-4">
@@ -739,6 +815,9 @@ function SiteCards({ sites, onDelete, onFiles, onVerifyDns, onSettings }) {
             </a>
           ) : (
             <span className="text-zinc-400 text-sm font-mono">{site.fqdn}</span>
+          )}
+          {(site.aliases || []).length > 0 && (
+            <p className="text-xs text-zinc-500 font-mono mb-1">also {site.aliases.join(', ')}</p>
           )}
           <div className="flex items-center gap-4 text-xs text-zinc-500 mt-2">
             <span>{formatBytes(site.totalSize || 0)}</span>

@@ -6,13 +6,21 @@
  * label explicitly via separate routes — they have no implicit "me" agent.
  */
 
-import { getChiselCredential } from '../../lib/chisel-users.js';
+import { getChiselCredential, getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import {
   rotateAgentChiselCredential,
   getAgentCapabilities,
   getAgentAllowedSites,
 } from '../../lib/mtls.js';
 import { z } from 'zod';
+import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+
+/**
+ * An agent may rotate its own chisel credential at most this often. Every
+ * rotation restarts chisel (the old password must stop working), which drops
+ * every agent's tunnels for a few seconds.
+ */
+const SELF_ROTATE_MIN_INTERVAL_MS = 10 * 60 * 1000;
 
 const LabelParamSchema = z.object({
   label: z
@@ -54,6 +62,54 @@ export default async function agentsRoutes(fastify, _opts) {
         });
       }
       return credential;
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /agents/me/chisel-credential/rotate
+  //
+  // Replaces the calling agent's chisel credential and returns the new one.
+  // An upgraded agent calls this once: versions before the credential moved
+  // into a 0600 environment file exposed it in process arguments and a
+  // world-readable unit file. Identity comes strictly from the mTLS cert.
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/agents/me/chisel-credential/rotate',
+    {
+      preHandler: fastify.requireRole(['agent'], { capability: 'tunnels:read' }),
+    },
+    async (request, reply) => {
+      const label = request.certLabel;
+      if (!label) {
+        return reply.code(400).send({
+          error: 'Agent label could not be determined from client certificate',
+        });
+      }
+      if (!AGENT_LABEL_REGEX.test(label)) {
+        return reply
+          .code(400)
+          .send({ error: 'Plugin-agents do not use chisel tunnel credentials' });
+      }
+      const issuedAt = await getChiselCredentialIssuedAt(label);
+      if (issuedAt && Date.now() - Date.parse(issuedAt) < SELF_ROTATE_MIN_INTERVAL_MS) {
+        return reply.code(429).send({
+          error: 'The chisel credential was issued less than 10 minutes ago',
+          issuedAt,
+        });
+      }
+      try {
+        const result = await rotateAgentChiselCredential(label, request.log);
+        return {
+          user: result.user,
+          password: result.password,
+          createdAt: result.createdAt,
+        };
+      } catch (err) {
+        const status = err.statusCode || 500;
+        return reply.code(status).send({
+          error: err.message || 'Failed to rotate chisel credential',
+        });
+      }
     },
   );
 

@@ -22,21 +22,20 @@ import {
 import {
   fetchHealth,
   fetchAgentConfig,
-  fetchTunnels,
   fetchChiselCredential,
   curlPostUnauthenticated,
 } from '../lib/panel-api.js';
 import { fetchPanelServerCertDigests } from '../lib/panel-cert.js';
 import { extractPemFromP12, cleanupPemFiles } from '../lib/ws-helpers.js';
-import { installChisel } from '../lib/chisel.js';
 import {
-  generateServiceConfig,
-  writeServiceConfigFile,
-  injectChiselAuth,
-  injectChiselFingerprint,
-} from '../lib/service-config.js';
-import { saveChiselCredential } from '../lib/chisel-credential.js';
-import { isAgentLoaded, unloadAgent, loadAgent, getAgentPid } from '@lamalibre/lamaste/agent';
+  saveChiselCredential,
+  userLingerStatus,
+  enableLingerCommand,
+  ensureAgentChiselBinary,
+  resolveInstalledAgentCli,
+  installSyncService,
+} from '@lamalibre/lamaste/agent';
+import { convergeWithPanel, describeConverge } from '../lib/converge.js';
 import { generateKeypairAndCSR, secureDelete } from '../lib/keychain.js';
 import { storeEnrolledCert } from '../lib/cert-store.js';
 
@@ -128,6 +127,130 @@ async function runJsonStep(ctx, step) {
 }
 
 /**
+ * The mTLS config the panel calls of a setup in progress use.
+ * @param {object} ctx
+ */
+function setupAuthConfig(ctx) {
+  return {
+    panelUrl: ctx.panelUrl,
+    authMethod: 'p12',
+    p12Path: ctx.p12Path,
+    p12Password: ctx.p12Password,
+    panelServerPubkeySha256: ctx.panelServerPubkeySha256,
+  };
+}
+
+/**
+ * The final setup steps, shared by every flow once the agent holds its
+ * certificate: install chisel, take the tunnel credential, save the agent
+ * configuration, converge the tunnel client with the panel, and install the
+ * sync timer that keeps it converged.
+ *
+ * @param {object} ctx
+ * @returns {Array<{ key: string, title: string, fn: () => Promise<string | void> }>}
+ */
+function serviceSetupSteps(ctx) {
+  return [
+    {
+      key: 'install_chisel',
+      title: 'Installing Chisel',
+      fn: async () => {
+        const result = await ensureAgentChiselBinary();
+        ctx.chiselVersion = result.version;
+        return result.installed
+          ? `Installed ${result.version} (checksum verified)`
+          : `Already installed (${result.version})`;
+      },
+    },
+    {
+      key: 'fetch_config',
+      title: 'Fetching the tunnel credential',
+      fn: async () => {
+        const authConfig = setupAuthConfig(ctx);
+        const agentConfig = await fetchAgentConfig(authConfig);
+        ctx.domain = agentConfig.domain;
+        // Straight from the panel into a 0600 file: this credential has never
+        // been exposed, so the configuration below marks it sealed.
+        const credential = await fetchChiselCredential(authConfig);
+        await saveChiselCredential(ctx.resolvedLabel, {
+          ...credential,
+          issuedAt: credential.createdAt,
+        });
+        return `Credential for ${credential.user} stored`;
+      },
+    },
+    {
+      key: 'save_config',
+      title: 'Saving configuration',
+      fn: async () => {
+        const setupAt = new Date().toISOString();
+        await saveAgentConfig(ctx.resolvedLabel, {
+          panelUrl: ctx.panelUrl,
+          authMethod: 'p12',
+          p12Path: ctx.p12Path,
+          p12Password: ctx.p12Password,
+          ...(ctx.agentLabel ? { agentLabel: ctx.agentLabel } : {}),
+          domain: ctx.domain,
+          chiselVersion: ctx.chiselVersion,
+          setupAt,
+          panelServerPubkeySha256: ctx.panelServerPubkeySha256,
+          panelServerCertSha256Hex: ctx.panelServerCertSha256Hex,
+          panelServerCertPinnedAt: ctx.panelServerCertPinnedAt,
+          chiselCredentialSealedAt: setupAt,
+        });
+        await upsertAgent({
+          label: ctx.resolvedLabel,
+          panelUrl: ctx.panelUrl,
+          authMethod: 'p12',
+          p12Path: ctx.p12Path,
+          keychainIdentity: null,
+          agentLabel: ctx.agentLabel ?? null,
+          domain: ctx.domain,
+          chiselVersion: ctx.chiselVersion,
+          setupAt,
+          updatedAt: null,
+        });
+      },
+    },
+    {
+      key: 'start_tunnels',
+      title: 'Starting the tunnel client',
+      fn: async () => {
+        const { result, response } = await convergeWithPanel(ctx.resolvedLabel, {
+          forceRestart: true,
+        });
+        ctx.converge = result;
+        ctx.tunnels = Array.isArray(response.tunnels) ? response.tunnels : [];
+        return describeConverge(result);
+      },
+    },
+    {
+      key: 'install_sync',
+      title: 'Installing the sync timer',
+      fn: async () => {
+        await installSyncService(ctx.resolvedLabel, ctx.program);
+        return 'Tunnel changes on the panel apply within 30 seconds';
+      },
+    },
+  ];
+}
+
+/**
+ * {@link serviceSetupSteps} as Listr tasks for the interactive flows.
+ * @param {object} ctx
+ */
+function serviceSetupTasks(ctx) {
+  return serviceSetupSteps(ctx).map((step) => ({
+    title: step.title,
+    task: async (_ctx, task) => {
+      const output = await step.fn();
+      if (output) task.output = output;
+    },
+    rendererOptions: { persistentOutput: true },
+  }));
+}
+
+/**
  * Run the agent setup flow.
  * Dispatches to interactive (P12 or token) or non-interactive (--json) mode.
  * @param {{ label?: string, json?: boolean }} options
@@ -168,6 +291,9 @@ export async function runSetup(options = {}) {
 async function runTokenSetup(flags) {
   // Step 1: Verify supported platform
   assertSupportedPlatform();
+  // The sync timer runs the installed program; check before the single-use
+  // token is spent.
+  const program = await resolveInstalledAgentCli(process.argv[1]);
 
   // Validate explicit label early if provided
   if (flags.label) {
@@ -208,12 +334,13 @@ async function runTokenSetup(flags) {
     p12Path: null,
     p12Password: null,
     chiselVersion: null,
-    serviceConfig: null,
     domain: null,
     tunnels: [],
     panelServerPubkeySha256: null,
     panelServerCertSha256Hex: null,
     panelServerCertPinnedAt: null,
+    program,
+    converge: null,
   };
 
   const tasks = new Listr(
@@ -350,146 +477,7 @@ async function runTokenSetup(flags) {
         },
         rendererOptions: { persistentOutput: true },
       },
-      {
-        title: 'Installing Chisel',
-        task: async (_ctx, task) => {
-          const result = await installChisel();
-          ctx.chiselVersion = result.version;
-          if (result.skipped) {
-            task.output = `Already installed (${result.version})`;
-          } else {
-            task.output = `Installed ${result.version}`;
-          }
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Fetching tunnel configuration',
-        task: async (_ctx, task) => {
-          const authConfig = {
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            p12Password: ctx.p12Password,
-            panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-          };
-
-          const agentConfig = await fetchAgentConfig(authConfig);
-          ctx.domain = agentConfig.domain;
-
-          // Capture the chisel TLS server fingerprint via TOFU so the chisel
-          // client can pin with --fingerprint. The chisel server runs behind
-          // nginx on tunnel.<domain>:443, which often has a different TLS
-          // cert from the panel — pin them separately.
-          const chiselServerUrl = `https://tunnel.${ctx.domain}:443`;
-          try {
-            const chiselDigests = await fetchPanelServerCertDigests(chiselServerUrl);
-            ctx.chiselServerCertSha256Hex = chiselDigests.certSha256Hex;
-          } catch (err) {
-            // Don't hard-fail enrollment if the tunnel host isn't reachable
-            // yet (DNS or LE cert may still be propagating). The agent will
-            // fall back to --tls-skip-verify and warn until the next update.
-            ctx.chiselServerCertSha256Hex = null;
-            task.output = `Warning: could not pin chisel server cert (${err.message})`;
-          }
-
-          // Fetch the per-agent chisel tunnel credential and inject it into
-          // the chisel client args. The chisel server enforces --authfile so
-          // a missing credential here means tunnels will fail to connect.
-          const credential = await fetchChiselCredential(authConfig);
-          await saveChiselCredential(ctx.resolvedLabel, credential);
-          let chiselArgs = injectChiselAuth(agentConfig.chiselArgs, credential);
-          if (ctx.chiselServerCertSha256Hex) {
-            chiselArgs = injectChiselFingerprint(chiselArgs, ctx.chiselServerCertSha256Hex);
-          }
-
-          ctx.serviceConfig = generateServiceConfig(chiselArgs, ctx.resolvedLabel);
-
-          const tunnelData = await fetchTunnels(authConfig);
-          ctx.tunnels = tunnelData.tunnels || [];
-          task.output = `${ctx.tunnels.length} tunnel(s) configured`;
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Writing service config',
-        task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Unloading previous agent',
-        skip: async () => {
-          const loaded = await isAgentLoaded(ctx.resolvedLabel);
-          return !loaded && 'No previous agent loaded';
-        },
-        task: async () => {
-          await unloadAgent(ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Loading agent',
-        skip: () =>
-          ctx.tunnels.length === 0 &&
-          'No tunnels configured — run lamaste-agent update after creating tunnels',
-        task: async () => {
-          await loadAgent(ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Verifying agent is running',
-        skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
-        task: async (_ctx, task) => {
-          await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid(ctx.resolvedLabel);
-          if (pid) {
-            task.output = `Agent running (PID ${pid})`;
-          } else {
-            const loaded = await isAgentLoaded(ctx.resolvedLabel);
-            if (loaded) {
-              task.output = 'Agent loaded (process starting...)';
-            } else {
-              throw new Error('Agent failed to load. Check logs with: lamaste-agent logs');
-            }
-          }
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Saving configuration',
-        task: async () => {
-          const configData = {
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            p12Password: ctx.p12Password,
-            agentLabel: ctx.agentLabel,
-            domain: ctx.domain,
-            chiselVersion: ctx.chiselVersion,
-            setupAt: new Date().toISOString(),
-            panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-            panelServerCertSha256Hex: ctx.panelServerCertSha256Hex,
-            panelServerCertPinnedAt: ctx.panelServerCertPinnedAt,
-            chiselServerCertSha256Hex: ctx.chiselServerCertSha256Hex || undefined,
-          };
-
-          await saveAgentConfig(ctx.resolvedLabel, configData);
-
-          // Add or update registry entry
-          await upsertAgent({
-            label: ctx.resolvedLabel,
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            keychainIdentity: null,
-            agentLabel: ctx.agentLabel,
-            domain: ctx.domain,
-            chiselVersion: ctx.chiselVersion,
-            setupAt: configData.setupAt,
-            updatedAt: null,
-          });
-        },
-      },
+      ...serviceSetupTasks(ctx),
     ],
     {
       renderer: 'default',
@@ -507,7 +495,7 @@ async function runTokenSetup(flags) {
     throw err;
   }
 
-  printSetupSummary(ctx);
+  await printSetupSummary(ctx);
 }
 
 /**
@@ -518,6 +506,14 @@ async function runTokenSetup(flags) {
  */
 async function runTokenSetupJson(flags) {
   assertSupportedPlatform();
+
+  let program;
+  try {
+    program = await resolveInstalledAgentCli(process.argv[1]);
+  } catch (err) {
+    emitJson({ event: 'error', message: err.message, recoverable: false });
+    process.exit(1);
+  }
 
   if (!flags.panelUrl) {
     emitJson({
@@ -543,13 +539,13 @@ async function runTokenSetupJson(flags) {
     p12Path: null,
     p12Password: null,
     chiselVersion: null,
-    serviceConfig: null,
     domain: null,
     tunnels: [],
     panelServerPubkeySha256: null,
     panelServerCertSha256Hex: null,
     panelServerCertPinnedAt: null,
-    chiselServerCertSha256Hex: null,
+    program,
+    converge: null,
   };
 
   const steps = [
@@ -667,132 +663,7 @@ async function runTokenSetupJson(flags) {
         await fetchHealth(authConfig);
       },
     },
-    {
-      key: 'install_chisel',
-      title: 'Installing Chisel',
-      fn: async () => {
-        const result = await installChisel();
-        ctx.chiselVersion = result.version;
-      },
-    },
-    {
-      key: 'fetch_config',
-      title: 'Fetching tunnel configuration',
-      fn: async () => {
-        const authConfig = {
-          panelUrl: ctx.panelUrl,
-          authMethod: 'p12',
-          p12Path: ctx.p12Path,
-          p12Password: ctx.p12Password,
-          panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-        };
-
-        const agentConfig = await fetchAgentConfig(authConfig);
-        ctx.domain = agentConfig.domain;
-
-        // TOFU-pin the chisel server cert at tunnel.<domain>:443. May fail
-        // on fresh installs where DNS or LE has not converged yet — fall
-        // back to --tls-skip-verify in that case (the agent will warn and
-        // the operator can re-pin via `lamaste-agent panel reset-pin`).
-        const chiselServerUrl = `https://tunnel.${ctx.domain}:443`;
-        try {
-          const chiselDigests = await fetchPanelServerCertDigests(chiselServerUrl);
-          ctx.chiselServerCertSha256Hex = chiselDigests.certSha256Hex;
-        } catch {
-          ctx.chiselServerCertSha256Hex = null;
-        }
-
-        // Fetch and persist this agent's chisel tunnel-server credential.
-        // Without --auth the chisel server rejects the connection.
-        const credential = await fetchChiselCredential(authConfig);
-        await saveChiselCredential(ctx.resolvedLabel, credential);
-        let chiselArgs = injectChiselAuth(agentConfig.chiselArgs, credential);
-        if (ctx.chiselServerCertSha256Hex) {
-          chiselArgs = injectChiselFingerprint(chiselArgs, ctx.chiselServerCertSha256Hex);
-        }
-
-        ctx.serviceConfig = generateServiceConfig(chiselArgs, ctx.resolvedLabel);
-
-        const tunnelData = await fetchTunnels(authConfig);
-        ctx.tunnels = tunnelData.tunnels || [];
-      },
-    },
-    {
-      key: 'write_service',
-      title: 'Writing service config',
-      fn: async () => {
-        await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
-      },
-    },
-    {
-      key: 'unload_previous',
-      title: 'Unloading previous agent',
-      skip: async () => {
-        const loaded = await isAgentLoaded(ctx.resolvedLabel);
-        return !loaded && 'No previous agent loaded';
-      },
-      fn: async () => {
-        await unloadAgent(ctx.resolvedLabel);
-      },
-    },
-    {
-      key: 'load_service',
-      title: 'Loading agent',
-      skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
-      fn: async () => {
-        await loadAgent(ctx.resolvedLabel);
-      },
-    },
-    {
-      key: 'verify_running',
-      title: 'Verifying agent is running',
-      skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
-      fn: async () => {
-        await new Promise((r) => setTimeout(r, 2000));
-        const pid = await getAgentPid(ctx.resolvedLabel);
-        if (!pid) {
-          const loaded = await isAgentLoaded(ctx.resolvedLabel);
-          if (!loaded) {
-            throw new Error('Agent failed to load. Check logs with: lamaste-agent logs');
-          }
-        }
-      },
-    },
-    {
-      key: 'save_config',
-      title: 'Saving configuration',
-      fn: async () => {
-        const configData = {
-          panelUrl: ctx.panelUrl,
-          authMethod: 'p12',
-          p12Path: ctx.p12Path,
-          p12Password: ctx.p12Password,
-          agentLabel: ctx.agentLabel,
-          domain: ctx.domain,
-          chiselVersion: ctx.chiselVersion,
-          setupAt: new Date().toISOString(),
-          panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-          panelServerCertSha256Hex: ctx.panelServerCertSha256Hex,
-          panelServerCertPinnedAt: ctx.panelServerCertPinnedAt,
-          chiselServerCertSha256Hex: ctx.chiselServerCertSha256Hex || undefined,
-        };
-
-        await saveAgentConfig(ctx.resolvedLabel, configData);
-
-        await upsertAgent({
-          label: ctx.resolvedLabel,
-          panelUrl: ctx.panelUrl,
-          authMethod: 'p12',
-          p12Path: ctx.p12Path,
-          keychainIdentity: null,
-          agentLabel: ctx.agentLabel,
-          domain: ctx.domain,
-          chiselVersion: ctx.chiselVersion,
-          setupAt: configData.setupAt,
-          updatedAt: null,
-        });
-      },
-    },
+    ...serviceSetupSteps(ctx),
   ];
 
   try {
@@ -822,7 +693,9 @@ async function runTokenSetupJson(flags) {
       chiselVersion: ctx.chiselVersion,
       panelServerPubkeySha256: ctx.panelServerPubkeySha256,
       panelServerCertSha256Hex: ctx.panelServerCertSha256Hex,
-      chiselServerCertSha256Hex: ctx.chiselServerCertSha256Hex || null,
+      // 'disabled' on Linux means the tunnel stops at logout and does not
+      // return after reboot until `enableLingerCommand` is run.
+      bootPersistence: await userLingerStatus(),
     },
   });
 }
@@ -833,6 +706,7 @@ async function runTokenSetupJson(flags) {
  */
 async function runP12Setup(options = {}) {
   assertSupportedPlatform();
+  const program = await resolveInstalledAgentCli(process.argv[1]);
 
   // Validate explicit label early if provided
   if (options.label) {
@@ -879,13 +753,13 @@ async function runP12Setup(options = {}) {
     p12Password,
     resolvedLabel: agentLabel,
     chiselVersion: null,
-    serviceConfig: null,
     domain: null,
     tunnels: [],
     panelServerPubkeySha256: null,
     panelServerCertSha256Hex: null,
     panelServerCertPinnedAt: null,
-    chiselServerCertSha256Hex: null,
+    program,
+    converge: null,
   };
 
   const tasks = new Listr(
@@ -944,135 +818,7 @@ async function runP12Setup(options = {}) {
         },
         rendererOptions: { persistentOutput: true },
       },
-      {
-        title: 'Installing Chisel',
-        task: async (_ctx, task) => {
-          const result = await installChisel();
-          ctx.chiselVersion = result.version;
-          if (result.skipped) {
-            task.output = `Already installed (${result.version})`;
-          } else {
-            task.output = `Installed ${result.version}`;
-          }
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Fetching tunnel configuration',
-        task: async (_ctx, task) => {
-          const authConfig = {
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            p12Password: ctx.p12Password,
-            panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-          };
-
-          const agentConfig = await fetchAgentConfig(authConfig);
-          ctx.domain = agentConfig.domain;
-
-          // TOFU-pin the chisel server cert at tunnel.<domain>:443.
-          const chiselServerUrl = `https://tunnel.${ctx.domain}:443`;
-          try {
-            const chiselDigests = await fetchPanelServerCertDigests(chiselServerUrl);
-            ctx.chiselServerCertSha256Hex = chiselDigests.certSha256Hex;
-          } catch (err) {
-            ctx.chiselServerCertSha256Hex = null;
-            task.output = `Warning: could not pin chisel server cert (${err.message})`;
-          }
-
-          // Fetch and persist this agent's chisel tunnel-server credential.
-          const credential = await fetchChiselCredential(authConfig);
-          await saveChiselCredential(ctx.resolvedLabel, credential);
-          let chiselArgs = injectChiselAuth(agentConfig.chiselArgs, credential);
-          if (ctx.chiselServerCertSha256Hex) {
-            chiselArgs = injectChiselFingerprint(chiselArgs, ctx.chiselServerCertSha256Hex);
-          }
-
-          ctx.serviceConfig = generateServiceConfig(chiselArgs, ctx.resolvedLabel);
-
-          const tunnelData = await fetchTunnels(authConfig);
-          ctx.tunnels = tunnelData.tunnels || [];
-          task.output = `${ctx.tunnels.length} tunnel(s) configured`;
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Writing service config',
-        task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig, ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Unloading previous agent',
-        skip: async () => {
-          const loaded = await isAgentLoaded(ctx.resolvedLabel);
-          return !loaded && 'No previous agent loaded';
-        },
-        task: async () => {
-          await unloadAgent(ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Loading agent',
-        skip: () =>
-          ctx.tunnels.length === 0 &&
-          'No tunnels configured — run lamaste-agent update after creating tunnels',
-        task: async () => {
-          await loadAgent(ctx.resolvedLabel);
-        },
-      },
-      {
-        title: 'Verifying agent is running',
-        skip: () => ctx.tunnels.length === 0 && 'No tunnels configured',
-        task: async (_ctx, task) => {
-          await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid(ctx.resolvedLabel);
-          if (pid) {
-            task.output = `Agent running (PID ${pid})`;
-          } else {
-            const loaded = await isAgentLoaded(ctx.resolvedLabel);
-            if (loaded) {
-              task.output = 'Agent loaded (process starting...)';
-            } else {
-              throw new Error('Agent failed to load. Check logs with: lamaste-agent logs');
-            }
-          }
-        },
-        rendererOptions: { persistentOutput: true },
-      },
-      {
-        title: 'Saving configuration',
-        task: async () => {
-          const configData = {
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            p12Password: ctx.p12Password,
-            domain: ctx.domain,
-            chiselVersion: ctx.chiselVersion,
-            setupAt: new Date().toISOString(),
-            panelServerPubkeySha256: ctx.panelServerPubkeySha256,
-            panelServerCertSha256Hex: ctx.panelServerCertSha256Hex,
-            panelServerCertPinnedAt: ctx.panelServerCertPinnedAt,
-            chiselServerCertSha256Hex: ctx.chiselServerCertSha256Hex || undefined,
-          };
-          await saveAgentConfig(ctx.resolvedLabel, configData);
-
-          await upsertAgent({
-            label: ctx.resolvedLabel,
-            panelUrl: ctx.panelUrl,
-            authMethod: 'p12',
-            p12Path: ctx.p12Path,
-            keychainIdentity: null,
-            agentLabel: null,
-            domain: ctx.domain,
-            chiselVersion: ctx.chiselVersion,
-            setupAt: configData.setupAt,
-            updatedAt: null,
-          });
-        },
-      },
+      ...serviceSetupTasks(ctx),
     ],
     {
       renderer: 'default',
@@ -1083,14 +829,14 @@ async function runP12Setup(options = {}) {
 
   await tasks.run();
 
-  printSetupSummary(ctx);
+  await printSetupSummary(ctx);
 }
 
 /**
  * Print a formatted summary after successful setup.
  * @param {object} ctx
  */
-function printSetupSummary(ctx) {
+async function printSetupSummary(ctx) {
   const b = chalk.bold;
   const c = chalk.cyan;
   const d = chalk.dim;
@@ -1128,7 +874,7 @@ function printSetupSummary(ctx) {
       c('║'),
   );
   console.log(
-    c('  ║') + `  ${b('Tunnels:')} ${ctx.tunnels.length} configured` + ' '.repeat(33) + c('║'),
+    c('  ║') + `  ${b('Tunnels:')} ${ctx.tunnels.length} carried` + ' '.repeat(36) + c('║'),
   );
   console.log(c('  ║') + ' '.repeat(58) + c('║'));
 
@@ -1163,8 +909,8 @@ function printSetupSummary(ctx) {
   );
   console.log(
     c('  ║') +
-      `    ${d('lamaste-agent update')}     ${d('— refresh tunnel config')}` +
-      ' '.repeat(7) +
+      `    ${d('lamaste-agent update')}     ${d('— apply changes now')}` +
+      ' '.repeat(11) +
       c('║'),
   );
   console.log(
@@ -1183,14 +929,29 @@ function printSetupSummary(ctx) {
     if (ctx.panelServerCertSha256Hex) {
       console.log(`    ${d('cert sha256:')} ${c(ctx.panelServerCertSha256Hex)}`);
     }
-    if (ctx.chiselServerCertSha256Hex) {
-      console.log(`    ${d('chisel sha256:')} ${c(ctx.chiselServerCertSha256Hex)}`);
-    } else {
-      console.log(
-        `    ${chalk.yellow('chisel cert was not pinned — falling back to --tls-skip-verify')}`,
-      );
-    }
     console.log(d('  Future panel calls will reject any other server key.'));
+    console.log('');
+  }
+
+  if (ctx.tunnels.length === 0) {
+    console.log(d('  No tunnel is assigned to this agent yet. Once an administrator creates one'));
+    console.log(d('  for it, the sync timer starts carrying it within 30 seconds.'));
+    console.log('');
+  }
+  for (const warning of ctx.converge?.warnings ?? []) {
+    console.log(chalk.yellow(`  ${warning}`));
+  }
+
+  const linger = await userLingerStatus();
+  if (linger === 'disabled' || linger === 'unknown') {
+    console.log(
+      chalk.yellow.bold('  The tunnel will not come back after a reboot until you log in.'),
+    );
+    console.log(
+      d('  The tunnel client and its sync timer are systemd user units; without lingering they'),
+    );
+    console.log(d('  only run while this user has a session. On a server or VM, enable it once:'));
+    console.log(`    ${c(enableLingerCommand())}`);
     console.log('');
   }
 }

@@ -16,7 +16,7 @@ import { getConfig } from '../../lib/config.js';
 import { readSites, writeSites, readTunnels } from '../../lib/state.js';
 import { writeStaticSiteVhost, removeStaticSiteVhost } from '../../lib/nginx.js';
 import { updateAccessControl } from '../../lib/authelia.js';
-import { issueTunnelCert, getCertPath } from '../../lib/certbot.js';
+import { issueTunnelCert, getCertPath, issueSiteCert } from '../../lib/certbot.js';
 import {
   createSiteDirectory,
   removeSiteDirectory,
@@ -30,6 +30,11 @@ import {
 } from '../../lib/files.js';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
+
+const AliasSchema = z
+  .string()
+  .max(253, 'Alias must be at most 253 characters')
+  .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/, 'Invalid alias hostname');
 
 const CreateSiteSchema = z.object({
   name: z
@@ -46,6 +51,7 @@ const CreateSiteSchema = z.object({
     .max(253, 'Domain must be at most 253 characters')
     .regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/, 'Invalid domain format')
     .optional(),
+  aliases: z.array(AliasSchema).max(10, 'At most 10 aliases').optional(),
   spaMode: z.boolean().optional().default(false),
   autheliaProtected: z.boolean().optional().default(false),
 });
@@ -54,6 +60,7 @@ const UpdateSiteSchema = z.object({
   spaMode: z.boolean().optional(),
   autheliaProtected: z.boolean().optional(),
   allowedUsers: z.array(z.string().min(1)).optional(),
+  aliases: z.array(AliasSchema).max(10, 'At most 10 aliases').optional(),
 });
 
 const DeleteFileSchema = z.object({
@@ -82,7 +89,7 @@ function buildNginxDeps() {
 }
 
 function buildCertbotDeps() {
-  return { issueTunnelCert, getCertPath };
+  return { issueTunnelCert, getCertPath, issueSiteCert };
 }
 
 function buildFilesDeps() {
@@ -114,6 +121,9 @@ function siteErrorStatus(code) {
     case 'FQDN_TUNNEL_COLLISION':
     case 'NOT_CUSTOM':
     case 'DOMAIN_NOT_CONFIGURED':
+    case 'INVALID_ALIAS':
+    case 'ALIAS_IN_USE':
+    case 'DNS_MISMATCH':
       return 400;
     case 'NOT_FOUND':
       return 404;
@@ -208,6 +218,7 @@ export default async function sitesRoutes(fastify, _opts) {
           name: body.name,
           type: body.type,
           customDomain: body.customDomain,
+          aliases: body.aliases,
           spaMode: body.spaMode,
           autheliaProtected: body.autheliaProtected,
           domain: config.domain,
@@ -275,7 +286,7 @@ export default async function sitesRoutes(fastify, _opts) {
     },
   );
 
-  // PATCH /api/sites/:id — update site settings (spaMode, autheliaProtected, allowedUsers)
+  // PATCH /api/sites/:id — update site settings (spaMode, autheliaProtected, allowedUsers, aliases)
   fastify.patch(
     '/sites/:id',
     {
@@ -292,10 +303,14 @@ export default async function sitesRoutes(fastify, _opts) {
           spaMode: body.spaMode,
           autheliaProtected: body.autheliaProtected,
           allowedUsers: body.allowedUsers,
+          aliases: body.aliases,
           domain: config.domain,
+          email: config.email,
+          serverIp: config.ip,
           nginx: nginxDeps,
           certbot: certbotDeps,
           siteState: siteStateDeps,
+          tunnelState: tunnelReadDeps,
           authelia: autheliaDeps,
           logger: request.log,
         });

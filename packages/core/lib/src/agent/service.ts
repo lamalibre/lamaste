@@ -41,6 +41,22 @@ export async function isAgentLoaded(label: string): Promise<boolean> {
 }
 
 /**
+ * Whether the agent service is set to run — loaded (launchd) or enabled
+ * (systemd). Unlike {@link isAgentLoaded} this is also true while a systemd
+ * unit sits in `activating (auto-restart)` between crashes, which is exactly
+ * when a stop must still happen.
+ */
+export async function isAgentEnabled(label: string): Promise<boolean> {
+  if (isDarwin()) return isAgentLoaded(label);
+  try {
+    const { stdout } = await runUserSystemctl(['is-enabled', systemdUnitName(label)]);
+    return String(stdout).trim() === 'enabled';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get the PID of the running agent, or null if not running.
  */
 export async function getAgentPid(label: string): Promise<number | null> {

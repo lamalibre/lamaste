@@ -39,7 +39,8 @@ ${b('USAGE')}
 ${b('COMMANDS')}
 
   ${c('setup')}           Interactive setup: install Chisel, fetch tunnel config, start agent
-  ${c('update')}          Re-fetch config from panel after tunnel changes
+  ${c('update')}          Re-fetch config from the panel now and restart the tunnel client
+  ${c('sync')}            Converge the tunnel client with the panel (run every 30s by a timer)
   ${c('uninstall')}       Stop agent and remove all files
   ${c('status')}          Show agent health, tunnel list, connection status
   ${c('logs')}            Stream Chisel log output (tail -f)
@@ -58,8 +59,11 @@ ${b('GLOBAL FLAGS')}
 
 ${b('EXAMPLES')}
 
+  ${d('# Install (global — the sync timer runs the installed program)')}
+  ${c('npm install -g @lamalibre/lamaste-agent')}
+
   ${d('# First-time setup (interactive)')}
-  ${c('npx @lamalibre/lamaste-agent setup')}
+  ${c('lamaste-agent setup')}
 
   ${d('# Setup with a specific label')}
   ${c('lamaste-agent setup --label prod-server --panel-url https://1.2.3.4:9292')}
@@ -73,7 +77,7 @@ ${b('EXAMPLES')}
   ${d('# Switch default agent')}
   ${c('lamaste-agent switch my-server')}
 
-  ${d('# After adding a tunnel on the panel')}
+  ${d('# Apply a tunnel change now instead of within 30 seconds')}
   ${c('lamaste-agent update')}
 
   ${d('# Check status of a specific agent')}
@@ -88,6 +92,7 @@ ${b('EXAMPLES')}
 ${b('PREREQUISITES')}
 
   ${d('•')} macOS (arm64 or x64) or Ubuntu Linux (arm64 or x64)
+  ${d('•')} Installed globally: ${c('npm install -g @lamalibre/lamaste-agent')}
   ${d('•')} Agent certificate (.p12) or enrollment token from your Lamaste panel
     (Panel → Certificates → Agent Certificates → Generate / Enroll)
   ${d('•')} Panel URL (e.g. https://1.2.3.4:9292)
@@ -118,6 +123,13 @@ export async function main() {
       const resolved = await resolveLabel(label);
       const { runUpdate } = await import('./commands/update.js');
       await runUpdate({ label: resolved });
+      break;
+    }
+    case 'sync': {
+      const { resolveLabel } = await import('@lamalibre/lamaste/agent');
+      const resolved = await resolveLabel(label);
+      const { runSync } = await import('./commands/sync.js');
+      await runSync({ label: resolved, quiet: args.includes('--quiet') });
       break;
     }
     case 'uninstall': {

@@ -62,15 +62,23 @@ export async function panelRequest(method, path, body = null) {
       curlArgs.push('-d', JSON.stringify(body));
     }
 
-    curlArgs.push(`${PANEL_URL}${path}`);
+    // Append the HTTP status on its own line so an error response is not
+    // mistaken for a result — the panel answers errors with a JSON body.
+    curlArgs.push('-w', '\n%{http_code}', `${PANEL_URL}${path}`);
 
     const { stdout } = await execa('curl', curlArgs, { timeout: 30000 });
 
-    if (!stdout.trim()) {
-      return {};
+    const split = stdout.lastIndexOf('\n');
+    const payload = stdout.slice(0, split).trim();
+    const status = Number(stdout.slice(split + 1).trim());
+    const parsed = payload ? JSON.parse(payload) : {};
+
+    if (!Number.isInteger(status) || status >= 400) {
+      const reason = [parsed.error, parsed.details].filter(Boolean).join(': ');
+      throw new Error(`${method} ${path} failed (HTTP ${status})${reason ? `: ${reason}` : ''}`);
     }
 
-    return JSON.parse(stdout);
+    return parsed;
   } finally {
     await unlink(tmpConfigPath).catch(() => {});
   }

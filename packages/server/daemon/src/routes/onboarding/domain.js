@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LETSENCRYPT_EMAIL_REGEX } from '@lamalibre/lamaste';
 import { getConfig, updateConfig } from '../../lib/config.js';
 
 const DomainSchema = z.object({
@@ -7,7 +8,13 @@ const DomainSchema = z.object({
     .min(1)
     .regex(/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/)
     .describe('Fully qualified domain name'),
-  email: z.string().email().describe("Email for Let's Encrypt registration"),
+  email: z
+    .string()
+    .regex(
+      LETSENCRYPT_EMAIL_REGEX,
+      'Enter an email address that starts with a letter or digit, e.g. admin@example.com',
+    )
+    .describe("Email for Let's Encrypt registration"),
 });
 
 export default async function domainRoute(fastify, _opts) {

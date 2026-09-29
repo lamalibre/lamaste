@@ -116,9 +116,13 @@ async function certRenew({ json }) {
   else process.stderr.write('  Forcing certificate renewal...');
 
   try {
-    await execa('sudo', ['certbot', 'renew', '--force-renewal', '--non-interactive'], {
-      timeout: 120000,
-    });
+    await execa(
+      'sudo',
+      ['certbot', 'renew', '--force-renewal', '--no-random-sleep-on-renew', '--non-interactive'],
+      {
+        timeout: 120000,
+      },
+    );
 
     // Reload nginx to pick up new certs
     await execa('sudo', ['nginx', '-t']);

@@ -161,6 +161,75 @@ export function derivePluginRoute(pluginNameOrPackage: string): string {
 }
 
 /**
+ * Agent label format — a DNS label: lowercase alphanumerics and hyphens,
+ * 1–63 characters, no leading or trailing hyphen. Labels become the
+ * `agent-<label>` chisel user and the `agent-<label>` panel subdomain, so the
+ * DNS-label shape is load-bearing, not cosmetic.
+ */
+export const AGENT_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Loopback ports on the relay that belong to Lamaste's own services and can
+ * never be a tunnel port: the panel server (3100), the chisel server (9090),
+ * Authelia (9091), the IP-based panel listener (9292) and Gatekeeper (9294).
+ *
+ * A tunnel's vhost proxies to `127.0.0.1:<port>` on the relay. Were one of
+ * these ports allowed, a tunnel hostname would publish that internal service
+ * on the internet — the panel API behind it trusts nginx-supplied client
+ * certificate headers, so this is an administrator takeover, not a leak.
+ * Enforced in the tunnel workflow, in the request schemas, and again when the
+ * chisel grants are rendered.
+ */
+export const RESERVED_TUNNEL_PORTS: readonly number[] = Object.freeze([
+  3100, 9090, 9091, 9292, 9294,
+]);
+
+/** True when `port` may carry a tunnel (1024–65535 and not reserved). */
+export function isTunnelPortAllowed(port: number): boolean {
+  return (
+    Number.isInteger(port) && port >= 1024 && port <= 65535 && !RESERVED_TUNNEL_PORTS.includes(port)
+  );
+}
+
+/**
+ * The Let's Encrypt registration email the relay accepts — the exact rule the
+ * root-owned `lamaste-certbot` wrapper enforces before calling certbot, so the
+ * panel rejects at onboarding what certbot issuance would later refuse. The
+ * local part starts with a letter or digit (never `-`, which certbot would
+ * parse as a flag); the TLD may be punycode.
+ */
+export const LETSENCRYPT_EMAIL_REGEX =
+  /^(?=.{3,254}$)[A-Za-z0-9][A-Za-z0-9._%+'-]{0,63}@([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+([A-Za-z]{2,63}|xn--[A-Za-z0-9-]{1,59})$/;
+
+/**
+ * The Chisel release every Lamaste server and agent runs, pinned by version
+ * and by the SHA-256 of each release asset (the `.gz` files published on
+ * GitHub). Downloads are verified against these digests before anything is
+ * unpacked, and an installed binary reporting another version is replaced.
+ *
+ * 1.12.0 is the first release whose `--authfile` reload survives atomic
+ * renames and re-checks a user's grants on every new tunnel, which is what
+ * lets the relay grant a new tunnel port without restarting chisel.
+ */
+export const CHISEL_RELEASE = Object.freeze({
+  version: '1.12.0',
+  sha256: Object.freeze({
+    linux_amd64: 'f3f180f1d93aa72cce4e6386f98cc06569a0146fbd65eb4423cf83e6434bcfe6',
+    linux_arm64: '2ec6152cd2c74fe0146d4d79e4e7aa174521368c56e433d55e023a92ea404ec3',
+    darwin_amd64: '4aeae36c867f11c8e8c3f2b913a0e063ea3c6d29e1c14a52ed2e6eef8cfc4395',
+    darwin_arm64: '707a4b932eea214765146504a0df246cefc415b4297af65a80dd67cf69ba85a9',
+  }),
+});
+
+export type ChiselArch = keyof typeof CHISEL_RELEASE.sha256;
+
+/** Download URL of the pinned Chisel release asset for `arch`. */
+export function chiselAssetUrl(arch: ChiselArch): string {
+  const v = CHISEL_RELEASE.version;
+  return `https://github.com/jpillora/chisel/releases/download/v${v}/chisel_${v}_${arch}.gz`;
+}
+
+/**
  * The mandatory capability every regular agent receives.
  */
 export const DEFAULT_AGENT_CAPABILITY: BaseCapability = 'tunnels:read';

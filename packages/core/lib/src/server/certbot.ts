@@ -4,7 +4,19 @@
  * Pure logic layer: accepts an `exec` function so the caller controls how the
  * certbot/openssl processes are spawned. Daemon passes execa, tests can pass
  * a mock. No Fastify, no global state.
+ *
+ * Privilege boundary: certbot and the certificate reads run as root through
+ * two root-owned wrapper scripts installed by the server provisioner,
+ * {@link CERTBOT_WRAPPER} and {@link CERT_INFO_WRAPPER}. They validate every
+ * argument and invoke certbot/openssl with a fixed argument vector, so the
+ * daemon user's sudo rights cannot be stretched with extra flags (certbot
+ * hooks, `--nginx-ctl`, openssl `-engine`) into running code as root.
  */
+
+/** `lamaste-certbot issue|renew|renew-all|list` — see the provisioner's scripts/. */
+export const CERTBOT_WRAPPER = '/usr/local/sbin/lamaste-certbot';
+/** `lamaste-cert-info <lineage> enddate|checkend|san` — see the provisioner's scripts/. */
+export const CERT_INFO_WRAPPER = '/usr/local/sbin/lamaste-cert-info';
 
 // ---------------------------------------------------------------------------
 // Exec abstraction
@@ -93,17 +105,7 @@ export async function issueCert(
   exec: ExecFn,
 ): Promise<IssueCertResult> {
   try {
-    await exec('sudo', [
-      'certbot',
-      'certonly',
-      '--nginx',
-      '-d',
-      fqdn,
-      '--email',
-      email,
-      '--agree-tos',
-      '--non-interactive',
-    ]);
+    await exec('sudo', [CERTBOT_WRAPPER, 'issue', email, fqdn, fqdn]);
   } catch (err: unknown) {
     const stderr = errText(err);
 
@@ -192,7 +194,7 @@ export function issueAppCert(
 export async function listCerts(exec: ExecFn): Promise<CertInfo[]> {
   let stdout: string;
   try {
-    const result = await exec('sudo', ['certbot', 'certificates', '--non-interactive']);
+    const result = await exec('sudo', [CERTBOT_WRAPPER, 'list']);
     stdout = result.stdout;
   } catch (err: unknown) {
     // certbot certificates can return non-zero if no certs exist
@@ -265,9 +267,8 @@ export async function renewCert(
   exec: ExecFn,
   options: RenewCertOptions = {},
 ): Promise<{ renewed: true; domain: string }> {
-  const args = ['certbot', 'renew', '--cert-name', domain];
-  if (options.forceRenewal) args.push('--force-renewal');
-  args.push('--non-interactive');
+  const args = [CERTBOT_WRAPPER, 'renew', domain];
+  if (options.forceRenewal) args.push('force');
 
   try {
     await exec('sudo', args);
@@ -282,7 +283,7 @@ export async function renewCert(
  */
 export async function renewAll(exec: ExecFn): Promise<{ renewed: true; output: string }> {
   try {
-    const { stdout } = await exec('sudo', ['certbot', 'renew', '--non-interactive']);
+    const { stdout } = await exec('sudo', [CERTBOT_WRAPPER, 'renew-all']);
     return { renewed: true, output: stdout };
   } catch (err: unknown) {
     throw new Error(`Failed to renew certificates: ${errText(err)}`);
@@ -396,6 +397,95 @@ export async function issueTunnelCert(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Site certificates (a primary name plus aliases, one lineage)
+// ---------------------------------------------------------------------------
+
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+function assertHostname(name: string): void {
+  if (typeof name !== 'string' || !HOSTNAME_RE.test(name)) {
+    throw new Error(`Invalid hostname: ${String(name)}`);
+  }
+}
+
+/**
+ * The DNS names in the certificate lineage `certName`, or `null` when there
+ * is no readable certificate valid for at least another day.
+ */
+export async function certNames(certName: string, exec: ExecFn): Promise<string[] | null> {
+  assertHostname(certName);
+  const validity = await isCertValid(certName, exec);
+  if (!validity.valid) return null;
+  try {
+    const { stdout } = await exec('sudo', [CERT_INFO_WRAPPER, certName, 'san']);
+    return [...stdout.matchAll(/DNS:([^,\s]+)/g)].map((m) => (m[1] ?? '').toLowerCase());
+  } catch {
+    return null;
+  }
+}
+
+export interface IssueSiteCertOptions {
+  /**
+   * `covering` (default): skip issuance when the current certificate already
+   * covers every name, even if it covers more. `exact`: re-issue unless the
+   * certificate holds exactly these names — used after names were removed,
+   * so renewal never has to validate a hostname the site no longer serves.
+   */
+  readonly match?: 'covering' | 'exact';
+}
+
+/**
+ * Ensure one certificate lineage, named after `fqdn`, covers `fqdn` and every
+ * alias. The lineage name is fixed with `--cert-name` so the path never
+ * drifts to `<fqdn>-0001`; a re-issue replaces the lineage's name set with
+ * exactly the given names. Every name must already resolve to this server
+ * (HTTP-01 challenge).
+ */
+export async function issueSiteCert(
+  fqdn: string,
+  aliases: readonly string[],
+  email: string,
+  exec: ExecFn,
+  options: IssueSiteCertOptions = {},
+): Promise<TunnelCertResult> {
+  assertHostname(fqdn);
+  aliases.forEach(assertHostname);
+  const names = [fqdn, ...aliases.filter((a) => a !== fqdn)];
+  const certPath = `/etc/letsencrypt/live/${fqdn}/`;
+
+  const current = await certNames(fqdn, exec);
+  if (current && names.every((n) => current.includes(n))) {
+    const exact = current.length === names.length;
+    if (options.match !== 'exact' || exact) {
+      return { skipped: true, reason: 'exists', certPath };
+    }
+  }
+
+  try {
+    await exec('sudo', [CERTBOT_WRAPPER, 'issue', email, fqdn, ...names]);
+  } catch (err: unknown) {
+    const stderr = errText(err);
+    if (stderr.includes('too many certificates') || stderr.includes('rate limit')) {
+      throw new Error(`Let's Encrypt rate limit reached for ${fqdn}. Details: ${stderr}`);
+    }
+    if (
+      stderr.includes('DNS problem') ||
+      stderr.includes('NXDOMAIN') ||
+      stderr.includes('no valid A records')
+    ) {
+      throw new Error(
+        `Not every name resolves to this server (${names.join(', ')}); the HTTP-01 ` +
+          `challenge needs each one. Details: ${stderr}`,
+      );
+    }
+    throw new Error(`Failed to issue certificate for ${names.join(', ')}: ${stderr}`);
+  }
+
+  return { skipped: false, certPath };
+}
+
 /**
  * Determine the correct cert path for a given FQDN.
  * Returns the wildcard cert path if available, otherwise the individual cert path.
@@ -412,35 +502,45 @@ export async function getCertPath(fqdn: string, domain: string, exec: ExecFn): P
  */
 export async function isCertValid(fqdn: string, exec: ExecFn): Promise<CertValidity> {
   const certPath = `/etc/letsencrypt/live/${fqdn}/fullchain.pem`;
+  if (!HOSTNAME_RE.test(fqdn)) {
+    return { valid: false, certPath: null, expiryDate: null };
+  }
 
   try {
-    await exec('sudo', ['openssl', 'x509', '-checkend', '86400', '-noout', '-in', certPath]);
-
-    const { stdout } = await exec('sudo', [
-      'openssl',
-      'x509',
-      '-enddate',
-      '-noout',
-      '-in',
-      certPath,
-    ]);
-    const match = stdout.match(/notAfter=(.+)/);
-    const expiryDate = match && match[1] ? new Date(match[1]).toISOString() : null;
-
-    return { valid: true, certPath, expiryDate };
+    await exec('sudo', [CERT_INFO_WRAPPER, fqdn, 'checkend']);
   } catch (err: unknown) {
-    if (isExecError(err)) {
-      if (
-        err.stderr?.includes('No such file') ||
-        err.stderr?.includes('unable to load certificate')
-      ) {
-        return { valid: false, certPath: null, expiryDate: null };
-      }
-      if (err.exitCode === 1) {
-        return { valid: false, certPath, expiryDate: null };
-      }
+    // Exit 1: the certificate exists but expires within a day. Anything
+    // else (3: no certificate, 2: refused) means there is none to use.
+    if (isExecError(err) && err.exitCode === 1) {
+      return { valid: false, certPath, expiryDate: null };
     }
-
     return { valid: false, certPath: null, expiryDate: null };
+  }
+
+  const expiry = await readLetsEncryptExpiry(fqdn, exec);
+  return { valid: true, certPath, expiryDate: expiry?.expiresAt ?? null };
+}
+
+/**
+ * Expiry of the Let's Encrypt lineage `lineage`, or null when there is no
+ * readable certificate.
+ */
+export async function readLetsEncryptExpiry(
+  lineage: string,
+  exec: ExecFn,
+): Promise<{ expiresAt: string; daysUntilExpiry: number } | null> {
+  if (!HOSTNAME_RE.test(lineage)) return null;
+  try {
+    const { stdout } = await exec('sudo', [CERT_INFO_WRAPPER, lineage, 'enddate']);
+    const match = stdout.match(/notAfter=(.+)/);
+    if (!match || !match[1]) return null;
+    const expiry = new Date(match[1]);
+    if (isNaN(expiry.getTime())) return null;
+    return {
+      expiresAt: expiry.toISOString(),
+      daysUntilExpiry: Math.floor((expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+    };
+  } catch {
+    return null;
   }
 }

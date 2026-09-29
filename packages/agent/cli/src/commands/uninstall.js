@@ -17,6 +17,7 @@ import {
   unloadAgent,
   isPanelServiceLoaded,
   unloadPanelService,
+  removeSyncService,
 } from '@lamalibre/lamaste/agent';
 import { listAgents, removeAgent, loadRegistry } from '@lamalibre/lamaste/agent';
 import { removePanelServiceConfig } from '../lib/panel-service.js';
@@ -82,6 +83,13 @@ async function uninstallSingle(label) {
         task: async () => {
           await unloadPanelService(label);
           await removePanelServiceConfig(label);
+        },
+      },
+      {
+        // First: the timer would otherwise start the tunnel client again.
+        title: `Removing sync timer "${label}"`,
+        task: async () => {
+          await removeSyncService(label);
         },
       },
       {
@@ -171,6 +179,13 @@ async function uninstallAll() {
         task: async () => {
           await unloadPanelService(agent.label);
           await removePanelServiceConfig(agent.label);
+        },
+      })),
+      // Remove sync timers first — they would start tunnel clients again
+      ...agents.map((agent) => ({
+        title: `Removing sync timer "${agent.label}"`,
+        task: async () => {
+          await removeSyncService(agent.label);
         },
       })),
       // Unload all agents

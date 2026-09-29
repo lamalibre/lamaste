@@ -797,7 +797,7 @@ pub async fn admin_create_tunnel(data: serde_json::Value) -> Result<serde_json::
 }
 
 #[tauri::command]
-pub async fn admin_toggle_tunnel(id: String, data: serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn admin_update_tunnel(id: String, data: serde_json::Value) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || {
         let path = format!("/api/tunnels/{}", url_encode(&id));
         admin_patch(&path, &data.to_string())
@@ -818,19 +818,6 @@ pub async fn admin_delete_tunnel(id: String) -> Result<serde_json::Value, String
 pub async fn admin_get_tunnel_agent_config() -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(|| admin_get("/api/tunnels/agent-config"))
         .await.map_err(|e| format!("Task failed: {}", e))?
-}
-
-#[tauri::command]
-pub async fn admin_get_mac_plist(format: Option<String>) -> Result<serde_json::Value, String> {
-    tokio::task::spawn_blocking(move || {
-        let query = match format.as_deref() {
-            Some(f) => format!("?format={}", url_encode(f)),
-            None => String::new(),
-        };
-        let path = format!("/api/tunnels/mac-plist{}", query);
-        admin_get(&path)
-    })
-    .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ===========================================================================

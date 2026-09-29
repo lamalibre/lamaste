@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# lamaste-certbot — root-only wrapper for the Let's Encrypt operations the
+# panel performs.
+#
+# This script is invoked via sudo from the lamaste service user. It replaces
+# sudoers entries of the form
+#
+#   lamaste ALL=(root) NOPASSWD: /usr/bin/certbot certonly --nginx -d * --email * ...
+#   lamaste ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name * --non-interactive
+#
+# A sudoers `*` matches any characters, spaces included, so those rules let the
+# lamaste user append arbitrary certbot flags — `--deploy-hook <cmd>`,
+# `--nginx-ctl <binary>`, `--config-dir <dir>` — and run code as root. Here every
+# argument is validated and certbot is executed with a fixed argument vector.
+#
+# Usage:
+#   lamaste-certbot issue <email> <cert-name> <domain> [<domain>...]
+#       certbot certonly --nginx --cert-name <cert-name> -d <domain>... \
+#               --email <email> --agree-tos --non-interactive
+#   lamaste-certbot renew <cert-name> [force]     (never with certbot's random delay)
+#   lamaste-certbot renew-all
+#   lamaste-certbot list
+#
+# Every <domain> and <cert-name> must be a lowercase DNS hostname (no wildcard,
+# no path characters); at most 100 domains, as Let's Encrypt allows.
+
+set -euo pipefail
+
+CERTBOT=/usr/bin/certbot
+
+err() {
+  printf '%s: %s\n' "lamaste-certbot" "$1" >&2
+  exit 2
+}
+
+# A DNS hostname: dot-separated labels of [a-z0-9-], each 1-63 chars, not
+# starting or ending with a hyphen, at least two labels, 253 chars at most.
+hostname_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+# Same rule as LETSENCRYPT_EMAIL_REGEX in @lamalibre/lamaste (onboarding rejects
+# anything this refuses). The local part may not start with '-'.
+email_re="^[A-Za-z0-9][A-Za-z0-9._%+'-]{0,63}@([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+([A-Za-z]{2,63}|xn--[A-Za-z0-9-]{1,59})\$"
+
+check_hostname() {
+  local name="$1"
+  if (( ${#name} > 253 )) || ! [[ "$name" =~ $hostname_re ]]; then
+    err "invalid hostname: $name"
+  fi
+}
+
+[[ $# -ge 1 ]] || err "usage: lamaste-certbot issue|renew|renew-all|list ..."
+cmd="$1"
+shift
+
+case "$cmd" in
+  issue)
+    [[ $# -ge 3 ]] || err "usage: lamaste-certbot issue <email> <cert-name> <domain>..."
+    email="$1"
+    cert_name="$2"
+    shift 2
+    if (( ${#email} > 254 )) || ! [[ "$email" =~ $email_re ]]; then
+      err "invalid email address"
+    fi
+    check_hostname "$cert_name"
+    (( $# <= 100 )) || err "too many domains ($#); at most 100"
+    domain_args=()
+    for domain in "$@"; do
+      check_hostname "$domain"
+      domain_args+=(-d "$domain")
+    done
+    exec "$CERTBOT" certonly --nginx --cert-name "$cert_name" "${domain_args[@]}" \
+      --email "$email" --agree-tos --non-interactive
+    ;;
+  renew)
+    [[ $# -ge 1 && $# -le 2 ]] || err "usage: lamaste-certbot renew <cert-name> [force]"
+    check_hostname "$1"
+    # A non-interactive renew otherwise sleeps up to ~8 minutes first (meant
+    # for certbot.timer); the panel runs these while an operator waits.
+    if [[ $# -eq 2 ]]; then
+      [[ "$2" == "force" ]] || err "the only renew option is 'force'"
+      exec "$CERTBOT" renew --cert-name "$1" --force-renewal --no-random-sleep-on-renew --non-interactive
+    fi
+    exec "$CERTBOT" renew --cert-name "$1" --no-random-sleep-on-renew --non-interactive
+    ;;
+  renew-all)
+    [[ $# -eq 0 ]] || err "renew-all takes no arguments"
+    exec "$CERTBOT" renew --no-random-sleep-on-renew --non-interactive
+    ;;
+  list)
+    [[ $# -eq 0 ]] || err "list takes no arguments"
+    exec "$CERTBOT" certificates --non-interactive
+    ;;
+  *)
+    err "unknown command: $cmd"
+    ;;
+esac

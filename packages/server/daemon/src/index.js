@@ -26,8 +26,8 @@ import {
 } from './routes/user-access.js';
 import userAccessSessionMiddleware from './middleware/user-access-session.js';
 import { getPluginCapabilities } from './lib/plugins.js';
-import { setPluginCapabilities, loadAgentRegistry } from './lib/mtls.js';
-import { migrateChiselCredentialsIfNeeded } from './lib/chisel-users.js';
+import { setPluginCapabilities } from './lib/mtls.js';
+import { startChiselReconciler } from './lib/chisel-reconcile.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -69,19 +69,12 @@ async function start() {
   // (e.g. legacy tickets.json shape dropped on upgrade) reach journalctl.
   setTicketModuleLogger(server.log);
 
-  // Migrate chisel credentials forward. If /etc/lamalibre/lamaste/chisel-users does not
-  // exist (fresh install OR upgrade from a version that ran chisel without auth),
-  // mint per-agent passwords for every active entry in the agent registry. The
-  // function logs a hard warning when it actually mints new passwords, since
-  // each existing agent must re-fetch via `lamaste-agent chisel refresh-credential`.
-  try {
-    await migrateChiselCredentialsIfNeeded(loadAgentRegistry, server.log);
-  } catch (err) {
-    server.log.error(
-      { err },
-      'Chisel credential migration failed at startup — agents may be unable to open tunnels until this is resolved',
-    );
-  }
+  // Bring chisel in line with persisted state: credentials for every active
+  // agent, tunnel ownership, the pinned chisel binary, its unit and the
+  // per-agent port grants in its authfile. Runs in the background, fails
+  // closed — chisel is stopped when this cannot be done — and retries until
+  // it can.
+  startChiselReconciler(server.log);
 
   // --- Plugins ---
   const ipOrigin = `https://${config.ip}:9292`;

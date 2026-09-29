@@ -18,6 +18,8 @@ import {
   PLUGIN_AGENT_CN_PREFIX as CORE_PLUGIN_AGENT_CN_PREFIX,
 } from '@lamalibre/lamaste';
 import { addToRevocationList } from './revocation.js';
+import { releaseAgentTunnels } from '@lamalibre/lamaste/server';
+import { tunnelNginxDeps, tunnelChiselDeps, tunnelStateDeps } from './tunnel-deps.js';
 import {
   addChiselCredential,
   removeChiselCredential,
@@ -775,6 +777,26 @@ export async function revokeAgentCert(label, logger) {
 
     // Cascade-revoked plugin-agents have no chisel credentials to clean up.
 
+    // 7. Detach the agent from its tunnels, so a later enrollment that reuses
+    // the label inherits nothing. Runs after the credential removal, whose
+    // chisel restart already ended the agent's sessions.
+    if (!label.startsWith(PLUGIN_AGENT_CN_PREFIX)) {
+      try {
+        await releaseAgentTunnels({
+          agentLabel: label,
+          nginx: tunnelNginxDeps,
+          chisel: tunnelChiselDeps,
+          state: tunnelStateDeps,
+          logger,
+        });
+      } catch (err) {
+        logger.error(
+          { err, label },
+          'Failed to release the tunnels of a revoked agent — assign or delete them by hand',
+        );
+      }
+    }
+
     return { ok: true, label };
   });
 }
@@ -791,7 +813,7 @@ export async function revokeAgentCert(label, logger) {
  *
  * @param {string} label
  * @param {import('pino').Logger} logger
- * @returns {Promise<{ ok: true, label: string, user: string, password: string, restartOk: boolean, restartError?: string }>}
+ * @returns {Promise<{ ok: true, label: string, user: string, password: string, createdAt: string, restartOk: boolean, restartError?: string }>}
  */
 export async function rotateAgentChiselCredential(label, logger) {
   const registry = await loadAgentRegistry();
@@ -812,6 +834,7 @@ export async function rotateAgentChiselCredential(label, logger) {
     label,
     user: result.user,
     password: result.password,
+    createdAt: result.createdAt,
     restartOk: result.restartOk,
     ...(result.restartOk ? {} : { restartError: result.restartError }),
   };

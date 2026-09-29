@@ -18,6 +18,12 @@ export {
   PLUGIN_CAPABILITY_REGEX,
   pluginCapabilityRegexFor,
   derivePluginRoute,
+  AGENT_LABEL_REGEX,
+  RESERVED_TUNNEL_PORTS,
+  isTunnelPortAllowed,
+  LETSENCRYPT_EMAIL_REGEX,
+  CHISEL_RELEASE,
+  chiselAssetUrl,
   DEFAULT_AGENT_CAPABILITY,
   PLUGIN_AGENT_CN_PREFIX,
   PLUGIN_MODES,
@@ -34,6 +40,7 @@ export type {
   CoreCapabilityNamespace,
   PluginMode,
   CuratedPlugin,
+  ChiselArch,
 } from './constants.js';
 
 // Types

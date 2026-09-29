@@ -221,11 +221,7 @@ export const webAdminClient = {
   // --- Tunnels ---
   getTunnels: () => apiFetch('/api/tunnels'),
   createTunnel: (data) => jsonPost('/api/tunnels', data),
-  toggleTunnel: (id, data) => jsonPatch(`/api/tunnels/${encodeURIComponent(id)}`, data),
+  updateTunnel: (id, data) => jsonPatch(`/api/tunnels/${encodeURIComponent(id)}`, data),
   deleteTunnel: (id) => jsonDelete(`/api/tunnels/${encodeURIComponent(id)}`),
   getTunnelAgentConfig: () => apiFetch('/api/tunnels/agent-config'),
-  getMacPlist: (format) => {
-    const params = format ? `?format=${encodeURIComponent(format)}` : '';
-    return apiFetch(`/api/tunnels/mac-plist${params}`);
-  },
 };

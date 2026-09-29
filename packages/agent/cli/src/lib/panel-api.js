@@ -296,29 +296,61 @@ export async function fetchAgentConfig(config) {
 }
 
 /**
+ * Validate a chisel credential payload from the panel.
+ * @param {unknown} parsed
+ * @returns {{ user: string, password: string, createdAt: string | null }}
+ */
+function parseChiselCredential(parsed) {
+  if (!parsed || typeof parsed.user !== 'string' || typeof parsed.password !== 'string') {
+    throw new Error('Panel returned malformed chisel credential payload');
+  }
+  return {
+    user: parsed.user,
+    password: parsed.password,
+    createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
+  };
+}
+
+/**
  * Fetch this agent's chisel tunnel-server credential from the panel.
  *
- * Returns `{ user, password }` — the agent supplies these as
- * `chisel client --auth <user>:<password>` when launching the tunnel
- * service. Identifies the agent strictly via the mTLS cert; the panel
- * does not accept a label query parameter.
+ * Returns `{ user, password, createdAt }`. The agent hands the credential to
+ * its chisel client through the environment, never in process arguments.
+ * Identifies the agent strictly via the mTLS cert; the panel does not accept
+ * a label query parameter.
  *
  * @param {object} config - Agent config (must use config-object form)
- * @returns {Promise<{ user: string, password: string }>}
+ * @returns {Promise<{ user: string, password: string, createdAt: string | null }>}
  */
 export async function fetchChiselCredential(config) {
   const panelUrl = resolvePanelUrl(config);
   const url = `${panelUrl}/api/agents/me/chisel-credential`;
   try {
     const { stdout } = await curlAuthenticated(config, [url]);
-    const parsed = JSON.parse(stdout);
-    if (!parsed || typeof parsed.user !== 'string' || typeof parsed.password !== 'string') {
-      throw new Error('Panel returned malformed chisel credential payload');
-    }
-    return { user: parsed.user, password: parsed.password };
+    return parseChiselCredential(JSON.parse(stdout));
   } catch (err) {
     throw new Error(
       `Failed to fetch chisel credential from panel. Details: ${err.stderr || err.message}`,
+    );
+  }
+}
+
+/**
+ * Ask the panel to replace this agent's chisel credential and return the new
+ * one. The panel allows it at most once every 10 minutes per agent.
+ *
+ * @param {object} config - Agent config
+ * @returns {Promise<{ user: string, password: string, createdAt: string | null }>}
+ */
+export async function rotateChiselCredential(config) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/chisel-credential/rotate`;
+  try {
+    const { stdout } = await curlAuthenticated(config, ['-X', 'POST', url]);
+    return parseChiselCredential(JSON.parse(stdout));
+  } catch (err) {
+    throw new Error(
+      `Failed to rotate the chisel credential on the panel. Details: ${err.stderr || err.message}`,
     );
   }
 }

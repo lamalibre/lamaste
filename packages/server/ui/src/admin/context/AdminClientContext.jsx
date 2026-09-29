@@ -129,11 +129,10 @@ const AdminClientContext = createContext(null);
  *
  * Tunnels:
  * @property {() => Promise<{tunnels: Array}>} getTunnels
- * @property {(data: {subdomain, port, description?, type?, pluginName?, agentLabel?, accessMode?}) => Promise<{ok, tunnel}>} createTunnel
- * @property {(id: string, data: {enabled}) => Promise<{ok, tunnel}>} toggleTunnel
+ * @property {(data: {subdomain, port, description?, type?, pluginName?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} createTunnel
+ * @property {(id: string, data: {enabled?, agentLabel?, accessMode?, maxBodySizeMb?}) => Promise<{ok, tunnel}>} updateTunnel
  * @property {(id: string) => Promise<{ok}>} deleteTunnel
  * @property {() => Promise<Object>} getTunnelAgentConfig
- * @property {(format?: string) => Promise<any>} getMacPlist
  *
  * Gatekeeper Groups:
  * @property {() => Promise<{groups: Array}>} getGatekeeperGroups

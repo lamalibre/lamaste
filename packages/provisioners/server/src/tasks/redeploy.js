@@ -4,7 +4,14 @@ import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
+import {
+  generateServiceUnit,
+  generateSudoersContent,
+  SUDOERS_WRAPPERS,
+  CHISEL_GROUP,
+} from '../lib/service-config.js';
+import { ensureChiselGroup } from '../lib/chisel-group.js';
+import { ensureHttpRedirect } from '../lib/http-redirect.js';
 
 /**
  * Read the installed serverd's package.json version, or null if not found.
@@ -263,16 +270,18 @@ export function redeployTasks(ctx, task) {
         const serviceUnit = generateServiceUnit({ installDir, configDir });
         await writeFile('/etc/systemd/system/lamalibre-lamaste-serverd.service', serviceUnit);
 
+        // The panel writes the chisel authfile for this group and its unit
+        // names it in SupplementaryGroups=; both must exist before it starts.
+        subtask.output = `Ensuring ${CHISEL_GROUP} group...`;
+        await ensureChiselGroup();
+
         // Install / refresh sudoers wrapper scripts before writing the
         // sudoers file. The sudoers entries reference these absolute paths,
-        // and the panel calls them at runtime to sign CSRs and rename PKI
-        // files (replacing two former wildcard sudoers entries that were
-        // exploitable — see service-config.js comments).
+        // and the panel calls them at runtime (CSR signing, PKI renames,
+        // certbot, certificate reads) in place of former wildcard sudoers
+        // entries that were exploitable — see service-config.js comments.
         const scriptsSrc = join(dirname(thisFile), '..', '..', 'scripts');
-        const wrappers = [
-          { name: 'lamaste-sign-csr', dest: '/usr/local/sbin/lamaste-sign-csr' },
-          { name: 'lamaste-pki-rename', dest: '/usr/local/sbin/lamaste-pki-rename' },
-        ];
+        const wrappers = SUDOERS_WRAPPERS;
         for (const w of wrappers) {
           const src = join(scriptsSrc, w.name);
           if (!existsSync(src)) {
@@ -301,6 +310,22 @@ export function redeployTasks(ctx, task) {
         }
 
         subtask.output = 'Systemd unit and sudoers updated';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Redirecting plain HTTP to HTTPS',
+      task: async (_ctx, subtask) => {
+        // Not fatal: another site on this machine may already own port 80's
+        // default server. The relay works without the redirect.
+        try {
+          const { changed } = await ensureHttpRedirect();
+          subtask.output = changed
+            ? 'Port 80 now redirects every host to https://'
+            : 'Port 80 redirect already in place';
+        } catch (err) {
+          subtask.skip(`Skipped — ${err.message}`);
+        }
       },
       rendererOptions: { persistentOutput: true },
     },

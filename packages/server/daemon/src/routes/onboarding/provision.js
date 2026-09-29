@@ -9,6 +9,7 @@ import * as nginx from '../../lib/nginx.js';
 import { writeInvitePage } from '../../lib/invite-page.js';
 import { migrateChiselCredentialsIfNeeded } from '../../lib/chisel-users.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
+import { setChiselRunningPinnedRelease } from '../../lib/chisel-runtime.js';
 
 // Module-level state for provisioning
 const emitter = new EventEmitter();
@@ -95,14 +96,15 @@ async function runProvisioning(log) {
     await chisel.ensureChiselKey();
     await chisel.writeChiselService();
     // Initialise the chisel-users authfile before starting the service.
-    // On a fresh install the registry is empty, so this writes an empty file
-    // (which chisel accepts — auth simply rejects every connection until
-    // an agent is enrolled). On re-provisioning over an existing install
-    // it preserves any prior credentials.
+    // On a fresh install the registry is empty, so it holds only the
+    // no-grants sentinel user (chisel authenticates, and rejects every
+    // connection until an agent is enrolled). On re-provisioning over an
+    // existing install it preserves any prior credentials.
     emitProgress('install-chisel', 'running', 'Initialising chisel-users authfile...');
     await migrateChiselCredentialsIfNeeded(loadAgentRegistry, log);
     emitProgress('install-chisel', 'running', 'Starting Chisel service...');
     await chisel.startChisel();
+    setChiselRunningPinnedRelease(true);
     emitProgress('install-chisel', 'done', 'Chisel installed and running');
 
     // Step 2: Install Authelia

@@ -134,6 +134,7 @@ export interface AdminClient {
     name: string;
     type: string;
     customDomain?: string;
+    aliases?: string[];
     spaMode?: boolean;
     autheliaProtected?: boolean;
   }): Promise<{ ok: boolean; site: unknown }>;
@@ -144,6 +145,7 @@ export interface AdminClient {
       spaMode?: boolean;
       autheliaProtected?: boolean;
       allowedUsers?: string[];
+      aliases?: string[];
     },
   ): Promise<{ ok: boolean; site: unknown }>;
   getSiteFiles(id: string, path?: string): Promise<{ files: unknown[]; path: string }>;
@@ -299,11 +301,15 @@ export interface AdminClient {
     pluginName?: string;
     agentLabel?: string;
     accessMode?: string;
+    maxBodySizeMb?: number;
   }): Promise<{ ok: boolean; tunnel: unknown }>;
-  toggleTunnel(id: string, data: { enabled: boolean }): Promise<{ ok: boolean; tunnel: unknown }>;
+  /** Enable/disable, move to another carrying agent, change access mode or body limit. */
+  updateTunnel(
+    id: string,
+    data: { enabled?: boolean; agentLabel?: string; accessMode?: string; maxBodySizeMb?: number },
+  ): Promise<{ ok: boolean; tunnel: unknown }>;
   deleteTunnel(id: string): Promise<{ ok: boolean }>;
   getTunnelAgentConfig(): Promise<Record<string, unknown>>;
-  getMacPlist(format?: string): Promise<unknown>;
 
   // Gatekeeper Groups
   getGatekeeperGroups(): Promise<{ groups: unknown[] }>;

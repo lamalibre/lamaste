@@ -139,10 +139,9 @@ export const desktopAdminClient = {
   // --- Tunnels ---
   getTunnels: () => invoke('admin_get_tunnels'),
   createTunnel: (data) => invoke('admin_create_tunnel', { data }),
-  toggleTunnel: (id, data) => invoke('admin_toggle_tunnel', { id, data }),
+  updateTunnel: (id, data) => invoke('admin_update_tunnel', { id, data }),
   deleteTunnel: (id) => invoke('admin_delete_tunnel', { id }),
   getTunnelAgentConfig: () => invoke('admin_get_tunnel_agent_config'),
-  getMacPlist: (format) => invoke('admin_get_mac_plist', { format }),
 
   // --- Agents ---
   getAgents: () => invoke('admin_get_agent_certs'),

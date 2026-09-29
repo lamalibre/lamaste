@@ -102,9 +102,28 @@ pub fn agent_error_log_file(label: &str) -> PathBuf {
     agent_data_dir(label).join("logs").join("chisel.error.log")
 }
 
-/// Per-agent launchd plist label. Project-prefixed via `config::project()`.
+/// Per-agent launchd plist label — `com.<org>.<project>.chisel-<label>`,
+/// the name `@lamalibre/lamaste/agent` (`plistLabel`) writes.
 pub fn plist_label_for(label: &str) -> String {
-    format!("com.{}.chisel-{}", config::project(), label)
+    crate::branding::product_bundle_id(&format!("chisel-{}", label))
+}
+
+/// Per-agent sync timer LaunchAgent label (`syncPlistLabel` in the agent library).
+#[cfg(target_os = "macos")]
+pub fn sync_plist_path_for(label: &str) -> PathBuf {
+    dirs::home_dir()
+        .expect("Could not determine home directory")
+        .join("Library/LaunchAgents")
+        .join(format!(
+            "{}.plist",
+            crate::branding::product_bundle_id(&format!("sync-{}", label))
+        ))
+}
+
+/// Per-agent sync timer unit base name (`syncSystemdTimerName` without suffix).
+#[cfg(target_os = "linux")]
+pub fn sync_unit_base_for(label: &str) -> String {
+    crate::branding::product_unit(&format!("sync-{}", label))
 }
 
 /// Per-agent launchd plist file path.
@@ -116,10 +135,11 @@ pub fn plist_path_for(label: &str) -> PathBuf {
         .join(format!("{}.plist", plist_label_for(label)))
 }
 
-/// Per-agent systemd unit name. Project-prefixed via `config::project()`.
+/// Per-agent systemd unit name — `<org>-<project>-chisel-<label>`, the name
+/// `@lamalibre/lamaste/agent` (`systemdUnitName`) writes.
 #[cfg(target_os = "linux")]
 pub fn systemd_unit_name(label: &str) -> String {
-    format!("{}-chisel-{}", config::project(), label)
+    crate::branding::product_unit(&format!("chisel-{}", label))
 }
 
 /// Validate an agent label.
@@ -528,6 +548,42 @@ pub async fn uninstall_agent(label: String) -> Result<serde_json::Value, String>
                 "detail": detail,
             }));
         };
+
+        // 0. Remove the sync timer first — it would start the tunnel service again.
+        #[cfg(target_os = "macos")]
+        {
+            let plist = sync_plist_path_for(&label);
+            if plist.exists() {
+                let _ = Command::new("launchctl")
+                    .args(["unload", &plist.to_string_lossy()])
+                    .output();
+                match std::fs::remove_file(&plist) {
+                    Ok(()) => add("Stop sync timer", "complete", "Sync timer unloaded and plist removed"),
+                    Err(e) => add("Stop sync timer", "warning", &format!("Failed to remove plist: {}", e)),
+                }
+            } else {
+                add("Stop sync timer", "skipped", "No sync timer found");
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let base = sync_unit_base_for(&label);
+            let timer = format!("{}.timer", base);
+            let _ = Command::new("systemctl")
+                .args(["--user", "disable", "--now", &timer])
+                .output();
+            // Also end a sync run already in progress, which could otherwise
+            // load the tunnel service again after it is removed below.
+            let _ = Command::new("systemctl")
+                .args(["--user", "stop", &format!("{}.service", base)])
+                .output();
+            if let Some(home) = dirs::home_dir() {
+                let dir = home.join(".config/systemd/user");
+                let _ = std::fs::remove_file(dir.join(&timer));
+                let _ = std::fs::remove_file(dir.join(format!("{}.service", base)));
+            }
+            add("Stop sync timer", "complete", "Sync timer disabled and units removed");
+        }
 
         // 1. Stop the chisel tunnel service
         #[cfg(target_os = "macos")]

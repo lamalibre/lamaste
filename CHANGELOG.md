@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Upgrade notes
+
+- **Upgrade agents first, then the server.** Agents older than this release reject the new `chiselArgs` shape; a new agent works against an old server.
+- **Install the agent globally:** `npm install -g @lamalibre/lamaste-agent`. `lamaste-agent setup` and `update` refuse to run from `npx`, because they install a sync timer that runs the installed program every 30 seconds. After upgrading an existing agent run `lamaste-agent update` once to install the timer.
+- Re-run the server installer (`npx @lamalibre/create-lamaste`) to redeploy: it creates the `lamaste-chisel` group, installs the new sudoers wrappers, rewrites the sudoers file and adds the port-80 redirect. On its next start the panel installs chisel 1.12.0, rewrites the chisel unit and authfile, and restarts chisel.
+
+### Security
+
+- **Tunnels belong to one agent, enforced by chisel.** Every tunnel now has an owning agent (`agentLabel`). The chisel authfile grants each `agent-<label>` user exactly the anchored reverse remotes (`^R:127\.0\.0\.1:<port>$`) of the enabled tunnels it owns. Previously every credential was granted `.*`, so any enrolled agent could bind any tunnel's port on the relay and take over its hostname. `GET /api/tunnels/agent-config` returns only the calling agent's tunnels, and agent certificates can only list, update and delete their own tunnels. A port claimed by two tunnels is granted to no one.
+- **Tunnels can no longer reach the relay's own services.** Ports 3100, 9090, 9091, 9292 and 9294 (panel, chisel, Authelia, IP panel, Gatekeeper) are rejected as tunnel ports, in the schema, the tunnel workflow and the chisel grants. Tunnel vhosts also clear client-supplied `X-SSL-Client-Verify/DN/Serial` headers. Together these allowed an agent with `tunnels:write` to publish the panel API through a tunnel hostname and pass as an administrator by sending `X-SSL-Client-Verify: SUCCESS`.
+- **Chisel never runs unauthenticated.** Chisel disables authentication when its authfile has no users, which made a freshly installed relay — or one whose agents were all revoked — an open reverse proxy. The authfile now always carries a grant-less `lamaste-no-grants` user (random password in `/etc/lamalibre/lamaste/chisel-sentinel`, 0600, never handed out).
+- **The chisel authfile is no longer world-readable.** `/etc/lamalibre/lamaste/chisel-users` (every agent's tunnel password) is 0640, group `lamaste-chisel`; chisel runs as `nobody` with that group. The panel writes it directly (0600 temp file → group → mode → fsync → rename), so the file chisel reloads never has the wrong permissions; the sudo rules for it are gone.
+- **Startup fails closed.** If the panel cannot bring the chisel unit and authfile in line with the tunnel state at startup, it stops and disables chisel — an authfile from an older version grants every agent every port, and a disabled unit keeps a reboot from starting it — and retries in the background (30 s, backing off to 10 min); once it succeeds chisel is enabled and started again.
+- **Let's Encrypt operations go through root-owned wrappers.** The sudoers rules `certbot certonly --nginx -d * …`, `certbot renew --cert-name * …` and `openssl x509 … -in /etc/letsencrypt/live/*` also matched extra arguments (`--deploy-hook`, `--nginx-ctl`, `-engine`, path traversal) — root code execution for the `lamaste` user. They are replaced by `/usr/local/sbin/lamaste-certbot` and `/usr/local/sbin/lamaste-cert-info`, which validate every hostname and email and run certbot/openssl with a fixed argument vector.
+- **Agents verify the relay's TLS certificate and only talk to the relay they enrolled with.** `chiselArgs` no longer contain `--tls-skip-verify` (discarded if an older panel sends it), and an agent refuses a chisel server other than `https://tunnel.<enrolled domain>:443` or a panel reporting another domain. The broken "chisel server cert pin" (`chiselServerCertSha256Hex`) is removed; the agent daemon no longer overwrites the enrolled domain from the panel.
+- **The chisel credential is no longer a process argument.** Linux agents read it from a 0600 `EnvironmentFile` (`~/.lamalibre/lamaste/agents/<label>/chisel.env`); macOS agents from the 0600 LaunchAgent plist's environment. Because earlier versions exposed it in `ps` and in a world-readable unit file, an upgraded agent rotates its credential once on its first sync. Agent data directories are 0700.
+- **Chisel is pinned.** Server and agents run chisel 1.12.0, downloaded from its fixed release URL and verified against a pinned SHA-256 before it is unpacked (previously: whatever GitHub reported as latest, unverified). Other installed versions are replaced automatically.
+- **A revoked agent's tunnels are released.** Its app tunnels become unassigned and its `agent-<label>` panel tunnel is deleted, so a later enrollment that reuses the label inherits nothing.
+
+### Added
+
+- **`lamaste-agent sync` and the sync timer** (systemd user timer / LaunchAgent, every 30 s). Sync converges the local chisel client with the panel: new, deleted, disabled and reassigned tunnels apply within about 30 seconds without `lamaste-agent update`; a rotated chisel credential is fetched; the pinned chisel binary is installed; an agent with no tunnels keeps chisel stopped instead of crash-looping, and starts it once a tunnel is assigned. It logs only changes and new errors (`agents/<label>/logs/sync.log`) and records its last outcome for `lamaste-agent status`. This matters because chisel rejects a client's whole session when a single requested port is not granted: an agent that kept asking for a revoked tunnel lost all of its tunnels.
+- Agent-side operations (sync, `update`, `setup`, the agent daemon's start/stop/update, config writes) serialize on a per-agent lock file, so the timer can neither restart a client the operator is stopping nor overwrite a concurrent config change.
+- `POST /api/agents/me/chisel-credential/rotate` — an agent replaces its own chisel credential (refused with 429 while the current one is less than 10 minutes old). `GET /api/agents/me/chisel-credential` returns `createdAt`; `agent-config` returns `chiselCredentialIssuedAt`.
+- Port 80 redirects to HTTPS: the installer adds a catch-all `lamalibre-lamaste-http-redirect` site (`301 https://$host$request_uri`). Certbot's nginx HTTP-01 challenge and renewals keep working with it (verified on Ubuntu 24.04 with nginx 1.24 and certbot 2.9).
+- `PATCH /api/tunnels/:id` accepts `agentLabel` (admin only) to move a tunnel between agents, `accessMode` to change a tunnel's access mode in place, and `maxBodySizeMb`; all fields apply in one workflow.
+- Per-tunnel request body limit `maxBodySizeMb` (1–10240 MiB, default 10; agents may set up to 100) rendered as `client_max_body_size`. Tunnels used to inherit nginx's 1 MiB default, rejecting ordinary uploads with 413.
+- Static-site `aliases` for custom-domain sites: extra hostnames (typically `www.<domain>`) answered with a 301 to the primary host. One certificate lineage (`--cert-name <fqdn>`) covers every name; DNS verification and live alias changes require each alias to resolve to the server first.
+- Admin UI: agent picker and body limit on tunnel creation, an **Agent** and **Body limit** column, an **Edit** dialog (agent, access mode, body limit), and redirect aliases on custom sites.
+- `lamaste-server tunnels create --agent <label> [--max-body-mb <n>]`, `tunnels assign <id> --agent <label>`, `tunnels configure <id> [--access-mode] [--max-body-mb]`, `sites create --aliases a,b`, `sites aliases <id> --set a,b`.
+- `lamaste-agent setup` and `status` report whether a Linux agent survives reboot (systemd user lingering) and print the fix; the JSON `complete` event carries `bootPersistence`. `status` shows the chisel version and the sync timer's state.
+- Agent Setup guide for macOS and Linux (`02-guides/agent-setup.md`), replacing the manual-chisel Mac client guide.
+
+### Changed
+
+- **Breaking:** admin `POST /api/tunnels` requires `agentLabel` naming an enrolled, non-revoked agent. Agent certificates default to themselves and cannot name another agent; plugin-agent certificates cannot create tunnels (they hold no chisel credential).
+- **Breaking:** `chiselArgs` are `['client', <serverUrl>, ...remotes]`. See the upgrade notes.
+- **Breaking:** admin `GET /api/tunnels/agent-config` returns only `{domain, chiselServerUrl}` unless `?agent=<label>` names the agent.
+- **Breaking:** `lamaste-agent setup` and `update` require a global install (override for unmanaged installs: `LAMALIBRE_LAMASTE_AGENT_CLI_PATH`). `update` now means "converge now and (re)install the sync timer".
+- Every tunnel mutation runs under one lock and validates against the state it reads inside it, so two concurrent creates can no longer both take a port. State is written before chisel is synced (the authfile is rendered from persisted state); a chisel failure on create rolls the state back and re-syncs the authfile.
+- Chisel reloads its authfile on changes that only add (a new agent, a new grant) and is restarted only when something is revoked (a withdrawn grant, a removed or rotated credential) — `systemctl try-restart`, which leaves a deliberately stopped chisel stopped. Previously every change restarted it. The chisel client reconnects at most 30 s apart (`--max-retry-interval 30s`, down from chisel's 5 min).
+- Startup reconciliation binds ownerless tunnels from earlier versions: an agent panel tunnel to the agent its `agent-<label>` hostname names (if active), other tunnels to the sole active agent; with several agents they stay unassigned, are logged, and show as **unassigned** in the panel until moved to an agent.
+- Changing a live site's aliases issues its certificate for old and new names first and narrows it to exactly the new names after the vhost is saved, so renewal never has to validate a removed hostname; a failed narrowing is returned as `warning`.
+- Agent daemon: stop is remembered and respected by the sync timer; start and restart converge with the panel.
+- The chisel client service is generated in one place, `@lamalibre/lamaste/agent` (`chisel-service.ts`, `chisel-credential.ts`, `converge.ts`), for `lamaste-agent` and `lamaste-agentd`. The diverged copies are gone — including agentd's update path, which regenerated the service without the chisel credential.
+- Panel-triggered certificate renewals skip certbot's random start delay (up to ~8 minutes).
+- Onboarding validates the Let's Encrypt email with the rule the certbot wrapper enforces (`LETSENCRYPT_EMAIL_REGEX`), instead of accepting addresses issuance would later refuse.
+- `agent-config` lists only the tunnels chisel grants the agent; a tunnel from older state on a reserved port, or sharing a port with another tunnel, is withheld from everyone and reported at startup instead of making chisel refuse the agent's whole session.
+- The sync timer records a Node.js path that survives Node upgrades (e.g. `/opt/homebrew/bin/node`, not the versioned Cellar path), and `lamaste-agent status` flags a timer that has stopped running.
+- `lamaste-server` CLI treats HTTP error responses from the panel as failures instead of results.
+- A tunnel (and an agent panel tunnel) can no longer claim a hostname that a static site or site alias already serves.
+
+### Removed
+
+- `GET /api/tunnels/mac-plist`, the admin UI's Mac client plist download, `plist.js`, and the desktop `admin_get_mac_plist` command. The manual plist carried no chisel credential and could not connect since per-agent authentication.
+- The unused `writeAppVhost` nginx writer.
+- The sudoers rules for certbot, Let's Encrypt `openssl` reads and the chisel authfile (see Security).
+
+### Fixed
+
+- Tunnel vhosts dropped `Host`, `X-Real-IP` and `X-Forwarded-*`: nginx ignores server-level `proxy_set_header` in a location that sets its own, and every tunnel location did. Apps saw `Host: 127.0.0.1:<port>`, which breaks absolute redirects and virtual hosting (e.g. GitLab). The headers are now set in each location.
+- Rewriting a disabled tunnel's vhost (e.g. changing its body limit) could re-enable it when nginx rejected the new file; the previous file and enabled/disabled state are now restored together.
+- The desktop app looked for agent services under the wrong names (`com.lamaste.chisel-<label>`, `lamaste-chisel-<label>`), so it misreported running state and left the tunnel service behind on uninstall. It now uses the names the agent writes and also removes the sync timer.
+- The admin UI's tunnel Edit dialog no longer sends a body limit change for a tunnel created before the setting existed when the field was not touched.
+- `GET /api/tunnels/agent-config?agent=<malformed>` answers 400, not 500.
+
 ## [3.0.0] - 2026-04-29
 
 ### Changed

@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { generateCertHelpPage } from '../lib/cert-help-page.js';
+import { ensureHttpRedirect } from '../lib/http-redirect.js';
 
 /**
  * nginx IP-based mTLS configuration subtasks.
@@ -228,6 +229,21 @@ server {
           subtask.output = 'Site enabled, default removed';
         } else {
           subtask.output = 'Site enabled';
+        }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Redirecting plain HTTP to HTTPS',
+      task: async (_ctx, subtask) => {
+        // nginx is (re)started by the next task; no reload here. Not fatal:
+        // another site on this machine may already own port 80's default
+        // server, and the relay works without the redirect.
+        try {
+          await ensureHttpRedirect({ reload: false });
+          subtask.output = 'Port 80 answers every host with a redirect to https://';
+        } catch (err) {
+          subtask.skip(`Skipped — ${err.message}`);
         }
       },
       rendererOptions: { persistentOutput: true },

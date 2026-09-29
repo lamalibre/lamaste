@@ -93,6 +93,7 @@ export type { AgentConfig } from './config.js';
 // Service lifecycle (unified dispatch)
 export {
   isAgentLoaded,
+  isAgentEnabled,
   getAgentPid,
   loadAgent,
   unloadAgent,
@@ -122,6 +123,62 @@ export {
   startAgent as linuxStartAgent,
   stopAgent as linuxStopAgent,
 } from './systemd.js';
+
+// Chisel client service — the single implementation for CLI and daemon
+export {
+  parseChiselArgs,
+  chiselClientArgs,
+  chiselEnvFilePath,
+  renderChiselPlist,
+  renderChiselSystemdUnit,
+  writeChiselService,
+  secureAgentDataDir,
+  relayServerUrl,
+  assertRelayServerUrl,
+  CHISEL_MAX_RETRY_INTERVAL,
+  userLingerStatus,
+  enableLingerCommand,
+} from './chisel-service.js';
+export type { ChiselClientSpec, ChiselCredential } from './chisel-service.js';
+export {
+  chiselCredentialPath,
+  loadChiselCredential,
+  saveChiselCredential,
+} from './chisel-credential.js';
+export type { StoredChiselCredential } from './chisel-credential.js';
+export { ensureAgentChiselBinary, installedAgentChiselVersion } from './chisel-binary.js';
+export type { AgentChiselBinaryResult } from './chisel-binary.js';
+export { convergeChiselService, setAgentTunnelsStopped, updateAgentConfig } from './converge.js';
+export { withAgentLock } from './agent-lock.js';
+export type {
+  AgentConfigResponse,
+  IssuedChiselCredential,
+  ConvergePanelCalls,
+  ConvergeOptions,
+  ConvergeState,
+  ConvergeResult,
+} from './converge.js';
+export {
+  SYNC_INTERVAL_SECONDS,
+  syncPlistLabel,
+  syncPlistPath,
+  syncSystemdServiceName,
+  syncSystemdTimerName,
+  syncLogFile,
+  syncStateFile,
+  resolveInstalledAgentCli,
+  renderSyncPlist,
+  renderSyncSystemdService,
+  renderSyncSystemdTimer,
+  installSyncService,
+  removeSyncService,
+  isSyncServiceLoaded,
+  isSyncServiceInstalled,
+  readSyncState,
+  writeSyncState,
+  isSyncStale,
+} from './sync-service.js';
+export type { AgentCliProgram, SyncState } from './sync-service.js';
 
 // Linux user-systemd helpers — make `systemctl --user` work in non-PAM root
 // shells (multipass exec, cron, npx-from-installer).

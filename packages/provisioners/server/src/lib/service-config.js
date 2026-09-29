@@ -18,6 +18,8 @@ After=network.target
 Type=simple
 User=lamaste
 Group=lamaste
+# Lets the panel hand the chisel authfile to the group chisel runs as.
+SupplementaryGroups=lamaste-chisel
 WorkingDirectory=${ctx.installDir}/serverd
 ExecStart=/usr/bin/node src/index.js
 Environment=NODE_ENV=production
@@ -57,10 +59,13 @@ lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl start chisel
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl stop chisel
-# Restart is invoked by chisel-users.js after every credential mutation
-# (chisel does not support graceful authfile reload). Pinned to bare service
-# name — no wildcards so a compromised panel cannot restart arbitrary units.
+# Chisel reloads its authfile by itself. The panel restarts it only when a
+# change revokes access (a removed or rotated credential, a withdrawn port
+# grant) — \`try-restart\`, so a chisel stopped on purpose stays stopped — and
+# when startup reconciliation changes the binary or the unit. Pinned to the
+# bare service name so a compromised panel cannot restart arbitrary units.
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl restart chisel
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl try-restart chisel
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl start authelia
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl stop authelia
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl restart authelia
@@ -69,6 +74,9 @@ lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl enable certbot.timer
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl start certbot.timer
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl enable chisel
+# Disabled (with stop) when startup reconciliation cannot secure chisel, so a
+# reboot does not start it on a stale authfile; re-enabled once it succeeds.
+lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl disable chisel
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl enable authelia
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl start lamalibre-lamaste-serverd
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl stop lamalibre-lamaste-serverd
@@ -77,19 +85,19 @@ lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl restart lamalibre-lamaste-server
 # --- nginx config test ---
 lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 
-# --- certbot: restrict to exact flag patterns used by the application ---
-lamaste ALL=(root) NOPASSWD: /usr/bin/certbot certonly --nginx -d * --email * --agree-tos --non-interactive
-lamaste ALL=(root) NOPASSWD: /usr/bin/certbot renew --non-interactive
-lamaste ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name * --non-interactive
-lamaste ALL=(root) NOPASSWD: /usr/bin/certbot renew --cert-name * --force-renewal --non-interactive
-lamaste ALL=(root) NOPASSWD: /usr/bin/certbot certificates --non-interactive
+# --- Let's Encrypt: root-owned wrappers with fixed argument vectors ---
+# A sudoers \`*\` matches spaces too, so rules such as
+# \`certbot renew --cert-name * --non-interactive\` accepted
+# \`--deploy-hook <cmd>\` and \`openssl x509 ... -in /etc/letsencrypt/live/*\`
+# accepted \`-engine <lib.so>\` — root code execution for the lamaste user.
+# The wrappers validate every argument (hostnames, email) and exec certbot /
+# openssl with fixed flags. See scripts/lamaste-certbot, scripts/lamaste-cert-info.
+lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-certbot
+lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-cert-info
 
-# --- openssl: read-only operations (no trailing wildcards) ---
+# --- openssl: read-only operations on the panel PKI ---
 lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/lamalibre/lamaste/pki/* -serial -noout
 lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/lamalibre/lamaste/pki/* -enddate -noout
-lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -checkend 86400 -noout -in /etc/letsencrypt/live/*
-lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -enddate -noout -in /etc/letsencrypt/live/*
-lamaste ALL=(root) NOPASSWD: /usr/bin/openssl x509 -in /etc/letsencrypt/live/* -enddate -noout
 # --- openssl / pki helpers ---
 # Trust boundary: only @lamalibre/ scoped code runs as lamaste user.
 # CSR signing was previously a wildcard rule allowing any /etc/lamalibre/lamaste/pki/*
@@ -110,10 +118,8 @@ lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/site-upload-* /var/www/lamaste/*
 lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/invite-page-* /var/www/lamaste/*
 lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/nginx-* /etc/nginx/sites-available/*
 lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/lamalibre-lamaste-chisel-service-* /etc/systemd/system/chisel.service
-# chisel-users authfile: written atomically via temp file then sudo mv
-lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/lamalibre-lamaste-chisel-users-* /etc/lamalibre/lamaste/chisel-users
-lamaste ALL=(root) NOPASSWD: /usr/bin/chown lamaste\\:lamaste /etc/lamalibre/lamaste/chisel-users
-lamaste ALL=(root) NOPASSWD: /usr/bin/chmod 644 /etc/lamalibre/lamaste/chisel-users
+# The chisel-users authfile needs no rule: the panel writes it itself, 0640,
+# group lamaste-chisel (the group chisel runs as; the lamaste user is a member).
 # chisel server private key: persistent SSH key so fingerprint stays stable
 # across restarts. Chisel runs as nobody, so we chown/chmod accordingly.
 lamaste ALL=(root) NOPASSWD: /usr/bin/mv /tmp/lamalibre-lamaste-chisel-server-key-* /etc/lamalibre/lamaste/chisel-server.key
@@ -241,5 +247,51 @@ NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
+`;
+}
+
+/**
+ * Root-owned sudoers wrapper scripts shipped in this package's scripts/
+ * directory and installed to /usr/local/sbin. The sudoers rules reference
+ * these absolute paths; each script validates its arguments and runs its
+ * command with a fixed argument vector.
+ */
+export const SUDOERS_WRAPPERS = [
+  { name: 'lamaste-sign-csr', dest: '/usr/local/sbin/lamaste-sign-csr' },
+  { name: 'lamaste-pki-rename', dest: '/usr/local/sbin/lamaste-pki-rename' },
+  { name: 'lamaste-certbot', dest: '/usr/local/sbin/lamaste-certbot' },
+  { name: 'lamaste-cert-info', dest: '/usr/local/sbin/lamaste-cert-info' },
+];
+
+/**
+ * The group the chisel server runs as. The 0640 chisel authfile (every
+ * agent's tunnel password) belongs to it; the lamaste user is a member so the
+ * panel can hand the file to the group without privileges. Must match
+ * CHISEL_AUTHFILE_GROUP in @lamalibre/lamaste/server.
+ */
+export const CHISEL_GROUP = 'lamaste-chisel';
+
+/** sites-available name of the port-80 catch-all. */
+export const HTTP_REDIRECT_SITE = 'lamalibre-lamaste-http-redirect';
+
+/**
+ * The port-80 catch-all: every plain-HTTP request is redirected to HTTPS on
+ * the same host and path. Without it nothing listens on :80 and `http://`
+ * links to the relay's hostnames are refused.
+ *
+ * It does not get in the way of Let's Encrypt: certbot's nginx authenticator
+ * (`certonly --nginx`, and renewals) clones this default_server block per
+ * hostname for the length of an HTTP-01 challenge, answers the challenge
+ * path ahead of the redirect, and restores the file afterwards — verified
+ * on Ubuntu 24.04 (nginx 1.24, certbot 2.9) for new names, names with an
+ * existing 443 block, multi-name lineages, and forced renewals.
+ */
+export function generateHttpRedirectVhost() {
+  return `# Managed by Lamaste — plain HTTP is redirected to HTTPS.
+server {
+    listen 80 default_server;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
 `;
 }

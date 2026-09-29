@@ -5,6 +5,7 @@
  *   list                            List managed sites
  *   create --name <n> [--type <t>]  Create a site
  *   delete <id>                     Delete a site by ID
+ *   aliases <id> --set <a,b|"">     Replace a custom site's redirect aliases
  *
  * List reads directly from the state file.
  * Create/delete use the panel REST API (which has the full
@@ -30,6 +31,8 @@ export async function runSites(args, { json }) {
       return createSite(args.slice(1), { json });
     case 'delete':
       return deleteSite(args[1], { json });
+    case 'aliases':
+      return setAliases(args.slice(1), { json });
     default:
       printSiteUsage();
       process.exit(sub ? 1 : 0);
@@ -46,11 +49,13 @@ ${b('Subcommands:')}
   ${c('list')}                                  List managed sites
   ${c('create')} --name <n> [options]            Create a site
   ${c('delete')} <id>                            Delete a site by ID
+  ${c('aliases')} <id> --set <a,b>               Replace redirect aliases (--set "" clears)
 
 ${b('Create options:')}
   --name <name>         Site name (required)
   --type <type>         Site type: managed (default) or custom
   --custom-domain <d>   Custom domain (required if type is custom)
+  --aliases <a,b>       Hostnames that redirect to the custom domain (e.g. www.<domain>)
   --spa                 Enable SPA mode (single-page application routing)
   --authelia            Enable Authelia protection
 `);
@@ -104,6 +109,7 @@ async function createSite(args, { json }) {
   const name = getArg(args, 'name');
   const type = getArg(args, 'type') || 'managed';
   const customDomain = getArg(args, 'custom-domain') || undefined;
+  const aliasArg = getArg(args, 'aliases');
   const spaMode = args.includes('--spa');
   const autheliaProtected = args.includes('--authelia');
 
@@ -131,6 +137,7 @@ async function createSite(args, { json }) {
   /** @type {Record<string, unknown>} */
   const body = { name, type, spaMode, autheliaProtected };
   if (customDomain) body.customDomain = customDomain;
+  if (aliasArg) body.aliases = splitAliases(aliasArg);
 
   if (!json) process.stderr.write(`  Creating site ${chalk.cyan(name)}...`);
 
@@ -199,4 +206,52 @@ function getArg(args, name) {
   const idx = args.indexOf(`--${name}`);
   if (idx === -1 || idx + 1 >= args.length) return null;
   return args[idx + 1];
+}
+
+/**
+ * @param {string} value
+ * @returns {string[]}
+ */
+function splitAliases(value) {
+  return value
+    .split(',')
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function setAliases(args, { json }) {
+  const id = args[0];
+  const setIdx = args.indexOf('--set');
+  if (!id || setIdx === -1 || setIdx + 1 >= args.length) {
+    const msg = 'Usage: lamaste-server sites aliases <id> --set <a,b>  (--set "" clears)';
+    if (json) emitError(msg);
+    else console.error(`\n  ${msg}\n`);
+    process.exit(1);
+  }
+  const aliases = splitAliases(args[setIdx + 1]);
+
+  if (!json) process.stderr.write(`  Updating aliases for ${chalk.dim(id)}...`);
+
+  try {
+    const result = await panelRequest('PATCH', `/api/sites/${id}`, { aliases });
+    if (json) {
+      emitComplete({ site: result.site, ...(result.warning ? { warning: result.warning } : {}) });
+    } else {
+      console.log(` ${chalk.green('ok')}`);
+      const list = result.site?.aliases ?? [];
+      console.log(`  Aliases: ${list.length > 0 ? list.join(', ') : chalk.dim('none')}\n`);
+      if (result.warning) console.log(`  ${chalk.yellow(result.warning)}\n`);
+    }
+  } catch (err) {
+    if (json) emitError(err.message);
+    else {
+      console.log(` ${chalk.red('failed')}`);
+      console.error(`  ${chalk.red(err.message)}\n`);
+    }
+    process.exit(1);
+  }
 }

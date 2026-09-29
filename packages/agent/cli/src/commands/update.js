@@ -1,116 +1,57 @@
 import { Listr } from 'listr2';
 import chalk from 'chalk';
-import { assertSupportedPlatform } from '@lamalibre/lamaste/agent';
-import { requireAgentConfig, saveAgentConfig } from '@lamalibre/lamaste/agent';
-import { isAgentLoaded, unloadAgent, loadAgent, getAgentPid } from '@lamalibre/lamaste/agent';
-import { readPluginRegistry, agentPluginsFile } from '@lamalibre/lamaste/agent';
 import {
-  fetchAgentConfig,
-  fetchTunnels,
-  fetchChiselCredential,
-  curlAuthenticatedJson,
-} from '../lib/panel-api.js';
-import {
-  generateServiceConfig,
-  writeServiceConfigFile,
-  injectChiselAuth,
-  injectChiselFingerprint,
-} from '../lib/service-config.js';
-import { loadChiselCredential, saveChiselCredential } from '../lib/chisel-credential.js';
+  assertSupportedPlatform,
+  requireAgentConfig,
+  updateAgentConfig,
+  readPluginRegistry,
+  agentPluginsFile,
+  resolveInstalledAgentCli,
+  installSyncService,
+} from '@lamalibre/lamaste/agent';
+import { curlAuthenticatedJson } from '../lib/panel-api.js';
+import { convergeWithPanel, describeConverge } from '../lib/converge.js';
 
 /**
- * Re-fetch tunnel config from the panel and restart the agent.
- * Used after adding/removing tunnels on the panel.
+ * Converge with the panel now and restart the tunnel client, and make sure
+ * the sync timer is installed (agents set up before it existed get it here).
+ * The timer applies tunnel changes within 30 seconds on its own; `update` is
+ * for applying one immediately.
  * @param {{ label: string }} options
  */
 export async function runUpdate({ label }) {
   assertSupportedPlatform();
 
   const config = await requireAgentConfig(label);
+  // The sync timer must run an installed program — fail before changing anything.
+  const program = await resolveInstalledAgentCli(process.argv[1]);
 
-  const ctx = {
-    serviceConfig: null,
-    tunnels: [],
-  };
+  const ctx = { result: null };
 
   const tasks = new Listr(
     [
       {
-        title: 'Fetching updated tunnel configuration',
+        title: 'Converging with the panel',
         task: async (_ctx, task) => {
-          const agentConfig = await fetchAgentConfig(config);
-
-          // Prefer the persisted credential — only re-fetch if we have none
-          // on disk. The credential rarely changes; refreshing it on every
-          // `lamaste-agent update` would needlessly hit the panel.
-          let credential = await loadChiselCredential(label);
-          if (!credential) {
-            credential = await fetchChiselCredential(config);
-            await saveChiselCredential(label, credential);
-          }
-
-          // Re-pin the chisel TLS server cert if we already have a stored
-          // fingerprint. We don't TOFU here — that would silently accept a
-          // rotated cert. Use the saved pin as-is and let the operator run
-          // `lamaste-agent panel reset-pin` if rotation was intentional.
-          let chiselArgs = injectChiselAuth(agentConfig.chiselArgs, credential);
-          if (config.chiselServerCertSha256Hex) {
-            chiselArgs = injectChiselFingerprint(chiselArgs, config.chiselServerCertSha256Hex);
-          }
-          ctx.serviceConfig = generateServiceConfig(chiselArgs, label);
-
-          const tunnelData = await fetchTunnels(config);
-          ctx.tunnels = tunnelData.tunnels || [];
-          task.output = `${ctx.tunnels.length} tunnel(s) configured`;
+          const { result } = await convergeWithPanel(label, { forceRestart: true });
+          ctx.result = result;
+          task.output = describeConverge(result);
         },
         rendererOptions: { persistentOutput: true },
       },
       {
-        title: 'Writing service config',
-        task: async () => {
-          await writeServiceConfigFile(ctx.serviceConfig, label);
-        },
-      },
-      {
-        title: 'Unloading agent',
-        skip: async () => {
-          const loaded = await isAgentLoaded(label);
-          return !loaded && 'Agent not currently loaded';
-        },
-        task: async () => {
-          await unloadAgent(label);
-        },
-      },
-      {
-        title: 'Loading agent',
-        task: async () => {
-          await loadAgent(label);
-        },
-      },
-      {
-        title: 'Verifying agent is running',
+        title: 'Installing the sync timer',
         task: async (_ctx, task) => {
-          await new Promise((r) => setTimeout(r, 2000));
-          const pid = await getAgentPid(label);
-          if (pid) {
-            task.output = `Agent running (PID ${pid})`;
-          } else {
-            const loaded = await isAgentLoaded(label);
-            if (loaded) {
-              task.output = 'Agent loaded (process starting...)';
-            } else {
-              throw new Error('Agent failed to load. Check logs with: lamaste-agent logs');
-            }
-          }
+          await installSyncService(label, program);
+          task.output = 'Tunnel changes on the panel apply within 30 seconds';
         },
         rendererOptions: { persistentOutput: true },
       },
       {
         title: 'Saving configuration',
         task: async () => {
-          await saveAgentConfig(label, {
-            ...config,
-            updatedAt: new Date().toISOString(),
+          await updateAgentConfig(label, (current) => {
+            current.updatedAt = new Date().toISOString();
           });
         },
       },
@@ -157,8 +98,9 @@ export async function runUpdate({ label }) {
 
   console.log('');
   console.log(chalk.green(`  Agent "${label}" updated successfully.`));
-  if (ctx.tunnels.length > 0) {
-    console.log(chalk.dim(`  ${ctx.tunnels.length} tunnel(s) active.`));
+  if (ctx.result) {
+    console.log(chalk.dim(`  ${describeConverge(ctx.result)}`));
+    for (const warning of ctx.result.warnings) console.log(chalk.yellow(`  ${warning}`));
   }
   console.log('');
 }

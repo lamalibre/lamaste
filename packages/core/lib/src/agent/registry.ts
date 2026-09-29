@@ -58,9 +58,6 @@ export interface AgentRegistryEntry {
   chiselVersion?: string | undefined;
   setupAt?: string | undefined;
   updatedAt?: string | undefined;
-  // Pinned fingerprint of the chisel server's TLS cert (hex-encoded SHA-256).
-  // Captured at setup and injected as --tls-fingerprint when the agent starts.
-  chiselServerCertSha256Hex?: string | undefined;
   // Pinned fingerprints for the panel server's TLS cert (B10 TOFU capture).
   // Used by panel-cert.js and the CLI's `panel reset-pin` command.
   panelServerPubkeySha256?: string | undefined;

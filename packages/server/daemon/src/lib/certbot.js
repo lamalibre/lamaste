@@ -17,6 +17,8 @@ import {
   issueTunnelCert as issueTunnelCertCore,
   getCertPath as getCertPathCore,
   isCertValid as isCertValidCore,
+  issueSiteCert as issueSiteCertCore,
+  readLetsEncryptExpiry as readLetsEncryptExpiryCore,
 } from '@lamalibre/lamaste/server';
 
 export function issueCert(fqdn, email) {
@@ -61,4 +63,12 @@ export function getCertPath(fqdn, domain) {
 
 export function isCertValid(fqdn) {
   return isCertValidCore(fqdn, execa);
+}
+
+export function issueSiteCert(fqdn, aliases, email, options = {}) {
+  return issueSiteCertCore(fqdn, aliases, email, execa, options);
+}
+
+export function readLetsEncryptExpiry(lineage) {
+  return readLetsEncryptExpiryCore(lineage, execa);
 }

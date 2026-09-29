@@ -361,10 +361,9 @@ fn main() {
             // Admin: Tunnels
             admin_commands::admin_get_tunnels,
             admin_commands::admin_create_tunnel,
-            admin_commands::admin_toggle_tunnel,
+            admin_commands::admin_update_tunnel,
             admin_commands::admin_delete_tunnel,
             admin_commands::admin_get_tunnel_agent_config,
-            admin_commands::admin_get_mac_plist,
             // Admin: Log Streaming
             admin_commands::admin_start_log_stream,
             admin_commands::admin_stop_log_stream,

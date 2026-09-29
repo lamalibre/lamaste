@@ -28,6 +28,12 @@ export interface SiteEntry {
   rootPath: string;
   createdAt: string;
   totalSize: number;
+  /**
+   * Further hostnames that answer with a 301 to `https://<fqdn>` — typically
+   * `www.<fqdn>`. Custom-domain sites only. One certificate lineage, named
+   * after `fqdn`, covers the primary name and every alias.
+   */
+  aliases?: string[] | undefined;
 }
 
 export interface SiteLogger {
@@ -54,6 +60,13 @@ export interface SiteNginxDeps {
 export interface SiteCertbotDeps {
   issueTunnelCert(fqdn: string, email: string): Promise<CertResult>;
   getCertPath(fqdn: string, domain: string): Promise<string>;
+  /** One lineage named after `fqdn` covering `fqdn` and every alias. */
+  issueSiteCert(
+    fqdn: string,
+    aliases: readonly string[],
+    email: string,
+    options?: { readonly match?: 'covering' | 'exact' },
+  ): Promise<CertResult>;
 }
 
 export interface SiteFilesDeps {
@@ -81,6 +94,12 @@ export interface AutheliaDeps {
 
 const RESERVED_SUBDOMAINS = ['panel', 'auth', 'tunnel', 'www', 'mail', 'ftp', 'api'] as const;
 
+/** Upper bound on aliases per site — a redirect list, not a domain farm. */
+export const MAX_SITE_ALIASES = 10;
+
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -104,7 +123,9 @@ export class SiteError extends Error {
       | 'NOT_CUSTOM'
       | 'ALREADY_VERIFIED'
       | 'DNS_MISMATCH'
-      | 'AUTHELIA_FAILED',
+      | 'AUTHELIA_FAILED'
+      | 'INVALID_ALIAS'
+      | 'ALIAS_IN_USE',
   ) {
     super(message);
     this.name = 'SiteError';
@@ -130,6 +151,59 @@ async function resolveA(hostname: string): Promise<string[]> {
   }
 }
 
+/**
+ * Validate a site's alias list against every hostname already served.
+ * Returns the normalised (lower-cased, de-duplicated) list.
+ */
+function validateAliases(
+  fqdn: string,
+  aliases: readonly string[],
+  selfId: string | null,
+  sites: readonly SiteEntry[],
+  tunnels: ReadonlyArray<{ subdomain: string }>,
+  domain: string,
+): string[] {
+  const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
+  if (normalised.length > MAX_SITE_ALIASES) {
+    throw new SiteError(`At most ${MAX_SITE_ALIASES} aliases per site`, 'INVALID_ALIAS');
+  }
+  const core = new Set(['panel', 'auth', 'tunnel'].map((s) => `${s}.${domain}`));
+  const tunnelHosts = new Set(tunnels.map((t) => `${t.subdomain}.${domain}`));
+  for (const alias of normalised) {
+    if (!HOSTNAME_RE.test(alias)) {
+      throw new SiteError(`Invalid alias hostname '${alias}'`, 'INVALID_ALIAS');
+    }
+    if (alias === fqdn) {
+      throw new SiteError(`Alias '${alias}' is the site's own domain`, 'INVALID_ALIAS');
+    }
+    if (core.has(alias) || alias === domain) {
+      throw new SiteError(`'${alias}' is reserved for Lamaste itself`, 'INVALID_ALIAS');
+    }
+    if (tunnelHosts.has(alias)) {
+      throw new SiteError(`'${alias}' is already in use by a tunnel`, 'ALIAS_IN_USE');
+    }
+    const owner = sites.find(
+      (s) => s.id !== selfId && (s.fqdn === alias || (s.aliases ?? []).includes(alias)),
+    );
+    if (owner) {
+      throw new SiteError(`'${alias}' is already served by site '${owner.name}'`, 'ALIAS_IN_USE');
+    }
+  }
+  return normalised;
+}
+
+/**
+ * The hostnames among `names` that do not resolve to `serverIp` yet.
+ */
+async function unresolvedNames(names: readonly string[], serverIp: string): Promise<string[]> {
+  const missing: string[] = [];
+  for (const name of names) {
+    const ips = await resolveA(name);
+    if (!ips.includes(serverIp)) missing.push(name);
+  }
+  return missing;
+}
+
 // ---------------------------------------------------------------------------
 // Create site
 // ---------------------------------------------------------------------------
@@ -138,6 +212,8 @@ export interface CreateSiteOptions {
   name: string;
   type: SiteType;
   customDomain?: string | undefined;
+  /** Custom-domain sites only: hostnames that redirect to the site. */
+  aliases?: string[] | undefined;
   spaMode?: boolean | undefined;
   autheliaProtected?: boolean | undefined;
   domain: string;
@@ -166,6 +242,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     name,
     type,
     customDomain,
+    aliases = [],
     spaMode = false,
     autheliaProtected = false,
     domain,
@@ -211,6 +288,15 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
 
+  if (existingSites.find((s) => (s.aliases ?? []).includes(fqdn))) {
+    throw new SiteError(`Domain '${fqdn}' is already an alias of another site`, 'FQDN_IN_USE');
+  }
+
+  if (aliases.length > 0 && type !== 'custom') {
+    throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
+  }
+  const siteAliases = validateAliases(fqdn, aliases, null, existingSites, tunnels, domain);
+
   const id = crypto.randomUUID();
   const rootPath = files.getSiteRoot(id);
 
@@ -227,6 +313,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     rootPath,
     createdAt: new Date().toISOString(),
     totalSize: 0,
+    ...(siteAliases.length > 0 ? { aliases: siteAliases } : {}),
   };
 
   if (type === 'managed') {
@@ -364,7 +451,10 @@ async function createCustomSite(
 
   return {
     site,
-    message: 'Site created. Add an A record for your domain, then verify DNS.',
+    message:
+      (site.aliases ?? []).length > 0
+        ? `Site created. Add A records for ${[site.fqdn, ...(site.aliases ?? [])].join(', ')}, then verify DNS.`
+        : 'Site created. Add an A record for your domain, then verify DNS.',
   };
 }
 
@@ -421,10 +511,16 @@ export interface UpdateSiteOptions {
   spaMode?: boolean | undefined;
   autheliaProtected?: boolean | undefined;
   allowedUsers?: string[] | undefined;
+  /** Custom-domain sites only: the complete new alias list. */
+  aliases?: string[] | undefined;
   domain: string;
+  /** Needed only when aliases change on a live site. */
+  email?: string | undefined;
+  serverIp?: string | undefined;
   nginx: SiteNginxDeps;
   certbot: SiteCertbotDeps;
   siteState: SiteStateDeps;
+  tunnelState?: TunnelReadDeps | undefined;
   authelia: AutheliaDeps;
   logger: SiteLogger;
 }
@@ -433,11 +529,32 @@ export interface UpdateSiteResult {
   ok: true;
   site: SiteEntry;
   message?: string | undefined;
+  /** Set when the update was applied but a follow-up step needs attention. */
+  warning?: string | undefined;
 }
 
 /**
- * Update site settings (spaMode, autheliaProtected, allowedUsers).
+ * Update site settings (spaMode, autheliaProtected, allowedUsers, aliases).
  * Regenerates nginx vhost if needed and syncs Authelia access control.
+ *
+ * On a live custom-domain site an alias change takes effect immediately, in
+ * an order where every intermediate state serves correctly:
+ *
+ * 1. Every added alias must already resolve to this server.
+ * 2. The certificate is issued for the union of the old and new names, so
+ *    it is valid for whichever vhost nginx serves at any moment.
+ * 3. The vhost is rewritten (tested by nginx, previous file restored on
+ *    failure), then the new list is saved.
+ * 4. If names were removed, the certificate is re-issued for exactly the new
+ *    set, so renewal never has to validate a hostname the site no longer
+ *    serves (its DNS may already point elsewhere). A failure here leaves a
+ *    working site with a certificate that still names the removed aliases;
+ *    it is reported as `warning` and retried by the next alias update.
+ *
+ * A failure in steps 1–3 leaves the saved site unchanged; the certificate may
+ * then already carry the added names, which is harmless. On a site still
+ * awaiting DNS verification the list is only saved; DNS verification then
+ * covers every alias.
  */
 export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteResult> {
   const { id, domain, nginx, certbot, siteState, authelia, logger } = opts;
@@ -456,21 +573,65 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
     opts.autheliaProtected !== undefined ? opts.autheliaProtected : site.autheliaProtected;
   const newAllowedUsers = opts.allowedUsers !== undefined ? opts.allowedUsers : site.allowedUsers;
 
+  let newAliases = site.aliases ?? [];
+  if (opts.aliases !== undefined) {
+    if (site.type !== 'custom' && opts.aliases.length > 0) {
+      throw new SiteError('Aliases are only supported on custom-domain sites', 'NOT_CUSTOM');
+    }
+    const tunnels = opts.tunnelState ? await opts.tunnelState.readTunnels() : [];
+    newAliases = validateAliases(site.fqdn, opts.aliases, site.id, sites, tunnels, domain);
+  }
+
   const spaModeChanged = newSpaMode !== site.spaMode;
   const autheliaChanged = newAutheliaProtected !== site.autheliaProtected;
   const usersChanged = JSON.stringify(newAllowedUsers) !== JSON.stringify(site.allowedUsers);
+  const aliasesChanged = JSON.stringify(newAliases) !== JSON.stringify(site.aliases ?? []);
 
-  if (!spaModeChanged && !autheliaChanged && !usersChanged) {
+  if (!spaModeChanged && !autheliaChanged && !usersChanged && !aliasesChanged) {
     return { ok: true as const, site, message: 'No changes' };
+  }
+
+  // A live custom site's certificate must cover every name the vhost can
+  // answer for, before and after the rewrite: issue for the union first.
+  const oldAliases = site.aliases ?? [];
+  const reissueCert = site.certIssued && site.type === 'custom' && aliasesChanged;
+  if (reissueCert) {
+    if (!opts.email) {
+      throw new SiteError('Email is required to change aliases', 'DOMAIN_NOT_CONFIGURED');
+    }
+    const added = newAliases.filter((a) => !oldAliases.includes(a));
+    if (added.length > 0) {
+      if (!opts.serverIp) {
+        throw new SiteError('Server IP is required to add aliases', 'DOMAIN_NOT_CONFIGURED');
+      }
+      const pending = await unresolvedNames(added, opts.serverIp);
+      if (pending.length > 0) {
+        throw new SiteError(
+          `Add A records pointing ${pending.join(', ')} to ${opts.serverIp} before adding them as aliases`,
+          'DNS_MISMATCH',
+        );
+      }
+      const union = [...oldAliases, ...added];
+      try {
+        await certbot.issueSiteCert(site.fqdn, union, opts.email);
+      } catch (err: unknown) {
+        throw new SiteError(
+          `Certificate issuance failed: ${err instanceof Error ? err.message : String(err)}`,
+          'CERT_FAILED',
+        );
+      }
+    }
   }
 
   // Update site fields
   site.spaMode = newSpaMode;
   site.autheliaProtected = newAutheliaProtected;
   site.allowedUsers = newAllowedUsers;
+  if (newAliases.length > 0) site.aliases = newAliases;
+  else delete site.aliases;
 
   // Regenerate nginx vhost if the site is live and nginx-affecting settings changed
-  if (site.certIssued && (spaModeChanged || autheliaChanged)) {
+  if (site.certIssued && (spaModeChanged || autheliaChanged || aliasesChanged)) {
     try {
       const certDir =
         site.type === 'managed'
@@ -498,6 +659,20 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
   sites[siteIndex] = site;
   await siteState.writeSites(sites);
 
+  // Narrow the certificate to exactly the names the site now serves.
+  let warning: string | undefined;
+  if (reissueCert && opts.email) {
+    try {
+      await certbot.issueSiteCert(site.fqdn, newAliases, opts.email, { match: 'exact' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ err, fqdn: site.fqdn }, 'Failed to narrow the site certificate');
+      warning =
+        'The site now serves the new alias list, but its certificate still names removed ' +
+        `aliases, and renewing it will fail once they stop resolving here: ${message}`;
+    }
+  }
+
   // Sync Authelia access_control if auth settings or user assignments changed
   if (autheliaChanged || usersChanged) {
     try {
@@ -513,7 +688,7 @@ export async function updateSite(opts: UpdateSiteOptions): Promise<UpdateSiteRes
     }
   }
 
-  return { ok: true as const, site };
+  return { ok: true as const, site, ...(warning ? { warning } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -579,12 +754,25 @@ export async function verifyDns(opts: VerifyDnsOptions): Promise<VerifyDnsResult
     };
   }
 
+  // Every alias shares the certificate, so every alias must resolve here too.
+  const aliases = site.aliases ?? [];
+  const pending = await unresolvedNames(aliases, serverIp);
+  if (pending.length > 0) {
+    return {
+      ok: false,
+      fqdn: pending[0] ?? site.fqdn,
+      expectedIp: serverIp,
+      resolvedIps: await resolveA(pending[0] ?? site.fqdn),
+      message: `Add A records pointing ${pending.join(', ')} to ${serverIp} — every alias shares the site's certificate.`,
+    };
+  }
+
   // DNS verified -- issue cert and configure vhost
   site.dnsVerified = true;
 
   try {
-    logger.info({ fqdn: site.fqdn }, 'DNS verified, issuing certificate');
-    await certbot.issueTunnelCert(site.fqdn, email);
+    logger.info({ fqdn: site.fqdn, aliases }, 'DNS verified, issuing certificate');
+    await certbot.issueSiteCert(site.fqdn, aliases, email);
     site.certIssued = true;
   } catch (err: unknown) {
     logger.error({ err }, 'Failed to issue certificate for custom domain');

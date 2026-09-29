@@ -244,6 +244,22 @@ function resolvePanelUrl(config) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Validate a chisel credential payload from the panel.
+ * @param {unknown} parsed
+ * @returns {{ user: string, password: string, createdAt: string | null }}
+ */
+function parseChiselCredential(parsed) {
+  if (!parsed || typeof parsed.user !== 'string' || typeof parsed.password !== 'string') {
+    throw new Error('Panel returned malformed chisel credential payload');
+  }
+  return {
+    user: parsed.user,
+    password: parsed.password,
+    createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : null,
+  };
+}
+
+/**
  * Create a panel API client bound to a specific agent label.
  * Cleans up stale curl configs on creation.
  *
@@ -298,6 +314,42 @@ export function createPanelApiClient(label) {
       } catch (err) {
         throw new Error(
           `Failed to fetch agent config from panel. Details: ${err.stderr || err.message}`,
+        );
+      }
+    },
+
+    /**
+     * Fetch this agent's chisel credential (`{ user, password, createdAt }`).
+     * @param {object} config
+     * @returns {Promise<{ user: string, password: string, createdAt: string | null }>}
+     */
+    async fetchChiselCredential(config) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/chisel-credential`;
+      try {
+        const { stdout } = await curlAuthenticated(baseDir, config, [url]);
+        return parseChiselCredential(JSON.parse(stdout));
+      } catch (err) {
+        throw new Error(
+          `Failed to fetch chisel credential from panel. Details: ${err.stderr || err.message}`,
+        );
+      }
+    },
+
+    /**
+     * Replace this agent's chisel credential on the panel and return the new one.
+     * @param {object} config
+     * @returns {Promise<{ user: string, password: string, createdAt: string | null }>}
+     */
+    async rotateChiselCredential(config) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/chisel-credential/rotate`;
+      try {
+        const { stdout } = await curlAuthenticated(baseDir, config, ['-X', 'POST', url]);
+        return parseChiselCredential(JSON.parse(stdout));
+      } catch (err) {
+        throw new Error(
+          `Failed to rotate the chisel credential on the panel. Details: ${err.stderr || err.message}`,
         );
       }
     },
