@@ -45,17 +45,36 @@ Each line is a JSON object with one of these shapes:
 - **nginx** — TLS on port 9292 with `ssl_verify_client on`, and a port-80
   catch-all (`lamalibre-lamaste-http-redirect`) that redirects plain HTTP to
   HTTPS without getting in the way of Let's Encrypt HTTP-01 challenges
-- **Panel server + client** — systemd service, static frontend
-- **`lamaste-chisel` group** — the group the Chisel server runs as; the panel
-  user is a member so it can write the 0640 Chisel authfile without sudo
-- **Sudo wrappers** — root-owned scripts in `/usr/local/sbin/`
-  (`lamaste-certbot`, `lamaste-cert-info`, `lamaste-sign-csr`,
-  `lamaste-pki-rename`) that validate every argument and run certbot / openssl
-  with a fixed argument vector, instead of wildcard sudoers rules
+- **Panel server + client** — systemd service, `lamaste-server` CLI, static
+  frontend, docs and the gatekeeper, in a root-owned `/opt/lamalibre/lamaste`
+  (read-only for the `lamaste` user the panel runs as)
+- **Chisel and Authelia** — the pinned releases (Chisel 1.12.0, Authelia
+  4.39.28) in `/usr/local/bin`, verified against pinned SHA-256 digests before
+  unpacking (a newer installed Authelia is kept, never downgraded), with
+  hardened systemd units. Onboarding only configures and starts them
+- **Service accounts** — the `lamaste-chisel` group (Chisel runs as
+  `nobody:lamaste-chisel`; the panel user is a member so it can write the 0640
+  Chisel authfile without sudo) and the unprivileged `lamaste-authelia` account
+  Authelia runs as
+- **Ownership** — `/var/www/lamaste` (`lamaste:www-data`, setgid), `/etc/authelia`
+  (`lamaste:lamaste-authelia`, setgid), `/var/log/authelia`, the Chisel key
+  and the PKI directory, so the panel manages them without privileges
+- **Root-owned programs** in `/usr/local/sbin/` — `lamaste-priv` (installs the
+  panel's nginx vhosts after checking every directive against an allow-list,
+  stores Authelia TOTP secrets as the Authelia account, starts a self-update),
+  `lamaste-certbot` and `lamaste-cert-info` (certbot / openssl with a fixed
+  argument vector)
+- **Sudoers** — `/etc/sudoers.d/lamaste` with no wildcards: fixed `systemctl`
+  lines, `nginx -t`, and the three programs above. Staged, checked with
+  `visudo -c`, then renamed into place
 
-Re-running the installer on an existing server (redeploy) refreshes the panel,
-its systemd unit, sudoers rules, the group, the wrappers and the port-80
-redirect. Upgrade agents before the server.
+Re-running the installer on an existing server (redeploy — also what the
+panel's self-update runs) refreshes the panel, CLI, UI, docs and gatekeeper,
+the pinned binaries, the panel, Chisel and Authelia units, the accounts and ownership, the programs and
+sudoers rules, and the port-80 redirect; it removes the retired
+`lamaste-sign-csr` / `lamaste-pki-rename` wrappers and converts an install
+directory left `lamaste`-owned by an older version. Upgrade agents before the
+server.
 
 Domain setup, Chisel tunnels, Authelia, and Let's Encrypt certificates are
 configured through the browser-based onboarding wizard after installation.

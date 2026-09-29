@@ -27,7 +27,7 @@ Four properties of the service are deliberate:
 
 - **TLS is verified, and the relay is fixed.** The client connects to `https://tunnel.<domain>:443`, which carries a publicly trusted Let's Encrypt certificate, and verifies it like any HTTPS client. A machine on the path cannot impersonate your relay. `<domain>` is the domain the agent enrolled with: the agent refuses a panel that reports a different domain (re-enroll to move an agent to another relay).
 - **The credential is never a process argument.** On Linux it lives in the 0600 `chisel.env` referenced by `EnvironmentFile=`; on macOS in the 0600 plist's environment. `ps` shows nothing secret.
-- **The Chisel release is pinned.** Agent and relay both run Chisel 1.12.0, downloaded from its fixed GitHub release URL and checked against a pinned SHA-256 before it is unpacked. A binary reporting another version is replaced by the next sync. The client reconnects with `--max-retry-interval 30s`, so it is back within half a minute of a relay restart.
+- **The Chisel release is pinned.** Agent and relay both run Chisel 1.12.0, downloaded from its fixed GitHub release URL and checked against a pinned SHA-256 before it is unpacked. A binary reporting another version is replaced by the next sync (on the relay, by re-running `create-lamaste`). The client reconnects with `--max-retry-interval 30s`, so it is back within half a minute of a relay restart.
 - **Only loopback ports.** The agent forwards `127.0.0.1:<port>` on the relay to `127.0.0.1:<port>` on the agent, and refuses any other address even if a panel response asks for one. To expose a service that is not on the agent's own loopback, run the agent on the machine (or VM) that hosts the service.
 
 ## Prerequisites

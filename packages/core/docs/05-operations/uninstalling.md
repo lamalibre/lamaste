@@ -14,7 +14,19 @@ Uninstalling Lamaste means undoing everything the installer did: stopping the se
 2. **Notify your users** — tunneled apps will become unreachable immediately after removal
 3. **SSH access** — you will need root SSH access to the server
 
-The uninstall guide is also available from the CLI:
+### Automated Removal
+
+`lamaste-server uninstall` performs the required steps below in one go (it asks for confirmation unless `--force` is passed):
+
+```bash
+sudo lamaste-server uninstall
+```
+
+It stops and disables the panel, gatekeeper, Chisel and Authelia; removes their systemd units, the sudoers file and the root-owned programs (`lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`, and the retired `lamaste-sign-csr` / `lamaste-pki-rename` if an older version left them); removes the Lamaste nginx vhosts and snippets, the Let's Encrypt certificates, `/etc/authelia`, `/var/log/authelia`, `/usr/local/bin/authelia`, `/usr/local/bin/chisel`, `/etc/lamalibre/lamaste`, `/var/www/lamaste`, `/opt/lamalibre/lamaste` and the global `@lamalibre/*` npm packages; and deletes the `lamaste` user, the `lamaste-chisel` group and the `lamaste-authelia` account. The optional steps (fail2ban, SSH, firewall, swap) are left to you.
+
+### Manual Removal
+
+The manual guide is also available from the CLI:
 
 ```bash
 npx @lamalibre/create-lamaste --uninstall
@@ -27,20 +39,13 @@ This prints the same steps listed below.
 Stop all Lamaste-managed services so they do not restart on reboot:
 
 ```bash
-sudo systemctl stop lamalibre-lamaste-serverd
-sudo systemctl disable lamalibre-lamaste-serverd
-sudo systemctl stop chisel
-sudo systemctl disable chisel
-sudo systemctl stop authelia
-sudo systemctl disable authelia
+sudo systemctl disable --now lamalibre-lamaste-serverd lamalibre-lamaste-gatekeeper chisel authelia
 ```
 
 Remove the systemd unit files:
 
 ```bash
-sudo rm -f /etc/systemd/system/lamalibre-lamaste-serverd.service
-sudo rm -f /etc/systemd/system/chisel.service
-sudo rm -f /etc/systemd/system/authelia.service
+sudo rm -f /etc/systemd/system/{lamalibre-lamaste-serverd,lamalibre-lamaste-gatekeeper,chisel,authelia}.service
 sudo systemctl daemon-reload
 ```
 
@@ -57,9 +62,9 @@ Expected output: empty (no matching lines).
 Remove all Lamaste-related nginx vhosts and the mTLS snippet:
 
 ```bash
-sudo rm -f /etc/nginx/sites-enabled/lamaste-*
-sudo rm -f /etc/nginx/sites-available/lamaste-*
-sudo rm -f /etc/nginx/snippets/lamalibre-lamaste-mtls.conf
+sudo rm -f /etc/nginx/sites-enabled/lamalibre-lamaste-*
+sudo rm -f /etc/nginx/sites-available/lamalibre-lamaste-*
+sudo rm -f /etc/nginx/snippets/lamalibre-lamaste-*
 ```
 
 Test the remaining nginx configuration and reload:
@@ -95,26 +100,28 @@ sudo rm -rf /var/www/lamaste/   # Static site files
 ### Step 4: Remove Authelia Files
 
 ```bash
-sudo rm -rf /etc/authelia/       # Authelia configuration and user database
+sudo rm -rf /etc/authelia/       # Authelia configuration, user database, SQLite database
 sudo rm -rf /var/log/authelia/   # Authelia log files
 ```
 
 ### Step 5: Remove Binaries
 
-Remove the Chisel and Authelia binaries:
+Remove the Chisel and Authelia binaries and the root-owned programs the sudoers rules name:
 
 ```bash
-sudo rm -f /usr/local/bin/chisel
-sudo rm -f /usr/local/bin/authelia
+sudo rm -f /usr/local/bin/chisel /usr/local/bin/authelia
+sudo rm -f /usr/local/sbin/lamaste-priv /usr/local/sbin/lamaste-certbot /usr/local/sbin/lamaste-cert-info
 ```
 
-### Step 6: Remove the Lamaste User
+### Step 6: Remove the Service Accounts
 
 ```bash
 sudo userdel -r lamaste
+sudo userdel lamaste-authelia
+sudo groupdel lamaste-chisel
 ```
 
-The `-r` flag removes the home directory (if one exists). The `lamaste` user is a system user with no login shell, so there is nothing sensitive in its home directory.
+The `-r` flag removes the home directory (if one exists). `lamaste` and `lamaste-authelia` are system users with no login shell, so there is nothing sensitive in their home directories.
 
 ### Step 7: Remove Sudoers Rules
 
@@ -229,21 +236,21 @@ sudo apt-get autoremove -y
 
 ### Summary Checklist
 
-| Step                      | Command                                                                    | Required? |
-| ------------------------- | -------------------------------------------------------------------------- | --------- |
-| 1. Stop services          | `systemctl stop/disable` + remove unit files                               | Yes       |
-| 2. Remove nginx config    | `rm lamaste-*` vhosts and snippet                                          | Yes       |
-| 3. Remove Lamaste dirs    | `rm -rf /etc/lamalibre/lamaste/ /opt/lamalibre/lamaste/ /var/www/lamaste/` | Yes       |
-| 4. Remove Authelia files  | `rm -rf /etc/authelia/ /var/log/authelia/`                                 | Yes       |
-| 5. Remove binaries        | `rm /usr/local/bin/chisel /usr/local/bin/authelia`                         | Yes       |
-| 6. Remove user            | `userdel -r lamaste`                                                       | Yes       |
-| 7. Remove sudoers         | `rm /etc/sudoers.d/lamaste`                                                | Yes       |
-| 8. Remove fail2ban config | `rm /etc/fail2ban/jail.d/lamaste.conf`                                     | Optional  |
-| 9. Revert SSH hardening   | Restore `sshd_config.pre-lamaste`                                          | Optional  |
-| 10. Revert firewall       | `ufw delete allow 9292/tcp`                                                | Optional  |
-| 11. Remove swap           | `swapoff /swapfile && rm /swapfile`                                        | Optional  |
-| 12. Remove LE certs       | `certbot delete --cert-name <domain>`                                      | Optional  |
-| 13. Remove packages       | `apt-get remove nginx certbot fail2ban`                                    | Optional  |
+| Step                      | Command                                                                     | Required? |
+| ------------------------- | --------------------------------------------------------------------------- | --------- |
+| 1. Stop services          | `systemctl disable --now` + remove unit files                               | Yes       |
+| 2. Remove nginx config    | `rm lamalibre-lamaste-*` vhosts and snippets                                | Yes       |
+| 3. Remove Lamaste dirs    | `rm -rf /etc/lamalibre/lamaste/ /opt/lamalibre/lamaste/ /var/www/lamaste/`  | Yes       |
+| 4. Remove Authelia files  | `rm -rf /etc/authelia/ /var/log/authelia/`                                  | Yes       |
+| 5. Remove binaries        | `rm /usr/local/bin/{chisel,authelia}`, `/usr/local/sbin/lamaste-*`          | Yes       |
+| 6. Remove accounts        | `userdel -r lamaste`, `userdel lamaste-authelia`, `groupdel lamaste-chisel` | Yes       |
+| 7. Remove sudoers         | `rm /etc/sudoers.d/lamaste`                                                 | Yes       |
+| 8. Remove fail2ban config | `rm /etc/fail2ban/jail.d/lamaste.conf`                                      | Optional  |
+| 9. Revert SSH hardening   | Restore `sshd_config.pre-lamaste`                                           | Optional  |
+| 10. Revert firewall       | `ufw delete allow 9292/tcp`                                                 | Optional  |
+| 11. Remove swap           | `swapoff /swapfile && rm /swapfile`                                         | Optional  |
+| 12. Remove LE certs       | `certbot delete --cert-name <domain>`                                       | Optional  |
+| 13. Remove packages       | `apt-get remove nginx certbot fail2ban`                                     | Optional  |
 
 ## For Developers
 
@@ -251,9 +258,10 @@ sudo apt-get autoremove -y
 
 For reference, here is a complete list of everything the installer and onboarding provisioning create on the system:
 
-**Systemd services:**
+**Systemd services** (all written by the installer):
 
 - `/etc/systemd/system/lamalibre-lamaste-serverd.service`
+- `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service`
 - `/etc/systemd/system/chisel.service`
 - `/etc/systemd/system/authelia.service`
 
@@ -261,28 +269,32 @@ For reference, here is a complete list of everything the installer and onboardin
 
 - `/etc/lamalibre/lamaste/` (config, state)
 - `/etc/lamalibre/lamaste/pki/` (certificates)
-- `/opt/lamalibre/lamaste/` (panel server and client)
+- `/opt/lamalibre/lamaste/` (panel server, CLI, client, docs, gatekeeper — root-owned)
 - `/opt/lamalibre/lamaste/lamaste-serverd/` (Fastify backend)
 - `/opt/lamalibre/lamaste/lamaste-server-ui/` (React frontend build)
 - `/var/www/lamaste/` (static site uploads)
 - `/etc/authelia/` (auth config and user database)
 - `/var/log/authelia/` (auth logs)
 
-**Binaries:**
+**Binaries** (installed by the installer):
 
-- `/usr/local/bin/chisel`
-- `/usr/local/bin/authelia`
+- `/usr/local/bin/chisel` (pinned release)
+- `/usr/local/bin/authelia` (pinned release)
+- `/usr/local/bin/lamaste-server` (symlink to the CLI)
+- `/usr/local/sbin/lamaste-priv`, `/usr/local/sbin/lamaste-certbot`, `/usr/local/sbin/lamaste-cert-info`
 
 **nginx files:**
 
 - `/etc/nginx/sites-available/lamalibre-lamaste-panel-ip`
+- `/etc/nginx/sites-available/lamalibre-lamaste-http-redirect`
 - `/etc/nginx/sites-available/lamalibre-lamaste-panel-domain`
 - `/etc/nginx/sites-available/lamalibre-lamaste-auth`
 - `/etc/nginx/sites-available/lamalibre-lamaste-tunnel`
 - `/etc/nginx/sites-available/lamalibre-lamaste-app-*`
 - `/etc/nginx/sites-available/lamalibre-lamaste-site-*`
+- `/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-*`
 - Corresponding symlinks in `/etc/nginx/sites-enabled/`
-- `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`
+- `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`, `lamalibre-lamaste-authz-cache.conf`
 
 **System configuration:**
 
@@ -292,31 +304,41 @@ For reference, here is a complete list of everything the installer and onboardin
 - `/etc/sysctl.d/99-lamaste.conf`
 - `/swapfile` (and entry in `/etc/fstab`)
 
-**System user:**
+**Service accounts:**
 
-- `lamaste` (system user, no login shell)
+- `lamaste` (system user, no login shell — runs the panel and gatekeeper)
+- `lamaste-authelia` (system user, no login shell, no home — runs Authelia)
+- `lamaste-chisel` (group — Chisel runs as `nobody:lamaste-chisel`; `lamaste` is a member)
 
 ## Quick Reference
 
 **Quick uninstall (required steps only):**
 
 ```bash
+sudo lamaste-server uninstall
+```
+
+Or by hand:
+
+```bash
 # Stop and remove services
-sudo systemctl stop lamalibre-lamaste-serverd chisel authelia
-sudo systemctl disable lamalibre-lamaste-serverd chisel authelia
-sudo rm -f /etc/systemd/system/{lamalibre-lamaste-serverd,chisel,authelia}.service
+sudo systemctl disable --now lamalibre-lamaste-serverd lamalibre-lamaste-gatekeeper chisel authelia
+sudo rm -f /etc/systemd/system/{lamalibre-lamaste-serverd,lamalibre-lamaste-gatekeeper,chisel,authelia}.service
 sudo systemctl daemon-reload
 
 # Remove nginx config
-sudo rm -f /etc/nginx/sites-enabled/lamaste-*
-sudo rm -f /etc/nginx/sites-available/lamaste-*
-sudo rm -f /etc/nginx/snippets/lamalibre-lamaste-mtls.conf
+sudo rm -f /etc/nginx/sites-enabled/lamalibre-lamaste-*
+sudo rm -f /etc/nginx/sites-available/lamalibre-lamaste-*
+sudo rm -f /etc/nginx/snippets/lamalibre-lamaste-*
 sudo nginx -t && sudo systemctl reload nginx
 
-# Remove files, binaries, user, and sudoers
+# Remove files, binaries, accounts, and sudoers
 sudo rm -rf /etc/lamalibre/lamaste/ /opt/lamalibre/lamaste/ /var/www/lamaste/
 sudo rm -rf /etc/authelia/ /var/log/authelia/
 sudo rm -f /usr/local/bin/chisel /usr/local/bin/authelia
+sudo rm -f /usr/local/sbin/lamaste-priv /usr/local/sbin/lamaste-certbot /usr/local/sbin/lamaste-cert-info
 sudo userdel -r lamaste
+sudo userdel lamaste-authelia
+sudo groupdel lamaste-chisel
 sudo rm -f /etc/sudoers.d/lamaste
 ```

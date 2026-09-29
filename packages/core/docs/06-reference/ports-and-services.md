@@ -42,7 +42,7 @@ A tunnel on one of them would publish that internal service on a public hostname
 | -------------------------------------- | ------ | ------------------------------- | ------------------------------------------- |
 | `lamalibre-lamaste-serverd.service`    | simple | lamaste                         | Panel server (Fastify Node.js API)          |
 | `chisel.service`                       | simple | nobody (group `lamaste-chisel`) | Chisel tunnel server (reverse mode)         |
-| `authelia.service`                     | simple | root                            | Authelia authentication server              |
+| `authelia.service`                     | simple | lamaste-authelia                | Authelia authentication server              |
 | `lamalibre-lamaste-gatekeeper.service` | simple | lamaste                         | Gatekeeper tunnel authorization service     |
 | `nginx.service`                        | —      | root                            | nginx reverse proxy (system package)        |
 | `fail2ban.service`                     | —      | root                            | Intrusion prevention (system package)       |
@@ -86,7 +86,9 @@ network.target
 
 All services start after `network.target` and are independent of each other. If one service fails, the others continue running.
 
-On every start the panel reconciles Chisel in the background (pinned binary, unit, authfile). If the authfile or unit cannot be established it stops and disables `chisel.service` (marker: `/etc/lamalibre/lamaste/chisel-failed-closed`) and retries with backoff (30 s up to 10 min), re-enabling it on success — see [Tunneling](../01-concepts/tunneling.md#startup-reconciliation).
+The `chisel` and `authelia` units are written by `create-lamaste` (as root) and hardened (`NoNewPrivileges`, empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`; Authelia also `UMask=027`, `ReadWritePaths=/etc/authelia /var/log/authelia` and `SystemCallFilter=@system-service`). `lamaste-authelia` is a system account with no login shell and no home directory, created by the installer. The panel runs as `lamaste` and can start, stop and restart these services through fixed sudoers lines, but never writes their units.
+
+On every start the panel reconciles Chisel in the background (server key, authfile; it also checks that the installed binary is the pinned release and logs an error if not). If the authfile cannot be established it stops and disables `chisel.service` (marker: `/etc/lamalibre/lamaste/chisel-failed-closed`) and retries with backoff (30 s up to 10 min), re-enabling it on success — see [Tunneling](../01-concepts/tunneling.md#startup-reconciliation).
 
 ### Agent-side services
 
@@ -121,7 +123,8 @@ Per agent label, on the agent machine (user-level, no root):
 | `/etc/authelia/.secrets.json`                            | Authelia secrets (JWT, session, encryption)                                         |
 | `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | mTLS configuration snippet                                                          |
 | `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                              |
-| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user                                                         |
+| `/etc/sudoers.d/lamaste`                                 | Sudo rules for lamaste user (fixed command lines, no wildcards)                     |
+| `/usr/local/sbin/lamaste-priv`                           | Root-owned helper: panel vhosts (allow-listed), Authelia TOTP, self-update          |
 | `/usr/local/sbin/lamaste-certbot`                        | Root-owned certbot wrapper (validated, fixed argv)                                  |
 | `/usr/local/sbin/lamaste-cert-info`                      | Root-owned read-only Let's Encrypt certificate queries                              |
 | `/etc/fail2ban/jail.d/lamaste.conf`                      | fail2ban jail configuration                                                         |
@@ -198,15 +201,15 @@ Per agent label, on the agent machine (user-level, no root):
 
 ## Binary Locations
 
-| Binary   | Path                      | Source                                | Version Check        |
-| -------- | ------------------------- | ------------------------------------- | -------------------- |
-| Chisel   | `/usr/local/bin/chisel`   | GitHub release 1.12.0, SHA-256 pinned | `chisel --version`   |
-| Authelia | `/usr/local/bin/authelia` | GitHub releases                       | `authelia --version` |
-| Node.js  | `/usr/bin/node`           | NodeSource repo                       | `node --version`     |
-| npm      | `/usr/bin/npm`            | NodeSource repo                       | `npm --version`      |
-| nginx    | `/usr/sbin/nginx`         | apt package                           | `nginx -v`           |
-| certbot  | `/usr/bin/certbot`        | apt package                           | `certbot --version`  |
-| openssl  | `/usr/bin/openssl`        | apt package                           | `openssl version`    |
+| Binary   | Path                      | Source                                                                                      | Version Check        |
+| -------- | ------------------------- | ------------------------------------------------------------------------------------------- | -------------------- |
+| Chisel   | `/usr/local/bin/chisel`   | GitHub release 1.12.0, SHA-256 pinned, installed by `create-lamaste`                        | `chisel --version`   |
+| Authelia | `/usr/local/bin/authelia` | GitHub release 4.39.28, SHA-256 pinned, installed by `create-lamaste` (a newer one is kept) | `authelia --version` |
+| Node.js  | `/usr/bin/node`           | NodeSource repo                                                                             | `node --version`     |
+| npm      | `/usr/bin/npm`            | NodeSource repo                                                                             | `npm --version`      |
+| nginx    | `/usr/sbin/nginx`         | apt package                                                                                 | `nginx -v`           |
+| certbot  | `/usr/bin/certbot`        | apt package                                                                                 | `certbot --version`  |
+| openssl  | `/usr/bin/openssl`        | apt package                                                                                 | `openssl version`    |
 
 ## Quick Reference
 

@@ -188,7 +188,7 @@ curl -s --cert client.p12:password \
 
 ### `POST /api/certs/mtls/rotate`
 
-Rotates the mTLS client certificate. This generates a new certificate and key pair, replacing the existing one. After rotation, nginx is reloaded to accept the new certificate.
+Would rotate the admin mTLS client certificate. **The panel does not issue admin certificates** — it runs unprivileged and signs only agent certificates, so a compromised panel cannot mint an admin credential — and this endpoint answers `503` with the instruction to run `sudo lamaste-server reset-admin` on the server console, which performs the rotation (see [Certificate Management](../02-guides/certificate-management.md#5-rotate-the-mtls-client-certificate)). The response shape below is what the route returns if a rotation succeeds.
 
 **This is a disruptive operation.** After rotation, you must download and import the new client certificate into your browser. The old certificate will no longer be accepted.
 
@@ -222,11 +222,12 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                                                                                           | When                                             |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| 410    | `{"error":"P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert."}` | `adminAuthMode` is `hardware-bound`              |
-| 500    | `{"error":"mTLS rotation failed: ..."}`                                                                                                        | Certificate generation or file operations failed |
-| 500    | `{"error":"CA key not found — cannot sign new certificate"}`                                                                                   | CA key missing from PKI directory                |
+| Status | Body                                                                                                                                           | When                                                |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| 410    | `{"error":"P12 certificate rotation is disabled. Admin uses hardware-bound authentication. Use lamaste-reset-admin on the server to revert."}` | `adminAuthMode` is `hardware-bound`                 |
+| 503    | `{"error":"Panel-initiated admin certificate rotation is disabled for security. Run sudo lamaste-server reset-admin ..."}`                     | Always (P12 mode): use `lamaste-server reset-admin` |
+| 500    | `{"error":"mTLS rotation failed: ..."}`                                                                                                        | Certificate generation or file operations failed    |
+| 500    | `{"error":"CA key not found — cannot sign new certificate"}`                                                                                   | CA key missing from PKI directory                   |
 
 ---
 
@@ -824,7 +825,7 @@ curl -s -k \
 
 ### `POST /api/certs/admin/upgrade-to-hardware-bound` — Upgrade admin to hardware-bound (admin-only)
 
-Upgrades the admin certificate from P12-based authentication to hardware-bound authentication. The admin submits a PEM-encoded CSR (generated from a key pair in the system keychain), and the panel signs it with the CA key. The old admin P12 certificate is revoked, and `adminAuthMode` is set to `hardware-bound` in the panel configuration. After this upgrade, P12 rotation and download endpoints return `410 Gone`.
+Upgrades the admin certificate from P12-based authentication to hardware-bound authentication. The admin submits a PEM-encoded CSR (generated from a key pair in the system keychain), and the panel would sign it with the CA key. **The panel does not issue `CN=admin` certificates**, so this endpoint currently answers `503` ("Panel-initiated admin cert issuance is disabled for security. Run `sudo lamaste-server reset-admin` ..."). The flow it describes: the old admin P12 certificate is revoked, and `adminAuthMode` is set to `hardware-bound` in the panel configuration. After this upgrade, P12 rotation and download endpoints return `410 Gone`.
 
 **Request:**
 
@@ -869,13 +870,14 @@ curl -s --cert client.p12:password \
 
 **Errors:**
 
-| Status | Body                                                                  | When                                        |
-| ------ | --------------------------------------------------------------------- | ------------------------------------------- |
-| 400    | `{"error":"Validation failed","details":{...}}`                       | Missing or malformed `csr` field            |
-| 400    | `{"error":"CSR too large"}`                                           | CSR exceeds 8192 bytes                      |
-| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}` | CSR fails OpenSSL validation                |
-| 409    | `{"error":"Admin is already using hardware-bound authentication"}`    | `adminAuthMode` is already `hardware-bound` |
-| 500    | `{"error":"Admin upgrade failed"}`                                    | OpenSSL signing or file operation failed    |
+| Status | Body                                                                            | When                                        |
+| ------ | ------------------------------------------------------------------------------- | ------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{...}}`                                 | Missing or malformed `csr` field            |
+| 400    | `{"error":"CSR too large"}`                                                     | CSR exceeds 8192 bytes                      |
+| 400    | `{"error":"Invalid CSR: structure or signature verification failed"}`           | CSR fails OpenSSL validation                |
+| 409    | `{"error":"Admin is already using hardware-bound authentication"}`              | `adminAuthMode` is already `hardware-bound` |
+| 503    | `{"error":"Panel-initiated admin cert issuance is disabled for security. ..."}` | Always: the panel does not sign admin CSRs  |
+| 500    | `{"error":"Admin upgrade failed"}`                                              | OpenSSL signing or file operation failed    |
 
 ---
 
@@ -980,7 +982,7 @@ curl -s --cert agent.p12:password \
 - **Issued by:** Lamaste's self-signed CA
 - **Purpose:** Admin authentication to the management panel
 - **Validity:** 2 years
-- **Renewal:** Manual via `/api/certs/mtls/rotate`
+- **Renewal:** Manual, `sudo lamaste-server reset-admin` on the server
 - **Path:** `/etc/lamalibre/lamaste/pki/client.p12`
 - **Issued during:** Initial installation by `create-lamaste`
 

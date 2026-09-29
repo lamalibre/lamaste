@@ -91,7 +91,7 @@ This does not affect the tunneled apps. Visitors to your tunneled apps authentic
 
 The `.p12` file can be imported into multiple browsers and devices. If you want to access the admin panel from both your laptop and your phone, import the same `.p12` file on each.
 
-If you lose access to the certificate and need a new one, you can rotate the client certificate from the Certificates page in the management panel (assuming you still have access from another device).
+If you lose access to the certificate and need a new one, run `sudo lamaste-server reset-admin` on the server (SSH or your provider's console). It issues a new admin certificate and revokes the old one; the panel itself never issues admin certificates.
 
 ### Agent certificates
 
@@ -357,22 +357,18 @@ In development (`NODE_ENV=development`), all checks are skipped.
 
 ### Certificate rotation
 
-Client certificates expire after 2 years. The management panel's Certificates page shows the expiry date and provides a rotation function.
-
-Rotation (`packages/lamaste-serverd/src/lib/mtls.js`) follows a safe sequence:
+Client certificates expire after 2 years. The management panel's Certificates page shows the expiry date. The admin certificate is rotated on the server with `sudo lamaste-server reset-admin` (`packages/server/cli/src/commands/reset-admin.js`) — the panel runs unprivileged and signs only agent certificates, and its rotation endpoint answers `503` with that instruction:
 
 ```
 1. Verify CA key exists
-2. Generate new client key (4096-bit RSA)
-3. Create CSR and sign with existing CA (2-year validity)
-4. Create new PKCS12 bundle with random password
-5. Back up current client.key, client.crt, client.p12
-6. Move new files into place
-7. Clean up CSR and serial file
-8. Set restrictive file permissions
+2. Generate new client key (4096-bit RSA)            ─┐
+3. Create CSR (CN=admin) and sign with the CA (2 yr)  │ run as the lamaste user,
+4. Create new PKCS12 bundle with random password      │ which owns the PKI directory
+5. Back up current client.key, client.crt, client.p12 │
+6. Move new files into place                         ─┘
+7. Revoke the old admin certificate, clear panel 2FA, set adminAuthMode to p12
+8. Restart the panel, reload nginx, print the new PKCS12 password
 ```
-
-After rotation, the server returns the new PKCS12 password and a warning: "Your current browser certificate is now invalid. Download and import the new certificate before closing this page."
 
 The CA certificate is never rotated — it has a 10-year validity. Since nginx trusts the CA, and all client certificates are signed by the same CA, rotating the client cert does not require any nginx changes.
 
@@ -434,14 +430,16 @@ if (alreadyProvisioned) {
 
 ### File permissions
 
-| File            | Mode  | Owner | Access              |
-| --------------- | ----- | ----- | ------------------- |
-| `ca.key`        | `600` | root  | CA signing only     |
-| `ca.crt`        | `644` | root  | nginx reads this    |
-| `client.key`    | `600` | root  | Bundled in .p12     |
-| `client.crt`    | `644` | root  | Bundled in .p12     |
-| `client.p12`    | `600` | root  | Downloaded by admin |
-| `.p12-password` | `600` | root  | Installer summary   |
+| File            | Mode  | Owner   | Access              |
+| --------------- | ----- | ------- | ------------------- |
+| `ca.key`        | `600` | lamaste | CA signing only     |
+| `ca.crt`        | `644` | lamaste | nginx reads this    |
+| `client.key`    | `600` | lamaste | Bundled in .p12     |
+| `client.crt`    | `644` | lamaste | Bundled in .p12     |
+| `client.p12`    | `600` | lamaste | Downloaded by admin |
+| `.p12-password` | `600` | lamaste | Installer summary   |
+
+The PKI directory (`0700`) belongs to the panel's `lamaste` user: the panel is the CA and signs agent certificates itself, unprivileged, refusing any CN that is not an agent or plugin-agent label. Admin certificates are issued only by `sudo lamaste-server reset-admin` on the server, which runs its `openssl` steps as `lamaste`.
 
 ### nginx directives
 

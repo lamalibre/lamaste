@@ -125,6 +125,7 @@ curl -s --cert client.p12:password \
 | 400    | `{"error":"Unknown service"}`                                                             | Service name not in whitelist                  |
 | 400    | `{"error":"Invalid action"}`                                                              | Action not one of start/stop/restart/reload    |
 | 400    | `{"error":"Cannot stop the panel service from the UI — it would terminate this session"}` | Attempting to stop `lamalibre-lamaste-serverd` |
+| 400    | `{"error":"chisel does not support reload — use restart"}`                                | `reload` for `chisel` or the panel service     |
 | 400    | `{"error":"Validation failed","details":{"issues":[...]}}`                                | Zod validation of params failed                |
 | 500    | `{"error":"Failed to restart nginx","details":"..."}`                                     | systemctl command failed                       |
 
@@ -239,9 +240,9 @@ If the timestamp cannot be parsed from the log line, `timestamp` is an empty str
 | Service                     | start | stop   | restart | reload |
 | --------------------------- | ----- | ------ | ------- | ------ |
 | `nginx`                     | Yes   | Yes    | Yes     | Yes    |
-| `chisel`                    | Yes   | Yes    | Yes     | Yes    |
+| `chisel`                    | Yes   | Yes    | Yes     | **No** |
 | `authelia`                  | Yes   | Yes    | Yes     | Yes    |
-| `lamalibre-lamaste-serverd` | Yes   | **No** | Yes     | Yes    |
+| `lamalibre-lamaste-serverd` | Yes   | **No** | Yes     | **No** |
 
 ### curl Cheat Sheet
 

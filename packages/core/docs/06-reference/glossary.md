@@ -44,7 +44,7 @@ If you are reading documentation and hit an unfamiliar term, this is the place t
 
 **Plain English:** The bouncer at the door of your tunneled apps. When someone visits your app through the tunnel, Authelia asks for a username and a time-based code from their phone before letting them in.
 
-**Technical:** Authelia is a lightweight open-source authentication server written in Go. It implements forward authentication — nginx delegates auth decisions to Authelia before proxying requests to the backend. Lamaste uses Authelia's file-based user store (`users.yml`) with bcrypt password hashing and TOTP (Time-based One-Time Password) for two-factor authentication. It runs as a systemd service binding `127.0.0.1:9091` and uses approximately 25MB of RAM.
+**Technical:** Authelia is a lightweight open-source authentication server written in Go. It implements forward authentication — nginx delegates auth decisions to Authelia before proxying requests to the backend. Lamaste uses Authelia's file-based user store (`users.yml`) with bcrypt password hashing and TOTP (Time-based One-Time Password) for two-factor authentication. It runs as a systemd service under its own unprivileged account (`lamaste-authelia`), binding `127.0.0.1:9091`, and uses approximately 25MB of RAM. The installer installs a pinned release (4.39.28, SHA-256 verified); onboarding writes its configuration and starts it.
 
 **Where it appears:**
 
@@ -109,9 +109,9 @@ If you are reading documentation and hit an unfamiliar term, this is the place t
 **Where it appears:**
 
 - Server binary: `/usr/local/bin/chisel`; agent binary: `~/.lamalibre/lamaste/bin/chisel`
-- Pinned to Chisel 1.12.0 on server and agents, verified against a pinned SHA-256; any other version is replaced
+- Pinned to Chisel 1.12.0 on server and agents, verified against a pinned SHA-256; any other version is replaced (on the server by the installer, on agents by their sync)
 - Server systemd unit: `chisel.service` (`User=nobody`, `Group=lamaste-chisel`)
-- Installed during onboarding provisioning
+- Installed on the server by `create-lamaste`; started during onboarding provisioning
 - Client runs on each agent (launchd on macOS, a systemd user unit on Linux) and verifies the server's TLS certificate
 - Authfile `/etc/lamalibre/lamaste/chisel-users` grants each agent only the ports of the tunnels it carries
 - Re-rendered when tunnels or agents change; Chisel reloads it for additions and is restarted for revocations
@@ -129,7 +129,7 @@ If you are reading documentation and hit an unfamiliar term, this is the place t
 - Generated during installation as `/etc/lamalibre/lamaste/pki/client.p12`
 - Imported into the admin's browser during setup
 - Verified by nginx on every request to port 9292
-- Can be rotated through the panel's Certificates page
+- Rotated on the server with `sudo lamaste-server reset-admin` (the panel does not issue admin certificates)
 
 See also: [mTLS](#mtls-mutual-tls), [CA](#ca-certificate-authority), [PKCS12](#pkcs12)
 
@@ -315,7 +315,7 @@ See also: [Client Certificate](#client-certificate), [CA](#ca-certificate-author
 
 **Plain English:** The setup wizard that runs the first time you open the admin panel. It walks you through connecting your domain and installing the remaining components.
 
-**Technical:** A multi-step wizard in the panel UI that transitions the system from `FRESH` state to `COMPLETED` state. The onboarding flow is: domain input, DNS verification, stack provisioning (Chisel, Authelia, certbot, nginx vhosts). Onboarding API endpoints are guarded by an onboarding middleware — they return `410 Gone` after completion, while management endpoints return `503 Service Unavailable` before completion.
+**Technical:** A multi-step wizard in the panel UI that transitions the system from `FRESH` state to `COMPLETED` state. The onboarding flow is: domain input, DNS verification, stack provisioning (starting Chisel, configuring Authelia — both installed beforehand by `create-lamaste` — certbot, nginx vhosts). Onboarding API endpoints are guarded by an onboarding middleware — they return `410 Gone` after completion, while management endpoints return `503 Service Unavailable` before completion.
 
 **Where it appears:**
 

@@ -432,11 +432,11 @@ This ensures that a crash during write never corrupts the state file. The worst 
 Provides functions for writing, enabling, disabling, testing, and reloading nginx configurations. The core pattern is **write-with-rollback**:
 
 1. Backup existing vhost (if any) to `.bak`
-2. Write new vhost via temp file + `sudo mv`
-3. Create symlink in `sites-enabled`
+2. Install the new vhost: `sudo lamaste-priv nginx-site write <name>` with the text on stdin — the root helper refuses any directive outside its allow-list
+3. Create (or remove) the symlink in `sites-enabled` (`nginx-site enable|disable`)
 4. Run `nginx -t` to validate
 5. On success: `systemctl reload nginx`, delete backup
-6. On failure: restore backup, remove new file
+6. On failure: restore backup (or remove the new file) and the previous link state
 
 Tunnel vhosts (`writePublicVhost`, `writeAuthenticatedVhost`, `writeRestrictedVhost`) declare their proxy headers inside each `location` (`TUNNEL_PROXY_HEADERS`: `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, WebSocket upgrade), always clear client-supplied `X-SSL-Client-*` headers, and — on public vhosts — clear the `Remote-*` identity headers.
 
@@ -446,8 +446,8 @@ See [nginx-configuration.md](./nginx-configuration.md) for detailed coverage.
 
 ### chisel.js — Tunnel Server Management
 
-- Installs the pinned Chisel release (1.12.0) from its fixed GitHub URL, verified against a pinned SHA-256 (`chisel-download.ts` in core); replaces an installed binary reporting another version
-- Writes systemd service unit (binds `127.0.0.1:9090`, `--reverse` mode, `--keyfile`, `--authfile`; `User=nobody`, `Group=lamaste-chisel`)
+- Never installs the binary or writes the unit: both are `create-lamaste`'s (the pinned 1.12.0 release at `/usr/local/bin/chisel`; the unit binds `127.0.0.1:9090`, `--reverse`, `--keyfile`, `--authfile`, `User=nobody`, `Group=lamaste-chisel`). `isChiselInstalled()` checks the binary exists; `getInstalledChiselVersion()` reads its version
+- Generates the server key `chisel-server.key` as `lamaste` (`lamaste:lamaste-chisel`, `0640`), written to a temp file and renamed into place
 - Manages service lifecycle (start, stop, `try-restart`)
 - `syncChisel()` — called after every tunnel state write: re-renders the authfile (via `chisel-users.js`). Chisel reloads it for new sessions; when the render withdrew a grant or password, Chisel is restarted so live sessions drop what they no longer hold (`chisel-runtime.js`). Throws if that restart fails, since a withdrawn grant would otherwise stay live
 
@@ -471,10 +471,10 @@ Runs in the background on every start (`startChiselReconciler`), so the panel st
 
 1. Mints a Chisel credential for every active agent that lacks one
 2. Under the tunnel lock, binds ownerless tunnels where the owner is certain (`bindUnownedTunnels`): an `agent-<label>` panel tunnel only to the agent it names, when active; other tunnels only when exactly one machine agent is active (plugin-agents are not counted). The rest stay unassigned and are logged, as are tunnels withheld from everyone (`withheldTunnels`: a reserved port or a port two tunnels share)
-3. Once onboarding has provisioned Chisel: installs the pinned release, rewrites the unit and the authfile (ownership and mode re-applied)
-4. Restarts Chisel when the binary, unit or a revocation requires it; starts it if enabled but not running
+3. Once onboarding is `COMPLETED`: ensures the server key exists and rewrites the authfile (ownership and mode re-applied). It also checks the installed Chisel version; if it is not the pinned release it logs an error ("run create-lamaste on the server") and Chisel is restarted on every authfile change until it is
+4. Restarts Chisel when a revocation requires it; starts it if enabled but not running
 
-If the authfile or unit cannot be established, Chisel is **stopped and disabled** and the marker `/etc/lamalibre/lamaste/chisel-failed-closed` is written — an authfile from an older version may grant every agent every port, and a disabled unit keeps a reboot from starting it on that file. Reconciliation retries with exponential backoff from 30 seconds to 10 minutes; a successful pass re-enables (`sudo systemctl enable chisel`) and starts Chisel and removes the marker. A failed binary download alone keeps Chisel running and is retried the same way.
+If the authfile cannot be established, Chisel is **stopped and disabled** and the marker `/etc/lamalibre/lamaste/chisel-failed-closed` is written — an authfile from an older version may grant every agent every port, and a disabled unit keeps a reboot from starting it on that file. Reconciliation retries with exponential backoff from 30 seconds to 10 minutes; a successful pass re-enables (`sudo systemctl enable chisel`) and starts Chisel and removes the marker.
 
 ### tunnel-deps.js — Tunnel Workflow Dependencies
 
@@ -491,9 +491,10 @@ If the authfile or unit cannot be established, Chisel is **stopped and disabled*
 
 ### authelia.js — Authentication Management
 
-- Downloads Authelia binary from GitHub releases (`linux-amd64` tarball)
-- Writes YAML configuration (bcrypt cost 12, file-based users, TOTP, session cookies)
+- Never installs Authelia: the pinned binary, its unit and the `lamaste-authelia` account are `create-lamaste`'s; `isAutheliaInstalled()` checks the binary exists
+- Writes YAML configuration (bcrypt cost 12, file-based users, TOTP, session cookies) directly, without sudo: `/etc/authelia` is `lamaste:lamaste-authelia 2770` (setgid), files are written as a temp file + fsync + rename (`configuration.yml` 0640, `users.yml` 0660, `.secrets.json` 0600)
 - User CRUD: creates users with bcrypt-hashed passwords, reads/writes `users.yml`
+- Stores a user's TOTP secret with `sudo lamaste-priv authelia-totp <username>` (secret on stdin), which runs Authelia's CLI as `lamaste-authelia` — the database is that account's file
 - TOTP generation: `crypto.randomBytes(20)` → base32-encoded secret → `otpauth://` URI (parameterized `generateTotpSecret(username, { issuer })` — reused by panel 2FA via `lib/totp.js`)
 - `base32Decode()` utility for decoding base32 TOTP secrets into raw bytes
 - Manages service lifecycle
@@ -511,9 +512,9 @@ If the authfile or unit cannot be established, Chisel is **stopped and disabled*
 
 ### mtls.js — mTLS Certificate Operations
 
-- Reads certificate expiry dates via `openssl x509 -enddate`
-- Rotates admin client certificates: generate new key → CSR → sign with CA → PKCS12 → backup old → swap
-- Generates agent-scoped client certificates with capability-based access
+- Reads certificate expiry dates via `openssl x509 -enddate` (no sudo: the panel owns the PKI directory)
+- Does not rotate admin client certificates — that is `sudo lamaste-server reset-admin` on the server only; the admin rotation route returns 503 with that instruction
+- Generates agent-scoped client certificates with capability-based access: key, CSR and PKCS12 as `lamaste`, signed with the panel CA by `lib/pki-sign.js` (`openssl x509 -req`, run as `lamaste`), which refuses any CN that is not an `agent:` / `plugin-agent:` label — never `CN=admin`. `lib/csr-signing.js` signs enrollment and rotation CSRs the same way after checking the CN is exactly the expected label
 - Manages the agent registry: create, list, revoke, update capabilities and allowed sites
 - Revoking a regular agent removes its Chisel credential and releases its tunnels (`releaseAgentTunnels`): app/plugin tunnels become unassigned, its `agent-<label>` panel tunnel is removed
 - `rotateAgentChiselCredential` backs `POST /api/agents/:label/chisel-credential/rotate` (admin) and `POST /api/agents/me/chisel-credential/rotate` (agent, refused with 429 while the current credential is under 10 minutes old)
@@ -568,9 +569,9 @@ State files: `/etc/lamalibre/lamaste/ticket-scopes.json` (scopes, instances, ass
 
 - Path validation with directory traversal prevention (rejects `..`, absolute paths, null bytes, hidden files)
 - Creates site directories with default `index.html`
-- Streaming file upload (memory-safe on 512 MB droplets): stream → temp file → `sudo mv`
-- File listing via `sudo find` with formatted output
-- All file operations use `sudo` since site directories are owned by `www-data`
+- Streaming file upload (memory-safe on 512 MB droplets): stream → temp file next to the destination → rename (mode `0640`)
+- File listing and site size via `readdir` / `lstat` (symbolic links are skipped, never followed)
+- No sudo: the web root is `lamaste:www-data` with setgid `2750` directories, so the panel writes it directly and nginx reads through the `www-data` group
 
 ## WebSocket Support
 

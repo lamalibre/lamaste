@@ -93,12 +93,12 @@ Prints a step-by-step guide for manually removing Lamaste from the server, then 
 npx @lamalibre/create-lamaste --uninstall
 ```
 
-The printed guide covers:
+The printed guide first points to the automated removal, `sudo lamaste-server uninstall`, then covers:
 
-1. Stop and disable services
+1. Stop and disable services (panel, gatekeeper, Chisel, Authelia) and remove their units
 2. Remove nginx configuration
-3. Remove Lamaste directories (`/etc/lamalibre/lamaste/`, `/opt/lamalibre/lamaste/`, `/var/www/lamaste/`)
-4. Remove the `lamaste` system user
+3. Remove Lamaste directories and binaries (`/etc/lamalibre/lamaste/`, `/opt/lamalibre/lamaste/`, `/var/www/lamaste/`, `/etc/authelia/`, `/var/log/authelia/`, `/usr/local/bin/{chisel,authelia}`, `/usr/local/sbin/lamaste-{priv,certbot,cert-info}`)
+4. Remove the service accounts (`lamaste`, `lamaste-authelia`, group `lamaste-chisel`)
 5. Remove sudoers rules
 6. Remove fail2ban configuration (optional)
 7. Revert SSH hardening (optional)
@@ -176,7 +176,8 @@ The installer runs in two sequential phases:
 2. Install Node.js 20 LTS
 3. Generate mTLS certificates (CA, client cert, PKCS12 bundle)
 4. Configure nginx (self-signed TLS, mTLS snippet, panel vhost on port 9292)
-5. Deploy Lamaste panel (system user, directories, server, client, config, systemd, sudoers)
+5. Deploy Lamaste panel (system user, root-owned install directory, pinned Chisel + Authelia with their units and accounts, server, CLI, client, config, systemd, `lamaste-priv` and wrappers, sudoers)
+6. Deploy Gatekeeper
 
 ## Idempotency
 

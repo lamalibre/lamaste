@@ -618,91 +618,59 @@ This design allows the panel vhosts to serve both mTLS-protected and public endp
 
 ## Write-With-Rollback Pattern
 
-All vhost modifications in the Panel Server follow a safe write-with-rollback sequence. This is implemented in `packages/server/daemon/src/lib/nginx.js` (`safeWriteVhost()` for tunnel vhosts; `writeStaticSiteVhost()` follows the same sequence).
+All vhost modifications in the Panel Server follow a safe write-with-rollback sequence, implemented once in `safeWriteVhost()` in `packages/server/daemon/src/lib/nginx.js` and used by tunnel, static site, agent panel and core vhosts. The panel cannot write `/etc/nginx` itself: every file operation is a call to the root-owned helper `sudo /usr/local/sbin/lamaste-priv nginx-site <action> <name>`, with the vhost text on stdin.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ 1. Backup existing vhost (if any)                    │
-│    sudo cp sites-available/<name> <name>.bak         │
-├─────────────────────────────────────────────────────┤
-│ 2. Write new vhost via temp file                     │
-│    Write to /tmp/nginx-<name>-<random>               │
-│    sudo mv /tmp/... → sites-available/<name>         │
-│    sudo chmod 644 sites-available/<name>             │
-├─────────────────────────────────────────────────────┤
-│ 3. Enable site                                       │
-│    sudo ln -sf sites-available/<name>                │
-│              → sites-enabled/<name>                  │
-├─────────────────────────────────────────────────────┤
-│ 4. Test configuration                                │
-│    sudo nginx -t                                     │
-│    ├── Success → continue to step 5                  │
-│    └── Failure → rollback                            │
-│        If backup exists: sudo mv <name>.bak <name>   │
-│        If no backup: sudo rm sites-available/<name>  │
-│                      sudo rm sites-enabled/<name>    │
-│        Throw error with nginx -t output              │
-├─────────────────────────────────────────────────────┤
-│ 5. Reload nginx                                      │
-│    sudo systemctl reload nginx                       │
-├─────────────────────────────────────────────────────┤
-│ 6. Clean up backup                                   │
-│    sudo rm <name>.bak (on success only)              │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ 1. Backup existing vhost (if any)                     │
+│    lamaste-priv nginx-site backup <name>              │
+├──────────────────────────────────────────────────────┤
+│ 2. Install the new vhost (text on stdin)              │
+│    lamaste-priv nginx-site write <name>               │
+│    → validated against the allow-list, then written   │
+│      atomically to sites-available/<name> (0644)      │
+├──────────────────────────────────────────────────────┤
+│ 3. Enable (or disable) the site                       │
+│    lamaste-priv nginx-site enable|disable <name>      │
+├──────────────────────────────────────────────────────┤
+│ 4. Test configuration                                 │
+│    sudo nginx -t                                      │
+│    ├── Success → continue to step 5                   │
+│    └── Failure → rollback                             │
+│        If backup exists: nginx-site restore <name>    │
+│        If no backup:     nginx-site remove <name>     │
+│        Restore the previous enabled/disabled state    │
+│        Throw error with nginx -t output               │
+├──────────────────────────────────────────────────────┤
+│ 5. Reload nginx                                       │
+│    sudo systemctl reload nginx                        │
+├──────────────────────────────────────────────────────┤
+│ 6. Clean up backup                                    │
+│    lamaste-priv nginx-site discard-backup <name>      │
+└──────────────────────────────────────────────────────┘
 ```
 
-**Why this matters:** A bad vhost configuration can prevent nginx from reloading, breaking all sites on the server. The `nginx -t` test catches syntax errors and missing certificate files before the reload. The rollback ensures the previous working configuration is restored if the test fails.
+**Why this matters:** A bad vhost configuration can prevent nginx from reloading, breaking all sites on the server. The `nginx -t` test catches syntax errors and missing certificate files before the reload. The rollback ensures the previous working configuration — file and link state — is restored if the test fails. Any other error (including a vhost `lamaste-priv` refuses) triggers the same rollback.
 
-The implementation wraps the entire sequence in a try/catch. Even unexpected errors (e.g., `sudo mv` fails) trigger rollback:
+Removing a vhost is `lamaste-priv nginx-site remove <name>` (the file, its `sites-enabled` link and its backup).
 
-```javascript
-async function safeWriteVhost(name, config, fqdn) {
-  const availablePath = path.join(SITES_AVAILABLE, name);
-  const bakPath = `${availablePath}.bak`;
+### Vhost allow-list
 
-  const existed = await fileExistsSudo(availablePath);
-  if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]);
-  }
+nginx's master process runs as root and opens the files a configuration names — `access_log /etc/cron.d/x` with a crafted `log_format` would be a root shell for whoever controls the panel. `lamaste-priv` therefore installs a vhost only if:
 
-  try {
-    await writeVhostFile(name, config);
-    await enableSite(name);
+- its **name** is one the panel manages: `lamalibre-lamaste-panel-domain`, `-auth`, `-tunnel`, `-app-<subdomain>`, `-agent-panel-<label>` or `-site-<uuid>`. `lamalibre-lamaste-panel-ip` (written by the installer) may only be enabled or disabled — which is how panel 2FA turns the IP vhost off;
+- every **directive** is on the allow-list for its context, with arguments that cannot name a file outside what Lamaste serves:
 
-    const result = await testConfig();
-    if (!result.valid) {
-      // Rollback
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-      }
-      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ${result.error}`);
-    }
+| Context    | Allowed                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| top level  | `server`, `map` (plain `key value;` entries, no `include`), `limit_req_zone`                                                                                                                                                                                                                                                                                                                                                                                 |
+| `server`   | `listen 443` / `[::]:443` with optional `ssl` / `http2`; `server_name` (hostnames); `ssl_certificate(_key)` only `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`; `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`; `root` only under `/var/www/lamaste/`; `ssl_protocols`, `ssl_ciphers`, `ssl_prefer_server_ciphers`, `client_max_body_size`, `index`, `add_header`, `proxy_set_header`, `error_page`, `return`, `rewrite`, `location` |
+| `location` | `proxy_pass` only `http://127.0.0.1:<port>[/path]`; `root` / `alias` only under `/var/www/lamaste/`; `proxy_set_header`, `proxy_http_version`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffers`, `proxy_next_upstream`, `proxy_pass_request_body`, `auth_request`, `auth_request_set`, `limit_req`, `try_files`, `index`, `add_header`, `error_page`, `client_max_body_size`, `internal`, `return`, `rewrite`, `if`, nested `location`            |
+| `if`       | `return`, `rewrite`                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
-    await reload();
+Port 80 is not allowed: it belongs to the installer's HTTPS redirect and to certbot's HTTP-01 challenges. Backslashes, `${`, control characters and non-ASCII text outside comments are refused rather than interpreted, as is any directive not listed — including ones nginx would accept (`access_log`, `log_format`, `ssl_*` files elsewhere, `proxy_pass` to another host, ...). A refused `write` fails with `nginx site write failed for <name>: lamaste-priv: vhost line <n>: ...` and leaves the previous vhost in place.
 
-    if (existed) {
-      await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
-    }
-
-    return availablePath;
-  } catch (err) {
-    if (err.message.includes('Nginx config test failed')) {
-      throw err; // already rolled back above
-    }
-    // Rollback on unexpected errors
-    if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
-    } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
-      await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]).catch(() => {});
-    }
-    throw err;
-  }
-}
-```
+Adding a directive to a generator therefore means adding it to the allow-list in `packages/provisioners/server/scripts/lamaste-priv` too. `npm test` checks both sides: `packages/server/daemon/test/nginx-vhosts.test.js` runs every generator's output through the allow-list, and `packages/provisioners/server/test/lamaste-priv.test.js` covers the refusals.
 
 ## Forward Auth Block
 
@@ -781,7 +749,7 @@ The 24-hour timeout (`proxy_read_timeout 86400s`) is set on tunnel and app vhost
     └── lamalibre-lamaste-authz-cache.conf      ← Gatekeeper proxy_cache zone definition
 ```
 
-All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish them from other nginx configurations on the system.
+All Lamaste-managed files are prefixed with `lamalibre-lamaste-` to distinguish them from other nginx configurations on the system. The installer writes its own files as root; the panel's vhosts (everything created during onboarding and at runtime, including `lamalibre-lamaste-agent-panel-<label>`) are installed through `lamaste-priv`.
 
 ## Vhost Lifecycle
 
@@ -824,15 +792,16 @@ Without it nothing listens on port 80 and `http://` links to the relay's hostnam
 
 ## Key Files
 
-| File                                                     | Role                                                                  |
-| -------------------------------------------------------- | --------------------------------------------------------------------- |
-| `packages/provisioners/server/src/tasks/nginx.js`        | Installer: self-signed cert, mTLS snippet, IP vhost, port-80 redirect |
-| `packages/provisioners/server/src/lib/http-redirect.js`  | Installs/refreshes the port-80 redirect site (installer and redeploy) |
-| `packages/server/daemon/src/lib/nginx.js`                | Runtime: vhost generation, write-with-rollback, enable/disable/reload |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | Shared mTLS snippet                                                   |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                |
-| `/etc/nginx/sites-available/lamalibre-lamaste-*`         | Vhost configuration files                                             |
-| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`           | Symlinks to enabled vhosts                                            |
+| File                                                     | Role                                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `packages/provisioners/server/src/tasks/nginx.js`        | Installer: self-signed cert, mTLS snippet, IP vhost, port-80 redirect                             |
+| `packages/provisioners/server/src/lib/http-redirect.js`  | Installs/refreshes the port-80 redirect site (installer and redeploy)                             |
+| `packages/server/daemon/src/lib/nginx.js`                | Runtime: vhost generation, write-with-rollback, enable/disable/reload                             |
+| `packages/provisioners/server/scripts/lamaste-priv`      | Root helper (`/usr/local/sbin/lamaste-priv`): site names, vhost allow-list, install/enable/remove |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`        | Shared mTLS snippet                                                                               |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf` | Gatekeeper proxy_cache zone definition                                                            |
+| `/etc/nginx/sites-available/lamalibre-lamaste-*`         | Vhost configuration files                                                                         |
+| `/etc/nginx/sites-enabled/lamalibre-lamaste-*`           | Symlinks to enabled vhosts                                                                        |
 
 ## Design Decisions
 
@@ -856,6 +825,6 @@ nginx emits error 495 when no client certificate is provided and 496 when the ce
 
 Chisel tunnel connections and some app WebSocket connections are long-lived. nginx's default `proxy_read_timeout` of 60 seconds would close these connections, causing tunnel drops. The 24-hour timeout is effectively "never timeout" for practical purposes, while still allowing nginx to reclaim resources from genuinely dead connections.
 
-### Why use sudo for nginx operations?
+### Why a root helper for nginx operations?
 
-The Panel Server runs as the `lamaste` user, not root. Writing to `/etc/nginx/sites-available/` and reloading nginx require root privileges. Instead of running the Panel Server as root, Lamaste uses scoped `sudoers` rules that allow the `lamaste` user to perform only specific operations (mv to specific paths, `nginx -t`, `systemctl reload nginx`). Certbot is reached only through the root-owned `/usr/local/sbin/lamaste-certbot` wrapper, which validates hostnames and email and runs certbot with a fixed argument vector — a sudoers wildcard over certbot's arguments would also accept flags like `--deploy-hook` and run code as root. This follows the principle of least privilege.
+The Panel Server runs as the `lamaste` user, not root. Writing to `/etc/nginx/sites-available/` and reloading nginx require root privileges. Instead of running the Panel Server as root, Lamaste allows the `lamaste` user a few fixed command lines (`nginx -t`, `systemctl reload nginx`, ...) and the root-owned `lamaste-priv` helper, which accepts only the panel's own site names and only vhosts built from the allow-listed directives above. Earlier versions used sudoers rules with wildcards (`mv /tmp/nginx-* /etc/nginx/sites-available/*`); a sudoers `*` also matches spaces, so such a rule accepted extra arguments, and even an exact rule would have let the panel install any nginx configuration — which nginx's root master process would act on. Certbot is reached only through the root-owned `/usr/local/sbin/lamaste-certbot` wrapper, which validates hostnames and email and runs certbot with a fixed argument vector. See [Security Model](../01-concepts/security-model.md#privilege-boundary).

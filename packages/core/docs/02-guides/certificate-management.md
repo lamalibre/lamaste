@@ -92,21 +92,19 @@ The client certificate has a 2-year validity. When it approaches expiry, or if y
 
 **Before rotating:** Understand that rotation generates a new client certificate. The old certificate stops working immediately after you rotate. Make sure you are prepared to import the new certificate into your browser right away.
 
-1. Go to the **Certificates** page.
-2. Find the mTLS section.
-3. Click **Rotate Client Certificate**.
-4. The panel generates a new client key, signs it with the existing CA, and creates a new `.p12` bundle.
-5. A download link appears for the new `client.p12` file.
+The panel does not issue admin certificates: it runs unprivileged and signs only agent certificates, so a compromised panel cannot mint an admin credential. **Rotate Client Certificate** in the panel (`POST /api/certs/mtls/rotate`) answers `503` with this instruction. Rotate on the server console instead:
+
+```bash
+sudo lamaste-server reset-admin
+```
 
 **What happens during rotation:**
 
-1. The current client key and certificate are backed up (`.bak` suffix).
-2. A new 4096-bit RSA key is generated.
-3. A new CSR is created with `/CN=Lamaste Client/O=Lamaste`.
-4. The CA signs the new certificate (2-year validity).
-5. A new PKCS12 bundle is created with a new random password.
-6. The old key, certificate, and `.p12` are replaced.
-7. nginx is reloaded to accept the new certificate.
+1. A new 4096-bit RSA key and a CSR for `/CN=admin/O=Lamaste` are generated, and the CA signs the new certificate (2-year validity). These `openssl` steps run as the `lamaste` user, which owns the PKI directory.
+2. A new PKCS12 bundle is created with a new random password.
+3. The current key, certificate and `.p12` are backed up (`.bak` suffix) and replaced.
+4. The old admin certificate is revoked, panel 2FA is cleared and the IP vhost re-enabled if 2FA had disabled it, and `adminAuthMode` is set back to `p12`.
+5. The panel is restarted, nginx is reloaded, and the new `.p12` password and an `scp` command are printed.
 
 ### 6. Download the New Certificate
 
@@ -121,7 +119,7 @@ Alternatively, use SCP from the command line (requires SSH access):
 scp root@203.0.113.42:/etc/lamalibre/lamaste/pki/client.p12 .
 ```
 
-The new `.p12` password is displayed on screen after rotation. Save it.
+The new `.p12` password is printed by `lamaste-server reset-admin`. Save it.
 
 ### 7. Import the New Certificate into Your Browser
 
@@ -295,15 +293,7 @@ Revocation is immediate — the certificate serial is added to a revocation list
 
 ### mTLS Rotation Internals
 
-The `rotateClientCert()` function in `lib/mtls.js`:
-
-1. Backs up existing files: `client.key` to `client.key.bak`, etc.
-2. Generates new RSA 4096 key via `openssl genrsa`
-3. Creates CSR with `openssl req -new -subj '/CN=Lamaste Client/O=Lamaste'`
-4. Signs with CA using `openssl x509 -req -days 730`
-5. Creates PKCS12 with legacy-compatible settings (`PBE-SHA1-3DES` and `sha1` MAC algorithm) for broad browser compatibility
-6. Generates a new random hex password and returns it in the API response (`p12Password`)
-7. Sets restrictive file permissions (600 for keys, 644 for certs)
+Admin certificate rotation lives only in `lamaste-server reset-admin` (`packages/server/cli/src/commands/reset-admin.js`), run as root on the server. The panel's `rotateClientCert()` in `lib/mtls.js` is a stub that returns `503` with that instruction; `@lamalibre/lamaste/server` no longer exports a rotation function. The PKI directory belongs to `lamaste`, so `reset-admin` runs every file operation inside it (`openssl genrsa`/`req`/`x509 -req`/`pkcs12`, `cp`, `chmod`) as `lamaste`, and writes `panel.json` and `revoked.json` as fresh files renamed into place — root never writes through a path the panel could have replaced with a symlink.
 
 The PKCS12 bundle uses legacy encryption settings (`-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1`) because newer OpenSSL defaults produce files that macOS Keychain Access cannot import.
 
@@ -324,19 +314,19 @@ This tells nginx to require a client certificate signed by the Lamaste CA. No ce
 
 ## Quick Reference
 
-| Certificate Type  | Validity | Renewal                   |
-| ----------------- | -------- | ------------------------- |
-| Let's Encrypt     | 90 days  | Automatic (certbot timer) |
-| mTLS CA           | 10 years | Manual (rarely needed)    |
-| Admin client cert | 2 years  | Manual rotation via panel |
-| Agent certs       | 2 years  | Generate new, revoke old  |
-| Self-signed TLS   | 10 years | Manual (rarely needed)    |
+| Certificate Type  | Validity | Renewal                                   |
+| ----------------- | -------- | ----------------------------------------- |
+| Let's Encrypt     | 90 days  | Automatic (certbot timer)                 |
+| mTLS CA           | 10 years | Manual (rarely needed)                    |
+| Admin client cert | 2 years  | Manual: `sudo lamaste-server reset-admin` |
+| Agent certs       | 2 years  | Generate new, revoke old                  |
+| Self-signed TLS   | 10 years | Manual (rarely needed)                    |
 
 | Action                  | How                                                |
 | ----------------------- | -------------------------------------------------- |
 | **View all certs**      | Certificates page in panel                         |
 | **Force renew LE cert** | Click "Renew" next to the certificate              |
-| **Rotate mTLS cert**    | Click "Rotate Client Certificate"                  |
+| **Rotate mTLS cert**    | `sudo lamaste-server reset-admin` on the server    |
 | **Download new .p12**   | Click "Download" after rotation                    |
 | **Check auto-renewal**  | View "Auto-Renewal Status" section                 |
 | **Generate agent cert** | Agent Certificates section, click "Generate"       |

@@ -46,7 +46,7 @@ This is the most important directory. It contains:
 | `configuration.yml` | Authelia server configuration                             |
 | `users.yml`         | User accounts (usernames, bcrypt password hashes, groups) |
 | `.secrets.json`     | JWT secret, session secret, storage encryption key        |
-| `db.sqlite3`        | Authelia session/state database                           |
+| `db.sqlite3`        | Authelia session/state database (TOTP registrations)      |
 
 **If you lose the users database**, all user accounts and TOTP secrets are gone. Users will need to be recreated and re-enroll their authenticator apps.
 
@@ -65,8 +65,8 @@ This is the most important directory. It contains:
 
 | Path                                   | Purpose                                       |
 | -------------------------------------- | --------------------------------------------- |
-| `sites-available/lamaste-*`            | Lamaste vhost configurations                  |
-| `sites-enabled/lamaste-*`              | Symlinks to enabled vhosts                    |
+| `sites-available/lamalibre-lamaste-*`  | Lamaste vhost configurations                  |
+| `sites-enabled/lamalibre-lamaste-*`    | Symlinks to enabled vhosts                    |
 | `snippets/lamalibre-lamaste-mtls.conf` | mTLS configuration snippet                    |
 | `nginx.conf`                           | Main nginx configuration (usually unmodified) |
 
@@ -86,8 +86,8 @@ sudo tar czf "$BACKUP_FILE" \
   /etc/lamalibre/lamaste/ \
   /etc/authelia/ \
   /etc/letsencrypt/ \
-  /etc/nginx/sites-available/lamaste-* \
-  /etc/nginx/sites-enabled/lamaste-* \
+  /etc/nginx/sites-available/lamalibre-lamaste-* \
+  /etc/nginx/sites-enabled/lamalibre-lamaste-* \
   /etc/nginx/snippets/lamalibre-lamaste-mtls.conf \
   /etc/systemd/system/lamalibre-lamaste-serverd.service \
   /etc/systemd/system/chisel.service \
@@ -137,7 +137,7 @@ tar czf "$BACKUP_DIR/lamaste-$(date +%Y%m%d).tar.gz" \
   /etc/lamalibre/lamaste/ \
   /etc/authelia/ \
   /etc/letsencrypt/ \
-  /etc/nginx/sites-available/lamaste-* \
+  /etc/nginx/sites-available/lamalibre-lamaste-* \
   /etc/nginx/snippets/lamalibre-lamaste-mtls.conf \
   2>/dev/null
 
@@ -184,11 +184,20 @@ sudo chmod 600 /etc/lamalibre/lamaste/pki/client.p12
 sudo chmod 600 /etc/lamalibre/lamaste/pki/.p12-password
 sudo chmod 640 /etc/lamalibre/lamaste/panel.json
 # Files the Chisel server (User=nobody, Group=lamaste-chisel) must read
-sudo chgrp lamaste-chisel /etc/lamalibre/lamaste/chisel-users
-sudo chmod 640 /etc/lamalibre/lamaste/chisel-users
-sudo chown nobody:nogroup /etc/lamalibre/lamaste/chisel-server.key
-sudo chmod 400 /etc/lamalibre/lamaste/chisel-server.key
+sudo chgrp lamaste-chisel /etc/lamalibre/lamaste/chisel-users /etc/lamalibre/lamaste/chisel-server.key
+sudo chmod 640 /etc/lamalibre/lamaste/chisel-users /etc/lamalibre/lamaste/chisel-server.key
+# Authelia: the panel owns its configuration; Authelia (lamaste-authelia) reads it
+# through the group and owns its database and notification file
+sudo chown lamaste:lamaste-authelia /etc/authelia /etc/authelia/configuration.yml /etc/authelia/users.yml /etc/authelia/.secrets.json
+sudo chmod 2770 /etc/authelia
+sudo chmod 640 /etc/authelia/configuration.yml
+sudo chmod 660 /etc/authelia/users.yml
+sudo chmod 600 /etc/authelia/.secrets.json
+sudo chown lamaste-authelia:lamaste-authelia /etc/authelia/db.sqlite3* /etc/authelia/notifications.txt
+sudo chmod 600 /etc/authelia/db.sqlite3* /etc/authelia/notifications.txt
 ```
+
+A backup taken on a version before the privilege boundary holds root-owned Authelia files and older unit files. After restoring one, re-run `npx @lamalibre/create-lamaste --yes`: the redeploy rewrites the `chisel` and `authelia` units and converts the ownership of `/etc/authelia`, the Chisel key and the PKI directory (see [Upgrades](upgrades.md)).
 
 The panel re-applies the authfile's group and mode itself on every start, so a Chisel that fails to read it before the panel is up is started again by the panel's reconciliation.
 
@@ -293,13 +302,13 @@ The existing client certificate (`.p12` file) will still work because the CA key
 
 All Lamaste state is stored as flat files with atomic writes:
 
-| File                                      | Format | Write Pattern                            |
-| ----------------------------------------- | ------ | ---------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`       | JSON   | Write `.tmp` then `rename()`             |
-| `/etc/lamalibre/lamaste/tunnels.json`     | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
-| `/etc/lamalibre/lamaste/sites.json`       | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
-| `/etc/lamalibre/lamaste/invitations.json` | JSON   | Write `.tmp`, `fsync()`, then `rename()` |
-| `/etc/authelia/users.yml`                 | YAML   | Write via `sudo mv` from temp file       |
+| File                                      | Format | Write Pattern                                                 |
+| ----------------------------------------- | ------ | ------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`       | JSON   | Write `.tmp` then `rename()`                                  |
+| `/etc/lamalibre/lamaste/tunnels.json`     | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
+| `/etc/lamalibre/lamaste/sites.json`       | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
+| `/etc/lamalibre/lamaste/invitations.json` | JSON   | Write `.tmp`, `fsync()`, then `rename()`                      |
+| `/etc/authelia/users.yml`                 | YAML   | Temp file in `/etc/authelia`, `fsync()`, `rename()` (no sudo) |
 
 The atomic write pattern (write to temporary file, sync, rename) ensures that a crash during a write does not corrupt the primary file. The `rename()` system call is atomic on POSIX filesystems.
 

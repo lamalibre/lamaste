@@ -94,7 +94,7 @@ Press **Enter** to proceed. To skip the confirmation prompt, use `npx @lamalibre
 
 ### 4. What the Installer Does
 
-The installer runs six sequential phases. Each phase displays real-time progress:
+The installer runs seven sequential phases. Each phase displays real-time progress:
 
 **Phase 1 — Environment checks**
 
@@ -167,10 +167,12 @@ Port 80 gets a catch-all site, `lamalibre-lamaste-http-redirect` (`listen 80 def
 ```
 ✔ Deploying Lamaste panel
   ✔ Creating system user → Created system user: lamaste
-  ✔ Creating lamaste-chisel group → Created group lamaste-chisel; lamaste is a member
-  ✔ Creating directory structure → Directories created
-  ✔ Deploying lamalibre-lamaste-serverd → Panel server deployed
-  ✔ Deploying lamaste-server-ui → Panel client deployed from pre-built dist
+  ✔ Creating directory structure → Directories created: /opt/lamalibre/lamaste, /etc/lamalibre/lamaste
+  ✔ Installing chisel and Authelia → chisel and Authelia installed (started during onboarding)
+  ✔ Deploying serverd → Panel server deployed
+  ✔ Deploying lamaste-server CLI → lamaste-server CLI deployed; lamaste-reset-admin shim installed
+  ✔ Deploying server-ui → Panel client deployed from pre-built dist
+  ✔ Deploying documentation → Documentation deployed
   ✔ Writing panel configuration → Configuration written to /etc/lamalibre/lamaste/panel.json
   ✔ Writing systemd service unit → Systemd service unit written
   ✔ Installing sudoers wrapper scripts → Sudoers wrappers installed
@@ -178,7 +180,9 @@ Port 80 gets a catch-all site, `lamalibre-lamaste-http-redirect` (`listen 80 def
   ✔ Starting panel service → Panel service running. Health: {"status":"ok"}
 ```
 
-The panel server runs as the `lamaste` system user with restricted sudoers rules, deployed to `/opt/lamalibre/lamaste/`. The `lamaste-chisel` group is the group the Chisel server will run as; the panel is a member so it can hand Chisel its authfile without sudo. Privileged operations that take arguments — signing CSRs, renaming PKI files, running certbot, reading Let's Encrypt certificates — go through root-owned wrapper scripts in `/usr/local/sbin/` that validate every argument, rather than sudoers wildcards. Configuration lives in `/etc/lamalibre/lamaste/panel.json`.
+The panel server runs as the unprivileged `lamaste` system user. Its code in `/opt/lamalibre/lamaste/` is root-owned and read-only for it. The installer — not onboarding — installs the pinned Chisel (1.12.0) and Authelia (4.39.28) releases, verified against pinned SHA-256 digests, with their systemd units; it creates the `lamaste-chisel` group (Chisel runs as it; the panel is a member so it can hand Chisel its authfile without sudo) and the `lamaste-authelia` account Authelia runs as. `/etc/sudoers.d/lamaste` has no wildcards: fixed `systemctl` command lines, `nginx -t`, and three root-owned programs in `/usr/local/sbin/` that validate every argument — `lamaste-priv` (the panel's nginx vhosts, checked against a directive allow-list; Authelia TOTP secrets; self-update), `lamaste-certbot` and `lamaste-cert-info`. The sudoers file is checked with `visudo -c` before it replaces the old one. See [Security Model](../01-concepts/security-model.md#privilege-boundary). Configuration lives in `/etc/lamalibre/lamaste/panel.json`.
+
+**Phase 7 — Gatekeeper deployment** deploys the tunnel authorization service into `/opt/lamalibre/lamaste/gatekeeper` and starts it.
 
 ### 5. Read the Summary
 
@@ -308,13 +312,13 @@ main() → envTasks → confirmInstallation() → installTasks → printSummary(
 
 Each task module exports a function that returns a Listr2 subtask list:
 
-| Module        | File                  | Purpose                                       |
-| ------------- | --------------------- | --------------------------------------------- |
-| `hardenTasks` | `src/tasks/harden.js` | Swap, UFW, fail2ban, SSH, apt packages        |
-| `nodeTasks`   | `src/tasks/node.js`   | Node.js 20 LTS via NodeSource                 |
-| `mtlsTasks`   | `src/tasks/mtls.js`   | CA, client cert, PKCS12 bundle                |
-| `nginxTasks`  | `src/tasks/nginx.js`  | Self-signed TLS, mTLS snippet, vhost          |
-| `panelTasks`  | `src/tasks/panel.js`  | System user, deploy, config, systemd, sudoers |
+| Module        | File                  | Purpose                                                                                                          |
+| ------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `hardenTasks` | `src/tasks/harden.js` | Swap, UFW, fail2ban, SSH, apt packages                                                                           |
+| `nodeTasks`   | `src/tasks/node.js`   | Node.js 20 LTS via NodeSource                                                                                    |
+| `mtlsTasks`   | `src/tasks/mtls.js`   | CA, client cert, PKCS12 bundle                                                                                   |
+| `nginxTasks`  | `src/tasks/nginx.js`  | Self-signed TLS, mTLS snippet, vhost                                                                             |
+| `panelTasks`  | `src/tasks/panel.js`  | System user, root-owned install dir, pinned chisel + Authelia, deploy, config, systemd, sudoers programs + rules |
 
 ### Idempotency
 
@@ -331,14 +335,16 @@ Every task includes skip guards. Running the installer a second time detects exi
 
 After installation, the server has these Lamaste directories:
 
-| Path                                        | Owner               | Purpose                            |
-| ------------------------------------------- | ------------------- | ---------------------------------- |
-| `/etc/lamalibre/lamaste/`                   | `lamaste:lamaste`   | Configuration and state files      |
-| `/etc/lamalibre/lamaste/pki/`               | `root:root` (700)   | CA, client cert, server cert, .p12 |
-| `/etc/lamalibre/lamaste/panel.json`         | `lamaste:lamaste`   | Panel configuration                |
-| `/opt/lamalibre/lamaste/lamaste-serverd/`   | `lamaste:lamaste`   | Fastify backend                    |
-| `/opt/lamalibre/lamaste/lamaste-server-ui/` | `lamaste:lamaste`   | React frontend (built)             |
-| `/var/www/lamaste/`                         | `www-data:www-data` | Static site files                  |
+| Path                                | Owner                             | Purpose                                         |
+| ----------------------------------- | --------------------------------- | ----------------------------------------------- |
+| `/etc/lamalibre/lamaste/`           | `lamaste:lamaste`                 | Configuration and state files                   |
+| `/etc/lamalibre/lamaste/pki/`       | `lamaste:lamaste` (700)           | CA, client cert, server cert, .p12              |
+| `/etc/lamalibre/lamaste/panel.json` | `lamaste:lamaste`                 | Panel configuration                             |
+| `/opt/lamalibre/lamaste/`           | `root:root`                       | Panel server, CLI, UI, docs, gatekeeper (code)  |
+| `/var/www/lamaste/`                 | `lamaste:www-data` (2750, setgid) | Static site files (0640; nginx reads via group) |
+| `/etc/authelia/`                    | `lamaste:lamaste-authelia` (2770) | Authelia configuration and database             |
+| `/var/log/authelia/`                | `lamaste-authelia` (750)          | Authelia log                                    |
+| `/usr/local/bin/chisel`, `authelia` | `root:root`                       | Pinned releases                                 |
 
 ### CLI Flags
 
@@ -368,7 +374,7 @@ Restart=always
 RestartSec=5
 ```
 
-The service includes security hardening: `ProtectHome=true`, `PrivateTmp=true`, and `ReadWritePaths` for the config and static site directories. `NoNewPrivileges` is intentionally omitted because the panel needs sudo for provisioning (Chisel, Authelia, certbot, nginx, systemctl). Access is restricted via fine-grained sudoers rules in `/etc/sudoers.d/lamaste`.
+The service includes security hardening: `ProtectHome=true`, `PrivateTmp=true`, and `ReadWritePaths` for the config and static site directories. `NoNewPrivileges` is intentionally omitted because the panel runs the fixed `sudo` commands in `/etc/sudoers.d/lamaste` (service control, `nginx -t`, `lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`) — nothing else.
 
 ## Quick Reference
 

@@ -4,7 +4,7 @@
 
 ## In Plain English
 
-After installing Lamaste, the server is accessible only by IP address. The onboarding wizard connects your domain, verifies that DNS is pointing correctly, and installs all the services needed to run secure tunnels — Chisel for tunneling, Authelia for two-factor authentication, and Let's Encrypt for proper TLS certificates. When it finishes, you have a fully operational platform.
+After installing Lamaste, the server is accessible only by IP address. The onboarding wizard connects your domain, verifies that DNS is pointing correctly, and starts all the services needed to run secure tunnels — Chisel for tunneling, Authelia for two-factor authentication, and Let's Encrypt for proper TLS certificates. The Chisel and Authelia programs themselves were already installed by the installer; onboarding configures and starts them. When it finishes, you have a fully operational platform.
 
 ## Prerequisites
 
@@ -102,13 +102,15 @@ After DNS verification succeeds, click **Continue** to reach the provisioning st
 
 The wizard displays a real-time progress view with six tasks:
 
-**Task 1 — Installing Chisel**
+**Task 1 — Starting Chisel**
 
-Chisel is the tunneling engine. The provisioner downloads the Chisel binary, writes a systemd service configuration, and starts it. Chisel listens on `127.0.0.1:9090` for WebSocket connections from your machine.
+Chisel is the tunneling engine. The installer already put the pinned Chisel release and its systemd unit in place; the provisioner checks the binary is there, creates the Chisel server key and the authfile, and starts the service. Chisel listens on `127.0.0.1:9090` for WebSocket connections from your machine.
 
-**Task 2 — Installing Authelia**
+**Task 2 — Configuring Authelia**
 
-Authelia provides two-factor authentication for your tunneled apps. The provisioner downloads the binary, writes the configuration file (using your domain), creates the initial admin user with a random password, and starts the service. Authelia listens on `127.0.0.1:9091`.
+Authelia provides two-factor authentication for your tunneled apps. The installer already put the pinned Authelia release, its systemd unit and its `lamaste-authelia` service account in place; the provisioner checks the binary is there, writes the configuration file (using your domain), creates the initial admin user with a random password, and starts the service. Authelia listens on `127.0.0.1:9091`.
+
+Onboarding downloads nothing. If either task fails with "… is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.", re-run the installer on the server (it is idempotent) and start provisioning again.
 
 Authelia uses **bcrypt** for password hashing (not argon2id) because argon2id uses approximately 93 MB per hash, which causes out-of-memory kills on a 512 MB droplet.
 
@@ -197,12 +199,12 @@ Provisioning runs asynchronously — the `POST /api/onboarding/provision` endpoi
 
 Each provisioning task calls library functions in `packages/lamaste-serverd/src/lib/`:
 
-| Task             | Library           | Key Function                                                  |
-| ---------------- | ----------------- | ------------------------------------------------------------- |
-| Install Chisel   | `lib/chisel.js`   | `installChisel()`, `writeChiselService()`, `startChisel()`    |
-| Install Authelia | `lib/authelia.js` | `installAuthelia()`, `writeAutheliaConfig()`, `createUser()`  |
-| Issue certs      | `lib/certbot.js`  | `issueCoreCerts()`, `setupAutoRenew()`                        |
-| Configure nginx  | `lib/nginx.js`    | `writePanelVhost()`, `writeAuthVhost()`, `writeTunnelVhost()` |
+| Task               | Library           | Key Function                                                     |
+| ------------------ | ----------------- | ---------------------------------------------------------------- |
+| Start Chisel       | `lib/chisel.js`   | `isChiselInstalled()`, `ensureChiselKey()`, `startChisel()`      |
+| Configure Authelia | `lib/authelia.js` | `isAutheliaInstalled()`, `writeAutheliaConfig()`, `createUser()` |
+| Issue certs        | `lib/certbot.js`  | `issueCoreCerts()`, `setupAutoRenew()`                           |
+| Configure nginx    | `lib/nginx.js`    | `writePanelVhost()`, `writeAuthVhost()`, `writeTunnelVhost()`    |
 
 ### DNS Verification Logic
 

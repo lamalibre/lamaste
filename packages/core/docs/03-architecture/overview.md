@@ -223,8 +223,9 @@ End User → nginx :443 → auth_request → 127.0.0.1:9294/authz/check
    └─ Receives real-time progress events for each task
 
 4. Provisioning sequence (in Panel Server):
-   a. Download + install Chisel binary from GitHub
-   b. Download + install Authelia binary from GitHub
+   a. Check Chisel is installed (create-lamaste installed the pinned release
+      and its unit), create its key and authfile, start it
+   b. Check Authelia is installed (likewise: pinned release, unit, account)
    c. Write Authelia config (bcrypt, TOTP, session cookies)
    d. Create admin user with random password
    e. Issue Let's Encrypt certs for panel/auth/tunnel subdomains
@@ -251,14 +252,19 @@ lamaste/
 │   │   │   │   ├── node.js           ← Node.js 20 installation
 │   │   │   │   ├── mtls.js           ← mTLS CA + client cert generation
 │   │   │   │   ├── nginx.js          ← IP-based nginx vhost + mTLS snippet
-│   │   │   │   └── panel.js          ← Panel deployment + systemd service
-│   │   │   │   └── redeploy.js       ← Panel-only redeployment subtasks
+│   │   │   │   ├── panel.js          ← Panel deployment + systemd service
+│   │   │   │   ├── gatekeeper.js     ← Gatekeeper deployment
+│   │   │   │   └── redeploy.js       ← Redeployment (upgrade, self-update)
 │   │   │   └── lib/
 │   │   │       ├── env.js            ← OS detection, IP detection, root check
 │   │   │       ├── secrets.js        ← crypto.randomBytes wrappers
 │   │   │       ├── summary.js        ← Post-install summary box
 │   │   │       ├── cert-help-page.js ← HTML page for visitors without certs
+│   │   │       ├── relay-services.js ← Pinned chisel + Authelia, units, accounts, ownership
+│   │   │       ├── ownership.js      ← Symlink-safe root writes and ownership migrations
+│   │   │       ├── wrappers.js       ← Installs lamaste-priv etc. and the sudoers file
 │   │   │       └── service-config.js ← Systemd unit + sudoers content generators
+│   │   ├── scripts/                   ← lamaste-priv, lamaste-certbot, lamaste-cert-info
 │   │   └── vendor/                    ← Bundled lamalibre-lamaste-serverd + lamaste-server-ui at publish time
 │   │
 │   ├── lamaste-serverd/                  ← Fastify REST API (127.0.0.1:3100)
@@ -300,7 +306,7 @@ lamaste/
 │   │           ├── revocation.js     ← Certificate revocation list management (revoked.json)
 │   │           ├── invite-page.js    ← Invitation acceptance HTML page generator
 │   │           ├── nginx.js          ← Vhost generation + write-with-rollback + reload
-│   │           ├── chisel.js         ← Chisel install + service management + syncChisel
+│   │           ├── chisel.js         ← Chisel key + service management + syncChisel
 │   │           ├── chisel-users.js   ← Per-agent Chisel credentials + authfile grants
 │   │           ├── chisel-reconcile.js ← Startup reconciliation of Chisel (fail closed)
 │   │           ├── chisel-runtime.js ← Restart decision for authfile changes
@@ -426,8 +432,9 @@ Layer 5: Authelia (Tunneled Apps)
 
 Layer 6: Service Isolation
   └─ All backend services bind 127.0.0.1 only
-  └─ lamaste user runs with minimal privileges
-  └─ Specific sudoers rules (no blanket root access)
+  └─ lamaste user runs with minimal privileges; code in /opt/lamalibre/lamaste is root-owned
+  └─ Fixed sudoers command lines + the validating lamaste-priv helper (no wildcards)
+  └─ Authelia runs as its own account (lamaste-authelia), Chisel as nobody:lamaste-chisel
   └─ systemd security hardening (NoNewPrivileges, ProtectSystem, ProtectHome)
 
 Layer 7: TLS Everywhere
@@ -472,7 +479,7 @@ systemd provides automatic restart on failure, structured logging via journal, d
 
 ### Why sudoers instead of running as root?
 
-The Panel Server runs as the `lamaste` user with minimal privileges. Operations requiring root (nginx reload, certificate operations, file writes to system directories) go through scoped `sudoers` rules. Each rule is restricted to specific commands with specific arguments — there is no blanket `lamaste ALL=(ALL) NOPASSWD: ALL`. This limits the blast radius of a compromised Panel Server process.
+The Panel Server runs as the `lamaste` user with minimal privileges and cannot become root. The files it manages (state, PKI, web root, Authelia configuration, Chisel authfile) belong to it or to a group it is in, so most work needs no privileges at all. What does — service control, `nginx -t`, installing its nginx vhosts, storing an Authelia TOTP secret, certbot, starting a self-update — goes through fixed `sudoers` command lines and three root-owned programs that validate their arguments (`lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`). There is no wildcard rule and no blanket `lamaste ALL=(ALL) NOPASSWD: ALL`. Binaries, units and service accounts are installed by `create-lamaste` as root. This limits the blast radius of a compromised Panel Server process; see [Security Model](../01-concepts/security-model.md#privilege-boundary).
 
 ## Lifecycle Summary
 
@@ -528,6 +535,7 @@ Phase 4: Recovery (if needed)
 | `/etc/lamalibre/lamaste/gatekeeper.json`                | Gatekeeper settings (cache TTL, admin contact, logging) |
 | `/etc/lamalibre/lamaste/push-install-config.json`       | Push install configuration and policies                 |
 | `/etc/lamalibre/lamaste/push-install-sessions.json`     | Push install session audit log                          |
-| `/etc/sudoers.d/lamaste`                                | Scoped sudo rules for lamaste user                      |
+| `/etc/sudoers.d/lamaste`                                | Fixed sudo rules for lamaste user (no wildcards)        |
+| `/usr/local/sbin/lamaste-priv`                          | Root helper: panel vhosts, Authelia TOTP, self-update   |
 | `~/.lamalibre/lamaste/servers.json`                     | Desktop app server registry (multi-server support)      |
 | `~/.lamalibre/lamaste/services.json`                    | Desktop app service discovery registry                  |

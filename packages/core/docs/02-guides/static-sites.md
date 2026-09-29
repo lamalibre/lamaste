@@ -263,13 +263,9 @@ POST /api/sites
 
 ### File Storage
 
-Static files are stored under `/var/www/lamaste/<site-id>/`. The directory is owned by `www-data:www-data` and served directly by nginx.
+Static files are stored under `/var/www/lamaste/<site-id>/` and served directly by nginx. The web root belongs to the panel's user with nginx's group: `lamaste:www-data`, directories `2750` (setgid, so everything created inside inherits the `www-data` group) and files `0640`. nginx reads through the group; no other user can read the files.
 
-File operations use sudo commands with restricted paths:
-
-- `mkdir -p /var/www/lamaste/<id>/`
-- `chown -R www-data:www-data /var/www/lamaste/<id>/`
-- `rm -rf /var/www/lamaste/<id>/`
+The panel therefore manages site files itself, without sudo: it creates site directories, writes uploads to a temporary file next to their destination and renames them into place (mode `0640`), lists and sizes directories with `readdir`/`lstat` (symbolic links are neither listed nor followed), and deletes with `rm`. The installer sets up this ownership, and converts a web root left `www-data`-owned by an earlier version on the next redeploy.
 
 Path validation prevents directory traversal attacks. The `validatePath()` function rejects paths containing `..`, absolute paths, and paths outside the site root.
 

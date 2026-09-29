@@ -28,13 +28,13 @@ Click the **Add User** button.
 
 A form appears with these fields:
 
-| Field            | Required | Rules                                                           | Example                   |
-| ---------------- | -------- | --------------------------------------------------------------- | ------------------------- |
-| **Username**     | Yes      | 2-32 chars, lowercase alphanumeric with underscores and hyphens | `alice`                   |
-| **Display Name** | Yes      | 1-100 characters                                                | `Alice Johnson`           |
-| **Email**        | Yes      | Valid email address                                             | `alice@example.com`       |
-| **Password**     | Yes      | 8-128 characters                                                | A strong, unique password |
-| **Groups**       | No       | Optional list of group names                                    | `admins`, `developers`    |
+| Field            | Required | Rules                                                                                            | Example                   |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------ | ------------------------- |
+| **Username**     | Yes      | 2-32 chars, lowercase alphanumeric with underscores and hyphens, starting with a letter or digit | `alice`                   |
+| **Display Name** | Yes      | 1-100 characters                                                                                 | `Alice Johnson`           |
+| **Email**        | Yes      | Valid email address                                                                              | `alice@example.com`       |
+| **Password**     | Yes      | 8-128 characters                                                                                 | A strong, unique password |
+| **Groups**       | No       | Optional list of group names                                                                     | `admins`, `developers`    |
 
 Fill in the form and click **Create User**.
 
@@ -212,13 +212,13 @@ The `totpUri` is used to generate a QR code that the user scans with their authe
 
 ### Validation Rules (Zod Schema)
 
-| Field         | Rules                             |
-| ------------- | --------------------------------- |
-| `username`    | 2-32 chars, regex `^[a-z0-9_-]+$` |
-| `displayname` | 1-100 chars                       |
-| `email`       | Valid email format                |
-| `password`    | 8-128 chars                       |
-| `groups`      | Optional array of strings         |
+| Field         | Rules                                     |
+| ------------- | ----------------------------------------- |
+| `username`    | 2-32 chars, regex `^[a-z0-9][a-z0-9_-]*$` |
+| `displayname` | 1-100 chars                               |
+| `email`       | Valid email format                        |
+| `password`    | 8-128 chars                               |
+| `groups`      | Optional array of strings                 |
 
 ### Password Hashing
 
@@ -244,12 +244,12 @@ Authelia reads `users.yml` on restart. If the restart fails, a warning is logged
 | **Reset TOTP**      | Users page, "Reset TOTP" on user, share QR code   |
 | **Delete user**     | Users page, "Delete" on user, confirm             |
 
-| Constraint       | Value                            |
-| ---------------- | -------------------------------- |
-| Username format  | `^[a-z0-9_-]+$`                  |
-| Username length  | 2-32 characters                  |
-| Password length  | 8-128 characters                 |
-| Password hashing | bcrypt (cost 12)                 |
-| Minimum users    | 1 (cannot delete last user)      |
-| TOTP algorithm   | SHA1, 6 digits, 30-second period |
-| User file        | `/etc/authelia/users.yml`        |
+| Constraint       | Value                                           |
+| ---------------- | ----------------------------------------------- |
+| Username format  | `^[a-z0-9][a-z0-9_-]*$` (users and invitations) |
+| Username length  | 2-32 characters                                 |
+| Password length  | 8-128 characters                                |
+| Password hashing | bcrypt (cost 12)                                |
+| Minimum users    | 1 (cannot delete last user)                     |
+| TOTP algorithm   | SHA1, 6 digits, 30-second period                |
+| User file        | `/etc/authelia/users.yml`                       |

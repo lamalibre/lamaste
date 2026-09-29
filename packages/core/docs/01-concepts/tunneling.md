@@ -216,14 +216,14 @@ Every time the panel starts it brings Chisel in line with the persisted state, i
 
 1. Every active agent gets a Chisel credential if it lacks one.
 2. Ownerless tunnels from versions before tunnel ownership are bound where the owner is certain: an `agent-<label>` panel tunnel only to that agent (when active), other tunnels only when exactly one machine agent is active (plugin-agent certificates carry no tunnels and are not counted). The rest stay unassigned and are logged. Tunnels that are withheld from every agent — a legacy tunnel on a reserved port, or two tunnels sharing a port — are logged too; delete each and recreate it on a free port.
-3. Once onboarding has provisioned Chisel: the pinned release is installed if another version is present, the unit is rewritten (group `lamaste-chisel`), and the authfile is rewritten with its ownership and mode.
-4. Chisel is restarted when the binary, the unit or a revocation requires it, and started if it is enabled but not running.
+3. Once onboarding is `COMPLETED`: the server key is ensured and the authfile is rewritten with its ownership and mode. The installed version is checked; if it is not the pinned release, the panel logs an error telling you to run `create-lamaste`, and restarts Chisel on every authfile change until you do (older releases do not reload the authfile reliably).
+4. Chisel is restarted when a revocation requires it, and started if it is enabled but not running.
 
-It **fails closed**: if the authfile or unit cannot be established, Chisel is stopped **and disabled**, and the marker file `/etc/lamalibre/lamaste/chisel-failed-closed` records when — an authfile left by an older version may grant every agent every port, and keeping it live would re-open what this version closes. Disabling the unit keeps a reboot from starting Chisel on that authfile before the panel has reconciled. Reconciliation retries with backoff (30 seconds, doubling up to 10 minutes); once it succeeds it re-enables and starts Chisel and removes the marker. A failed download of the pinned binary alone does not stop Chisel; the authfile still enforces access, and the download is retried.
+It **fails closed**: if the authfile cannot be established, Chisel is stopped **and disabled**, and the marker file `/etc/lamalibre/lamaste/chisel-failed-closed` records when — an authfile left by an older version may grant every agent every port, and keeping it live would re-open what this version closes. Disabling the unit keeps a reboot from starting Chisel on that authfile before the panel has reconciled. Reconciliation retries with backoff (30 seconds, doubling up to 10 minutes); once it succeeds it re-enables and starts Chisel and removes the marker.
 
 ### Installation
 
-Chisel is installed during the onboarding provisioning step — not during the initial `npx @lamalibre/create-lamaste` install — and kept at the pinned release by every panel start. Both the server and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
+On the server, Chisel is installed by `npx @lamalibre/create-lamaste` — as root, together with its hardened systemd unit (`User=nobody`, `Group=lamaste-chisel`, `NoNewPrivileges`, `ProtectSystem=strict`, empty `CapabilityBoundingSet`) — and kept at the pinned release by every redeploy. The panel never installs a binary or writes the unit; onboarding only checks the binary exists, creates the server key and authfile, and starts the service. Both the server installer and the agents download the pinned release (`CHISEL_RELEASE` in `@lamalibre/lamaste`'s `constants.ts`) from its fixed URL, with no GitHub API lookup and no "latest":
 
 ```
 https://github.com/jpillora/chisel/releases/download/v1.12.0/chisel_1.12.0_<os>_<arch>.gz
@@ -231,13 +231,14 @@ https://github.com/jpillora/chisel/releases/download/v1.12.0/chisel_1.12.0_<os>_
   → gunzip → /usr/local/bin/chisel (server) or ~/.lamalibre/lamaste/bin/chisel (agent)
 ```
 
-A digest mismatch aborts the install and leaves any existing binary untouched. An installed binary reporting another version is replaced — on the server at panel startup, on an agent by its next sync. The binary is a single static Go executable with no runtime dependencies.
+A digest mismatch aborts the install and leaves any existing binary untouched. An installed binary reporting another version is replaced — on the server by the next `create-lamaste` run, on an agent by its next sync. The binary is a single static Go executable with no runtime dependencies.
 
 ### Source files
 
 | File                                                      | Purpose                                                             |
 | --------------------------------------------------------- | ------------------------------------------------------------------- |
-| `packages/core/lib/src/server/chisel.ts`                  | Install, start, stop, restart, status, unit re-apply                |
+| `packages/core/lib/src/server/chisel.ts`                  | Server key, start, stop, restart, status, installed version         |
+| `packages/provisioners/server/src/lib/binaries.js`        | Server install of the pinned Chisel (and Authelia) release          |
 | `packages/core/lib/src/server/chisel-users.ts`            | Per-agent credentials, grants, authfile rendering, sentinel user    |
 | `packages/core/lib/src/server/chisel-args.ts`             | Client `chiselArgs` returned by `agent-config`                      |
 | `packages/core/lib/src/server/tunnels.ts`                 | Tunnel create/delete/toggle/assign/reconfigure                      |

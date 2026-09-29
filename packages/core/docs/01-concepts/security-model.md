@@ -375,7 +375,7 @@ Group=lamaste-chisel
 ExecStart=/usr/local/bin/chisel server --reverse --port 9090 --host 127.0.0.1 --keyfile /etc/lamalibre/lamaste/chisel-server.key --authfile /etc/lamalibre/lamaste/chisel-users
 ```
 
-The binary is Chisel 1.12.0, downloaded from its fixed release URL and verified against a pinned SHA-256 before it is unpacked; a different installed version is replaced at the next panel start.
+The unit also sets `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp` and `PrivateDevices`. The binary is Chisel 1.12.0, which `create-lamaste` downloads from its fixed release URL and verifies against a pinned SHA-256 before unpacking it. The panel never installs or replaces it: at startup it only checks the installed version and, if it is not the pinned release, logs an error and restarts Chisel on every authfile change until `create-lamaste` is re-run.
 
 `--authfile` restricts every connecting client to its own credential and port grants. The reverse listeners Chisel opens for agents also bind `127.0.0.1` only: agents may only request `R:127.0.0.1:<port>` remotes.
 
@@ -385,6 +385,8 @@ Authelia is configured in its YAML:
 server:
   address: 'tcp://127.0.0.1:9091/'
 ```
+
+Authelia is reachable from the internet (`auth.<domain>`), so it runs as neither root nor `lamaste` but as its own system account, `lamaste-authelia`. Its unit (written by `create-lamaste`) sets `UMask=027`, `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `ProtectSystem=strict` with `ReadWritePaths=/etc/authelia /var/log/authelia`, `PrivateTmp`, `PrivateDevices` and `SystemCallFilter=@system-service`. It can read its configuration through its group and write only its database, notification file, `users.yml` (rewritten on a password change) and its log. The binary is Authelia 4.39.28, downloaded by `create-lamaste` from its fixed release URL and verified against a pinned SHA-256 per architecture; a newer installed Authelia is kept, never downgraded.
 
 The panel server binds to localhost in its Fastify configuration.
 
@@ -400,37 +402,72 @@ Tunnel vhosts never pass client-supplied `X-SSL-Client-*` headers to the app (th
 
 Sensitive files use restrictive permissions:
 
-| File                                                                | Mode  | Rationale                                       |
-| ------------------------------------------------------------------- | ----- | ----------------------------------------------- |
-| `/etc/lamalibre/lamaste/pki/ca.key`                                 | `600` | CA private key — can sign new client certs      |
-| `/etc/lamalibre/lamaste/pki/client.key`                             | `600` | Client private key                              |
-| `/etc/lamalibre/lamaste/pki/client.p12`                             | `600` | PKCS12 bundle with private key                  |
-| `/etc/lamalibre/lamaste/pki/.p12-password`                          | `600` | Password for the .p12 file                      |
-| `/etc/authelia/configuration.yml`                                   | `600` | Contains JWT and session secrets                |
-| `/etc/authelia/.secrets.json`                                       | `600` | Secret backup                                   |
-| `/etc/authelia/users.yml`                                           | `600` | Password hashes                                 |
-| `/etc/lamalibre/lamaste/chisel-credentials.json`                    | `600` | Per-agent Chisel passwords                      |
-| `/etc/lamalibre/lamaste/chisel-sentinel`                            | `600` | Sentinel Chisel user password                   |
-| `/etc/lamalibre/lamaste/chisel-users`                               | `640` | Chisel authfile; group `lamaste-chisel` only    |
-| `~/.lamalibre/lamaste/agents/<label>/`                              | `700` | Agent data directory (agent machine)            |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.json`, `chisel.env`     | `600` | Agent's Chisel credential (agent machine)       |
-| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist` | `600` | Carries `AUTH` in its environment (macOS agent) |
-| `/etc/lamalibre/lamaste/pki/`                                       | `700` | PKI directory itself                            |
+| File                                                                | Mode  | Rationale                                         |
+| ------------------------------------------------------------------- | ----- | ------------------------------------------------- |
+| `/etc/lamalibre/lamaste/pki/ca.key`                                 | `600` | CA private key — can sign new client certs        |
+| `/etc/lamalibre/lamaste/pki/client.key`                             | `600` | Client private key                                |
+| `/etc/lamalibre/lamaste/pki/client.p12`                             | `600` | PKCS12 bundle with private key                    |
+| `/etc/lamalibre/lamaste/pki/.p12-password`                          | `600` | Password for the .p12 file                        |
+| `/etc/authelia/configuration.yml`                                   | `640` | JWT and session secrets; group `lamaste-authelia` |
+| `/etc/authelia/.secrets.json`                                       | `600` | Secret backup; the panel (`lamaste`) only         |
+| `/etc/authelia/users.yml`                                           | `660` | Password hashes; Authelia rewrites it             |
+| `/etc/authelia/db.sqlite3`, `notifications.txt`                     | `600` | Owned by `lamaste-authelia`                       |
+| `/etc/lamalibre/lamaste/chisel-server.key`                          | `640` | Chisel SSH host key; group `lamaste-chisel`       |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`                    | `600` | Per-agent Chisel passwords                        |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                            | `600` | Sentinel Chisel user password                     |
+| `/etc/lamalibre/lamaste/chisel-users`                               | `640` | Chisel authfile; group `lamaste-chisel` only      |
+| `~/.lamalibre/lamaste/agents/<label>/`                              | `700` | Agent data directory (agent machine)              |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.json`, `chisel.env`     | `600` | Agent's Chisel credential (agent machine)         |
+| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist` | `600` | Carries `AUTH` in its environment (macOS agent)   |
+| `/etc/lamalibre/lamaste/pki/`                                       | `700` | PKI directory itself                              |
 
-Mode `600` means only the file owner can read or write. Mode `640` adds read access for the file's group. Mode `700` means only the directory owner can list, read, or modify contents.
+Mode `600` means only the file owner can read or write. Mode `640` adds read access for the file's group, `660` also write access. Mode `700` means only the directory owner can list, read, or modify contents. See [Configuration Files](../06-reference/config-files.md#file-permissions-table) for the owner of every directory.
 
-### Privileged operations
+### Privilege boundary
 
-The panel runs as the unprivileged `lamaste` user; what needs root goes through `/etc/sudoers.d/lamaste`. A sudoers `*` matches any characters, spaces included, so a rule such as `certbot renew --cert-name * --non-interactive` would also accept `--deploy-hook <command>` — code execution as root. Certbot, the Let's Encrypt certificate reads, CSR signing and PKI renames therefore go through root-owned wrapper scripts in `/usr/local/sbin/` that validate every argument and run the real program with a fixed argument vector:
+The panel runs as the unprivileged `lamaste` user and cannot become root. `/etc/sudoers.d/lamaste` contains no wildcard: a sudoers `*` matches any characters, spaces included, so a rule such as `mv /tmp/site-index-* /var/www/lamaste/*` also accepts `-t /etc/sudoers.d`, `find /var/www/lamaste/*` accepts `-exec`, `cat /etc/authelia/*` reads `/etc/shadow`, `certbot renew --cert-name * ...` accepts `--deploy-hook <command>`, and an `openssl` rule accepts `-engine`. Every rule is either a fixed command line or a root-owned program that validates its own arguments:
 
-| Wrapper              | Runs                                                                                     |
-| -------------------- | ---------------------------------------------------------------------------------------- |
-| `lamaste-certbot`    | `certbot certonly --nginx` (validated hostnames and email), `renew`, `renew-all`, `list` |
-| `lamaste-cert-info`  | Read-only `openssl` queries (expiry, 24 h validity, SAN) on a Let's Encrypt lineage      |
-| `lamaste-sign-csr`   | Signing an agent CSR with the panel CA                                                   |
-| `lamaste-pki-rename` | Renaming files inside the PKI directory                                                  |
+| Rule                                       | What it allows                                                                                                                                                                                                                                                        |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `systemctl <verb> <service>` (fixed lines) | `start`/`stop`/`restart` of `nginx`, `chisel`, `authelia`, `lamalibre-lamaste-serverd`, `lamalibre-lamaste-gatekeeper`; `reload` of `nginx` and `authelia`; `try-restart`/`enable`/`disable` of `chisel`; `enable` of `authelia`; `enable`/`start` of `certbot.timer` |
+| `nginx -t`                                 | Test the nginx configuration                                                                                                                                                                                                                                          |
+| `/usr/local/sbin/lamaste-priv`             | Install/enable/remove the panel's own vhosts, store a TOTP secret, start a self-update (see below)                                                                                                                                                                    |
+| `/usr/local/sbin/lamaste-certbot`          | `certbot certonly --nginx` (validated hostnames and email), `renew`, `renew-all`, `list`                                                                                                                                                                              |
+| `/usr/local/sbin/lamaste-cert-info`        | Read-only `openssl` queries (expiry, 24 h validity, SAN) on a Let's Encrypt lineage                                                                                                                                                                                   |
 
-The Chisel authfile needs no sudo at all: the panel writes it itself and hands it to the `lamaste-chisel` group, of which it is a member.
+There is no rule for `mv`, `cp`, `rm`, `chmod`, `chown`, `mkdir`, `cat`, `find`, `du`, `test`, `ln`, `openssl`, `systemd-run` or `systemctl daemon-reload`. What the panel does without them:
+
+- **Its own files.** The PKI directory (the panel is the CA, and signs agent CSRs itself — see [Certificates](certificates.md)), the web root (`/var/www/lamaste`, `lamaste:www-data`), Authelia's configuration (`/etc/authelia`, `lamaste:lamaste-authelia`) and the Chisel authfile and key (group `lamaste-chisel`, of which `lamaste` is a member) belong to it or to a group it shares.
+- **Binaries, units, accounts.** Chisel and Authelia (pinned, digest-verified releases), their systemd units and the service accounts are installed by `create-lamaste`, which runs as root. The panel never writes a unit or a binary; onboarding only checks they exist.
+- **Code.** `/opt/lamalibre/lamaste` (panel, gatekeeper, `lamaste-server` CLI, UI, docs) is root-owned and read-only for `lamaste`, so a compromised panel cannot rewrite code that root later runs through `sudo lamaste-server`.
+
+#### `lamaste-priv`
+
+`/usr/local/sbin/lamaste-priv` is a root-owned (`0755`), zero-dependency Node.js program installed by `create-lamaste`. Content (vhost text, TOTP secrets) arrives on stdin, never on the command line, so it is not written to the sudo log. It reads nothing the `lamaste` user can write.
+
+| Operation                                                                           | Does                                                                                                                           |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `nginx-site write\|backup\|restore\|discard-backup\|enable\|disable\|remove <name>` | Manage `sites-available/<name>` (and its `.bak`) and its `sites-enabled` link. `write` validates the vhost on stdin first.     |
+| `authelia-totp <username>`                                                          | Store the TOTP secret from stdin with Authelia's CLI, run as `lamaste-authelia` (the database is that account's file)          |
+| `self-update <version>`                                                             | Start `npx @lamalibre/create-lamaste@<version> --yes` in a transient systemd unit two seconds later (`MAJOR.MINOR.PATCH` only) |
+
+Site names are limited to the panel's own vhosts: `lamalibre-lamaste-panel-domain`, `-auth`, `-tunnel`, `-app-<subdomain>`, `-agent-panel-<label>` and `-site-<uuid>`. `lamalibre-lamaste-panel-ip` (written by `create-lamaste`) may only be enabled or disabled.
+
+**Why vhosts are validated.** nginx's master process runs as root and opens the files a configuration names: `access_log /etc/cron.d/x` with a crafted `log_format` would be a root shell. `lamaste-priv` parses every vhost and accepts only directives on a per-context allow-list, with arguments that cannot name a file outside what Lamaste serves:
+
+- `listen 443` (`[::]:443`), optionally `ssl` / `http2` — port 80 belongs to the installer's HTTPS redirect
+- `server_name` with hostnames only
+- `ssl_certificate` / `ssl_certificate_key` only under `/etc/letsencrypt/live/<name>/{fullchain,privkey}.pem`
+- `include` only `/etc/nginx/snippets/lamalibre-lamaste-*.conf`
+- `root` / `alias` only under `/var/www/lamaste/`
+- `proxy_pass` only `http://127.0.0.1:<port>[/path]`
+- the `proxy_*`, `auth_request`, `auth_request_set`, `limit_req`, `limit_req_zone`, `map`, `add_header`, `error_page`, `return`, `rewrite`, `try_files`, `if`, `index`, `ssl_protocols`/`ssl_ciphers` directives the panel's generators use
+
+Anything else is refused — including directives nginx would accept, backslashes, `${`, and non-ASCII text outside comments. A refused write leaves the previous vhost in place. `npm test` runs the allow-list's refusal tests and checks that every vhost the panel generates passes it.
+
+#### Root code never writes through the panel's paths
+
+`create-lamaste` (including a self-update the panel triggers) and `sudo lamaste-server` run as root on directories `lamaste` can write to, which a compromised panel could have seeded with symlinks. So root never writes through an existing path there: new files are created `O_EXCL | O_NOFOLLOW` under a random name, `fchown`ed and renamed into place; temporary directories are `mkdtemp`; `lamaste-server reset-admin` runs `openssl`, `cp` and `chmod` as `lamaste`; `lamaste-server plugins install|enable|disable|uninstall` re-runs itself as `lamaste` (npm and state writes) and only restarts the panel as root.
 
 ### Secret generation
 
@@ -468,21 +505,7 @@ After onboarding completes, all onboarding endpoints return 410 Gone. This preve
 
 ### Atomic file writes
 
-Configuration files that are read live by services (like Authelia's `users.yml`) use atomic writes to prevent partial reads:
-
-```javascript
-async function sudoWriteFile(destPath, content, mode = '644') {
-  const tmpFile = path.join(
-    tmpdir(),
-    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
-  );
-  await fsWriteFile(tmpFile, content, 'utf-8');
-  await execa('sudo', ['mv', tmpFile, destPath]);
-  await execa('sudo', ['chmod', mode, destPath]);
-}
-```
-
-The `mv` command is atomic on the same filesystem — the file appears at its final path in a single operation, so Authelia never reads a partially written file.
+Configuration files that are read live by services (like Authelia's `users.yml`) are written atomically: a temporary file in the same directory, `fsync`, then `rename`. The rename is atomic on the same filesystem, so Authelia never reads a partially written file. `/etc/authelia` is setgid `lamaste-authelia`, so the new file belongs to that group; its mode decides whether Authelia may read it (`0640`), also rewrite it (`0660`), or not see it (`0600`). No `sudo` is involved.
 
 ### Source files
 
@@ -514,7 +537,7 @@ The `mv` command is atomic on the same filesystem — the file appears at its fi
 | Agent-to-agent auth  | Tickets (time-limited, single-use)   | Unauthorized cross-agent access       |
 | Tunnel ownership     | Chisel authfile per-agent grants     | One agent hijacking another's host    |
 | Reserved ports       | Tunnel port validation               | Publishing internal services          |
-| Privileged commands  | Validating wrappers, pinned sudoers  | Root code execution via extra flags   |
+| Privileged commands  | No-wildcard sudoers, `lamaste-priv`  | Root code execution via extra flags   |
 | Relay authenticity   | Agent verifies `tunnel.<domain>` TLS | Relay impersonation, credential theft |
 | App auth             | Authelia TOTP 2FA                    | Unauthorized app access               |
 | Service isolation    | `127.0.0.1` binding                  | Direct access to internal services    |

@@ -388,38 +388,31 @@ All vhost writes follow a safe sequence to prevent nginx from entering a broken 
 5b. If test fails → restore backup, remove new file, throw error
 ```
 
-This pattern is implemented in `packages/server/daemon/src/lib/nginx.js`, shared by the tunnel vhost writers (`writePublicVhost`, `writeAuthenticatedVhost`, `writeRestrictedVhost`):
+This pattern is implemented once, as `safeWriteVhost()` in `packages/server/daemon/src/lib/nginx.js`, and shared by every vhost writer (tunnels, static sites, agent panels, the core onboarding vhosts). The panel runs unprivileged, so each file step is a call to the root-owned helper `lamaste-priv`, with the vhost text on stdin:
 
 ```javascript
-async function safeWriteVhost(name, config, fqdn) {
-  const existed = await fileExistsSudo(availablePath);
-  if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]); // Backup
-  }
+async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
+  const existed = await siteExists(name);
+  const wasEnabled = await isSiteEnabled(name);
+  if (existed) await siteAction('backup', name); // sudo lamaste-priv nginx-site backup <name>
 
   try {
-    await writeVhostFile(name, config); // Write new vhost
-    await enableSite(name); // Symlink
-    const result = await testConfig(); // nginx -t
-
+    await writeVhostFile(name, config); // nginx-site write <name> (validated, then written)
+    await (enabled ? enableSite(name) : disableSite(name));
+    const result = await testConfig(); // sudo nginx -t
     if (!result.valid) {
-      // Rollback
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', enabledPath]);
-      }
-      throw new Error(`Nginx config test failed: ${result.error}`);
+      // restore(): nginx-site restore (or remove), then the previous link state
+      throw new Error(`Nginx config test failed after writing vhost for ${fqdn}: ...`);
     }
-
-    await reload(); // Reload nginx
+    await reload(); // sudo systemctl reload nginx
+    if (existed) await siteAction('discard-backup', name);
   } catch (err) {
-    // Rollback on any unexpected error
-    // ...
+    // Any other error, including a vhost lamaste-priv refuses, is rolled back too
   }
 }
 ```
+
+`lamaste-priv` accepts only the panel's own site names and only vhosts whose every directive is on its allow-list — nginx's master process runs as root and opens the files a configuration names, so a free-form vhost would be root access. See [nginx Configuration](../03-architecture/nginx-configuration.md#vhost-allow-list).
 
 The `nginx -t` command parses the entire configuration and reports syntax errors without affecting the running server. Only after it passes does the code reload nginx.
 

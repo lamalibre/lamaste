@@ -100,7 +100,7 @@ Track and manage all TLS certificates.
 
 - View all certs with expiry dates
 - Force renewal of Let's Encrypt certs
-- Rotate mTLS admin cert (generates new p12, shows download + password)
+- Download the admin p12 (rotation itself is `sudo lamaste-server reset-admin` on the server; the panel does not issue admin certificates)
 - Generate agent certificates (label, capabilities, download p12, share password)
 - List and revoke agent certificates
 - Update agent capabilities (without reissuing the certificate)
@@ -245,44 +245,44 @@ Host static websites directly on the Lamaste server, served via nginx.
 
 ## Sudoers Rules
 
-The panel runs as a non-root user (`lamaste`) with specific sudo permissions, written to `/etc/sudoers.d/lamaste` by `generateSudoersContent()` in `packages/provisioners/server/src/lib/service-config.js`. There is no blanket `certbot *` or `systemctl *`. A sudoers `*` matches spaces too, so a rule like `certbot renew --cert-name * --non-interactive` would also accept `--deploy-hook <command>` — root code execution. Certbot and the Let's Encrypt `openssl` reads therefore go through root-owned wrappers in `/usr/local/sbin/` that validate every argument and run the program with a fixed argument vector. An excerpt:
+The panel runs as a non-root user (`lamaste`) and cannot become root. `/etc/sudoers.d/lamaste` is written by `generateSudoersContent()` in `packages/provisioners/server/src/lib/service-config.js` and contains **no wildcard at all**: a sudoers `*` matches spaces too, so a rule like `certbot renew --cert-name * --non-interactive` would also accept `--deploy-hook <command>`, and `mv /tmp/nginx-* /etc/nginx/sites-available/*` would accept `-t /etc/sudoers.d`. Every rule is a fixed command line or a root-owned program that validates its own arguments:
 
 ```sudoers
-# --- systemctl: managed services (bare service names, no wildcards) ---
+# --- systemctl: managed services (fixed command lines) ---
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl try-restart chisel
 # fail-closed startup reconciliation disables chisel, and re-enables it on success
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl disable chisel
 lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl reload authelia
-lamaste ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
-# ... start/stop/restart/enable for nginx, chisel, authelia, certbot.timer, lamalibre-lamaste-serverd
+# ... start/stop/restart/enable for nginx, chisel, authelia, certbot.timer,
+#     start/stop/restart for lamalibre-lamaste-serverd and lamalibre-lamaste-gatekeeper
 
 # --- nginx config test ---
 lamaste ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 
-# --- Let's Encrypt: root-owned wrappers with fixed argument vectors ---
-#   lamaste-certbot issue <email> <cert-name> <domain>...   certbot certonly --nginx
-#   lamaste-certbot renew <cert-name> [force]               never with certbot's random delay
-#   lamaste-certbot renew-all | list
-#   lamaste-cert-info <lineage> enddate|checkend|san        read-only openssl queries
+# --- root-owned programs that validate their own arguments ---
+#   lamaste-priv nginx-site write|backup|restore|discard-backup|enable|disable|remove <name>
+#   lamaste-priv authelia-totp <username>                    secret on stdin
+#   lamaste-priv self-update <version>                       create-lamaste in a transient unit
+#   lamaste-certbot issue <email> <cert-name> <domain>...    certbot certonly --nginx
+#   lamaste-certbot renew <cert-name> [force] | renew-all | list
+#   lamaste-cert-info <lineage> enddate|checkend|san         read-only openssl queries
+lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-priv
 lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-certbot
 lamaste ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-cert-info
-
-# ... plus scoped mv/cp/rm/chmod/chown rules for vhosts, Authelia config and
-#     the PKI helpers (lamaste-sign-csr, lamaste-pki-rename)
-# The chisel-users authfile needs no rule: the panel writes it itself, 0640,
-# group lamaste-chisel (the group chisel runs as; the lamaste user is a member).
 ```
 
-The wrappers accept only lowercase DNS hostnames (no wildcards or path characters, at most 100 per certificate) and a syntactically valid email address. Renewals the panel triggers pass `--no-random-sleep-on-renew`, because certbot otherwise sleeps up to about 8 minutes before a non-interactive renewal (a delay meant for `certbot.timer`) while an operator waits.
+Everything else the panel does needs no rule: the PKI directory (agent CSR signing), the web root, `/etc/authelia` and the Chisel authfile and key belong to `lamaste` or to a group it is in, and binaries, units and service accounts are installed by `create-lamaste` as root. `lamaste-priv` installs a vhost only if every directive is on its allow-list — nginx's root master process opens the files a configuration names. See [Security Model](../01-concepts/security-model.md#privilege-boundary).
 
-Redeploying the panel (`npx @lamalibre/create-lamaste` on an existing install) rewrites this file and reinstalls the wrappers, so upgrades pick up new rules.
+The certbot wrappers accept only lowercase DNS hostnames (no wildcards or path characters, at most 100 per certificate) and a syntactically valid email address. Renewals the panel triggers pass `--no-random-sleep-on-renew`, because certbot otherwise sleeps up to about 8 minutes before a non-interactive renewal (a delay meant for `certbot.timer`) while an operator waits.
+
+Redeploying (`npx @lamalibre/create-lamaste` on an existing install) reinstalls the programs, removes retired ones (`lamaste-sign-csr`, `lamaste-pki-rename`), and replaces this file atomically after `visudo -c` accepts it, so upgrades pick up new rules.
 
 ## File Operation Safety
 
 - **YAML writes** (users.yml): write to temp file, then atomic rename
 - **nginx changes**: always run `nginx -t` before reload; rollback on failure
 - **Authelia changes**: reload service after users.yml update
-- **Chisel changes**: tunnel state is written first, then the authfile is re-rendered from it (per-agent port grants) and the service restarted
+- **Chisel changes**: tunnel state is written first, then the authfile is re-rendered from it (per-agent port grants); Chisel reloads it, and is restarted only when a grant or password is withdrawn
 - **Last-user protection**: never delete the last Authelia user
 - **State persistence**: tunnels.json updated atomically after each tunnel operation

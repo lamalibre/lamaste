@@ -115,7 +115,7 @@ curl -s --cert client.p12:password \
 
 ### `POST /api/system/update`
 
-Triggers a background update of the Lamaste panel server to the specified version. The update is executed asynchronously via `systemd-run` so that the panel server process can restart without terminating the update.
+Triggers a background update of the Lamaste server to the specified version. The panel runs `sudo lamaste-priv self-update <version>`; the root-owned helper validates the version (`MAJOR.MINOR.PATCH`) and starts `npx @lamalibre/create-lamaste@<version> --yes` — the installer's redeploy path — in a transient systemd unit two seconds later. The transient unit keeps the update alive while the installer stops and restarts the panel; the delay lets this response reach the client first. The panel passes only the version: it never writes a script for root to run.
 
 **Authentication:** Admin-only. Agent certificates cannot trigger updates.
 
@@ -147,15 +147,16 @@ curl -s --cert client.p12:password \
 }
 ```
 
-The 202 status indicates the update has been accepted and is running in the background. The panel server will restart as part of the update process, so the client should expect the connection to drop and poll `/api/health` to detect when the new version is running.
+The 202 status indicates the helper has started the update unit (`lamalibre-lamaste-update-<random>`) and the update is running in the background. The panel server will restart as part of the update process, so the client should expect the connection to drop and poll `/api/health` to detect when the new version is running.
 
 **Errors:**
 
-| Status | Body                                                             | When                               |
-| ------ | ---------------------------------------------------------------- | ---------------------------------- |
-| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`       | Missing or invalid `version` field |
-| 403    | `{"error":"Insufficient certificate scope"}`                     | Non-admin certificate              |
-| 503    | `{"error":"Onboarding not complete","onboardingStatus":"FRESH"}` | Onboarding has not finished        |
+| Status | Body                                                             | When                                                                                           |
+| ------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 400    | `{"error":"Validation failed","details":{"issues":[...]}}`       | Missing or invalid `version` field                                                             |
+| 403    | `{"error":"Insufficient certificate scope"}`                     | Non-admin certificate                                                                          |
+| 500    | `{"error":"Could not start the update: <helper error>"}`         | `lamaste-priv` could not start the update unit (e.g. helper missing — re-run `create-lamaste`) |
+| 503    | `{"error":"Onboarding not complete","onboardingStatus":"FRESH"}` | Onboarding has not finished                                                                    |
 
 ---
 

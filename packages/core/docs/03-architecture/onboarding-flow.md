@@ -85,8 +85,8 @@ State is persisted in `/etc/lamalibre/lamaste/panel.json` under the `onboarding`
 ┌─────────────────────────────────────────────────┐
 │  Installing Stack                                │
 │                                                  │
-│  ✔ Installing Chisel tunnel server               │
-│  ✔ Configuring Authelia (2FA)                    │
+│  ✔ Starting Chisel                               │
+│  ✔ Configuring Authelia                          │
 │  ● Issuing TLS certificates...                   │
 │  ○ Configuring nginx virtual hosts               │
 │  ○ Starting services                             │
@@ -106,8 +106,8 @@ State is persisted in `/etc/lamalibre/lamaste/panel.json` under the `onboarding`
 
 **Provisioning tasks (in order):**
 
-1. Download and install Chisel binary + systemd service
-2. Generate Authelia config + create initial admin user with a random password
+1. Check the Chisel binary is installed, create its key and authfile, start it (the pinned binary and its unit come from `create-lamaste`; onboarding downloads nothing)
+2. Check the Authelia binary is installed, generate its config + create initial admin user with a random password, start it
 3. Issue individual Let's Encrypt certificates for core subdomains (`panel.<domain>`, `auth.<domain>`, `tunnel.<domain>`)
 4. Write nginx vhosts for panel, auth, tunnel subdomains
 5. Start all services

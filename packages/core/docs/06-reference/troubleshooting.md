@@ -193,16 +193,17 @@ sudo nginx -t
 
 **Cause 1: Chisel server is not running.**
 
-The panel reconciles Chisel on every start and **stops and disables** it when it cannot establish a correct authfile and unit (fail closed); `/etc/lamalibre/lamaste/chisel-failed-closed` exists while that is the case. It then retries on its own, from every 30 seconds up to every 10 minutes, and re-enables and starts Chisel once it succeeds. The panel log says why. Do not just `systemctl enable --now chisel` — fix the cause and let the panel bring it back.
+The panel reconciles Chisel on every start and **stops and disables** it when it cannot establish a correct authfile (fail closed); `/etc/lamalibre/lamaste/chisel-failed-closed` exists while that is the case. It then retries on its own, from every 30 seconds up to every 10 minutes, and re-enables and starts Chisel once it succeeds. The panel log says why. Do not just `systemctl enable --now chisel` — fix the cause and let the panel bring it back.
 
 **Fix:**
 
 ```bash
 sudo systemctl status chisel
 sudo journalctl -u lamalibre-lamaste-serverd -n 50 --no-pager | grep -i chisel
-# A message "Chisel stopped: its authfile or unit could not be brought in line ..."
-# names the failure — commonly a missing lamaste-chisel group (re-run the installer
-# in redeploy mode) or a full disk. Once fixed, restart the panel:
+# A message "Chisel stopped: its authfile could not be brought in line ..."
+# names the failure — commonly a missing lamaste-chisel group or a wrongly owned
+# config directory (re-run the installer in redeploy mode) or a full disk.
+# Once fixed, restart the panel:
 sudo systemctl restart lamalibre-lamaste-serverd
 ```
 
@@ -314,35 +315,37 @@ ls -la /usr/local/bin/authelia
 
 **Common causes:**
 
-| Cause                        | Log Message             | Fix                                                                               |
-| ---------------------------- | ----------------------- | --------------------------------------------------------------------------------- |
-| Missing `panel.json`         | `Config file not found` | Re-run installer or create the file manually                                      |
-| Invalid JSON in `panel.json` | `contains invalid JSON` | Fix the JSON syntax                                                               |
-| Port 3100 in use             | `EADDRINUSE`            | Find and stop the conflicting process: `sudo ss -tlnp sport = :3100`              |
-| Missing Node.js modules      | `Cannot find module`    | `cd /opt/lamalibre/lamaste/lamalibre-lamaste-serverd && npm install --production` |
+| Cause                           | Log Message                             | Fix                                                                                                                            |
+| ------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Missing `panel.json`            | `Config file not found`                 | Re-run installer or create the file manually                                                                                   |
+| Invalid JSON in `panel.json`    | `contains invalid JSON`                 | Fix the JSON syntax                                                                                                            |
+| Port 3100 in use                | `EADDRINUSE`                            | Find and stop the conflicting process: `sudo ss -tlnp sport = :3100`                                                           |
+| Missing Node.js modules         | `Cannot find module`                    | Re-run the installer (`npx @lamalibre/create-lamaste --yes`); `/opt/lamalibre/lamaste` is root-owned and redeployed as a whole |
+| Permission denied writing state | `EACCES` under `/etc/lamalibre/lamaste` | Re-run the installer; the redeploy re-applies the ownership of the config and PKI directories                                  |
 
 ### chisel fails to start
 
 **Common causes:**
 
-| Cause                | Log Message                                                                      | Fix                                                                                                                                                                                          |
-| -------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Binary missing       | `exec format error` or `not found`                                               | Restart the panel — startup reconciliation installs the pinned, checksum-verified release                                                                                                    |
-| Authfile unreadable  | `permission denied` on `chisel-users`                                            | The file must be `0640 lamaste:lamaste-chisel` and the unit `Group=lamaste-chisel`; restart the panel, which re-applies both. If the group is missing, re-run the installer in redeploy mode |
-| Stopped by the panel | (panel log) `Chisel stopped: ...`; unit disabled, `chisel-failed-closed` present | Reconciliation failed closed; see [Tunnel Client Cannot Connect](#tunnel-client-cannot-connect), Cause 1                                                                                     |
-| Port 9090 in use     | `bind: address already in use`                                                   | `sudo ss -tlnp sport = :9090` to find conflicting process                                                                                                                                    |
-| Wrong architecture   | `exec format error`                                                              | Restart the panel; it downloads the release for the server's architecture                                                                                                                    |
+| Cause                      | Log Message                                                                           | Fix                                                                                                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Binary missing             | `exec format error` or `not found`                                                    | Re-run the installer (`npx @lamalibre/create-lamaste --yes`) — it installs the pinned, checksum-verified release for the server's architecture; the panel cannot install binaries                                                 |
+| Not the pinned release     | (panel log) `The installed chisel is not the pinned release — run create-lamaste ...` | Re-run the installer. Until then the panel restarts Chisel on every authfile change                                                                                                                                               |
+| Authfile or key unreadable | `permission denied` on `chisel-users` or `chisel-server.key`                          | Both must be `0640 lamaste:lamaste-chisel` and the unit `Group=lamaste-chisel`; restart the panel, which re-applies the authfile's. If the group, the unit or the key's ownership is wrong, re-run the installer in redeploy mode |
+| Stopped by the panel       | (panel log) `Chisel stopped: ...`; unit disabled, `chisel-failed-closed` present      | Reconciliation failed closed; see [Tunnel Client Cannot Connect](#tunnel-client-cannot-connect), Cause 1                                                                                                                          |
+| Port 9090 in use           | `bind: address already in use`                                                        | `sudo ss -tlnp sport = :9090` to find conflicting process                                                                                                                                                                         |
 
 ### authelia fails to start
 
 **Common causes:**
 
-| Cause                       | Log Message            | Fix                                                                                               |
-| --------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------- |
-| Invalid `configuration.yml` | `configuration: error` | Check YAML syntax with `authelia validate-configuration --config /etc/authelia/configuration.yml` |
-| Missing `users.yml`         | `cannot open file`     | Create an initial users file (see [Config Files](config-files.md))                                |
-| Binary missing              | `not found`            | Re-download the binary                                                                            |
-| Wrong permissions           | `permission denied`    | `sudo chmod 600 /etc/authelia/configuration.yml /etc/authelia/users.yml`                          |
+| Cause                       | Log Message                             | Fix                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Invalid `configuration.yml` | `configuration: error`                  | Check YAML syntax with `authelia validate-configuration --config /etc/authelia/configuration.yml`                                                                                                                                                                                                                                                         |
+| Missing `users.yml`         | `cannot open file`                      | Create an initial users file (see [Config Files](config-files.md))                                                                                                                                                                                                                                                                                        |
+| Binary missing              | `not found`                             | Re-run the installer (`npx @lamalibre/create-lamaste --yes`); it installs the pinned release                                                                                                                                                                                                                                                              |
+| Wrong permissions           | `permission denied`                     | Authelia runs as `lamaste-authelia`: `/etc/authelia` must be `lamaste:lamaste-authelia 2770`, `configuration.yml` `0640`, `users.yml` `0660`, `db.sqlite3` owned by `lamaste-authelia`. Re-run the installer to re-apply (a root-owned `/etc/authelia` from an older version is converted), or see [Config Files](config-files.md#file-permissions-table) |
+| Database newer than binary  | storage schema version error at startup | A newer Authelia ran against this database and was replaced by an older one; the installer never downgrades an installed Authelia, so reinstall that newer release by hand                                                                                                                                                                                |
 
 ---
 
@@ -511,6 +514,47 @@ sudo systemctl restart authelia
 
 ---
 
+## Onboarding Fails: "Chisel is not installed" / "Authelia is not installed"
+
+**Symptom:** The **Starting Chisel** or **Configuring Authelia** provisioning task fails with "Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation." (or the same for Authelia).
+
+**Cause:** Onboarding downloads nothing: the installer installs both binaries (pinned releases), their systemd units and the `lamaste-authelia` account. The binary at `/usr/local/bin/chisel` or `/usr/local/bin/authelia` is missing — the installer was interrupted, or the file was removed.
+
+**Fix:** Re-run the installer on the server, then start provisioning again from the wizard:
+
+```bash
+npx @lamalibre/create-lamaste --yes
+```
+
+If provisioning then fails writing Authelia's configuration with `/etc/authelia is not writable by the panel — run create-lamaste to repair the installation`, the directory's ownership is wrong; the same command repairs it.
+
+---
+
+## Tunnel, Site or Panel Change Fails: "nginx site write failed"
+
+**Symptom:** Creating or changing a tunnel, static site or agent panel fails with an error like `nginx site write failed for lamalibre-lamaste-app-myapp: lamaste-priv: vhost line 12: directive "access_log" is not allowed in server` (or `arguments of "..." are not allowed`, `site name not allowed for write: ...`).
+
+**Cause:** The panel installs vhosts only through the root helper `/usr/local/sbin/lamaste-priv`, which accepts only the panel's own site names and only directives on its allow-list (nginx's master process runs as root, so an unchecked vhost would be root access). The previous vhost is left in place. This happens when the panel generates something the installed helper does not know — typically a panel upgraded without re-running the installer, or a helper left over from an older version — or when a hand-edited generator adds a directive.
+
+**Fix:**
+
+1. Re-run the installer so the helper matches the panel: `npx @lamalibre/create-lamaste --yes`
+2. If it persists on a current install, it is a bug: the vhost generators (`packages/server/daemon/src/lib/nginx.js`) and the allow-list (`packages/provisioners/server/scripts/lamaste-priv`) must change together — `npm test` checks every generated vhost against the allow-list. Do not work around it by editing files in `/etc/nginx` by hand.
+
+`sudo: a password is required` for `lamaste-priv` means the helper or the sudoers file is missing or outdated: re-run the installer.
+
+---
+
+## Panel Update Fails to Start
+
+**Symptom:** The panel's **Update** action (`POST /api/system/update`) returns `500` with `Could not start the update: ...`.
+
+**Cause:** `sudo lamaste-priv self-update <version>` could not start the transient update unit — for example the helper is missing (an install from before `lamaste-priv`), or `systemd-run` failed.
+
+**Fix:** Update from the console instead, which also installs the current helper: `npx @lamalibre/create-lamaste@<version> --yes`. The update unit's own output is in `journalctl -u 'lamalibre-lamaste-update-*'`.
+
+---
+
 ## Panel Shows "Service Unavailable" (503)
 
 **Symptom:** The panel loads but shows 503 errors for management pages.
@@ -574,6 +618,10 @@ Then restart the panel: `sudo systemctl restart lamalibre-lamaste-serverd`
 df -h /
 # Free space by removing old backups, logs, or unused sites
 ```
+
+**Cause 3: The web root is not writable by the panel (`EACCES`).**
+
+The panel writes `/var/www/lamaste` itself: it must be `lamaste:www-data`, directories `2750`, files `0640`. An install from before this layout had it owned by `www-data`. Re-run the installer (`npx @lamalibre/create-lamaste --yes`); the redeploy converts the tree.
 
 ---
 

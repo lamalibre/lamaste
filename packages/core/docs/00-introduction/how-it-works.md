@@ -267,22 +267,26 @@ Phase 2: Installation
 │   ├── Generate self-signed TLS certificate for IP access
 │   ├── Write mTLS snippet (ssl_verify_client on)
 │   ├── Write IP-based panel vhost (port 9292)
-│   ├── Deploy certificate help page
 │   ├── Enable site, remove default
 │   ├── Port 80 catch-all: redirect plain HTTP to HTTPS
 │   └── Validate config and start nginx
 │
-└── Deploy Panel
-    ├── Create lamaste system user
-    ├── Create lamaste-chisel group (Chisel reads its authfile through it)
-    ├── Create directory structure (/opt/lamalibre/lamaste, /etc/lamalibre/lamaste, /var/www/lamaste)
-    ├── Deploy lamalibre-lamaste-serverd (copy + npm install --production)
-    ├── Deploy lamaste-server-ui (copy pre-built dist or build from source)
-    ├── Write panel.json configuration
-    ├── Write systemd service unit (lamalibre-lamaste-serverd.service)
-    ├── Install root-owned sudo wrappers (lamaste-certbot, lamaste-cert-info, ...)
-    ├── Write sudoers rules (least-privilege for lamaste user)
-    └── Start panel service + health check
+├── Deploy Panel
+│   ├── Create lamaste system user
+│   ├── Create directory structure (/opt/lamalibre/lamaste root-owned, /etc/lamalibre/lamaste)
+│   │   and deploy the certificate help page
+│   ├── Install chisel + Authelia
+│   │   ├── lamaste-chisel group (Chisel reads its authfile through it), lamaste-authelia account
+│   │   ├── Pinned releases (Chisel 1.12.0, Authelia 4.39.28), SHA-256 verified
+│   │   ├── Hardened systemd units (chisel.service, authelia.service)
+│   │   └── Ownership: /var/www/lamaste (lamaste:www-data), /etc/authelia (lamaste:lamaste-authelia)
+│   ├── Deploy lamalibre-lamaste-serverd, lamaste-server CLI, lamaste-server-ui, docs
+│   ├── Write panel.json configuration
+│   ├── Write systemd service unit (lamalibre-lamaste-serverd.service)
+│   ├── Install root-owned sudo programs (lamaste-priv, lamaste-certbot, lamaste-cert-info)
+│   ├── Write sudoers rules (fixed command lines, no wildcards; visudo-checked)
+│   └── Start panel service + health check
+└── Deploy Gatekeeper
 ```
 
 Every task is idempotent — re-running the installer updates the installation without losing existing configuration. Skip guards check for existing state (swap already exists, certificates already generated, etc.).
@@ -295,14 +299,12 @@ After the installer runs, the panel is in `FRESH` state. The onboarding wizard (
 Onboarding Wizard
 ├── Domain Step: user enters domain + email
 ├── DNS Step: panel shows required DNS records, user verifies
-└── Provisioning Step: panel installs remaining components
-    ├── Download the pinned Chisel release (1.12.0), verify its SHA-256, install
-    ├── Download and install Authelia binary
-    ├── Create Authelia configuration + first admin user
+└── Provisioning Step: panel configures and starts the remaining components
+    ├── Check Chisel is installed, create its key + authfile, start it
+    ├── Check Authelia is installed, write its configuration + first admin user, start it
     ├── Issue Let's Encrypt certificate via certbot
-    ├── Write domain-based nginx vhosts
-    ├── Create systemd service units for Chisel + Authelia
-    ├── Start all services
+    ├── Write domain-based nginx vhosts (through lamaste-priv)
+    ├── Verify all services
     └── Update panel.json → onboarding status: COMPLETED
 ```
 
@@ -332,9 +334,10 @@ Layer 5: Localhost binding
 Layer 6: Systemd hardening
   └─ NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp
 
-Layer 7: Least-privilege sudoers
-  └─ lamaste user can only run specific commands (nginx -t, systemctl for known services);
-     certbot and certificate reads only through validating root-owned wrappers
+Layer 7: Privilege boundary
+  └─ lamaste user can only run fixed commands (nginx -t, systemctl for known services)
+     and validating root-owned programs (lamaste-priv, lamaste-certbot, lamaste-cert-info);
+     no sudoers wildcards. Authelia runs as its own account; code is root-owned
 ```
 
 ### Key File Locations on the Droplet
@@ -351,7 +354,7 @@ Layer 7: Least-privilege sudoers
 | `/etc/nginx/sites-available/lamaste-*`                  | nginx vhost configurations                         |
 | `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`       | mTLS client certificate requirement                |
 | `/etc/systemd/system/lamalibre-lamaste-serverd.service` | Panel server systemd unit                          |
-| `/etc/sudoers.d/lamaste`                                | Least-privilege sudo rules                         |
+| `/etc/sudoers.d/lamaste`                                | Fixed sudo rules (no wildcards)                    |
 | `/etc/fail2ban/jail.d/lamaste.conf`                     | fail2ban jail configuration                        |
 
 ### State Machine

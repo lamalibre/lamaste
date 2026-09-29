@@ -36,7 +36,8 @@ npx @lamalibre/create-lamaste
         │     ├── nodeTasks()          ← Node.js 20 LTS installation
         │     ├── mtlsTasks()          ← CA + client cert + PKCS12 generation
         │     ├── nginxTasks()         ← Self-signed TLS, mTLS snippet, vhost, nginx start
-        │     └── panelTasks()         ← User, dirs, deploy, config, systemd, start
+        │     ├── panelTasks()         ← User, dirs, chisel + Authelia, deploy, config, systemd, sudoers, start
+        │     └── gatekeeperTasks()    ← Deploy gatekeeper, state files, systemd, start
         │
         └── printSummary()             ← Formatted box with SCP command + password + URL
 ```
@@ -66,15 +67,16 @@ Detected conditions:
 
 ### Phase 2: Installation Tasks
 
-Five task groups run sequentially through Listr2:
+Six task groups run sequentially through Listr2:
 
-| Order | Task Group | Source            | Key Operations                                                                                   |
-| ----- | ---------- | ----------------- | ------------------------------------------------------------------------------------------------ |
-| 1     | Hardening  | `tasks/harden.js` | Swap file, UFW firewall, fail2ban, SSH hardening, system packages                                |
-| 2     | Node.js    | `tasks/node.js`   | Check existing, add NodeSource repo, install, verify                                             |
-| 3     | mTLS       | `tasks/mtls.js`   | CA key + cert, client key + CSR, sign, PKCS12 bundle                                             |
-| 4     | nginx      | `tasks/nginx.js`  | Self-signed TLS cert, mTLS snippet, IP vhost, cert help page, enable site, start                 |
-| 5     | Panel      | `tasks/panel.js`  | System user, directories, deploy server + client, config, systemd, sudoers, start + health check |
+| Order | Task Group | Source                | Key Operations                                                                                                                                                                                                                          |
+| ----- | ---------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Hardening  | `tasks/harden.js`     | Swap file, UFW firewall, fail2ban, SSH hardening, system packages                                                                                                                                                                       |
+| 2     | Node.js    | `tasks/node.js`       | Check existing, add NodeSource repo, install, verify                                                                                                                                                                                    |
+| 3     | mTLS       | `tasks/mtls.js`       | CA key + cert, client key + CSR, sign, PKCS12 bundle                                                                                                                                                                                    |
+| 4     | nginx      | `tasks/nginx.js`      | Self-signed TLS cert, mTLS snippet, IP vhost, port-80 redirect, enable site, start                                                                                                                                                      |
+| 5     | Panel      | `tasks/panel.js`      | System user, root-owned install dir + cert help page, pinned chisel + Authelia (binaries, units, accounts, ownership), deploy server + CLI + client + docs, config, systemd, `lamaste-priv` and wrappers, sudoers, start + health check |
+| 6     | Gatekeeper | `tasks/gatekeeper.js` | Deploy gatekeeper (root-owned), state files, systemd unit, start                                                                                                                                                                        |
 
 ## Task Implementation Details
 
@@ -156,7 +158,7 @@ Five task groups run sequentially through Listr2:
 - WebSocket upgrade support for `/api` paths
 - Custom error pages (495/496) serve a certificate help page for visitors without certs
 
-**Certificate help page:**
+**Certificate help page** (written by the panel task, and regenerated on every redeploy):
 
 - Static HTML at `/opt/lamalibre/lamaste/lamaste-server-ui/cert-help.html`
 - Styled with the same dark terminal aesthetic as the panel
@@ -172,43 +174,53 @@ Five task groups run sequentially through Listr2:
 
 **Directory structure:**
 
-- `/opt/lamalibre/lamaste/lamaste-serverd/` — deployed server code
-- `/opt/lamalibre/lamaste/lamaste-server-ui/` — built client SPA
-- `/etc/lamalibre/lamaste/` — configuration files
-- `/var/www/lamaste/` — static site roots
+- `/opt/lamalibre/lamaste/` — code (panel server, `lamaste-server` CLI, UI, docs, gatekeeper, cert help page), **root-owned** and read-only for `lamaste`. The `lamaste-server` CLI is run as root by administrators, so the panel must not be able to change it. A tree owned by anyone but root (earlier versions gave it to `lamaste`) is moved aside, every component is deployed fresh, and the old tree is removed.
+- `/etc/lamalibre/lamaste/` — configuration and state, owned by `lamaste`
+- `/var/www/lamaste/` — static site roots, `lamaste:www-data`, directories `2750` (setgid), files `0640`
+
+**Chisel and Authelia** (`lib/relay-services.js`, run on install and on every redeploy):
+
+- Creates the `lamaste-chisel` group (and adds `lamaste` to it) and the `lamaste-authelia` system account (no login shell, no home)
+- Installs Chisel 1.12.0 and Authelia 4.39.28 to `/usr/local/bin` (`lib/binaries.js`): downloaded from fixed release URLs, verified against the SHA-256 digests pinned in `@lamalibre/lamaste` (`CHISEL_RELEASE`, `AUTHELIA_RELEASE`) before anything is unpacked, staged in a `mkdtemp` directory and renamed into place. A binary already at the pinned version is left alone; an Authelia **newer** than the pin is kept, never downgraded (its database may use a schema the pinned release cannot read)
+- Writes `/etc/systemd/system/chisel.service` (`User=nobody`, `Group=lamaste-chisel`) and `/etc/systemd/system/authelia.service` (`User=lamaste-authelia`, `UMask=027`, `ProtectSystem=strict` with `ReadWritePaths=/etc/authelia /var/log/authelia`, `SystemCallFilter=@system-service`, empty `CapabilityBoundingSet`, `NoNewPrivileges`); both are enabled and started later by onboarding
+- Sets ownership (`lib/ownership.js`): `/var/www/lamaste` `lamaste:www-data 2750`; `/etc/authelia` `lamaste:lamaste-authelia 2770` (setgid) with `configuration.yml` `0640`, `users.yml` `0660`, `.secrets.json` `0600` (lamaste), `db.sqlite3*` and `notifications.txt` `lamaste-authelia 0600`; `/var/log/authelia` `lamaste-authelia 0750`; `chisel-server.key` (if present) `lamaste:lamaste-chisel 0640`; the PKI directory `lamaste:lamaste` (the panel is the CA)
+
+Every write root makes in a directory `lamaste` can write to (its config directory, the web root, `/etc/authelia`) avoids following symlinks the panel could have planted: new files are created `O_EXCL | O_NOFOLLOW` and renamed into place, ownership is changed through the file descriptor, recursive changes use `chown -R -P` / `rm -rf --one-file-system`.
 
 **Server deployment:**
 
 - Copies `package.json` and `src/` from `vendor/lamaste-serverd/`
-- Runs `npm install --production` in the deployment directory
-- Sets ownership to `lamaste:lamaste`
+- Runs `npm install --production --ignore-scripts` in the deployment directory (root-owned)
 
 **Client deployment:**
 
 - Prefers pre-built `dist/` directory from vendor (avoids Vite build on low-RAM VPS)
-- Falls back to building from source in `/tmp/` if no pre-built dist exists
+- Falls back to building from source in a fresh `mkdtemp` directory if no pre-built dist exists
 - Only the `dist/` output is deployed to the lamaste-server-ui directory
 
 **Configuration:**
 
 - Writes `/etc/lamalibre/lamaste/panel.json` with detected IP, directory paths, and `onboarding.status: "FRESH"`
 - On re-run: merges with existing config, preserving user/onboarding state
-- File mode 0640, owned by `lamaste:lamaste`
+- File mode 0640, owned by `lamaste:lamaste`, written as a fresh file renamed into place
 
 **Systemd service:**
 
 - Unit file at `/etc/systemd/system/lamalibre-lamaste-serverd.service`
-- Runs as `lamaste` user with security hardening: `NoNewPrivileges=true`, `ProtectSystem=strict`, `ProtectHome=true`, `PrivateTmp=true`
-- `ReadWritePaths=/etc/lamalibre/lamaste /var/www/lamaste` are allowed
+- Runs as the `lamaste` user with `SupplementaryGroups=lamaste-chisel`, `ProtectHome=true`, `PrivateTmp=true`, `ReadWritePaths=/etc/lamalibre/lamaste /var/www/lamaste`
+- `NoNewPrivileges` is omitted: the panel runs the fixed `sudo` commands below
 - Restart on failure with 5-second delay
+
+**Root-owned programs** (`lib/wrappers.js`), installed before the sudoers file:
+
+- `/usr/local/sbin/lamaste-priv` (Node.js, syntax-checked with `node --check`), `/usr/local/sbin/lamaste-certbot` and `/usr/local/sbin/lamaste-cert-info` (bash, checked with `bash -n`), installed `root:root 0755`
+- The retired `lamaste-sign-csr` and `lamaste-pki-rename` are removed
+- See [Security Model](../01-concepts/security-model.md#privilege-boundary) for what each accepts
 
 **Sudoers rules:**
 
-- Written to `/etc/sudoers.d/lamaste` with granular permissions
-- Scoped to specific `systemctl` commands for managed services (nginx, chisel, authelia, lamalibre-lamaste-serverd)
-- Scoped `mv` rules restricted to specific source/destination paths (e.g., `/tmp/* → /etc/nginx/sites-available/*`)
-- Scoped file operations for static sites under `/var/www/lamaste/`
-- Validated with `visudo -c` — removed immediately if validation fails
+- `/etc/sudoers.d/lamaste` contains no wildcard: only fixed `systemctl` command lines (nginx; chisel including `try-restart`, `enable`, `disable`; authelia; `certbot.timer`; the panel and gatekeeper services), `nginx -t`, and the three programs above
+- Installed atomically: written as `/etc/sudoers.d/lamaste.lamaste-new` (sudo ignores files with a dot in their name), checked with `visudo -c`, then renamed into place — an invalid file is never live and the previous rules stay in force
 - No blanket root access
 
 **Health check:**
@@ -238,9 +250,9 @@ The mTLS certificate skip guard is especially important: regenerating certificat
 
 When the installer detects an existing Lamaste installation (`/etc/lamalibre/lamaste/panel.json` exists) and the `--force-full` flag is not set, it enters **redeploy mode** instead of running the full installation.
 
-Redeploy mode only updates the lamalibre-lamaste-serverd and lamaste-server-ui files, runs `npm install`, merges configuration, updates the systemd service unit and sudoers rules, and restarts the service. It does not touch OS hardening, mTLS certificates, nginx configuration, or any other system-level settings.
+Redeploy mode stops the panel and gatekeeper, secures the install directory (a non-root-owned tree is moved aside and removed at the end), redeploys the panel server, `lamaste-server` CLI, UI, docs, gatekeeper and cert help page, merges `panel.json`, runs the same Chisel/Authelia step as a fresh install (stopping a running Authelia while its files change hands), rewrites the panel's systemd unit, the root-owned programs and the sudoers rules, ensures the port-80 redirect, then restarts Chisel if its binary or unit changed, starts Authelia and the gatekeeper if they were running, and restarts the panel. It does not touch OS hardening, mTLS certificates or the panel's vhosts. The panel's self-update (`sudo lamaste-priv self-update <version>`) runs this path as root, so it never writes through a path the `lamaste` user controls.
 
-This provides a fast upgrade path: re-running `npx @lamalibre/create-lamaste` on an existing installation updates only the panel code while preserving all configuration and certificates. Use `--force-full` to bypass this and run the complete installer.
+This provides a fast upgrade path: re-running `npx @lamalibre/create-lamaste` on an existing installation updates the code and the pinned services while preserving all configuration and certificates. Use `--force-full` to bypass this and run the complete installer.
 
 The redeploy logic lives in `tasks/redeploy.js`, with shared systemd unit and sudoers content generators in `lib/service-config.js`.
 
@@ -320,21 +332,29 @@ const ctx = {
 
 ## Key Files
 
-| File                                                | Role                                      |
-| --------------------------------------------------- | ----------------------------------------- |
-| `packages/create-lamaste/bin/create-lamaste.js`     | CLI entry point (`#!/usr/bin/env node`)   |
-| `packages/create-lamaste/src/index.js`              | Main orchestrator with Listr2 pipeline    |
-| `packages/create-lamaste/src/tasks/harden.js`       | OS hardening subtasks                     |
-| `packages/create-lamaste/src/tasks/node.js`         | Node.js 20 installation subtasks          |
-| `packages/create-lamaste/src/tasks/mtls.js`         | mTLS certificate generation subtasks      |
-| `packages/create-lamaste/src/tasks/nginx.js`        | nginx IP-based configuration subtasks     |
-| `packages/create-lamaste/src/tasks/panel.js`        | Panel deployment subtasks                 |
-| `packages/create-lamaste/src/tasks/redeploy.js`     | Panel-only redeployment subtasks          |
-| `packages/create-lamaste/src/lib/env.js`            | OS detection, IP detection, root check    |
-| `packages/create-lamaste/src/lib/secrets.js`        | `crypto.randomBytes` wrappers             |
-| `packages/create-lamaste/src/lib/summary.js`        | Post-install summary box printer          |
-| `packages/create-lamaste/src/lib/cert-help-page.js` | HTML help page generator                  |
-| `packages/create-lamaste/src/lib/service-config.js` | Systemd unit + sudoers content generators |
+| File                                                                        | Role                                                                 |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `packages/provisioners/server/bin/create-lamaste.js`                        | CLI entry point (`#!/usr/bin/env node`)                              |
+| `packages/provisioners/server/src/index.js`                                 | Main orchestrator with Listr2 pipeline                               |
+| `packages/provisioners/server/src/tasks/harden.js`                          | OS hardening subtasks                                                |
+| `packages/provisioners/server/src/tasks/node.js`                            | Node.js 20 installation subtasks                                     |
+| `packages/provisioners/server/src/tasks/mtls.js`                            | mTLS certificate generation subtasks                                 |
+| `packages/provisioners/server/src/tasks/nginx.js`                           | nginx IP-based configuration subtasks                                |
+| `packages/provisioners/server/src/tasks/panel.js`                           | Panel deployment subtasks                                            |
+| `packages/provisioners/server/src/tasks/gatekeeper.js`                      | Gatekeeper deployment subtasks                                       |
+| `packages/provisioners/server/src/tasks/redeploy.js`                        | Redeployment (upgrade and self-update) subtasks                      |
+| `packages/provisioners/server/src/lib/relay-services.js`                    | Accounts, pinned binaries, units and ownership for chisel/Authelia   |
+| `packages/provisioners/server/src/lib/binaries.js`                          | Verified install of the pinned chisel and Authelia releases          |
+| `packages/provisioners/server/src/lib/accounts.js`                          | `lamaste-chisel` group and `lamaste-authelia` account                |
+| `packages/provisioners/server/src/lib/ownership.js`                         | Symlink-safe root writes, directory ownership migrations             |
+| `packages/provisioners/server/src/lib/wrappers.js`                          | Installs the root-owned programs and the sudoers file                |
+| `packages/provisioners/server/src/lib/env.js`                               | OS detection, IP detection, root check                               |
+| `packages/provisioners/server/src/lib/secrets.js`                           | `crypto.randomBytes` wrappers                                        |
+| `packages/provisioners/server/src/lib/summary.js`                           | Post-install summary box printer                                     |
+| `packages/provisioners/server/src/lib/cert-help-page.js`                    | HTML help page generator                                             |
+| `packages/provisioners/server/src/lib/service-config.js`                    | Systemd unit + sudoers content generators                            |
+| `packages/provisioners/server/scripts/lamaste-priv`                         | Root helper: panel vhosts (allow-listed), Authelia TOTP, self-update |
+| `packages/provisioners/server/scripts/lamaste-certbot`, `lamaste-cert-info` | Validating certbot / certificate-read wrappers                       |
 
 ## Confirmation Banner
 

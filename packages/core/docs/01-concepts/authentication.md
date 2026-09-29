@@ -352,12 +352,14 @@ The `users.yml` file is read live by Authelia. To prevent Authelia from reading 
 ```javascript
 export async function writeUsers(usersData) {
   const yamlContent = yaml.dump(usersData, { lineWidth: -1 });
-  // sudoWriteFile: writes to a temp file, then mv into place
-  await sudoWriteFile(AUTHELIA_USERS, yamlContent, '600');
+  // 0660: Authelia rewrites the file in place when a user changes a password.
+  await writeAutheliaFile(AUTHELIA_USERS, yamlContent, 0o660);
 }
 ```
 
-The `sudoWriteFile` helper writes to a random temp file in `/tmp/`, then uses `sudo mv` to atomically replace the target. Since `mv` on the same filesystem is atomic at the kernel level, Authelia never sees a half-written file.
+The `writeAutheliaFile` helper writes a random temp file in `/etc/authelia/`, `fsync`s it and renames it over the target. Since a rename on the same filesystem is atomic at the kernel level, Authelia never sees a half-written file. No sudo is involved: `/etc/authelia` belongs to the panel's `lamaste` user with group `lamaste-authelia` and the setgid bit, so new files belong to Authelia's group. Authelia itself runs as the unprivileged `lamaste-authelia` account, not root.
+
+Storing a user's TOTP secret is the one Authelia operation the panel cannot do itself — the secret lives in Authelia's database, which is that account's file. The panel runs `sudo lamaste-priv authelia-totp <username>` with the secret on stdin (never on a command line), and the root helper runs `authelia storage user totp generate` as `lamaste-authelia`.
 
 ### Secrets management
 

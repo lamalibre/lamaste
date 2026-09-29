@@ -59,13 +59,13 @@ You can also manually trigger renewal from the Certificates page:
 
 Your admin client certificate expires after 2 years. The Certificates page shows when it expires. To rotate it:
 
-1. Click "Rotate Client Certificate" on the Certificates page
-2. Lamaste generates a new key pair and certificate, signed by the same CA
-3. A new `.p12` file is generated with a new random password
-4. Download the new `.p12` file and import it into your browser
+1. On the server, run `sudo lamaste-server reset-admin` (the panel runs unprivileged and does not issue admin certificates)
+2. Lamaste generates a new key pair and certificate, signed by the same CA, and revokes the old one
+3. A new `.p12` file is generated with a new random password, which the command prints
+4. Download the new `.p12` file (Certificates page, or `scp`) and import it into your browser
 5. Remove the old certificate from your browser/keychain
 
-**Important:** after rotation, the old certificate is immediately invalid. Download and import the new one before closing the page or navigating away.
+**Important:** after rotation, the old certificate is immediately invalid.
 
 ### What happens when certificates expire
 
@@ -92,6 +92,8 @@ The panel runs as the unprivileged `lamaste` user and never runs `certbot` or `o
 | `/usr/local/sbin/lamaste-cert-info` | `<lineage> enddate` (expiry), `<lineage> checkend` (valid 24 h more?), `<lineage> san` (names) |
 
 Each wrapper validates every argument — lowercase DNS hostnames only (no wildcards, no path characters, at most 100 per certificate), a syntactically valid email — and executes certbot or openssl with a fixed argument vector. They replace sudoers rules such as `certbot renew --cert-name * --non-interactive` and `openssl x509 -enddate -noout -in /etc/letsencrypt/live/*`: a sudoers `*` also matches spaces, so those rules accepted extra flags like `--deploy-hook <command>` or `-engine <library>` — root code execution for the `lamaste` user. The wrappers ship in `packages/provisioners/server/scripts/` and are installed (`root:root`, 0755) by the installer and by every redeploy.
+
+The mTLS PKI needs no wrapper. `/etc/lamalibre/lamaste/pki` belongs to the `lamaste` user — the panel is the CA — so agent certificates and CSRs (enrollment, hardware-bound rotation) are signed by the panel itself with `openssl x509 -req` (`packages/server/daemon/src/lib/pki-sign.js`). `signAgentCsr` refuses any CN that is not an `agent:<label>` or `plugin-agent:<label>` label, and the callers check the CN is exactly the label they expect; the panel never issues `CN=admin`. Admin certificates come only from `sudo lamaste-server reset-admin` on the server. (Earlier versions signed through a root wrapper, `lamaste-sign-csr`, and renamed PKI files through `lamaste-pki-rename`; both are removed on upgrade.)
 
 #### Issuing a certificate
 
@@ -348,14 +350,8 @@ The panel server reads mTLS certificate expiry dates using OpenSSL:
 
 ```javascript
 export async function readCertExpiry(certPath) {
-  const { stdout } = await execa('sudo', [
-    'openssl',
-    'x509',
-    '-in',
-    certPath,
-    '-enddate',
-    '-noout',
-  ]);
+  // No sudo: the PKI directory belongs to the panel's user.
+  const { stdout } = await execa('openssl', ['x509', '-in', certPath, '-enddate', '-noout']);
   const match = stdout.match(/notAfter=(.+)/);
   const expiryDate = new Date(match[1]);
   const daysUntilExpiry = Math.floor((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));

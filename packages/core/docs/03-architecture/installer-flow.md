@@ -34,10 +34,14 @@ $ npx @lamalibre/create-lamaste
     ├─ mTLS enforcement
     └─ Proxy to panel backend
   ✔ Deploying Lamaste Panel
-    ├─ Installing lamalibre-lamaste-serverd
-    ├─ Building lamaste-server-ui
+    ├─ Creating system user and root-owned install directory
+    ├─ Installing chisel and Authelia (pinned, SHA-256 verified)
+    ├─ Installing lamalibre-lamaste-serverd, CLI, UI, docs
     ├─ Configuring systemd service
+    ├─ Installing lamaste-priv and sudoers wrappers
+    ├─ Writing sudoers rules (visudo-checked)
     └─ Starting panel service
+  ✔ Deploying Gatekeeper
   ✔ Verifying installation
 
   ══════════════════════════════════════════════════════════
@@ -97,13 +101,19 @@ $ npx @lamalibre/create-lamaste
 
 ### 6. Panel Deployment
 
-- Create `/opt/lamalibre/lamaste/` directory structure
-- Deploy lamalibre-lamaste-serverd from bundled `vendor/lamaste-serverd/` directory + npm install
-- Deploy lamaste-server-ui from bundled `vendor/lamaste-server-ui/dist/` (pre-built, avoids Vite build on low-RAM VPS)
+- Create the `lamaste` system user
+- Create `/opt/lamalibre/lamaste/` **root-owned** (read-only for `lamaste`; a tree owned by anyone else is moved aside and replaced) and write the certificate help page into it
+- Create the `lamaste-chisel` group and the `lamaste-authelia` account; install Chisel 1.12.0 and Authelia 4.39.28 to `/usr/local/bin` (fixed release URLs, SHA-256 verified before unpacking; a newer Authelia is kept); write `chisel.service` and `authelia.service`; set ownership of `/var/www/lamaste` (`lamaste:www-data`), `/etc/authelia` (`lamaste:lamaste-authelia`) and `/var/log/authelia` (`lamaste-authelia`). The services are started by onboarding
+- Deploy lamalibre-lamaste-serverd from bundled `vendor/lamaste-serverd/` directory + npm install, the `lamaste-server` CLI, and lamaste-server-ui from bundled `vendor/lamaste-server-ui/dist/` (pre-built, avoids Vite build on low-RAM VPS)
 - Write `/etc/lamalibre/lamaste/panel.json` with droplet IP and paths
 - Write systemd unit file for panel service
+- Install the root-owned programs `/usr/local/sbin/lamaste-priv`, `lamaste-certbot` and `lamaste-cert-info`
+- Write `/etc/sudoers.d/lamaste` — fixed `systemctl` lines, `nginx -t`, and the three programs; no wildcards — staged, checked with `visudo -c`, then renamed into place
 - Enable and start the service
-- Configure sudoers for panel service user (systemctl, nginx, certbot operations)
+
+### 6b. Gatekeeper Deployment
+
+- Deploy the gatekeeper into `/opt/lamalibre/lamaste/gatekeeper` (root-owned), create its state files, write its unit and start it
 
 ### 7. Verification
 
@@ -134,7 +144,7 @@ There's no domain yet during initial setup. The browser will show a certificate 
 
 ### What happens when re-running on an existing installation?
 
-If an existing Lamaste installation is detected (`/etc/lamalibre/lamaste/panel.json` exists), the installer enters **redeploy mode** by default. This only updates the lamalibre-lamaste-serverd and lamaste-server-ui files, merges configuration, and restarts the service -- skipping OS hardening, mTLS certificates, and nginx configuration. Use `--force-full` to run the complete installation instead.
+If an existing Lamaste installation is detected (`/etc/lamalibre/lamaste/panel.json` exists), the installer enters **redeploy mode** by default. This redeploys the panel, CLI, UI, docs and gatekeeper into a root-owned install directory, merges configuration, re-checks the pinned Chisel and Authelia installs, their units and the directory ownership, rewrites the root-owned programs and the sudoers rules, and restarts what changed -- skipping OS hardening, mTLS certificates, and the panel's nginx vhosts. See [Upgrades](../05-operations/upgrades.md). Use `--force-full` to run the complete installation instead.
 
 ### Why not use the lamalibre-lamaste-serverd directly on port 9292?
 

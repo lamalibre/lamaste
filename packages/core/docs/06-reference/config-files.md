@@ -4,45 +4,48 @@
 
 ## File Overview
 
-| File                                                       | Format     | Owner                  | Mode | Purpose                                                                         |
-| ---------------------------------------------------------- | ---------- | ---------------------- | ---- | ------------------------------------------------------------------------------- |
-| `/etc/lamalibre/lamaste/panel.json`                        | JSON       | lamaste:lamaste        | 0600 | Panel server configuration                                                      |
-| `/etc/lamalibre/lamaste/tunnels.json`                      | JSON       | lamaste:lamaste        | 0600 | Tunnel definitions                                                              |
-| `/etc/lamalibre/lamaste/sites.json`                        | JSON       | lamaste:lamaste        | 0600 | Static site definitions                                                         |
-| `/etc/lamalibre/lamaste/chisel-credentials.json`           | JSON       | lamaste:lamaste        | 0600 | Per-agent Chisel credentials (source of truth for the authfile)                 |
-| `/etc/lamalibre/lamaste/chisel-users`                      | JSON       | lamaste:lamaste-chisel | 0640 | Chisel `--authfile`: per-agent credentials and port grants (rendered)           |
-| `/etc/lamalibre/lamaste/chisel-sentinel`                   | text       | lamaste:lamaste        | 0600 | Password of the `lamaste-no-grants` sentinel user                               |
-| `/etc/authelia/configuration.yml`                          | YAML       | root:root              | 0600 | Authelia server configuration                                                   |
-| `/etc/authelia/users.yml`                                  | YAML       | root:root              | 0600 | User database                                                                   |
-| `/etc/authelia/.secrets.json`                              | JSON       | root:root              | 0600 | Authelia secrets                                                                |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`                | JSON       | lamaste:lamaste        | 0600 | Ticket scope registry                                                           |
-| `/etc/lamalibre/lamaste/tickets.json`                      | JSON       | lamaste:lamaste        | 0600 | Ticket and session store                                                        |
-| `/etc/lamalibre/lamaste/invitations.json`                  | JSON       | lamaste:lamaste        | 0600 | Pending user invitations                                                        |
-| `/etc/lamalibre/lamaste/plugins.json`                      | JSON       | lamaste:lamaste        | 0600 | Plugin registry                                                                 |
-| `/etc/lamalibre/lamaste/storage-config.json`               | JSON       | lamaste:lamaste        | 0600 | Storage server registry and plugin bindings (credentials AES-256-GCM encrypted) |
-| `/etc/lamalibre/lamaste/storage-master.key`                | Binary     | lamaste:lamaste        | 0600 | 32-byte master key for storage credential encryption                            |
-| `/etc/lamalibre/lamaste/groups.json`                       | JSON       | lamaste:lamaste        | 0600 | Lamaste group definitions and membership                                        |
-| `/etc/lamalibre/lamaste/access-grants.json`                | JSON       | lamaste:lamaste        | 0600 | Generic access grants (principal → resource)                                    |
-| `/etc/lamalibre/lamaste/gatekeeper.json`                   | JSON       | lamaste:lamaste        | 0600 | Gatekeeper settings (cache TTL, admin contact, logging)                         |
-| `/etc/lamalibre/lamaste/access-request-log.json`           | JSON       | lamaste:lamaste        | 0600 | Optional denied access log                                                      |
-| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`        | JSON       | lamaste:lamaste        | 0600 | One-time enrollment tokens for hardware-bound enrollment                        |
-| `/etc/lamalibre/lamaste/pki/revoked.json`                  | JSON       | lamaste:lamaste        | 0600 | Revoked certificate serial numbers                                              |
-| `/etc/lamalibre/lamaste/pki/agents/registry.json`          | JSON       | lamaste:lamaste        | 0600 | Agent certificate metadata                                                      |
-| `/etc/nginx/sites-available/lamaste-*`                     | nginx conf | root:root              | 0644 | Vhost configurations                                                            |
-| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`          | nginx conf | root:root              | 0644 | mTLS snippet                                                                    |
-| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`   | nginx conf | root:root              | 0644 | Gatekeeper proxy_cache zone                                                     |
-| `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service` | systemd    | root:root              | 0644 | Gatekeeper systemd unit                                                         |
-| `~/.lamalibre/lamaste/servers.json`                        | JSON       | user                   | 0600 | Desktop app server registry                                                     |
-| `~/.lamalibre/lamaste/agents.json`                         | JSON       | user                   | 0600 | Multi-agent registry                                                            |
-| `~/.lamalibre/lamaste/agents/<label>/config.json`          | JSON       | user                   | 0600 | Per-agent configuration                                                         |
-| `~/.lamalibre/lamaste/agents/<label>/client.p12`           | PKCS#12    | user                   | 0600 | Per-agent mTLS certificate                                                      |
-| `~/.lamalibre/lamaste/agents/<label>/ca.crt`               | PEM        | user                   | 0644 | Per-agent CA certificate                                                        |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.json`          | JSON       | user                   | 0600 | Per-agent Chisel credential (source of truth for the service)                   |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.env`           | env file   | user                   | 0600 | Linux only: `AUTH=` for the systemd unit's `EnvironmentFile=`                   |
-| `~/.lamalibre/lamaste/agents/<label>/`                     | directory  | user                   | 0700 | Per-agent data directory                                                        |
-| `~/.lamalibre/lamaste/agents/<label>/sync-state.json`      | JSON       | user                   | 0600 | Outcome of the last `lamaste-agent sync`                                        |
-| `~/.lamalibre/lamaste/agents/<label>/logs/`                | directory  | user                   | 0700 | Per-agent Chisel and sync log files                                             |
-| `~/.lamalibre/lamaste/agent.json`                          | JSON       | user                   | 0600 | Legacy single-server config                                                     |
+| File                                                       | Format     | Owner                    | Mode | Purpose                                                                         |
+| ---------------------------------------------------------- | ---------- | ------------------------ | ---- | ------------------------------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/panel.json`                        | JSON       | lamaste:lamaste          | 0600 | Panel server configuration                                                      |
+| `/etc/lamalibre/lamaste/tunnels.json`                      | JSON       | lamaste:lamaste          | 0600 | Tunnel definitions                                                              |
+| `/etc/lamalibre/lamaste/sites.json`                        | JSON       | lamaste:lamaste          | 0600 | Static site definitions                                                         |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`           | JSON       | lamaste:lamaste          | 0600 | Per-agent Chisel credentials (source of truth for the authfile)                 |
+| `/etc/lamalibre/lamaste/chisel-users`                      | JSON       | lamaste:lamaste-chisel   | 0640 | Chisel `--authfile`: per-agent credentials and port grants (rendered)           |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                   | text       | lamaste:lamaste          | 0600 | Password of the `lamaste-no-grants` sentinel user                               |
+| `/etc/lamalibre/lamaste/chisel-server.key`                 | PEM        | lamaste:lamaste-chisel   | 0640 | Chisel SSH host key (`--keyfile`), generated by the panel at onboarding         |
+| `/etc/authelia/configuration.yml`                          | YAML       | lamaste:lamaste-authelia | 0640 | Authelia server configuration                                                   |
+| `/etc/authelia/users.yml`                                  | YAML       | lamaste:lamaste-authelia | 0660 | User database (Authelia rewrites it on a password change)                       |
+| `/etc/authelia/.secrets.json`                              | JSON       | lamaste:lamaste-authelia | 0600 | Authelia secrets (panel only)                                                   |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`                | JSON       | lamaste:lamaste          | 0600 | Ticket scope registry                                                           |
+| `/etc/lamalibre/lamaste/tickets.json`                      | JSON       | lamaste:lamaste          | 0600 | Ticket and session store                                                        |
+| `/etc/lamalibre/lamaste/invitations.json`                  | JSON       | lamaste:lamaste          | 0600 | Pending user invitations                                                        |
+| `/etc/lamalibre/lamaste/plugins.json`                      | JSON       | lamaste:lamaste          | 0600 | Plugin registry                                                                 |
+| `/etc/lamalibre/lamaste/storage-config.json`               | JSON       | lamaste:lamaste          | 0600 | Storage server registry and plugin bindings (credentials AES-256-GCM encrypted) |
+| `/etc/lamalibre/lamaste/storage-master.key`                | Binary     | lamaste:lamaste          | 0600 | 32-byte master key for storage credential encryption                            |
+| `/etc/lamalibre/lamaste/groups.json`                       | JSON       | lamaste:lamaste          | 0600 | Lamaste group definitions and membership                                        |
+| `/etc/lamalibre/lamaste/access-grants.json`                | JSON       | lamaste:lamaste          | 0600 | Generic access grants (principal → resource)                                    |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                   | JSON       | lamaste:lamaste          | 0600 | Gatekeeper settings (cache TTL, admin contact, logging)                         |
+| `/etc/lamalibre/lamaste/access-request-log.json`           | JSON       | lamaste:lamaste          | 0600 | Optional denied access log                                                      |
+| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`        | JSON       | lamaste:lamaste          | 0600 | One-time enrollment tokens for hardware-bound enrollment                        |
+| `/etc/lamalibre/lamaste/pki/revoked.json`                  | JSON       | lamaste:lamaste          | 0600 | Revoked certificate serial numbers                                              |
+| `/etc/lamalibre/lamaste/pki/agents/registry.json`          | JSON       | lamaste:lamaste          | 0600 | Agent certificate metadata                                                      |
+| `/etc/nginx/sites-available/lamalibre-lamaste-*`           | nginx conf | root:root                | 0644 | Vhost configurations (the panel's are installed by `lamaste-priv`)              |
+| `/etc/nginx/snippets/lamalibre-lamaste-mtls.conf`          | nginx conf | root:root                | 0644 | mTLS snippet                                                                    |
+| `/etc/nginx/snippets/lamalibre-lamaste-authz-cache.conf`   | nginx conf | root:root                | 0644 | Gatekeeper proxy_cache zone                                                     |
+| `/etc/systemd/system/lamalibre-lamaste-gatekeeper.service` | systemd    | root:root                | 0644 | Gatekeeper systemd unit                                                         |
+| `/etc/systemd/system/chisel.service`                       | systemd    | root:root                | 0644 | Chisel unit, written by `create-lamaste`                                        |
+| `/etc/systemd/system/authelia.service`                     | systemd    | root:root                | 0644 | Authelia unit, written by `create-lamaste`                                      |
+| `~/.lamalibre/lamaste/servers.json`                        | JSON       | user                     | 0600 | Desktop app server registry                                                     |
+| `~/.lamalibre/lamaste/agents.json`                         | JSON       | user                     | 0600 | Multi-agent registry                                                            |
+| `~/.lamalibre/lamaste/agents/<label>/config.json`          | JSON       | user                     | 0600 | Per-agent configuration                                                         |
+| `~/.lamalibre/lamaste/agents/<label>/client.p12`           | PKCS#12    | user                     | 0600 | Per-agent mTLS certificate                                                      |
+| `~/.lamalibre/lamaste/agents/<label>/ca.crt`               | PEM        | user                     | 0644 | Per-agent CA certificate                                                        |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.json`          | JSON       | user                     | 0600 | Per-agent Chisel credential (source of truth for the service)                   |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.env`           | env file   | user                     | 0600 | Linux only: `AUTH=` for the systemd unit's `EnvironmentFile=`                   |
+| `~/.lamalibre/lamaste/agents/<label>/`                     | directory  | user                     | 0700 | Per-agent data directory                                                        |
+| `~/.lamalibre/lamaste/agents/<label>/sync-state.json`      | JSON       | user                     | 0600 | Outcome of the last `lamaste-agent sync`                                        |
+| `~/.lamalibre/lamaste/agents/<label>/logs/`                | directory  | user                     | 0700 | Per-agent Chisel and sync log files                                             |
+| `~/.lamalibre/lamaste/agent.json`                          | JSON       | user                     | 0600 | Legacy single-server config                                                     |
 
 ---
 
@@ -281,7 +284,7 @@ The Chisel server's `--authfile`. **Never edit by hand** — the panel renders i
 
 The patterns are anchored because Chisel matches them unanchored. An agent with an empty list can connect but bind nothing. Reserved ports (3100, 9090, 9091, 9292, 9294) and a port claimed by two tunnels are never granted.
 
-**Ownership and mode:** `0640`, owner `lamaste`, group `lamaste-chisel`. The file holds every agent's password; Chisel runs as `User=nobody`, `Group=lamaste-chisel` and is the only reader besides the panel. The installer creates the group and adds `lamaste` to it; the panel's unit carries `SupplementaryGroups=lamaste-chisel`.
+**Ownership and mode:** `0640`, owner `lamaste`, group `lamaste-chisel`. The file holds every agent's password; Chisel runs as `User=nobody`, `Group=lamaste-chisel` and is the only reader besides the panel. The installer creates the group and adds `lamaste` to it; the panel's unit carries `SupplementaryGroups=lamaste-chisel`. The Chisel SSH host key, `chisel-server.key`, has the same owner, group and mode; the panel generates it at onboarding (earlier versions made it `nobody:nogroup 0400`; a redeploy converts it).
 
 **Write pattern:** Written by the panel itself, no sudo: a `0600` temp file in `/etc/lamalibre/lamaste/`, `chgrp lamaste-chisel`, `chmod 0640`, `fsync()`, `rename()` — Chisel's watcher never sees the file with the wrong permissions. Renders are serialized by a mutex.
 
@@ -291,7 +294,7 @@ The patterns are anchored because Chisel matches them unanchored. An agent with 
 
 ## `/etc/lamalibre/lamaste/chisel-failed-closed`
 
-Present only while startup reconciliation holds Chisel down: when the panel cannot establish a correct authfile and unit it stops **and disables** `chisel.service` and writes this file (mode 0600, containing the time). The next successful reconciliation re-enables and starts Chisel and removes it. Do not delete it by hand to bring Chisel back — fix what the panel log names and restart the panel.
+Present only while startup reconciliation holds Chisel down: when the panel cannot establish a correct authfile it stops **and disables** `chisel.service` and writes this file (mode 0600, containing the time). The next successful reconciliation re-enables and starts Chisel and removes it. Do not delete it by hand to bring Chisel back — fix what the panel log names and restart the panel.
 
 ---
 
@@ -643,6 +646,8 @@ totp:
 | `bcrypt.cost`        | `12`        | Balance between security and performance                     |
 | `session.domain`     | Your domain | Must match the domain in `panel.json`                        |
 
+**Ownership and mode:** `lamaste:lamaste-authelia`, `0640`. The panel writes it without sudo (atomic temp file + rename in `/etc/authelia`, which is `lamaste:lamaste-authelia 2770`, setgid); Authelia, running as `lamaste-authelia`, reads it through its group. The database (`db.sqlite3`) and `notifications.txt` belong to `lamaste-authelia` (`0600`).
+
 **Do not edit this file directly** unless you understand Authelia configuration. Changes require a service restart: `sudo systemctl restart authelia`.
 
 ---
@@ -671,7 +676,7 @@ users:
 
 **Password format:** bcrypt hash (starts with `$2b$12$`). Never use argon2id on a 512 MB droplet.
 
-**Write pattern:** Atomic via temp file + `sudo mv`. After writing, Authelia is restarted.
+**Write pattern:** Written by the panel without sudo — a temp file in `/etc/authelia`, `fsync()`, `rename()` — mode `0660`, group `lamaste-authelia` (Authelia rewrites the file in place when a user changes a password). After writing, Authelia is restarted.
 
 **Warning:** Never delete the last user. The panel server prevents this, but manual editing could bypass the guard.
 
@@ -689,7 +694,7 @@ Stores the randomly generated secrets used in the Authelia configuration. Backed
 }
 ```
 
-**Mode:** 0600 (root only). If these values change, all active sessions are invalidated.
+**Mode:** 0600, owner `lamaste` (the panel only; Authelia reads the secrets from its configuration). If these values change, all active sessions are invalidated.
 
 ---
 
@@ -1004,68 +1009,72 @@ WantedBy=multi-user.target
 
 ## File Permissions Table
 
-| Path                                                                | Owner                  | Mode | Notes                      |
-| ------------------------------------------------------------------- | ---------------------- | ---- | -------------------------- |
-| `/etc/lamalibre/lamaste/`                                           | lamaste:lamaste        | 0755 | State directory            |
-| `/etc/lamalibre/lamaste/panel.json`                                 | lamaste:lamaste        | 0600 | Panel config               |
-| `/etc/lamalibre/lamaste/tunnels.json`                               | lamaste:lamaste        | 0600 | Tunnel state               |
-| `/etc/lamalibre/lamaste/sites.json`                                 | lamaste:lamaste        | 0600 | Site state                 |
-| `/etc/lamalibre/lamaste/chisel-credentials.json`                    | lamaste:lamaste        | 0600 | Chisel credentials         |
-| `/etc/lamalibre/lamaste/chisel-users`                               | lamaste:lamaste-chisel | 0640 | Chisel authfile            |
-| `/etc/lamalibre/lamaste/chisel-sentinel`                            | lamaste:lamaste        | 0600 | Sentinel password          |
-| `/etc/lamalibre/lamaste/pki/`                                       | lamaste:lamaste        | 0700 | PKI directory              |
-| `/etc/lamalibre/lamaste/pki/ca.key`                                 | root:root              | 0600 | CA private key             |
-| `/etc/lamalibre/lamaste/pki/ca.crt`                                 | root:root              | 0644 | CA certificate             |
-| `/etc/lamalibre/lamaste/pki/client.key`                             | root:root              | 0600 | Client private key         |
-| `/etc/lamalibre/lamaste/pki/client.crt`                             | root:root              | 0644 | Client certificate         |
-| `/etc/lamalibre/lamaste/pki/client.p12`                             | root:root              | 0600 | PKCS12 bundle              |
-| `/etc/lamalibre/lamaste/pki/.p12-password`                          | root:root              | 0600 | PKCS12 password            |
-| `/etc/lamalibre/lamaste/pki/self-signed.pem`                        | root:root              | 0644 | Self-signed TLS cert       |
-| `/etc/lamalibre/lamaste/pki/self-signed-key.pem`                    | root:root              | 0600 | Self-signed TLS key        |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`                         | lamaste:lamaste        | 0600 | Ticket scope registry      |
-| `/etc/lamalibre/lamaste/tickets.json`                               | lamaste:lamaste        | 0600 | Ticket/session store       |
-| `/etc/lamalibre/lamaste/invitations.json`                           | lamaste:lamaste        | 0600 | Pending invitations        |
-| `/etc/lamalibre/lamaste/plugins.json`                               | lamaste:lamaste        | 0600 | Plugin registry            |
-| `/etc/lamalibre/lamaste/storage-config.json`                        | lamaste:lamaste        | 0600 | Storage registry           |
-| `/etc/lamalibre/lamaste/storage-master.key`                         | lamaste:lamaste        | 0600 | Storage encryption key     |
-| `/etc/lamalibre/lamaste/groups.json`                                | lamaste:lamaste        | 0600 | Lamaste groups             |
-| `/etc/lamalibre/lamaste/access-grants.json`                         | lamaste:lamaste        | 0600 | Access grants              |
-| `/etc/lamalibre/lamaste/gatekeeper.json`                            | lamaste:lamaste        | 0600 | Gatekeeper settings        |
-| `/etc/lamalibre/lamaste/access-request-log.json`                    | lamaste:lamaste        | 0600 | Denied access log          |
-| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`                 | lamaste:lamaste        | 0600 | Enrollment tokens          |
-| `/etc/lamalibre/lamaste/pki/revoked.json`                           | lamaste:lamaste        | 0600 | Revocation list            |
-| `/etc/lamalibre/lamaste/pki/agents/registry.json`                   | lamaste:lamaste        | 0600 | Agent cert metadata        |
-| `/etc/authelia/configuration.yml`                                   | root:root              | 0600 | Auth config                |
-| `/etc/authelia/users.yml`                                           | root:root              | 0600 | User database              |
-| `/etc/authelia/.secrets.json`                                       | root:root              | 0600 | Auth secrets               |
-| `/etc/authelia/db.sqlite3`                                          | root:root              | 0600 | Auth session DB            |
-| `/opt/lamalibre/lamaste/`                                           | lamaste:lamaste        | 0755 | Install directory          |
-| `/var/www/lamaste/`                                                 | www-data:www-data      | 0755 | Static site files          |
-| `/etc/sudoers.d/lamaste`                                            | root:root              | 0440 | Sudo rules                 |
-| `/usr/local/sbin/lamaste-certbot`, `lamaste-cert-info`              | root:root              | 0755 | Validating sudo wrappers   |
-| `~/.lamalibre/lamaste/servers.json`                                 | user                   | 0600 | Server registry            |
-| `~/.lamalibre/lamaste/agent.json`                                   | user                   | 0600 | Legacy agent config        |
-| `~/.lamalibre/lamaste/agents/<label>/`                              | user                   | 0700 | Agent data directory       |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.json`                   | user                   | 0600 | Agent Chisel credential    |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.env`                    | user                   | 0600 | Linux `AUTH=` env file     |
-| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist` | user                   | 0600 | macOS service (has `AUTH`) |
-| `~/.lamalibre/lamaste/services.json`                                | user                   | 0600 | Service registry           |
+| Path                                                                   | Owner                             | Mode | Notes                                                     |
+| ---------------------------------------------------------------------- | --------------------------------- | ---- | --------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/`                                              | lamaste:lamaste                   | 0755 | State directory                                           |
+| `/etc/lamalibre/lamaste/panel.json`                                    | lamaste:lamaste                   | 0600 | Panel config                                              |
+| `/etc/lamalibre/lamaste/tunnels.json`                                  | lamaste:lamaste                   | 0600 | Tunnel state                                              |
+| `/etc/lamalibre/lamaste/sites.json`                                    | lamaste:lamaste                   | 0600 | Site state                                                |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`                       | lamaste:lamaste                   | 0600 | Chisel credentials                                        |
+| `/etc/lamalibre/lamaste/chisel-users`                                  | lamaste:lamaste-chisel            | 0640 | Chisel authfile                                           |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                               | lamaste:lamaste                   | 0600 | Sentinel password                                         |
+| `/etc/lamalibre/lamaste/pki/`                                          | lamaste:lamaste                   | 0700 | PKI directory                                             |
+| `/etc/lamalibre/lamaste/pki/ca.key`                                    | lamaste:lamaste                   | 0600 | CA private key                                            |
+| `/etc/lamalibre/lamaste/pki/ca.crt`                                    | lamaste:lamaste                   | 0644 | CA certificate                                            |
+| `/etc/lamalibre/lamaste/pki/client.key`                                | lamaste:lamaste                   | 0600 | Client private key                                        |
+| `/etc/lamalibre/lamaste/pki/client.crt`                                | lamaste:lamaste                   | 0644 | Client certificate                                        |
+| `/etc/lamalibre/lamaste/pki/client.p12`                                | lamaste:lamaste                   | 0600 | PKCS12 bundle                                             |
+| `/etc/lamalibre/lamaste/pki/.p12-password`                             | lamaste:lamaste                   | 0600 | PKCS12 password                                           |
+| `/etc/lamalibre/lamaste/pki/self-signed.pem`                           | lamaste:lamaste                   | 0644 | Self-signed TLS cert                                      |
+| `/etc/lamalibre/lamaste/pki/self-signed-key.pem`                       | lamaste:lamaste                   | 0600 | Self-signed TLS key                                       |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`                            | lamaste:lamaste                   | 0600 | Ticket scope registry                                     |
+| `/etc/lamalibre/lamaste/tickets.json`                                  | lamaste:lamaste                   | 0600 | Ticket/session store                                      |
+| `/etc/lamalibre/lamaste/invitations.json`                              | lamaste:lamaste                   | 0600 | Pending invitations                                       |
+| `/etc/lamalibre/lamaste/plugins.json`                                  | lamaste:lamaste                   | 0600 | Plugin registry                                           |
+| `/etc/lamalibre/lamaste/storage-config.json`                           | lamaste:lamaste                   | 0600 | Storage registry                                          |
+| `/etc/lamalibre/lamaste/storage-master.key`                            | lamaste:lamaste                   | 0600 | Storage encryption key                                    |
+| `/etc/lamalibre/lamaste/groups.json`                                   | lamaste:lamaste                   | 0600 | Lamaste groups                                            |
+| `/etc/lamalibre/lamaste/access-grants.json`                            | lamaste:lamaste                   | 0600 | Access grants                                             |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                               | lamaste:lamaste                   | 0600 | Gatekeeper settings                                       |
+| `/etc/lamalibre/lamaste/access-request-log.json`                       | lamaste:lamaste                   | 0600 | Denied access log                                         |
+| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`                    | lamaste:lamaste                   | 0600 | Enrollment tokens                                         |
+| `/etc/lamalibre/lamaste/pki/revoked.json`                              | lamaste:lamaste                   | 0600 | Revocation list                                           |
+| `/etc/lamalibre/lamaste/pki/agents/registry.json`                      | lamaste:lamaste                   | 0600 | Agent cert metadata                                       |
+| `/etc/lamalibre/lamaste/chisel-server.key`                             | lamaste:lamaste-chisel            | 0640 | Chisel SSH host key                                       |
+| `/etc/authelia/`                                                       | lamaste:lamaste-authelia          | 2770 | Authelia config (setgid)                                  |
+| `/etc/authelia/configuration.yml`                                      | lamaste:lamaste-authelia          | 0640 | Auth config                                               |
+| `/etc/authelia/users.yml`                                              | lamaste:lamaste-authelia          | 0660 | User database                                             |
+| `/etc/authelia/.secrets.json`                                          | lamaste:lamaste-authelia          | 0600 | Auth secrets (panel only)                                 |
+| `/etc/authelia/db.sqlite3`, `notifications.txt`                        | lamaste-authelia:lamaste-authelia | 0600 | Authelia's own files                                      |
+| `/var/log/authelia/`                                                   | lamaste-authelia:lamaste-authelia | 0750 | Authelia log                                              |
+| `/opt/lamalibre/lamaste/`                                              | root:root                         | 0755 | Install directory (read-only for lamaste)                 |
+| `/var/www/lamaste/`                                                    | lamaste:www-data                  | 2750 | Static site files (files 0640; nginx reads via the group) |
+| `/etc/sudoers.d/lamaste`                                               | root:root                         | 0440 | Sudo rules (no wildcards)                                 |
+| `/usr/local/sbin/lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info` | root:root                         | 0755 | Validating sudo programs                                  |
+| `/usr/local/bin/chisel`, `/usr/local/bin/authelia`                     | root:root                         | 0755 | Pinned releases (`create-lamaste`)                        |
+| `~/.lamalibre/lamaste/servers.json`                                    | user                              | 0600 | Server registry                                           |
+| `~/.lamalibre/lamaste/agent.json`                                      | user                              | 0600 | Legacy agent config                                       |
+| `~/.lamalibre/lamaste/agents/<label>/`                                 | user                              | 0700 | Agent data directory                                      |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.json`                      | user                              | 0600 | Agent Chisel credential                                   |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.env`                       | user                              | 0600 | Linux `AUTH=` env file                                    |
+| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist`    | user                              | 0600 | macOS service (has `AUTH`)                                |
+| `~/.lamalibre/lamaste/services.json`                                   | user                              | 0600 | Service registry                                          |
 
 ## Quick Reference
 
-| Config File               | Read By                   | Modified By                                                  | Restart Needed?                                                           |
-| ------------------------- | ------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| `panel.json`              | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write)                     | No (hot reload)                                                           |
-| `tunnels.json`            | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync)             | No                                                                        |
-| `sites.json`              | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync)             | No                                                                        |
-| `chisel-users`            | chisel                    | lamalibre-lamaste-serverd (rendered, atomic rename, no sudo) | No for additions (hot reload); the panel restarts `chisel` on revocations |
-| `ticket-scopes.json`      | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)             | No                                                                        |
-| `tickets.json`            | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)             | No                                                                        |
-| `storage-config.json`     | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)             | No                                                                        |
-| `groups.json`             | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex)             | No (gatekeeper watches file)                                              |
-| `access-grants.json`      | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex)             | No (gatekeeper watches file)                                              |
-| `gatekeeper.json`         | gatekeeper                | lamalibre-lamaste-serverd (atomic write)                     | Yes (`systemctl restart lamalibre-lamaste-gatekeeper`)                    |
-| `access-request-log.json` | lamalibre-lamaste-serverd | gatekeeper (atomic write)                                    | No                                                                        |
-| `configuration.yml`       | authelia                  | onboarding provisioning                                      | Yes (`systemctl restart authelia`)                                        |
-| `users.yml`               | authelia                  | lamalibre-lamaste-serverd (via sudo)                         | Yes (`systemctl restart authelia`)                                        |
-| `lamaste-*` vhosts        | nginx                     | lamalibre-lamaste-serverd (via sudo)                         | Yes (`nginx -t && systemctl reload nginx`)                                |
+| Config File                  | Read By                   | Modified By                                                    | Restart Needed?                                                           |
+| ---------------------------- | ------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `panel.json`                 | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write)                       | No (hot reload)                                                           |
+| `tunnels.json`               | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync)               | No                                                                        |
+| `sites.json`                 | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + fsync)               | No                                                                        |
+| `chisel-users`               | chisel                    | lamalibre-lamaste-serverd (rendered, atomic rename, no sudo)   | No for additions (hot reload); the panel restarts `chisel` on revocations |
+| `ticket-scopes.json`         | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)               | No                                                                        |
+| `tickets.json`               | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)               | No                                                                        |
+| `storage-config.json`        | lamalibre-lamaste-serverd | lamalibre-lamaste-serverd (atomic write + mutex)               | No                                                                        |
+| `groups.json`                | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex)               | No (gatekeeper watches file)                                              |
+| `access-grants.json`         | gatekeeper                | lamalibre-lamaste-serverd (atomic write + mutex)               | No (gatekeeper watches file)                                              |
+| `gatekeeper.json`            | gatekeeper                | lamalibre-lamaste-serverd (atomic write)                       | Yes (`systemctl restart lamalibre-lamaste-gatekeeper`)                    |
+| `access-request-log.json`    | lamalibre-lamaste-serverd | gatekeeper (atomic write)                                      | No                                                                        |
+| `configuration.yml`          | authelia                  | onboarding provisioning                                        | Yes (`systemctl restart authelia`)                                        |
+| `users.yml`                  | authelia                  | lamalibre-lamaste-serverd (atomic rename, no sudo)             | Yes (`systemctl restart authelia`)                                        |
+| `lamalibre-lamaste-*` vhosts | nginx                     | lamalibre-lamaste-serverd (via `sudo lamaste-priv nginx-site`) | Yes (`nginx -t && systemctl reload nginx`)                                |

@@ -235,7 +235,7 @@ The wildcard check probes `test-lamaste-check.<domain>`. Wildcard DNS is optiona
 
 ### `POST /api/onboarding/provision`
 
-Starts the full stack provisioning process in the background. This installs and configures Chisel, Authelia, certbot certificates, and nginx vhosts.
+Starts the full stack provisioning process in the background. This configures and starts Chisel and Authelia, issues certbot certificates, and writes nginx vhosts. The Chisel and Authelia binaries and units are installed by `create-lamaste`, not here: if one is missing, the task fails with the error "Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation." (likewise for Authelia). Task IDs are unchanged from earlier versions; only the titles changed.
 
 Provisioning runs asynchronously. This endpoint returns immediately with a 202 status. Use the WebSocket stream endpoint to follow progress in real time.
 
@@ -272,14 +272,14 @@ curl -s -K ~/.curl-lamaste \
 
 The provisioning sequence runs these tasks in order:
 
-| Task ID            | Title                    | What It Does                                                         |
-| ------------------ | ------------------------ | -------------------------------------------------------------------- |
-| `install-chisel`   | Installing Chisel        | Downloads binary, writes systemd service, starts service             |
-| `install-authelia` | Installing Authelia      | Downloads binary, writes config, creates admin user, starts service  |
-| `issue-certs`      | Issuing TLS certificates | Issues Let's Encrypt cert for `panel.<domain>`, sets up auto-renewal |
-| `configure-nginx`  | Configuring nginx        | Writes panel/auth/tunnel vhosts, enables sites, tests and reloads    |
-| `verify-services`  | Verifying services       | Checks all services are running (Chisel, Authelia, nginx, panel)     |
-| `finalize`         | Finalizing setup         | Updates config to `COMPLETED` state                                  |
+| Task ID            | Title                    | What It Does                                                                      |
+| ------------------ | ------------------------ | --------------------------------------------------------------------------------- |
+| `install-chisel`   | Starting Chisel          | Checks the binary is installed, creates key and authfile, starts service          |
+| `install-authelia` | Configuring Authelia     | Checks the binary is installed, writes config, creates admin user, starts service |
+| `issue-certs`      | Issuing TLS certificates | Issues Let's Encrypt cert for `panel.<domain>`, sets up auto-renewal              |
+| `configure-nginx`  | Configuring nginx        | Writes panel/auth/tunnel vhosts, enables sites, tests and reloads                 |
+| `verify-services`  | Verifying services       | Checks all services are running (Chisel, Authelia, nginx, panel)                  |
+| `finalize`         | Finalizing setup         | Updates config to `COMPLETED` state                                               |
 
 ---
 
@@ -307,17 +307,17 @@ When a client connects, the server sends the full current state so late-joining 
   "tasks": [
     {
       "id": "install-chisel",
-      "title": "Installing Chisel",
+      "title": "Starting Chisel",
       "status": "done",
-      "message": "Chisel installed and running",
+      "message": "Chisel 1.12.0 running",
       "log": null
     },
     {
       "id": "install-authelia",
-      "title": "Installing Authelia",
+      "title": "Configuring Authelia",
       "status": "running",
       "message": "Creating admin user...",
-      "log": "Installed Authelia v4.38.0"
+      "log": null
     },
     {
       "id": "issue-certs",
@@ -358,10 +358,10 @@ When a client connects, the server sends the full current state so late-joining 
 ```json
 {
   "task": "install-authelia",
-  "title": "Installing Authelia",
+  "title": "Configuring Authelia",
   "status": "running",
   "message": "Writing configuration...",
-  "log": "Installed Authelia v4.38.0",
+  "log": null,
   "progress": { "current": 2, "total": 6 }
 }
 ```

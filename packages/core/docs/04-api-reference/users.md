@@ -88,18 +88,18 @@ Creates a new Authelia user. The password is hashed with bcrypt before being sto
 }
 ```
 
-| Field         | Type       | Validation                                                 | Description                                 |
-| ------------- | ---------- | ---------------------------------------------------------- | ------------------------------------------- |
-| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens | Login identifier                            |
-| `displayname` | `string`   | 1-100 chars                                                | Display name                                |
-| `email`       | `string`   | Valid email format                                         | Email address                               |
-| `password`    | `string`   | 8-128 chars                                                | Plain-text password (hashed before storage) |
-| `groups`      | `string[]` | Optional, defaults to `[]`                                 | Authelia group memberships                  |
+| Field         | Type       | Validation                                                                                  | Description                                 |
+| ------------- | ---------- | ------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `username`    | `string`   | 2-32 chars, lowercase alphanumeric + underscores + hyphens, starting with a letter or digit | Login identifier                            |
+| `displayname` | `string`   | 1-100 chars                                                                                 | Display name                                |
+| `email`       | `string`   | Valid email format                                                                          | Email address                               |
+| `password`    | `string`   | 8-128 chars                                                                                 | Plain-text password (hashed before storage) |
+| `groups`      | `string[]` | Optional, defaults to `[]`                                                                  | Authelia group memberships                  |
 
-**Username regex:**
+**Username regex** (the same rule applies to invitations — a leading `-` would read as a flag to Authelia's CLI when a TOTP secret is stored):
 
 ```
-^[a-z0-9_-]+$
+^[a-z0-9][a-z0-9_-]*$
 ```
 
 ```bash
@@ -294,13 +294,13 @@ Returned by list and mutation endpoints (sensitive fields excluded):
 
 ### Validation Summary
 
-| Field         | Rules                                 |
-| ------------- | ------------------------------------- |
-| `username`    | 2-32 chars, `/^[a-z0-9_-]+$/`, unique |
-| `displayname` | 1-100 chars                           |
-| `email`       | Valid email format                    |
-| `password`    | 8-128 chars                           |
-| `groups`      | Array of strings, optional            |
+| Field         | Rules                                         |
+| ------------- | --------------------------------------------- |
+| `username`    | 2-32 chars, `/^[a-z0-9][a-z0-9_-]*$/`, unique |
+| `displayname` | 1-100 chars                                   |
+| `email`       | Valid email format                            |
+| `password`    | 8-128 chars                                   |
+| `groups`      | Array of strings, optional                    |
 
 ### curl Cheat Sheet
 

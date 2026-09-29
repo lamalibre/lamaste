@@ -387,27 +387,11 @@ users:
 
 **Write pattern:**
 
-Authelia user file writes go through `sudoWriteFile()` in `packages/lamaste-serverd/src/lib/authelia.js`:
+The Panel Server writes Authelia's files itself, without sudo (`writeAutheliaFile()` in `packages/core/lib/src/server/authelia.ts`): `/etc/authelia` is owned by `lamaste` with group `lamaste-authelia` and the setgid bit (`2770`), so the panel can create files there and every new file belongs to Authelia's group.
 
-```javascript
-async function sudoWriteFile(destPath, content, mode = '644') {
-  const tmpFile = path.join(
-    tmpdir(),
-    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
-  );
-  await fsWriteFile(tmpFile, content, 'utf-8');
-  await execa('sudo', ['mv', tmpFile, destPath]);
-  await execa('sudo', ['chmod', mode, destPath]);
-}
-```
-
-This pattern:
-
-1. Writes to a temp file in `/tmp/` (writable by the `lamaste` user)
-2. Uses `sudo mv` to move it to `/etc/authelia/users.yml` (requires root)
-3. Uses `sudo chmod` to set permissions (600 for sensitive files)
-
-The `sudo mv` is atomic (same-filesystem rename). The scoped `sudoers` rules allow the `lamaste` user to `mv` from `/tmp/*` to `/etc/authelia/*`.
+1. Writes a temp file in `/etc/authelia/` (`open(..., 'wx')`), sets its mode, `fsync()`s it
+2. `rename()`s it over the destination — atomic on the same filesystem, so Authelia never reads a partial file
+3. The mode decides Authelia's access: `users.yml` `0660` (Authelia rewrites it when a user changes a password), `configuration.yml` `0640`, `.secrets.json` `0600` (the panel only)
 
 **Critical invariant:** After writing `users.yml`, the Authelia service must be restarted to pick up changes. Authelia does not watch the file for changes. The Panel Server calls `reloadAuthelia()` (which runs `systemctl restart authelia`) after every user modification.
 
@@ -471,32 +455,32 @@ Environment variables allow overriding paths for development and testing without
 
 ## File Permissions
 
-| File                      | Mode   | Owner                    | Rationale                                                            |
-| ------------------------- | ------ | ------------------------ | -------------------------------------------------------------------- |
-| `panel.json`              | `0600` | `lamaste:lamaste`        | Contains sensitive config, owner-only access                         |
-| `tunnels.json`            | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
-| `sites.json`              | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
-| `chisel-credentials.json` | `0600` | `lamaste:lamaste`        | Per-agent Chisel passwords                                           |
-| `chisel-users`            | `0640` | `lamaste:lamaste-chisel` | Chisel authfile (read by the Chisel process, group `lamaste-chisel`) |
-| `chisel-sentinel`         | `0600` | `lamaste:lamaste`        | Sentinel Chisel user password                                        |
-| `invitations.json`        | `0600` | `lamaste:lamaste`        | Written by Panel Server                                              |
-| `storage-config.json`     | `0600` | `lamaste:lamaste`        | Storage registry (credentials AES-256-GCM encrypted)                 |
-| `storage-master.key`      | `0600` | `lamaste:lamaste`        | 32-byte master key for storage encryption                            |
-| `groups.json`             | `0600` | `lamaste:lamaste`        | Lamaste group definitions and membership                             |
-| `access-grants.json`      | `0600` | `lamaste:lamaste`        | Generic access grants (principal → resource)                         |
-| `gatekeeper.json`         | `0600` | `lamaste:lamaste`        | Gatekeeper settings (cache TTL, logging)                             |
-| `access-request-log.json` | `0600` | `lamaste:lamaste`        | Optional denied access log                                           |
-| `pki/ca.key`              | `0600` | `root:root`              | CA private key — most sensitive file                                 |
-| `pki/ca.crt`              | `0644` | `root:root`              | CA cert — needs to be readable by nginx                              |
-| `pki/client.key`          | `0600` | `root:root`              | Client private key                                                   |
-| `pki/client.crt`          | `0644` | `root:root`              | Client cert                                                          |
-| `pki/client.p12`          | `0600` | `root:root`              | PKCS12 bundle with private key                                       |
-| `pki/.p12-password`       | `0600` | `root:root`              | Password for PKCS12 bundle                                           |
-| `users.yml`               | `0600` | `root:root`              | Contains bcrypt password hashes                                      |
-| `configuration.yml`       | `0600` | `root:root`              | Contains JWT and session secrets                                     |
-| `.secrets.json`           | `0600` | `root:root`              | Encryption keys                                                      |
+| File                      | Mode   | Owner                      | Rationale                                                            |
+| ------------------------- | ------ | -------------------------- | -------------------------------------------------------------------- |
+| `panel.json`              | `0600` | `lamaste:lamaste`          | Contains sensitive config, owner-only access                         |
+| `tunnels.json`            | `0600` | `lamaste:lamaste`          | Written by Panel Server                                              |
+| `sites.json`              | `0600` | `lamaste:lamaste`          | Written by Panel Server                                              |
+| `chisel-credentials.json` | `0600` | `lamaste:lamaste`          | Per-agent Chisel passwords                                           |
+| `chisel-users`            | `0640` | `lamaste:lamaste-chisel`   | Chisel authfile (read by the Chisel process, group `lamaste-chisel`) |
+| `chisel-sentinel`         | `0600` | `lamaste:lamaste`          | Sentinel Chisel user password                                        |
+| `invitations.json`        | `0600` | `lamaste:lamaste`          | Written by Panel Server                                              |
+| `storage-config.json`     | `0600` | `lamaste:lamaste`          | Storage registry (credentials AES-256-GCM encrypted)                 |
+| `storage-master.key`      | `0600` | `lamaste:lamaste`          | 32-byte master key for storage encryption                            |
+| `groups.json`             | `0600` | `lamaste:lamaste`          | Lamaste group definitions and membership                             |
+| `access-grants.json`      | `0600` | `lamaste:lamaste`          | Generic access grants (principal → resource)                         |
+| `gatekeeper.json`         | `0600` | `lamaste:lamaste`          | Gatekeeper settings (cache TTL, logging)                             |
+| `access-request-log.json` | `0600` | `lamaste:lamaste`          | Optional denied access log                                           |
+| `pki/ca.key`              | `0600` | `lamaste:lamaste`          | CA private key — most sensitive file                                 |
+| `pki/ca.crt`              | `0644` | `lamaste:lamaste`          | CA cert — needs to be readable by nginx                              |
+| `pki/client.key`          | `0600` | `lamaste:lamaste`          | Client private key                                                   |
+| `pki/client.crt`          | `0644` | `lamaste:lamaste`          | Client cert                                                          |
+| `pki/client.p12`          | `0600` | `lamaste:lamaste`          | PKCS12 bundle with private key                                       |
+| `pki/.p12-password`       | `0600` | `lamaste:lamaste`          | Password for PKCS12 bundle                                           |
+| `users.yml`               | `0660` | `lamaste:lamaste-authelia` | Contains bcrypt password hashes; Authelia rewrites it                |
+| `configuration.yml`       | `0640` | `lamaste:lamaste-authelia` | Contains JWT and session secrets; Authelia reads it                  |
+| `.secrets.json`           | `0600` | `lamaste:lamaste-authelia` | Encryption keys; the panel only                                      |
 
-PKI and Authelia files are owned by root because they are written during installation (as root) or via `sudo` commands. The Panel Server reads them using `sudo` when needed (e.g., reading `users.yml` for the users API).
+The PKI directory belongs to `lamaste` because the panel is the CA (it signs agent certificates itself); the installer creates it as root and hands it over, and every redeploy re-applies that ownership. Authelia's files belong to `lamaste` with the `lamaste-authelia` group, so the panel reads and writes them directly and Authelia (running as `lamaste-authelia`) reads them through its group. Nothing here is read or written with `sudo`.
 
 ## Concurrency Safety
 
@@ -517,7 +501,7 @@ This ensures that concurrent tunnel or credential operations never interleave st
 | `packages/lamaste-gatekeeper/src/lib/grants.ts` | Access grant read/write with atomic writes                       |
 | `packages/lamaste-serverd/src/lib/config.js`    | Config loading, Zod validation, atomic updates                   |
 | `packages/lamaste-serverd/src/lib/state.js`     | tunnels.json + sites.json atomic read/write                      |
-| `packages/lamaste-serverd/src/lib/authelia.js`  | users.yml read/write via sudo                                    |
+| `packages/core/lib/src/server/authelia.ts`      | users.yml / configuration.yml read and atomic write (no sudo)    |
 | `packages/lamaste-serverd/src/lib/files.js`     | Static site file operations                                      |
 | `packages/create-lamaste/src/tasks/panel.js`    | Initial panel.json creation                                      |
 | `packages/create-lamaste/src/tasks/mtls.js`     | Initial PKI file creation                                        |
@@ -542,4 +526,4 @@ On Linux, `writeFile` may return before data is flushed to the physical disk (th
 
 ### Why YAML for Authelia users instead of JSON?
 
-Authelia's file-based authentication backend expects YAML format. This is an external constraint, not a choice. The Panel Server uses the `js-yaml` library for serialization and `sudo cat` for reading (since the file is owned by root with mode 600).
+Authelia's file-based authentication backend expects YAML format. This is an external constraint, not a choice. The Panel Server uses the `js-yaml` library for serialization and reads the file directly (it owns it).
