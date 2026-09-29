@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PLUGIN_CAPABILITY_REGEX } from '@lamalibre/lamaste';
 import { execa } from 'execa';
 import { listCerts, renewCert, readLetsEncryptExpiry } from '../../lib/certbot.js';
 import {
@@ -133,7 +134,12 @@ const DelegatedEnrollBodySchema = z.object({
     .string()
     .min(1)
     .max(100)
-    .regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Scope must follow scope:action format (e.g., sync:connect)'),
+    // Ticket sub-scopes are namespaced like every plugin capability
+    // (`plugin:<name>:<action>`); ticket instances are registered under them.
+    .regex(
+      PLUGIN_CAPABILITY_REGEX,
+      'Scope must follow plugin:<name>:<action> format (e.g., plugin:sync:connect)',
+    ),
 });
 
 /**
@@ -653,6 +659,11 @@ export default async function certsRoutes(fastify, _opts) {
       // Plugin-agents cannot delegate enrollment — prevents recursive delegation chains
       if (request.certRole === 'plugin-agent') {
         return reply.code(403).send({ error: 'Plugin agents cannot delegate enrollment' });
+      }
+      // Only an agent can own a ticket instance. Refused before the body is
+      // validated, so the answer to a non-agent never depends on its input.
+      if (request.certRole !== 'agent') {
+        return reply.code(403).send({ error: 'Only agent certificates can delegate enrollment' });
       }
 
       const body = DelegatedEnrollBodySchema.parse(request.body);

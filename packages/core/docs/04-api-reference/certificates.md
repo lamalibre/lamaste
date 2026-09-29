@@ -665,19 +665,19 @@ The returned token is passed out-of-band to the plugin agent, which submits it a
 ```json
 {
   "pluginAgentLabel": "rpi-sync",
-  "scope": "sync:connect"
+  "scope": "plugin:sync:connect"
 }
 ```
 
-| Field              | Type     | Required | Description                                                                                                                       |
-| ------------------ | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `pluginAgentLabel` | `string` | Yes      | 1-50 characters, must start with a letter or number, lowercase letters, numbers, and hyphens only                                 |
-| `scope`            | `string` | Yes      | Ticket scope capability in `scope:action` format (e.g., `sync:connect`). Must be a registered ticket scope, not a base capability |
+| Field              | Type     | Required | Description                                                                                                                                 |
+| ------------------ | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pluginAgentLabel` | `string` | Yes      | 1-50 characters, must start with a letter or number, lowercase letters, numbers, and hyphens only                                           |
+| `scope`            | `string` | Yes      | Ticket sub-scope in `plugin:<name>:<action>` format (e.g., `plugin:sync:connect`). Must be a registered ticket scope, not a base capability |
 
 ```bash
 curl -s --cert agent.p12:password \
   -X POST -H 'Content-Type: application/json' \
-  -d '{"pluginAgentLabel":"rpi-sync","scope":"sync:connect"}' \
+  -d '{"pluginAgentLabel":"rpi-sync","scope":"plugin:sync:connect"}' \
   https://203.0.113.42:9292/api/certs/agent/enroll-delegated | jq
 ```
 

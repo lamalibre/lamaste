@@ -33,7 +33,7 @@ Using the desktop app's cloud provisioning wizard:
 
 ### 3. Enroll a Lamaste Agent on the Mac
 
-From the Lamaste panel, create an enrollment token with the `sync:connect` capability (in addition to the default `tunnels:read`). On the Mac, run `lamaste-agent setup` with that token.
+From the Lamaste panel, create an enrollment token with the `plugin:sync:connect` capability (in addition to the default `tunnels:read`). On the Mac, run `lamaste-agent setup` with that token.
 
 ```mermaid
 sequenceDiagram
@@ -41,14 +41,14 @@ sequenceDiagram
     participant Panel as Lamaste Panel
     participant Mac as Mac (Agent CLI)
 
-    Admin->>Panel: POST /api/certs/agent/enroll<br/>{label: "macbook-pro",<br/>capabilities: ["tunnels:read", "sync:connect"]}
+    Admin->>Panel: POST /api/certs/agent/enroll<br/>{label: "macbook-pro",<br/>capabilities: ["tunnels:read", "plugin:sync:connect"]}
     Note over Panel: Generate 32-byte token<br/>10-minute expiry<br/>Store in enrollment-tokens.json
     Panel-->>Admin: {ok, token, expiresAt}
 
     Admin-->>Mac: Out-of-band: token + panel URL
 
     Mac->>Panel: POST /api/enroll<br/>{token, csr: "<PEM CSR>"}
-    Note over Panel: Validate token (HMAC-SHA256 timing-safe)<br/>Consume token (mark used)<br/>Sign CSR with panel CA<br/>Subject: CN=agent:macbook-pro/O=Lamaste<br/>Validity: 730 days<br/>Add to agent registry with capabilities:<br/>["tunnels:read", "sync:connect"]
+    Note over Panel: Validate token (HMAC-SHA256 timing-safe)<br/>Consume token (mark used)<br/>Sign CSR with panel CA<br/>Subject: CN=agent:macbook-pro/O=Lamaste<br/>Validity: 730 days<br/>Add to agent registry with capabilities:<br/>["tunnels:read", "plugin:sync:connect"]
     Panel-->>Mac: {ok, cert, caCert, label, serial, expiresAt}
     Note over Mac: Save cert + CA to ~/.lamalibre/lamaste/<br/>Agent is now enrolled
 ```
@@ -105,13 +105,13 @@ sequenceDiagram
 
     Note over Sync: Startup: detect Lamaste agent cert<br/>at ~/.lamalibre/lamaste/ → enter plugin mode<br/>mTLS auth: CN=agent:macbook-pro
 
-    Sync->>Panel: POST /api/tickets/scopes<br/>{name: "sync", version: "1.0.0",<br/>scopes: [{name: "sync:connect",<br/>instanceScoped: true}],<br/>transport: {strategies: ["tunnel"],<br/>preferred: "tunnel"}}
-    Note over Panel: Store scope in ticket-scopes.json<br/>Refresh capability set<br/>(sync:connect now assignable)
-    Panel-->>Sync: {ok, registered: ["sync:connect"]}
+    Sync->>Panel: POST /api/tickets/scopes<br/>{name: "sync", version: "1.0.0",<br/>scopes: [{name: "plugin:sync:connect",<br/>instanceScoped: true}],<br/>transport: {strategies: ["tunnel"],<br/>preferred: "tunnel"}}
+    Note over Panel: Store scope in ticket-scopes.json<br/>Refresh capability set<br/>(plugin:sync:connect now assignable)
+    Panel-->>Sync: {ok, registered: ["plugin:sync:connect"]}
 
-    Sync->>Panel: POST /api/tickets/instances<br/>{scope: "sync:connect",<br/>transport: {strategies: ["tunnel"],<br/>preferred: "tunnel"}}
+    Sync->>Panel: POST /api/tickets/instances<br/>{scope: "plugin:sync:connect",<br/>transport: {strategies: ["tunnel"],<br/>preferred: "tunnel"}}
     Note over Panel: Generate instanceId (16 bytes hex)<br/>Bind to agent label: macbook-pro<br/>Status: active
-    Panel-->>Sync: {ok, instanceId,<br/>instanceScope: "sync:connect:<id>"}
+    Panel-->>Sync: {ok, instanceId,<br/>instanceScope: "plugin:sync:connect:<id>"}
 
     loop Every 60 seconds
         Sync->>Panel: POST /api/tickets/instances/<instanceId>/heartbeat
@@ -142,8 +142,8 @@ sequenceDiagram
 
     rect rgb(40, 40, 60)
         Note over Sync,Panel: Pre-announcement (mTLS: CN=agent:macbook-pro)
-        Sync->>Panel: POST /api/certs/agent/enroll-delegated<br/>{pluginAgentLabel: "rpi-sync",<br/>scope: "sync:connect"}
-        Note over Panel: Verify caller is agent (not plugin-agent)<br/>Verify sync:connect is a registered ticket scope<br/>Verify sync:connect is NOT a base capability<br/>Verify agent owns active instance for scope<br/>Generate delegated token (32 bytes, 10-min expiry)<br/>Store with type: "delegated",<br/>delegatedBy: "macbook-pro",<br/>label: "plugin-agent:macbook-pro:rpi-sync",<br/>capabilities: ["sync:connect"]
+        Sync->>Panel: POST /api/certs/agent/enroll-delegated<br/>{pluginAgentLabel: "rpi-sync",<br/>scope: "plugin:sync:connect"}
+        Note over Panel: Verify caller is agent (not plugin-agent)<br/>Verify plugin:sync:connect is a registered ticket scope<br/>Verify plugin:sync:connect is NOT a base capability<br/>Verify agent owns active instance for scope<br/>Generate delegated token (32 bytes, 10-min expiry)<br/>Store with type: "delegated",<br/>delegatedBy: "macbook-pro",<br/>label: "plugin-agent:macbook-pro:rpi-sync",<br/>capabilities: ["plugin:sync:connect"]
         Panel-->>Sync: {ok, enrollmentToken,<br/>expiresAt, pluginAgentLabel}
     end
 
@@ -178,7 +178,7 @@ sequenceDiagram
     rect rgb(40, 60, 40)
         Note over RPi,Panel: Lamaste enrollment (public endpoint — no mTLS, no Authelia)
         RPi->>Panel: POST /api/enroll<br/>{token: delegatedToken,<br/>csr: "<PEM CSR>"}
-        Note over Panel: Validate token (HMAC-SHA256 timing-safe)<br/>Verify delegating agent (macbook-pro)<br/>still registered and not revoked<br/>Consume token (mark used)<br/>Sign CSR with panel CA<br/>Subject: CN=plugin-agent:macbook-pro:rpi-sync<br/>Validity: 730 days<br/>Add to agent registry:<br/>enrollmentMethod: "delegated"<br/>delegatedBy: "macbook-pro"<br/>capabilities: ["sync:connect"]
+        Note over Panel: Validate token (HMAC-SHA256 timing-safe)<br/>Verify delegating agent (macbook-pro)<br/>still registered and not revoked<br/>Consume token (mark used)<br/>Sign CSR with panel CA<br/>Subject: CN=plugin-agent:macbook-pro:rpi-sync<br/>Validity: 730 days<br/>Add to agent registry:<br/>enrollmentMethod: "delegated"<br/>delegatedBy: "macbook-pro"<br/>capabilities: ["plugin:sync:connect"]
         Panel-->>RPi: {ok, cert, caCert,<br/>label: "plugin-agent:macbook-pro:rpi-sync",<br/>serial, expiresAt}
     end
 
@@ -248,25 +248,25 @@ The Sync agent now has three credentials:
 
 ### 10. Admin Grants Ticket Access
 
-The delegated enrollment gives the Sync agent a Lamaste identity, but it still needs to be authorized in the ticket system. The admin assigns the `sync:connect` capability and creates a ticket assignment.
+The delegated enrollment gives the Sync agent a Lamaste identity, but it still needs to be authorized in the ticket system. The admin assigns the `plugin:sync:connect` capability and creates a ticket assignment.
 
 ```mermaid
 sequenceDiagram
     participant Admin as Admin (Panel UI)
     participant Panel as Lamaste Panel
 
-    Admin->>Panel: PATCH /api/certs/agent/<br/>plugin-agent:macbook-pro:rpi-sync/capabilities<br/>{capabilities: ["sync:connect"]}
+    Admin->>Panel: PATCH /api/certs/agent/<br/>plugin-agent:macbook-pro:rpi-sync/capabilities<br/>{capabilities: ["plugin:sync:connect"]}
     Note over Panel: Update registry entry<br/>for plugin-agent
     Panel-->>Admin: {ok}
 
-    Admin->>Panel: POST /api/tickets/assignments<br/>{agentLabel: "plugin-agent:macbook-pro:rpi-sync",<br/>instanceScope: "sync:connect:<instanceId>"}
+    Admin->>Panel: POST /api/tickets/assignments<br/>{agentLabel: "plugin-agent:macbook-pro:rpi-sync",<br/>instanceScope: "plugin:sync:connect:<instanceId>"}
     Note over Panel: Store assignment<br/>in ticket-scopes.json
     Panel-->>Admin: {ok}
 
-    Note over Admin: Plugin-agent can now<br/>participate in sync:connect tickets
+    Note over Admin: Plugin-agent can now<br/>participate in plugin:sync:connect tickets
 ```
 
-The plugin-agent cert starts with only the delegated scope capability (`sync:connect`). The admin can grant additional capabilities via the Certificates page if needed — this is a deliberate opt-in with minimal privilege as the default.
+The plugin-agent cert starts with only the delegated scope capability (`plugin:sync:connect`). The admin can grant additional capabilities via the Certificates page if needed — this is a deliberate opt-in with minimal privilege as the default.
 
 ### 11. Ticket Authorization in Action
 
@@ -278,8 +278,8 @@ sequenceDiagram
     participant Panel as Lamaste Panel
     participant RPi as Sync Agent (RPi)<br/>TARGET: assigned to instance
 
-    Mac->>Panel: POST /api/tickets<br/>(mTLS: CN=agent:macbook-pro)<br/>{scope: "sync:connect",<br/>instanceId: "<id>",<br/>target: "plugin-agent:<br/>macbook-pro:rpi-sync"}
-    Note over Panel: Rate limit (max 10/min per agent)<br/>Verify source exists, not revoked<br/>Verify source has sync:connect<br/>Verify target exists, not revoked<br/>Verify target has sync:connect<br/>Verify source owns instance (not stale)<br/>Verify source ≠ target<br/>Verify target assigned to instance<br/>Generate ticket (32 bytes, 30-sec TTL)
+    Mac->>Panel: POST /api/tickets<br/>(mTLS: CN=agent:macbook-pro)<br/>{scope: "plugin:sync:connect",<br/>instanceId: "<id>",<br/>target: "plugin-agent:<br/>macbook-pro:rpi-sync"}
+    Note over Panel: Rate limit (max 10/min per agent)<br/>Verify source exists, not revoked<br/>Verify source has plugin:sync:connect<br/>Verify target exists, not revoked<br/>Verify target has plugin:sync:connect<br/>Verify source owns instance (not stale)<br/>Verify source ≠ target<br/>Verify target assigned to instance<br/>Generate ticket (32 bytes, 30-sec TTL)
     Panel-->>Mac: {ok, ticket: {id, scope,<br/>instanceId, source, target, expiresAt}}
 
     RPi->>Panel: GET /api/tickets/inbox<br/>(mTLS: CN=plugin-agent:<br/>macbook-pro:rpi-sync)

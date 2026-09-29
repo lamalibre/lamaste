@@ -136,15 +136,46 @@ export class SiteError extends Error {
 // DNS resolution helper
 // ---------------------------------------------------------------------------
 
+/** Every error code `dns.resolve4` reports (node:dns error codes). */
+const DNS_ERROR_CODES: ReadonlySet<string> = new Set([
+  'ENODATA',
+  'EFORMERR',
+  'ESERVFAIL',
+  'ENOTFOUND',
+  'ENOTIMP',
+  'EREFUSED',
+  'EBADQUERY',
+  'EBADNAME',
+  'EBADFAMILY',
+  'EBADRESP',
+  'ECONNREFUSED',
+  'ETIMEOUT',
+  'EOF',
+  'EFILE',
+  'ENOMEM',
+  'EDESTRUCTION',
+  'EBADSTR',
+  'EBADFLAGS',
+  'ENONAME',
+  'EBADHINTS',
+  'ENOTINITIALIZED',
+  'ELOADIPHLPAPI',
+  'EADDRGETNETWORKPARAMS',
+  'ECANCELLED',
+]);
+
 /**
- * Resolve A records for a hostname, returning an empty array on expected DNS errors.
+ * Resolve A records for a hostname. A name the resolver cannot answer for —
+ * no such name, no A record, or a refused / failed / timed-out query — has no
+ * address here: callers ask "does this name point at this server?", and the
+ * answer is no. Anything else is a bug and is rethrown.
  */
 async function resolveA(hostname: string): Promise<string[]> {
   try {
     return await dns.resolve4(hostname);
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOTFOUND' || code === 'ENODATA' || code === 'ETIMEOUT') {
+    if (code !== undefined && DNS_ERROR_CODES.has(code)) {
       return [];
     }
     throw err;

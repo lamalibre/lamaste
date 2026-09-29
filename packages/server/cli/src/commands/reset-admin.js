@@ -24,7 +24,7 @@ import { readFile, rename, access, constants, unlink, open, rm } from 'node:fs/p
 import { basename, dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { execa } from 'execa';
-import { CONFIG_PATH, PKI_DIR, PANEL_SERVICE } from '../config.js';
+import { CONFIG_PATH, PKI_DIR, PANEL_SERVICE, STATE_DIR } from '../config.js';
 import { emitStep, emitError, emitComplete } from '../ndjson.js';
 
 /**
@@ -94,6 +94,44 @@ async function writeOwnedFile(destPath, content, owner, mode) {
   }
   await fh.close();
   await rename(tmp, destPath);
+}
+
+/**
+ * Add a certificate serial to the panel's revocation list (`revoked_certs`
+ * in `state.db`). Runs as lamaste: the database is in WAL mode, and a write
+ * as root could leave root-owned `-wal`/`-shm` files the panel cannot open.
+ * The serial and label reach the child through its environment, never
+ * through the code it runs.
+ *
+ * @param {string} serial
+ * @param {string} label
+ * @param {{ uid: number, gid: number }} lamaste
+ */
+async function revokeInStateDb(serial, label, lamaste) {
+  const script = `
+    import { DatabaseSync } from 'node:sqlite';
+    const db = new DatabaseSync(process.env.STATE_DB);
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const seen = db.prepare('SELECT serial FROM revoked_certs WHERE serial = ?').get(process.env.SERIAL);
+      if (!seen) {
+        db.prepare('INSERT INTO revoked_certs (serial, label, revoked_at) VALUES (?, ?, ?)')
+          .run(process.env.SERIAL, process.env.LABEL, new Date().toISOString());
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    db.close();
+  `;
+  await execa(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], {
+    ...lamaste,
+    cwd: STATE_DIR,
+    env: { STATE_DB: `${STATE_DIR}/state.db`, SERIAL: serial, LABEL: label },
+    extendEnv: false,
+  });
 }
 
 /**
@@ -294,25 +332,24 @@ export async function runResetAdmin({ json, passwordFile }) {
 
   if (json) emitStep('install-cert', 'complete');
 
-  // 13. Revoke old cert
+  // 13. Revoke old cert — in the panel's revocation list (state.db,
+  // revoked_certs), which the mTLS middleware checks on every request.
   if (oldSerial) {
     if (json) emitStep('revoke-old', 'running');
     else console.log('  Revoking old admin certificate...');
-    const revocationPath = `${PKI_DIR}/revoked.json`;
-    let revoked = { revoked: [] };
     try {
-      const raw = await readFile(revocationPath, 'utf-8');
-      revoked = JSON.parse(raw);
-    } catch {
-      // File may not exist
-    }
-    if (!revoked.revoked.some((e) => e.serial === oldSerial)) {
-      revoked.revoked.push({
-        serial: oldSerial,
-        label: 'admin (reset from hardware-bound)',
-        revokedAt: new Date().toISOString(),
-      });
-      await writeOwnedFile(revocationPath, JSON.stringify(revoked, null, 2) + '\n', lamaste, 0o600);
+      await revokeInStateDb(oldSerial, 'admin (reset-admin)', lamaste);
+    } catch (err) {
+      // The new certificate is already installed; a revocation that did not
+      // happen must not pass silently — the old certificate would still work.
+      const msg = `Could not revoke the old admin certificate (serial ${oldSerial}): ${err.stderr || err.message}`;
+      if (json) {
+        emitStep('revoke-old', 'failed', msg);
+        emitError(msg);
+      } else {
+        console.error(`  Error: ${msg}`);
+      }
+      process.exit(1);
     }
     if (json) emitStep('revoke-old', 'complete');
   }
