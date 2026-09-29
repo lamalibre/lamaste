@@ -61,9 +61,11 @@ export default {
     const { mp, vmNames } = ctx;
     const host = vmNames.host;
     await mp.exec(host, 'systemctl stop authelia', { sudo: true, allowFailure: true });
+    // As Authelia's own account: a root sqlite3 could leave root-owned
+    // journal files that Authelia (lamaste-authelia) then cannot open.
     await mp.exec(
       host,
-      'sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;"',
+      'runuser -u lamaste-authelia -- sqlite3 /etc/authelia/db.sqlite3 "DELETE FROM authentication_logs; DELETE FROM totp_history;"',
       { sudo: true, allowFailure: true },
     );
     await mp.exec(host, 'systemctl start authelia', { sudo: true, allowFailure: true });
@@ -326,6 +328,8 @@ export default {
    * the CLI restarts that systemd service after extraction.
    */
   hotReload: {
+    // The install directory is root-owned (code the panel runs must not be
+    // writable by the panel): files are copied in as root and stay root's.
     async 'lamaste-serverd'(ctx) {
       const INSTALL_DIR = '/opt/lamalibre/lamaste';
       await ctx.mp.exec(
@@ -338,7 +342,6 @@ export default {
           `rm -rf ${INSTALL_DIR}/serverd/src`,
           `cp -r /tmp/hot-reload-extract/package/src ${INSTALL_DIR}/serverd/src`,
           `cd ${INSTALL_DIR}/serverd && npm install --production --ignore-scripts`,
-          `chown -R lamaste:lamaste ${INSTALL_DIR}/serverd`,
           `rm -rf /tmp/hot-reload-extract`,
         ].join(' && '),
         { sudo: true, timeout: 60_000 },
@@ -354,9 +357,8 @@ export default {
           `rm -rf /tmp/hot-reload-extract`,
           `mkdir -p /tmp/hot-reload-extract`,
           `tar xzf ${ctx.remotePath} -C /tmp/hot-reload-extract`,
-          `rm -rf ${INSTALL_DIR}/lamaste-server-ui/dist`,
-          `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/lamaste-server-ui/dist`,
-          `chown -R lamaste:lamaste ${INSTALL_DIR}/lamaste-server-ui`,
+          `rm -rf ${INSTALL_DIR}/server-ui/dist`,
+          `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/server-ui/dist`,
           `rm -rf /tmp/hot-reload-extract`,
         ].join(' && '),
         { sudo: true, timeout: 60_000 },
@@ -376,7 +378,6 @@ export default {
           `rm -rf ${INSTALL_DIR}/gatekeeper/dist`,
           `cp -r /tmp/hot-reload-extract/package/dist ${INSTALL_DIR}/gatekeeper/dist`,
           `cd ${INSTALL_DIR}/gatekeeper && npm install --production --ignore-scripts`,
-          `chown -R lamaste:lamaste ${INSTALL_DIR}/gatekeeper`,
           `rm -rf /tmp/hot-reload-extract`,
         ].join(' && '),
         { sudo: true, timeout: 60_000 },

@@ -1186,11 +1186,571 @@
       "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sudoers: certbot and certificate reads via root-owned wrappers\"\n# ---------------------------------------------------------------------------\n\nSUDOERS_RULES=$(host_exec \"grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste\" 2>/dev/null || echo \"\")\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-certbot\" \"sudoers allows the lamaste-certbot wrapper\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-cert-info\" \"sudoers allows the lamaste-cert-info wrapper\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/usr/bin/certbot\" \"sudoers has no direct certbot rule\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/etc/letsencrypt\" \"sudoers has no rule reaching into /etc/letsencrypt\" || true\n\nfor wrapper in lamaste-certbot lamaste-cert-info; do\n  WRAPPER_STAT=$(host_exec \"stat -c '%U %G %a' /usr/local/sbin/${wrapper} 2>/dev/null\" || echo \"missing\")\n  assert_eq \"$WRAPPER_STAT\" \"root root 755\" \"/usr/local/sbin/${wrapper} is root-owned 0755\" || true\ndone\n\n# The service user cannot reach certbot directly, and the wrappers refuse any\n# argument beyond their fixed shapes (a trailing --deploy-hook would run code\n# as root)\nDIRECT_CERTBOT=$(host_exec \"sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied\")\nassert_eq \"$DIRECT_CERTBOT\" \"denied\" \"lamaste cannot run /usr/bin/certbot through sudo\" || true\nEXTRA_ARG_RC=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew tunnel.${TEST_DOMAIN} --deploy-hook /bin/true >/dev/null 2>&1; echo \\$?\")\nassert_eq \"$EXTRA_ARG_RC\" \"2\" \"lamaste-certbot rejects extra arguments (exit 2)\" || true\nTRAVERSAL_RC=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1; echo \\$?\")\nassert_eq \"$TRAVERSAL_RC\" \"2\" \"lamaste-cert-info rejects a traversing lineage name (exit 2)\" || true\nTUNNEL_ENDDATE=$(host_exec \"sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info tunnel.${TEST_DOMAIN} enddate 2>/dev/null\" || echo \"\")\nassert_contains \"$TUNNEL_ENDDATE\" \"notAfter=\" \"lamaste-cert-info reads the tunnel certificate's expiry\" || true"
     },
     {
+      "id": "privilege-boundary-the-panel-user-cannot-become-root",
+      "label": "Privilege boundary: the panel user cannot become root",
+      "steps": [
+        {
+          "id": "step-73",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true"
+          },
+          "capture": [
+            {
+              "variable": "WILDCARD_RULES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "sudoers has no wildcard rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WILDCARD_RULES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "sudoers has no wildcard rule"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "sudoers allows the lamaste-priv helper",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SUDOERS_RULES"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "NOPASSWD: /usr/local/sbin/lamaste-priv"
+              },
+              "message": "sudoers allows the lamaste-priv helper"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' /usr/local/sbin/lamaste-priv 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "PRIV_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "/usr/local/sbin/lamaste-priv is root-owned 0755",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PRIV_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root root 755"
+              },
+              "message": "/usr/local/sbin/lamaste-priv is root-owned 0755"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "ls /usr/local/sbin/lamaste-sign-csr /usr/local/sbin/lamaste-pki-rename 2>/dev/null | wc -l"
+          },
+          "capture": [
+            {
+              "variable": "RETIRED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-79",
+          "label": "Retired wrappers lamaste-sign-csr / lamaste-pki-rename are gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RETIRED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Retired wrappers lamaste-sign-csr / lamaste-pki-rename are gone"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "find /opt/lamalibre/lamaste ! -user root | wc -l"
+          },
+          "capture": [
+            {
+              "variable": "NON_ROOT_CODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "Everything under /opt/lamalibre/lamaste is root-owned",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NON_ROOT_CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Everything under /opt/lamalibre/lamaste is root-owned"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste touch /opt/lamalibre/lamaste/serverd/src/e2e-probe 2>/dev/null && echo allowed || echo denied"
+          },
+          "capture": [
+            {
+              "variable": "CODE_WRITE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "lamaste cannot write into the install directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CODE_WRITE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "denied"
+              },
+              "message": "lamaste cannot write into the install directory"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' /var/www/lamaste"
+          },
+          "capture": [
+            {
+              "variable": "WEBROOT_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "/var/www/lamaste is lamaste:www-data 2750",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WEBROOT_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste www-data 2750"
+              },
+              "message": "/var/www/lamaste is lamaste:www-data 2750"
+            }
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' /etc/authelia"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_DIR_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "/etc/authelia is lamaste:lamaste-authelia 2770",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHELIA_DIR_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste lamaste-authelia 2770"
+              },
+              "message": "/etc/authelia is lamaste:lamaste-authelia 2770"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl show -p User --value authelia"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Authelia runs as lamaste-authelia, not root",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHELIA_USER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-authelia"
+              },
+              "message": "Authelia runs as lamaste-authelia, not root"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "ps -o user= -C authelia | head -1"
+          },
+          "capture": [
+            {
+              "variable": "AUTHELIA_PROC_USER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-91",
+          "label": "The running Authelia process belongs to lamaste-authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUTHELIA_PROC_USER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-authelia"
+              },
+              "message": "The running Authelia process belongs to lamaste-authelia"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U %G %a' /etc/lamalibre/lamaste/chisel-server.key"
+          },
+          "capture": [
+            {
+              "variable": "KEY_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "chisel-server.key is lamaste:lamaste-chisel 0640",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "KEY_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste lamaste-chisel 640"
+              },
+              "message": "chisel-server.key is lamaste:lamaste-chisel 0640"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%U' /etc/systemd/system/chisel.service /etc/systemd/system/authelia.service | sort -u"
+          },
+          "capture": [
+            {
+              "variable": "UNIT_OWNER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "chisel and Authelia units are root-owned",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNIT_OWNER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root"
+              },
+              "message": "chisel and Authelia units are root-owned"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "printf 'server {\\n listen 443 ssl;\\n access_log /etc/cron.d/e2e;\\n}\\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e-evil >/dev/null 2>&1; echo \\$?"
+          },
+          "capture": [
+            {
+              "variable": "EVIL_VHOST_RC",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "lamaste-priv refuses a vhost with access_log (exit 2)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EVIL_VHOST_RC"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "lamaste-priv refuses a vhost with access_log (exit 2)"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -e /etc/nginx/sites-available/lamalibre-lamaste-app-e2e-evil && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "EVIL_VHOST_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "The refused vhost was not written",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "EVIL_VHOST_FILE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "The refused vhost was not written"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste sudo -n /usr/bin/mv /tmp/site-index-x -t /etc/sudoers.d /var/www/lamaste/y >/dev/null 2>&1 && echo allowed || echo denied"
+          },
+          "capture": [
+            {
+              "variable": "OLD_MV_RULE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "The former mv wildcard rule is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OLD_MV_RULE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "denied"
+              },
+              "message": "The former mv wildcard rule is gone"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Privilege boundary: the panel user cannot become root\"\n# ---------------------------------------------------------------------------\n\n# Every sudoers rule is a fixed command line or a root-owned program that\n# validates its own arguments — no wildcards (a sudoers * matches spaces)\nWILDCARD_RULES=$(host_exec \"grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true\")\nassert_eq \"$WILDCARD_RULES\" \"0\" \"sudoers has no wildcard rule\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-priv\" \"sudoers allows the lamaste-priv helper\" || true\nPRIV_STAT=$(host_exec \"stat -c '%U %G %a' /usr/local/sbin/lamaste-priv 2>/dev/null\" || echo \"missing\")\nassert_eq \"$PRIV_STAT\" \"root root 755\" \"/usr/local/sbin/lamaste-priv is root-owned 0755\" || true\nRETIRED=$(host_exec \"ls /usr/local/sbin/lamaste-sign-csr /usr/local/sbin/lamaste-pki-rename 2>/dev/null | wc -l\")\nassert_eq \"$RETIRED\" \"0\" \"Retired wrappers lamaste-sign-csr / lamaste-pki-rename are gone\" || true\n\n# Code root runs (and the panel runs) is not writable by the panel\nNON_ROOT_CODE=$(host_exec \"find /opt/lamalibre/lamaste ! -user root | wc -l\")\nassert_eq \"$NON_ROOT_CODE\" \"0\" \"Everything under /opt/lamalibre/lamaste is root-owned\" || true\nCODE_WRITE=$(host_exec \"sudo -u lamaste touch /opt/lamalibre/lamaste/serverd/src/e2e-probe 2>/dev/null && echo allowed || echo denied\")\nassert_eq \"$CODE_WRITE\" \"denied\" \"lamaste cannot write into the install directory\" || true\n\n# What the panel writes without privileges\nWEBROOT_STAT=$(host_exec \"stat -c '%U %G %a' /var/www/lamaste\")\nassert_eq \"$WEBROOT_STAT\" \"lamaste www-data 2750\" \"/var/www/lamaste is lamaste:www-data 2750\" || true\nAUTHELIA_DIR_STAT=$(host_exec \"stat -c '%U %G %a' /etc/authelia\")\nassert_eq \"$AUTHELIA_DIR_STAT\" \"lamaste lamaste-authelia 2770\" \"/etc/authelia is lamaste:lamaste-authelia 2770\" || true\nAUTHELIA_USER=$(host_exec \"systemctl show -p User --value authelia\")\nassert_eq \"$AUTHELIA_USER\" \"lamaste-authelia\" \"Authelia runs as lamaste-authelia, not root\" || true\nAUTHELIA_PROC_USER=$(host_exec \"ps -o user= -C authelia | head -1\")\nassert_eq \"$AUTHELIA_PROC_USER\" \"lamaste-authelia\" \"The running Authelia process belongs to lamaste-authelia\" || true\nKEY_STAT=$(host_exec \"stat -c '%U %G %a' /etc/lamalibre/lamaste/chisel-server.key\")\nassert_eq \"$KEY_STAT\" \"lamaste lamaste-chisel 640\" \"chisel-server.key is lamaste:lamaste-chisel 0640\" || true\nUNIT_OWNER=$(host_exec \"stat -c '%U' /etc/systemd/system/chisel.service /etc/systemd/system/authelia.service | sort -u\")\nassert_eq \"$UNIT_OWNER\" \"root\" \"chisel and Authelia units are root-owned\" || true\n\n# The helper refuses a vhost that would make nginx (root) open a file\nEVIL_VHOST_RC=$(host_exec \"printf 'server {\\n listen 443 ssl;\\n access_log /etc/cron.d/e2e;\\n}\\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e-evil >/dev/null 2>&1; echo \\$?\")\nassert_eq \"$EVIL_VHOST_RC\" \"2\" \"lamaste-priv refuses a vhost with access_log (exit 2)\" || true\nEVIL_VHOST_FILE=$(host_exec \"test -e /etc/nginx/sites-available/lamalibre-lamaste-app-e2e-evil && echo yes || echo no\")\nassert_eq \"$EVIL_VHOST_FILE\" \"no\" \"The refused vhost was not written\" || true\nOLD_MV_RULE=$(host_exec \"sudo -u lamaste sudo -n /usr/bin/mv /tmp/site-index-x -t /etc/sudoers.d /var/www/lamaste/y >/dev/null 2>&1 && echo allowed || echo denied\")\nassert_eq \"$OLD_MV_RULE\" \"denied\" \"The former mv wildcard rule is gone\" || true"
+    },
+    {
       "id": "port-80-redirects-every-host-to-https",
       "label": "Port 80 redirects every host to HTTPS",
       "steps": [
         {
-          "id": "step-73",
+          "id": "step-102",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1212,7 +1772,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-103",
           "label": "Set REDIRECT_CODE",
           "target": "local",
           "op": {
@@ -1229,7 +1789,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-104",
           "label": "http://${HOST_IP}/a?b=1 with Host foo.example answers 301",
           "target": "local",
           "continueOnError": true,
@@ -1250,7 +1810,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-105",
           "label": "Set REDIRECT_LOCATION",
           "target": "local",
           "op": {
@@ -1267,7 +1827,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-106",
           "label": "301 Location is https://foo.example/a?b=1",
           "target": "local",
           "continueOnError": true,
@@ -1288,7 +1848,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-107",
           "label": "HTTP request on visitor",
           "target": "visitor",
           "op": {
@@ -1307,7 +1867,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-108",
           "label": "http://panel.${TEST_DOMAIN}/x answers 301 to HTTPS",
           "target": "local",
           "continueOnError": true,
@@ -1328,7 +1888,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-109",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1345,7 +1905,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-110",
           "label": "nginx site lamalibre-lamaste-http-redirect is enabled",
           "target": "local",
           "continueOnError": true,

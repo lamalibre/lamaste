@@ -200,6 +200,48 @@ TUNNEL_ENDDATE=$(host_exec "sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert
 assert_contains "$TUNNEL_ENDDATE" "notAfter=" "lamaste-cert-info reads the tunnel certificate's expiry" || true
 
 # ---------------------------------------------------------------------------
+log_section "Privilege boundary: the panel user cannot become root"
+# ---------------------------------------------------------------------------
+
+# Every sudoers rule is a fixed command line or a root-owned program that
+# validates its own arguments — no wildcards (a sudoers * matches spaces)
+WILDCARD_RULES=$(host_exec "grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true")
+assert_eq "$WILDCARD_RULES" "0" "sudoers has no wildcard rule" || true
+assert_contains "$SUDOERS_RULES" "NOPASSWD: /usr/local/sbin/lamaste-priv" "sudoers allows the lamaste-priv helper" || true
+PRIV_STAT=$(host_exec "stat -c '%U %G %a' /usr/local/sbin/lamaste-priv 2>/dev/null" || echo "missing")
+assert_eq "$PRIV_STAT" "root root 755" "/usr/local/sbin/lamaste-priv is root-owned 0755" || true
+RETIRED=$(host_exec "ls /usr/local/sbin/lamaste-sign-csr /usr/local/sbin/lamaste-pki-rename 2>/dev/null | wc -l")
+assert_eq "$RETIRED" "0" "Retired wrappers lamaste-sign-csr / lamaste-pki-rename are gone" || true
+
+# Code root runs (and the panel runs) is not writable by the panel
+NON_ROOT_CODE=$(host_exec "find /opt/lamalibre/lamaste ! -user root | wc -l")
+assert_eq "$NON_ROOT_CODE" "0" "Everything under /opt/lamalibre/lamaste is root-owned" || true
+CODE_WRITE=$(host_exec "sudo -u lamaste touch /opt/lamalibre/lamaste/serverd/src/e2e-probe 2>/dev/null && echo allowed || echo denied")
+assert_eq "$CODE_WRITE" "denied" "lamaste cannot write into the install directory" || true
+
+# What the panel writes without privileges
+WEBROOT_STAT=$(host_exec "stat -c '%U %G %a' /var/www/lamaste")
+assert_eq "$WEBROOT_STAT" "lamaste www-data 2750" "/var/www/lamaste is lamaste:www-data 2750" || true
+AUTHELIA_DIR_STAT=$(host_exec "stat -c '%U %G %a' /etc/authelia")
+assert_eq "$AUTHELIA_DIR_STAT" "lamaste lamaste-authelia 2770" "/etc/authelia is lamaste:lamaste-authelia 2770" || true
+AUTHELIA_USER=$(host_exec "systemctl show -p User --value authelia")
+assert_eq "$AUTHELIA_USER" "lamaste-authelia" "Authelia runs as lamaste-authelia, not root" || true
+AUTHELIA_PROC_USER=$(host_exec "ps -o user= -C authelia | head -1")
+assert_eq "$AUTHELIA_PROC_USER" "lamaste-authelia" "The running Authelia process belongs to lamaste-authelia" || true
+KEY_STAT=$(host_exec "stat -c '%U %G %a' /etc/lamalibre/lamaste/chisel-server.key")
+assert_eq "$KEY_STAT" "lamaste lamaste-chisel 640" "chisel-server.key is lamaste:lamaste-chisel 0640" || true
+UNIT_OWNER=$(host_exec "stat -c '%U' /etc/systemd/system/chisel.service /etc/systemd/system/authelia.service | sort -u")
+assert_eq "$UNIT_OWNER" "root" "chisel and Authelia units are root-owned" || true
+
+# The helper refuses a vhost that would make nginx (root) open a file
+EVIL_VHOST_RC=$(host_exec "printf 'server {\n listen 443 ssl;\n access_log /etc/cron.d/e2e;\n}\n' | sudo -u lamaste sudo -n /usr/local/sbin/lamaste-priv nginx-site write lamalibre-lamaste-app-e2e-evil >/dev/null 2>&1; echo \$?")
+assert_eq "$EVIL_VHOST_RC" "2" "lamaste-priv refuses a vhost with access_log (exit 2)" || true
+EVIL_VHOST_FILE=$(host_exec "test -e /etc/nginx/sites-available/lamalibre-lamaste-app-e2e-evil && echo yes || echo no")
+assert_eq "$EVIL_VHOST_FILE" "no" "The refused vhost was not written" || true
+OLD_MV_RULE=$(host_exec "sudo -u lamaste sudo -n /usr/bin/mv /tmp/site-index-x -t /etc/sudoers.d /var/www/lamaste/y >/dev/null 2>&1 && echo allowed || echo denied")
+assert_eq "$OLD_MV_RULE" "denied" "The former mv wildcard rule is gone" || true
+
+# ---------------------------------------------------------------------------
 log_section "Port 80 redirects every host to HTTPS"
 # ---------------------------------------------------------------------------
 

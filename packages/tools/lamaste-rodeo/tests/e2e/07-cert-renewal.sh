@@ -119,10 +119,15 @@ assert_contains "$SUDOERS_RULES" "NOPASSWD: /usr/local/sbin/lamaste-cert-info" "
 assert_not_contains "$SUDOERS_RULES" "/usr/bin/certbot" "sudoers has no direct certbot rule" || true
 assert_not_contains "$SUDOERS_RULES" "/etc/letsencrypt" "sudoers has no rule reaching into /etc/letsencrypt" || true
 
-for wrapper in lamaste-certbot lamaste-cert-info; do
+for wrapper in lamaste-certbot lamaste-cert-info lamaste-priv; do
   WRAPPER_STAT=$(stat -c '%U %G %a' "/usr/local/sbin/${wrapper}" 2>/dev/null || echo "missing")
   assert_eq "$WRAPPER_STAT" "root root 755" "/usr/local/sbin/${wrapper} is root-owned 0755" || true
 done
+
+# No rule may contain a wildcard: a sudoers * matches spaces too, so it
+# admits extra arguments (mv -t, find -exec, openssl -engine)
+WILDCARD_RULES=$(sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true)
+assert_eq "$WILDCARD_RULES" "0" "sudoers has no wildcard rule" || true
 
 # The service user cannot run certbot directly, and the wrappers refuse any
 # argument beyond their fixed shapes (a trailing --deploy-hook would run code

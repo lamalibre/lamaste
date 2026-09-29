@@ -744,6 +744,44 @@
         },
         {
           "id": "step-37",
+          "label": "Set WILDCARD_RULES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true"
+          },
+          "capture": [
+            {
+              "variable": "WILDCARD_RULES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "sudoers has no wildcard rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WILDCARD_RULES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "sudoers has no wildcard rule"
+            }
+          }
+        },
+        {
+          "id": "step-39",
           "label": "Set DIRECT_CERTBOT",
           "target": "local",
           "op": {
@@ -760,7 +798,7 @@
           ]
         },
         {
-          "id": "step-38",
+          "id": "step-40",
           "label": "lamaste cannot run /usr/bin/certbot through sudo",
           "target": "local",
           "continueOnError": true,
@@ -781,7 +819,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-41",
           "label": "GET /api/onboarding/status",
           "target": "host",
           "op": {
@@ -800,7 +838,7 @@
           ]
         },
         {
-          "id": "step-42",
+          "id": "step-44",
           "label": "lamaste-certbot rejects extra arguments (exit 2)",
           "target": "local",
           "continueOnError": true,
@@ -821,7 +859,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-47",
           "label": "lamaste-certbot rejects a malformed email (exit 2)",
           "target": "local",
           "continueOnError": true,
@@ -842,7 +880,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-50",
           "label": "lamaste-cert-info rejects a traversing lineage name (exit 2)",
           "target": "local",
           "continueOnError": true,
@@ -863,7 +901,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-51",
           "label": "Set PANEL_ENDDATE",
           "target": "local",
           "op": {
@@ -880,7 +918,7 @@
           ]
         },
         {
-          "id": "step-50",
+          "id": "step-52",
           "label": "lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry",
           "target": "local",
           "continueOnError": true,
@@ -901,7 +939,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-53",
           "label": "Set ISSUES_TOTAL",
           "target": "local",
           "op": {
@@ -918,7 +956,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-54",
           "label": "Set ISSUES_NAMED",
           "target": "local",
           "op": {
@@ -935,7 +973,7 @@
           ]
         },
         {
-          "id": "step-53",
+          "id": "step-55",
           "label": "Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)",
           "target": "local",
           "continueOnError": true,
@@ -956,7 +994,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-56",
           "label": "No certonly calls recorded by the certbot shim yet",
           "target": "local",
           "op": {
@@ -966,14 +1004,14 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sudoers: certbot and certificate reads via root-owned wrappers\"\n# ---------------------------------------------------------------------------\n\nSUDOERS_RULES=$(sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste 2>/dev/null || echo \"\")\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-certbot\" \"sudoers allows the lamaste-certbot wrapper\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-cert-info\" \"sudoers allows the lamaste-cert-info wrapper\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/usr/bin/certbot\" \"sudoers has no direct certbot rule\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/etc/letsencrypt\" \"sudoers has no rule reaching into /etc/letsencrypt\" || true\n\nfor wrapper in lamaste-certbot lamaste-cert-info; do\n  WRAPPER_STAT=$(stat -c '%U %G %a' \"/usr/local/sbin/${wrapper}\" 2>/dev/null || echo \"missing\")\n  assert_eq \"$WRAPPER_STAT\" \"root root 755\" \"/usr/local/sbin/${wrapper} is root-owned 0755\" || true\ndone\n\n# The service user cannot run certbot directly, and the wrappers refuse any\n# argument beyond their fixed shapes (a trailing --deploy-hook would run code\n# as root; a traversing lineage would read any file)\nDIRECT_CERTBOT=$(sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied)\nassert_eq \"$DIRECT_CERTBOT\" \"denied\" \"lamaste cannot run /usr/bin/certbot through sudo\" || true\nWRAP_DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\nEXTRA_ARG_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew \"panel.${WRAP_DOMAIN}\" --deploy-hook /bin/true >/dev/null 2>&1 || EXTRA_ARG_RC=$?\nassert_eq \"$EXTRA_ARG_RC\" \"2\" \"lamaste-certbot rejects extra arguments (exit 2)\" || true\nBAD_EMAIL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot issue \"-x@example.com\" \"panel.${WRAP_DOMAIN}\" \"panel.${WRAP_DOMAIN}\" >/dev/null 2>&1 || BAD_EMAIL_RC=$?\nassert_eq \"$BAD_EMAIL_RC\" \"2\" \"lamaste-certbot rejects a malformed email (exit 2)\" || true\nTRAVERSAL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1 || TRAVERSAL_RC=$?\nassert_eq \"$TRAVERSAL_RC\" \"2\" \"lamaste-cert-info rejects a traversing lineage name (exit 2)\" || true\nPANEL_ENDDATE=$(sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info \"panel.${WRAP_DOMAIN}\" enddate 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_ENDDATE\" \"notAfter=\" \"lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry\" || true\n\n# Every issue the panel ever made carried --cert-name (a fixed lineage name,\n# so a re-issue never drifts to <name>-0001)\nISSUES_TOTAL=$(sudo grep -c ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null || true)\nISSUES_NAMED=$(sudo grep ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep -c -- ' --cert-name ' || true)\nif [ \"${ISSUES_TOTAL:-0}\" -gt 0 ] 2>/dev/null; then\n  assert_eq \"${ISSUES_NAMED:-0}\" \"${ISSUES_TOTAL}\" \"Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)\" || true\nelse\n  log_skip \"No certonly calls recorded by the certbot shim yet\"\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Sudoers: certbot and certificate reads via root-owned wrappers\"\n# ---------------------------------------------------------------------------\n\nSUDOERS_RULES=$(sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste 2>/dev/null || echo \"\")\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-certbot\" \"sudoers allows the lamaste-certbot wrapper\" || true\nassert_contains \"$SUDOERS_RULES\" \"NOPASSWD: /usr/local/sbin/lamaste-cert-info\" \"sudoers allows the lamaste-cert-info wrapper\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/usr/bin/certbot\" \"sudoers has no direct certbot rule\" || true\nassert_not_contains \"$SUDOERS_RULES\" \"/etc/letsencrypt\" \"sudoers has no rule reaching into /etc/letsencrypt\" || true\n\nfor wrapper in lamaste-certbot lamaste-cert-info lamaste-priv; do\n  WRAPPER_STAT=$(stat -c '%U %G %a' \"/usr/local/sbin/${wrapper}\" 2>/dev/null || echo \"missing\")\n  assert_eq \"$WRAPPER_STAT\" \"root root 755\" \"/usr/local/sbin/${wrapper} is root-owned 0755\" || true\ndone\n\n# No rule may contain a wildcard: a sudoers * matches spaces too, so it\n# admits extra arguments (mv -t, find -exec, openssl -engine)\nWILDCARD_RULES=$(sudo grep -v '^[[:space:]]*#' /etc/sudoers.d/lamaste | grep -c '[*]' || true)\nassert_eq \"$WILDCARD_RULES\" \"0\" \"sudoers has no wildcard rule\" || true\n\n# The service user cannot run certbot directly, and the wrappers refuse any\n# argument beyond their fixed shapes (a trailing --deploy-hook would run code\n# as root; a traversing lineage would read any file)\nDIRECT_CERTBOT=$(sudo -u lamaste sudo -n /usr/bin/certbot certificates >/dev/null 2>&1 && echo allowed || echo denied)\nassert_eq \"$DIRECT_CERTBOT\" \"denied\" \"lamaste cannot run /usr/bin/certbot through sudo\" || true\nWRAP_DOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"\")\nEXTRA_ARG_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot renew \"panel.${WRAP_DOMAIN}\" --deploy-hook /bin/true >/dev/null 2>&1 || EXTRA_ARG_RC=$?\nassert_eq \"$EXTRA_ARG_RC\" \"2\" \"lamaste-certbot rejects extra arguments (exit 2)\" || true\nBAD_EMAIL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-certbot issue \"-x@example.com\" \"panel.${WRAP_DOMAIN}\" \"panel.${WRAP_DOMAIN}\" >/dev/null 2>&1 || BAD_EMAIL_RC=$?\nassert_eq \"$BAD_EMAIL_RC\" \"2\" \"lamaste-certbot rejects a malformed email (exit 2)\" || true\nTRAVERSAL_RC=0\nsudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info ../../../etc/shadow enddate >/dev/null 2>&1 || TRAVERSAL_RC=$?\nassert_eq \"$TRAVERSAL_RC\" \"2\" \"lamaste-cert-info rejects a traversing lineage name (exit 2)\" || true\nPANEL_ENDDATE=$(sudo -u lamaste sudo -n /usr/local/sbin/lamaste-cert-info \"panel.${WRAP_DOMAIN}\" enddate 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_ENDDATE\" \"notAfter=\" \"lamaste-cert-info reads panel.${WRAP_DOMAIN}'s expiry\" || true\n\n# Every issue the panel ever made carried --cert-name (a fixed lineage name,\n# so a re-issue never drifts to <name>-0001)\nISSUES_TOTAL=$(sudo grep -c ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null || true)\nISSUES_NAMED=$(sudo grep ' certonly ' /etc/letsencrypt/e2e-certbot-calls.log 2>/dev/null | grep -c -- ' --cert-name ' || true)\nif [ \"${ISSUES_TOTAL:-0}\" -gt 0 ] 2>/dev/null; then\n  assert_eq \"${ISSUES_NAMED:-0}\" \"${ISSUES_TOTAL}\" \"Every certonly call carried --cert-name (${ISSUES_TOTAL} issued)\" || true\nelse\n  log_skip \"No certonly calls recorded by the certbot shim yet\"\nfi"
     },
     {
       "id": "auto-renew-timer-status",
       "label": "Auto-renew timer status",
       "steps": [
         {
-          "id": "step-55",
+          "id": "step-57",
           "label": "GET /api/certs/auto-renew-status",
           "target": "host",
           "op": {
@@ -991,7 +1029,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-58",
           "label": "Extract AUTORENEW_ACTIVE",
           "target": "local",
           "op": {
@@ -1008,7 +1046,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-59",
           "label": "Certbot auto-renew timer is active",
           "target": "local",
           "op": {
@@ -1023,7 +1061,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-60",
           "label": "Auto-renew has a next run time",
           "target": "local",
           "continueOnError": true,
@@ -1046,7 +1084,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-62",
           "label": "Certbot auto-renew timer is not active (may need certbot.timer enabled)",
           "target": "local",
           "op": {
@@ -1061,7 +1099,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-63",
           "label": "Could not determine auto-renew timer status",
           "target": "local",
           "op": {
