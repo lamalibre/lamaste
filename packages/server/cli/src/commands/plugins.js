@@ -30,6 +30,12 @@ import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 export async function runPlugins(args, { json }) {
   const sub = args[0];
 
+  if (MUTATING.has(sub) && process.getuid?.() === 0) {
+    await runAsLamaste(args, { json });
+    await restartPanel(json);
+    return;
+  }
+
   switch (sub) {
     case 'list':
       return listPlugins({ json });
@@ -246,12 +252,58 @@ async function uninstallPluginCmd(name, { json }) {
   }
 }
 
+const MUTATING = new Set(['install', 'enable', 'disable', 'uninstall']);
+
+/** Set on the child run as lamaste: the root parent restarts the panel. */
+const CHILD_ENV = 'LAMALIBRE_LAMASTE_CLI_PLUGINS_CHILD';
+
+/**
+ * Run a plugin subcommand as the lamaste user and wait for it.
+ *
+ * Plugin state (the npm tree, plugins.json, plugin data) lives in the
+ * lamaste-owned state directory. Running npm or writing files there as root
+ * would let whatever the panel left in that directory — a `.npmrc`, a
+ * symlink — steer root. As lamaste, it can only reach what the panel could
+ * already reach. Stays usable while the panel is down (disabling a plugin
+ * that keeps it from starting).
+ *
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function runAsLamaste(args, { json }) {
+  const uid = Number.parseInt((await execa('id', ['-u', 'lamaste'])).stdout.trim(), 10);
+  const gid = Number.parseInt((await execa('id', ['-g', 'lamaste'])).stdout.trim(), 10);
+  const { exitCode } = await execa(
+    process.execPath,
+    [process.argv[1], 'plugins', ...args, ...(json ? ['--json'] : [])],
+    {
+      uid,
+      gid,
+      cwd: STATE_DIR,
+      stdio: 'inherit',
+      reject: false,
+      env: {
+        ...process.env,
+        [CHILD_ENV]: '1',
+        HOME: STATE_DIR,
+        USER: 'lamaste',
+        LOGNAME: 'lamaste',
+        npm_config_cache: `${STATE_DIR}/.npm`,
+      },
+      extendEnv: false,
+    },
+  );
+  if (exitCode !== 0) process.exit(exitCode ?? 1);
+}
+
 /**
  * Restart the panel service after plugin changes.
  * Plugin enable/disable/install/uninstall requires a panel restart to take effect.
  * @param {boolean} json
  */
 async function restartPanel(json) {
+  // The child run as lamaste cannot; its root parent does.
+  if (process.env[CHILD_ENV] === '1') return;
   try {
     await execa('systemctl', ['restart', PANEL_SERVICE]);
     if (!json) {

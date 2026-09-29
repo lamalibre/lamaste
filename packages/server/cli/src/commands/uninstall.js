@@ -81,10 +81,15 @@ export async function runUninstall(args, { json }) {
     { name: 'remove-nginx', label: 'Removing nginx configurations', fn: removeNginxConfigs },
     { name: 'reload-nginx', label: 'Reloading nginx', fn: reloadNginx },
     { name: 'remove-certbot', label: 'Removing certbot certificates', fn: removeCertbotCerts },
-    { name: 'remove-authelia', label: 'Removing Authelia configuration', fn: removeAuthelia },
+    { name: 'remove-authelia', label: 'Removing Authelia', fn: removeAuthelia },
     { name: 'remove-data', label: 'Removing Lamaste data', fn: removeData },
     { name: 'remove-packages', label: 'Removing npm packages', fn: removePackages },
     { name: 'remove-user', label: 'Removing lamaste user', fn: removeUser },
+    {
+      name: 'remove-authelia-user',
+      label: 'Removing lamaste-authelia user',
+      fn: removeAutheliaUser,
+    },
   ];
 
   for (const step of steps) {
@@ -113,7 +118,7 @@ export async function runUninstall(args, { json }) {
 }
 
 async function stopServices() {
-  for (const service of [PANEL_SERVICE, GATEKEEPER_SERVICE]) {
+  for (const service of [PANEL_SERVICE, GATEKEEPER_SERVICE, 'chisel']) {
     try {
       await execa('systemctl', ['stop', service], { timeout: 15000 });
     } catch {
@@ -131,6 +136,8 @@ async function removeServices() {
   const serviceFiles = [
     `/etc/systemd/system/${PANEL_SERVICE}.service`,
     `/etc/systemd/system/${GATEKEEPER_SERVICE}.service`,
+    '/etc/systemd/system/chisel.service',
+    '/etc/systemd/system/authelia.service',
   ];
 
   for (const file of serviceFiles) {
@@ -143,10 +150,12 @@ async function removeServices() {
   await execa('rm', ['-f', '/etc/sudoers.d/lamaste']).catch(() => {});
   await execa('rm', [
     '-f',
-    '/usr/local/sbin/lamaste-sign-csr',
-    '/usr/local/sbin/lamaste-pki-rename',
+    '/usr/local/sbin/lamaste-priv',
     '/usr/local/sbin/lamaste-certbot',
     '/usr/local/sbin/lamaste-cert-info',
+    // installed by versions before 4.0
+    '/usr/local/sbin/lamaste-sign-csr',
+    '/usr/local/sbin/lamaste-pki-rename',
   ]).catch(() => {});
 }
 
@@ -237,8 +246,10 @@ async function removeAuthelia() {
   await execa('systemctl', ['stop', 'authelia']).catch(() => {});
   await execa('systemctl', ['disable', 'authelia']).catch(() => {});
 
-  // Remove authelia config (but not the binary — it may be system-managed)
-  await execa('rm', ['-rf', '/etc/authelia']).catch(() => {});
+  // Remove its configuration, database and log, and the binary
+  // create-lamaste installed (the pinned release, at /usr/local/bin).
+  await execa('rm', ['-rf', '/etc/authelia', '/var/log/authelia']).catch(() => {});
+  await execa('rm', ['-f', '/usr/local/bin/authelia']).catch(() => {});
 }
 
 async function removeData() {
@@ -291,6 +302,11 @@ async function removeUser() {
   // Remove groups if they still exist
   await execa('groupdel', ['lamaste']).catch(() => {});
   await execa('groupdel', ['lamaste-chisel']).catch(() => {});
+}
+
+async function removeAutheliaUser() {
+  await execa('userdel', ['lamaste-authelia']).catch(() => {});
+  await execa('groupdel', ['lamaste-authelia']).catch(() => {});
 }
 
 /**

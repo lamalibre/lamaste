@@ -1,6 +1,14 @@
 /**
- * Authelia lifecycle management — install, config, users, service control,
+ * Authelia configuration management — config, users, service control,
  * access-control sync, TOTP helpers.
+ *
+ * create-lamaste installs Authelia (the pinned release), its unit, and the
+ * account it runs as (`lamaste-authelia`, unprivileged). /etc/authelia is
+ * owned by the lamaste user with group lamaste-authelia, so the panel writes
+ * Authelia's configuration and users file directly, without privileges;
+ * Authelia reads them through its group. Only storing a TOTP secret needs
+ * another identity — Authelia's database is its own file — and goes through
+ * the root helper `lamaste-priv`, which runs Authelia's CLI as its account.
  *
  * Pure logic: all process spawning goes through an injected `exec` function.
  * `bcryptHash` is also injected so the core library does not take a runtime
@@ -10,8 +18,7 @@
  */
 
 import crypto from 'node:crypto';
-import { access, constants, writeFile as fsWriteFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, chmod, constants, copyFile, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
@@ -26,7 +33,9 @@ export const AUTHELIA_CONFIG = path.join(AUTHELIA_CONFIG_DIR, 'configuration.yml
 export const AUTHELIA_USERS = path.join(AUTHELIA_CONFIG_DIR, 'users.yml');
 export const AUTHELIA_SECRETS = path.join(AUTHELIA_CONFIG_DIR, '.secrets.json');
 export const AUTHELIA_LOG_DIR = '/var/log/authelia';
-const GITHUB_API = 'https://api.github.com/repos/authelia/authelia/releases/latest';
+
+/** The root helper that runs Authelia's CLI as its own account (see lamaste-priv). */
+const PRIV = '/usr/local/sbin/lamaste-priv';
 
 // ---------------------------------------------------------------------------
 // Dependency interfaces
@@ -48,7 +57,7 @@ export interface ExecFn {
   (
     file: string,
     args: string[],
-    options?: { reject?: boolean; timeout?: number },
+    options?: { reject?: boolean; timeout?: number; input?: string },
   ): Promise<ExecResult>;
 }
 
@@ -112,194 +121,44 @@ export interface ProtectedSiteRule {
 }
 
 // ---------------------------------------------------------------------------
-// sudo-write helper
+// Files
 // ---------------------------------------------------------------------------
-
-async function sudoWriteFile(
-  destPath: string,
-  content: string,
-  mode: string,
-  exec: ExecFn,
-): Promise<void> {
-  const tmpFile = path.join(
-    tmpdir(),
-    `lamalibre-lamaste-authelia-${crypto.randomBytes(4).toString('hex')}`,
-  );
-  await fsWriteFile(tmpFile, content, 'utf-8');
-  await exec('sudo', ['mv', tmpFile, destPath]);
-  await exec('sudo', ['chmod', mode, destPath]);
-}
-
-// ---------------------------------------------------------------------------
-// Install
-// ---------------------------------------------------------------------------
-
-interface GitHubAsset {
-  readonly name: string;
-  readonly browser_download_url: string;
-}
-interface GitHubReleaseInfo {
-  readonly assets?: GitHubAsset[];
-  readonly message?: string;
-}
-
-async function getInstalledVersion(exec: ExecFn): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await exec(AUTHELIA_BIN, ['--version']);
-    const output = (stdout || stderr || '').trim();
-    if (output) return output;
-  } catch {
-    // --version may not be recognized in newer versions
-  }
-
-  try {
-    const { stdout, stderr } = await exec(AUTHELIA_BIN, ['version']);
-    const output = (stdout || stderr || '').trim();
-    if (output) return output;
-  } catch {
-    // neither worked
-  }
-
-  return null;
-}
-
-export interface InstallResult {
-  readonly installed?: true;
-  readonly skipped?: true;
-  readonly version: string;
-}
 
 /**
- * Download and install the Authelia binary from GitHub releases.
+ * Atomically replace a file in /etc/authelia (temp file, fsync, rename). The
+ * directory is setgid lamaste-authelia, so the new file belongs to that
+ * group; `mode` decides whether Authelia can read (0640) or also rewrite
+ * (0660) it, or not see it at all (0600).
  */
-export async function installAuthelia(exec: ExecFn): Promise<InstallResult> {
-  const exists = await fileExists(AUTHELIA_BIN);
-  if (exists) {
-    const version = await getInstalledVersion(exec);
-    if (version) {
-      return { skipped: true, version };
+async function writeAutheliaFile(destPath: string, content: string, mode: number): Promise<void> {
+  const tmpFile = path.join(
+    path.dirname(destPath),
+    `.${path.basename(destPath)}.${crypto.randomBytes(8).toString('hex')}`,
+  );
+  try {
+    const fh = await open(tmpFile, 'wx', 0o600);
+    try {
+      await fh.writeFile(content, 'utf-8');
+      await fh.chmod(mode);
+      await fh.sync();
+    } finally {
+      await fh.close();
     }
-  }
-
-  let releaseInfo: GitHubReleaseInfo;
-  try {
-    const { stdout } = await exec('curl', [
-      '-s',
-      '-L',
-      '-H',
-      'Accept: application/vnd.github+json',
-      GITHUB_API,
-    ]);
-    releaseInfo = JSON.parse(stdout) as GitHubReleaseInfo;
+    await rename(tmpFile, destPath);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Failed to fetch Authelia release info from GitHub: ${message}. Check internet connectivity.`,
-    );
-  }
-
-  if (releaseInfo.message && releaseInfo.message.includes('rate limit')) {
-    throw new Error(
-      'GitHub API rate limit exceeded. Please try again later or set a GITHUB_TOKEN environment variable.',
-    );
-  }
-
-  const { stdout: unameArch } = await exec('uname', ['-m']);
-  const archMap: Record<string, string> = {
-    x86_64: 'linux-amd64',
-    aarch64: 'linux-arm64',
-    arm64: 'linux-arm64',
-  };
-  const autheliaArch = archMap[unameArch.trim()] ?? 'linux-amd64';
-
-  const asset = releaseInfo.assets?.find(
-    (a) => a.name.includes(autheliaArch) && a.name.endsWith('.tar.gz') && !a.name.includes('musl'),
-  );
-
-  if (!asset) {
-    throw new Error(
-      `Could not find ${autheliaArch} tarball in the latest Authelia release. Available assets: ` +
-        (releaseInfo.assets?.map((a) => a.name).join(', ') || 'none'),
-    );
-  }
-
-  const downloadUrl = asset.browser_download_url;
-  const tmpTar = path.join(tmpdir(), `authelia-${crypto.randomBytes(4).toString('hex')}.tar.gz`);
-  const tmpExtractDir = path.join(
-    tmpdir(),
-    `authelia-extract-${crypto.randomBytes(4).toString('hex')}`,
-  );
-
-  try {
-    await exec('curl', ['-L', '-o', tmpTar, downloadUrl]);
-  } catch (err: unknown) {
-    throw new Error(
-      `Failed to download Authelia from ${downloadUrl}: ${errText(err)}. Check internet connectivity.`,
-    );
-  }
-
-  try {
-    await exec('mkdir', ['-p', tmpExtractDir]);
-    await exec('tar', ['xzf', tmpTar, '-C', tmpExtractDir]);
-
-    const { stdout: findResult } = await exec('find', [
-      tmpExtractDir,
-      '-name',
-      'authelia*',
-      '-type',
-      'f',
-    ]);
-    const candidates = findResult.trim().split('\n').filter(Boolean);
-
-    const binaryPath =
-      candidates.find((p) => path.basename(p) === 'authelia') ||
-      candidates.find(
-        (p) => !path.basename(p).endsWith('.sha256') && !path.basename(p).endsWith('.md'),
-      ) ||
-      candidates[0];
-
-    if (!binaryPath) {
+    await rm(tmpFile, { force: true }).catch(() => undefined);
+    if ((err as NodeJS.ErrnoException).code === 'EACCES') {
       throw new Error(
-        'Could not find authelia binary in extracted archive. Contents: ' + candidates.join(', '),
+        `${AUTHELIA_CONFIG_DIR} is not writable by the panel — run create-lamaste to repair the installation`,
       );
     }
-
-    await exec('sudo', ['mv', binaryPath, AUTHELIA_BIN]);
-    await exec('sudo', ['chmod', '+x', AUTHELIA_BIN]);
-  } catch (err: unknown) {
-    throw new Error(`Failed to install Authelia binary: ${errText(err)}`);
-  } finally {
-    await exec('rm', ['-rf', tmpTar, tmpExtractDir]).catch(() => undefined);
+    throw err;
   }
+}
 
-  const version = await getInstalledVersion(exec);
-  if (!version) {
-    let diag = '';
-    try {
-      const { stdout: fileInfo } = await exec('file', [AUTHELIA_BIN]);
-      diag += `file: ${fileInfo}\n`;
-    } catch {
-      /* ignore */
-    }
-    try {
-      const { stdout: lsInfo } = await exec('ls', ['-la', AUTHELIA_BIN]);
-      diag += `ls: ${lsInfo}\n`;
-    } catch {
-      /* ignore */
-    }
-    try {
-      const result = await exec(AUTHELIA_BIN, ['--version'], { reject: false });
-      diag += `--version stdout: ${result.stdout}\n--version stderr: ${result.stderr}\nexitCode: ${result.exitCode ?? ''}\n`;
-    } catch (e: unknown) {
-      const em = e instanceof Error ? e.message : String(e);
-      diag += `--version error: ${em}\n`;
-    }
-    throw new Error(
-      `Authelia was installed but version check failed. The binary may be corrupted or incompatible.\nDiagnostics:\n${diag}`,
-    );
-  }
-
-  return { installed: true, version };
+/** True once create-lamaste has installed Authelia. */
+export async function isAutheliaInstalled(): Promise<boolean> {
+  return fileExists(AUTHELIA_BIN);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,16 +171,8 @@ export async function installAuthelia(exec: ExecFn): Promise<InstallResult> {
 export async function writeAutheliaConfig(
   domain: string,
   secrets: AutheliaSecrets,
-  exec: ExecFn,
 ): Promise<string> {
   const { jwtSecret, sessionSecret, storageEncryptionKey } = secrets;
-
-  try {
-    await exec('sudo', ['mkdir', '-p', AUTHELIA_CONFIG_DIR]);
-    await exec('sudo', ['mkdir', '-p', AUTHELIA_LOG_DIR]);
-  } catch (err: unknown) {
-    throw new Error(`Failed to create Authelia directories: ${errText(err)}`);
-  }
 
   const configContent = yaml.dump(
     {
@@ -398,15 +249,17 @@ export async function writeAutheliaConfig(
   );
 
   try {
-    await sudoWriteFile(AUTHELIA_CONFIG, configContent, '600', exec);
+    await writeAutheliaFile(AUTHELIA_CONFIG, configContent, 0o640);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia configuration: ${errText(err)}`);
   }
 
+  // The panel's own record of the secrets (Authelia reads them from its
+  // configuration): readable by lamaste only.
   const secretsContent =
     JSON.stringify({ jwtSecret, sessionSecret, storageEncryptionKey }, null, 2) + '\n';
   try {
-    await sudoWriteFile(AUTHELIA_SECRETS, secretsContent, '600', exec);
+    await writeAutheliaFile(AUTHELIA_SECRETS, secretsContent, 0o600);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia secrets file: ${errText(err)}`);
   }
@@ -425,7 +278,6 @@ export async function writeAutheliaConfig(
 export async function createUser(
   username: string,
   password: string,
-  exec: ExecFn,
   bcryptHash: BcryptHashFn,
 ): Promise<{ username: string; created: true }> {
   const hash = await bcryptHash(password, 12);
@@ -436,8 +288,7 @@ export async function createUser(
 
   let usersData: UsersYamlFile = { users: {} };
   try {
-    const { stdout } = await exec('sudo', ['cat', AUTHELIA_USERS]);
-    const parsed = yaml.load(stdout) as UsersYamlFile | null;
+    const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
     if (parsed && parsed.users) {
       usersData = parsed;
     }
@@ -452,7 +303,7 @@ export async function createUser(
     groups: ['admins'],
   };
 
-  await writeUsers(usersData, exec);
+  await writeUsers(usersData);
 
   return { username, created: true };
 }
@@ -460,10 +311,9 @@ export async function createUser(
 /**
  * Read the Authelia users file and return user info (without password hashes).
  */
-export async function readUsers(exec: ExecFn): Promise<AutheliaUser[]> {
+export async function readUsers(): Promise<AutheliaUser[]> {
   try {
-    const { stdout } = await exec('sudo', ['cat', AUTHELIA_USERS]);
-    const parsed = yaml.load(stdout) as UsersYamlFile | null;
+    const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
 
     if (!parsed || !parsed.users) {
       return [];
@@ -483,11 +333,12 @@ export async function readUsers(exec: ExecFn): Promise<AutheliaUser[]> {
 /**
  * Atomically write the Authelia users YAML file.
  */
-export async function writeUsers(usersData: UsersYamlFile, exec: ExecFn): Promise<void> {
+export async function writeUsers(usersData: UsersYamlFile): Promise<void> {
   const yamlContent = yaml.dump(usersData, { lineWidth: -1 });
 
   try {
-    await sudoWriteFile(AUTHELIA_USERS, yamlContent, '600', exec);
+    // 0660: Authelia rewrites the file in place when a user changes a password.
+    await writeAutheliaFile(AUTHELIA_USERS, yamlContent, 0o660);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia users file: ${errText(err)}`);
   }
@@ -497,9 +348,8 @@ export async function writeUsers(usersData: UsersYamlFile, exec: ExecFn): Promis
  * Read the raw users.yml data, returning the full object including password
  * hashes. Used by CRUD operations that need to modify and re-write the file.
  */
-export async function readUsersRaw(exec: ExecFn): Promise<UsersYamlFile> {
-  const { stdout } = await exec('sudo', ['cat', AUTHELIA_USERS]);
-  const parsed = yaml.load(stdout) as UsersYamlFile | null;
+export async function readUsersRaw(): Promise<UsersYamlFile> {
+  const parsed = yaml.load(await readFile(AUTHELIA_USERS, 'utf-8')) as UsersYamlFile | null;
   if (!parsed || !parsed.users) {
     return { users: {} };
   }
@@ -516,42 +366,6 @@ export function hashPassword(password: string, bcryptHash: BcryptHashFn): Promis
 // ---------------------------------------------------------------------------
 // systemd service
 // ---------------------------------------------------------------------------
-
-/**
- * Write the Authelia systemd service unit file.
- */
-export async function writeAutheliaService(exec: ExecFn): Promise<string> {
-  const serviceContent = `[Unit]
-Description=Authelia Authentication Server
-After=network.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/authelia --config /etc/authelia/configuration.yml
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=authelia
-
-[Install]
-WantedBy=multi-user.target
-`;
-
-  const tmpFile = path.join(tmpdir(), `authelia-service-${crypto.randomBytes(4).toString('hex')}`);
-  await fsWriteFile(tmpFile, serviceContent, 'utf-8');
-
-  try {
-    await exec('sudo', ['mv', tmpFile, '/etc/systemd/system/authelia.service']);
-    await exec('sudo', ['chmod', '644', '/etc/systemd/system/authelia.service']);
-    await exec('sudo', ['systemctl', 'daemon-reload']);
-  } catch (err: unknown) {
-    throw new Error(`Failed to write Authelia service file: ${errText(err)}`);
-  }
-
-  return '/etc/systemd/system/authelia.service';
-}
 
 /**
  * Enable and start the Authelia systemd service.
@@ -642,8 +456,10 @@ export async function updateAccessControl(
   // Read current config
   let currentConfig: Record<string, unknown>;
   try {
-    const { stdout } = await exec('sudo', ['cat', AUTHELIA_CONFIG]);
-    const loaded = yaml.load(stdout) as Record<string, unknown> | null;
+    const loaded = yaml.load(await readFile(AUTHELIA_CONFIG, 'utf-8')) as Record<
+      string,
+      unknown
+    > | null;
     if (!loaded) {
       throw new Error('Authelia configuration is empty or invalid');
     }
@@ -756,7 +572,7 @@ export async function updateAccessControl(
 
   // Restore secrets from the authoritative .secrets.json file.
   try {
-    const { stdout: secretsJson } = await exec('sudo', ['cat', AUTHELIA_SECRETS]);
+    const secretsJson = await readFile(AUTHELIA_SECRETS, 'utf-8');
     const secrets = JSON.parse(secretsJson) as Partial<AutheliaSecrets>;
     const storage = currentConfig.storage as
       | { local?: unknown; encryption_key?: string }
@@ -788,24 +604,29 @@ export async function updateAccessControl(
 
   // Backup current config before writing
   const bakPath = `${AUTHELIA_CONFIG}.bak`;
+  let backedUp = false;
   try {
-    await exec('sudo', ['cp', AUTHELIA_CONFIG, bakPath]);
+    await rm(bakPath, { force: true });
+    await copyFile(AUTHELIA_CONFIG, bakPath, constants.COPYFILE_EXCL);
+    await chmod(bakPath, 0o640);
+    backedUp = true;
   } catch {
     // first-time write or missing config — no backup needed
   }
 
   try {
-    await sudoWriteFile(AUTHELIA_CONFIG, configContent, '600', exec);
+    await writeAutheliaFile(AUTHELIA_CONFIG, configContent, 0o640);
   } catch (err: unknown) {
     throw new Error(`Failed to write Authelia configuration: ${errText(err)}`);
   }
 
   try {
     await reloadAuthelia(exec);
-    await exec('sudo', ['rm', '-f', bakPath]).catch(() => undefined);
+    await rm(bakPath, { force: true }).catch(() => undefined);
   } catch (restartErr: unknown) {
     try {
-      await exec('sudo', ['mv', bakPath, AUTHELIA_CONFIG]);
+      if (!backedUp) throw restartErr;
+      await rename(bakPath, AUTHELIA_CONFIG);
       await reloadAuthelia(exec);
     } catch {
       // both configs may be broken — surface original error
@@ -830,7 +651,7 @@ export async function createUserFromInvitation(
 ): Promise<{ username: string; created: true }> {
   let usersData: UsersYamlFile;
   try {
-    usersData = await readUsersRaw(exec);
+    usersData = await readUsersRaw();
   } catch {
     usersData = { users: {} };
   }
@@ -846,7 +667,7 @@ export async function createUserFromInvitation(
     groups,
   };
 
-  await writeUsers(usersData, exec);
+  await writeUsers(usersData);
   await reloadAuthelia(exec);
 
   return { username, created: true };
@@ -933,38 +754,15 @@ export function generateTotpSecret(
  * Write a TOTP secret to Authelia's storage backend.
  *
  * Authelia v4.38+ stores TOTP configurations in its storage backend (SQLite).
- * The totp_secret field in users.yml is ignored. This function uses Authelia's
- * own CLI to generate/replace the TOTP config, which correctly handles
- * storage encryption.
+ * The totp_secret field in users.yml is ignored. The secret is stored with
+ * Authelia's own CLI (which handles storage encryption), run as Authelia's
+ * account by the root helper; the secret travels on stdin, never in a
+ * command line the sudo log would record.
  */
 export async function writeTotpToDatabase(
   username: string,
   base32Secret: string,
   exec: ExecFn,
 ): Promise<void> {
-  const dbPath = path.join(AUTHELIA_CONFIG_DIR, 'db.sqlite3');
-
-  await exec('sudo', [
-    AUTHELIA_BIN,
-    'storage',
-    'user',
-    'totp',
-    'generate',
-    username,
-    '--secret',
-    base32Secret,
-    '--force',
-    '--issuer',
-    'Lamaste',
-    '--algorithm',
-    'SHA1',
-    '--digits',
-    '6',
-    '--period',
-    '30',
-    '--config',
-    AUTHELIA_CONFIG,
-    '--sqlite.path',
-    dbPath,
-  ]);
+  await exec('sudo', [PRIV, 'authelia-totp', username], { input: base32Secret });
 }

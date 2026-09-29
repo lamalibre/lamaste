@@ -59,8 +59,8 @@ export interface ProvisioningLogger {
 // ---------------------------------------------------------------------------
 
 export const TASK_DEFINITIONS: readonly TaskDefinition[] = [
-  { id: 'install-chisel', title: 'Installing Chisel' },
-  { id: 'install-authelia', title: 'Installing Authelia' },
+  { id: 'install-chisel', title: 'Starting Chisel' },
+  { id: 'install-authelia', title: 'Configuring Authelia' },
   { id: 'issue-certs', title: 'Issuing TLS certificates' },
   { id: 'configure-nginx', title: 'Configuring nginx' },
   { id: 'verify-services', title: 'Verifying services' },
@@ -71,22 +71,25 @@ export const TASK_DEFINITIONS: readonly TaskDefinition[] = [
 // Dependency interfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Chisel and Authelia are installed (pinned binaries, units, service
+ * accounts) by create-lamaste as root; provisioning checks they are there,
+ * writes what the panel owns, and starts them.
+ */
 export interface ChiselProvDeps {
-  installChisel(): Promise<{ skipped?: boolean; version?: string }>;
+  isChiselInstalled(): Promise<boolean>;
   ensureChiselKey(): Promise<{ generated: boolean }>;
-  writeChiselService(): Promise<unknown>;
   startChisel(): Promise<unknown>;
   isChiselRunning(): Promise<boolean>;
 }
 
 export interface AutoeliaProvDeps {
-  installAuthelia(): Promise<{ skipped?: boolean; version?: string }>;
+  isAutheliaInstalled(): Promise<boolean>;
   writeAutheliaConfig(
     domain: string,
     secrets: { jwtSecret: string; sessionSecret: string; storageEncryptionKey: string },
   ): Promise<void>;
   createUser(username: string, password: string): Promise<void>;
-  writeAutheliaService(): Promise<void>;
   startAuthelia(): Promise<void>;
   isAutheliaRunning(): Promise<boolean>;
 }
@@ -208,34 +211,26 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
   let adminPassword: string | undefined;
 
   try {
-    // Step 1: Install Chisel
-    emitProgress('install-chisel', 'running', 'Downloading Chisel binary...');
-    const chiselResult = await chisel.installChisel();
-    emitProgress(
-      'install-chisel',
-      'running',
-      'Writing systemd service...',
-      chiselResult.skipped
-        ? 'Chisel already installed'
-        : `Installed Chisel ${chiselResult.version ?? 'unknown'}`,
-    );
+    // Step 1: Chisel (installed by create-lamaste)
+    emitProgress('install-chisel', 'running', 'Checking the Chisel installation...');
+    if (!(await chisel.isChiselInstalled())) {
+      throw new Error(
+        'Chisel is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+      );
+    }
     await chisel.ensureChiselKey();
-    await chisel.writeChiselService();
     emitProgress('install-chisel', 'running', 'Starting Chisel service...');
     await chisel.startChisel();
-    emitProgress('install-chisel', 'done', 'Chisel installed and running');
+    emitProgress('install-chisel', 'done', 'Chisel running');
 
-    // Step 2: Install Authelia
-    emitProgress('install-authelia', 'running', 'Downloading Authelia binary...');
-    const autheliaResult = await authelia.installAuthelia();
-    emitProgress(
-      'install-authelia',
-      'running',
-      'Writing configuration...',
-      autheliaResult.skipped
-        ? 'Authelia already installed'
-        : `Installed Authelia ${autheliaResult.version ?? 'unknown'}`,
-    );
+    // Step 2: Authelia (installed by create-lamaste)
+    emitProgress('install-authelia', 'running', 'Checking the Authelia installation...');
+    if (!(await authelia.isAutheliaInstalled())) {
+      throw new Error(
+        'Authelia is not installed. Run `npx @lamalibre/create-lamaste` on the server to repair the installation.',
+      );
+    }
+    emitProgress('install-authelia', 'running', 'Writing configuration...');
 
     const secrets = {
       jwtSecret: crypto.randomBytes(32).toString('hex'),
@@ -248,12 +243,9 @@ export async function provisionServer(opts: ProvisionServerOptions): Promise<Pro
     adminPassword = crypto.randomBytes(16).toString('base64url');
     await authelia.createUser('admin', adminPassword);
 
-    emitProgress('install-authelia', 'running', 'Writing systemd service...');
-    await authelia.writeAutheliaService();
-
     emitProgress('install-authelia', 'running', 'Starting Authelia service...');
     await authelia.startAuthelia();
-    emitProgress('install-authelia', 'done', 'Authelia installed and running');
+    emitProgress('install-authelia', 'done', 'Authelia configured and running');
 
     // Step 3: Issue certificates
     emitProgress('issue-certs', 'running', `Issuing certificate for panel.${domain}...`);

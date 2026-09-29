@@ -1,16 +1,16 @@
 import { execa } from 'execa';
-import { writeFile, readFile, mkdir, cp, rm } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, mkdtemp, cp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-  generateServiceUnit,
-  generateSudoersContent,
-  SUDOERS_WRAPPERS,
-  CHISEL_GROUP,
-} from '../lib/service-config.js';
-import { ensureChiselGroup } from '../lib/chisel-group.js';
+import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
+import { lookupId } from '../lib/accounts.js';
+import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
+import { generateCertHelpPage } from '../lib/cert-help-page.js';
+import { provisionRelayServices } from '../lib/relay-services.js';
+import { installSudoersFile, installSudoersWrappers } from '../lib/wrappers.js';
 
 /**
  * Panel deployment subtasks: system user, directories, server + client deploy,
@@ -53,28 +53,40 @@ export function panelTasks(ctx, task) {
       rendererOptions: { persistentOutput: true },
     },
     {
-      title: `Creating ${CHISEL_GROUP} group`,
+      title: 'Creating directory structure',
       task: async (_ctx, subtask) => {
-        const { created } = await ensureChiselGroup();
-        subtask.output = created
-          ? `Created group ${CHISEL_GROUP}; lamaste is a member`
-          : `Group ${CHISEL_GROUP} exists; lamaste is a member`;
+        // Code (the panel, the gatekeeper, and the lamaste-server CLI that
+        // administrators run as root) is root-owned: the lamaste user must
+        // not be able to change what root later executes. State is lamaste's.
+        const { previous } = await ensureRootOwnedInstallDir(installDir);
+        // A lamaste-owned tree from an earlier version was moved aside;
+        // every component is deployed fresh below, so it can go now.
+        if (previous) await removeTree(previous);
+        await mkdir(`${installDir}/serverd`, { recursive: true });
+        await mkdir(`${installDir}/server-ui`, { recursive: true });
+        await mkdir(configDir, { recursive: true });
+
+        // Served by the IP vhost to browsers without a client certificate.
+        const helpDir = `${installDir}/lamaste-server-ui`;
+        await mkdir(helpDir, { recursive: true });
+        await writeFile(`${helpDir}/cert-help.html`, generateCertHelpPage(ctx));
+
+        await execa('chown', ['-R', 'lamaste:lamaste', configDir]);
+
+        subtask.output = `Directories created: ${installDir}, ${configDir}`;
       },
       rendererOptions: { persistentOutput: true },
     },
     {
-      title: 'Creating directory structure',
+      title: 'Installing chisel and Authelia',
       task: async (_ctx, subtask) => {
-        await mkdir(`${installDir}/serverd`, { recursive: true });
-        await mkdir(`${installDir}/server-ui`, { recursive: true });
-        await mkdir(configDir, { recursive: true });
-        await mkdir('/var/www/lamaste', { recursive: true });
-
-        await execa('chown', ['-R', 'lamaste:lamaste', installDir]);
-        await execa('chown', ['-R', 'lamaste:lamaste', configDir]);
-        await execa('chown', ['-R', 'www-data:www-data', '/var/www/lamaste']);
-
-        subtask.output = `Directories created: ${installDir}, ${configDir}, /var/www/lamaste`;
+        // Pinned, digest-verified binaries, their units, service accounts,
+        // and the web root / Authelia directories the panel writes without
+        // privileges. Onboarding enables and starts the services.
+        await provisionRelayServices(ctx, (line) => {
+          subtask.output = line;
+        });
+        subtask.output = 'chisel and Authelia installed (started during onboarding)';
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -116,8 +128,6 @@ export function panelTasks(ctx, task) {
           );
         }
 
-        await execa('chown', ['-R', 'lamaste:lamaste', serverDest]);
-
         subtask.output = 'Panel server deployed';
       },
       rendererOptions: { persistentOutput: true },
@@ -158,8 +168,6 @@ export function panelTasks(ctx, task) {
             `Failed to install lamaste-server CLI dependencies.\n${err.stderr || err.message}`,
           );
         }
-
-        await execa('chown', ['-R', 'lamaste:lamaste', cliDest]);
 
         const serverBin = join(cliDest, 'bin', 'lamaste-server.js');
         await execa('chmod', ['+x', serverBin]);
@@ -205,15 +213,12 @@ export function panelTasks(ctx, task) {
           await rm(distDest, { recursive: true, force: true });
           await cp(prebuiltDist, distDest, { recursive: true });
 
-          await execa('chown', ['-R', 'lamaste:lamaste', clientDest]);
           subtask.output = 'Panel client deployed from pre-built dist';
           return;
         }
 
         // No pre-built dist — build from source in a temp directory
-        const buildDir = '/tmp/lamalibre-lamaste-server-ui-build';
-        await rm(buildDir, { recursive: true, force: true });
-        await mkdir(buildDir, { recursive: true });
+        const buildDir = await mkdtemp(join(tmpdir(), 'lamalibre-lamaste-server-ui-build-'));
 
         subtask.output = 'Copying lamaste-server-ui source for build...';
         for (const entry of [
@@ -250,7 +255,6 @@ export function panelTasks(ctx, task) {
 
         await rm(buildDir, { recursive: true, force: true });
 
-        await execa('chown', ['-R', 'lamaste:lamaste', clientDest]);
         subtask.output = 'Panel client built and deployed';
       },
       rendererOptions: { persistentOutput: true },
@@ -265,7 +269,6 @@ export function panelTasks(ctx, task) {
           subtask.output = 'Copying version-stamped docs...';
           await rm(docsDest, { recursive: true, force: true });
           await cp(docsSrc, docsDest, { recursive: true });
-          await execa('chown', ['-R', 'lamaste:lamaste', docsDest]);
           subtask.output = 'Documentation deployed';
         } else {
           subtask.output = 'No bundled docs found — skipping';
@@ -304,9 +307,11 @@ export function panelTasks(ctx, task) {
           };
         }
 
-        await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o640 });
-
-        await execa('chown', ['lamaste:lamaste', configPath]);
+        await writeFileNoFollow(configPath, JSON.stringify(config, null, 2) + '\n', {
+          mode: 0o640,
+          uid: await lookupId('user', 'lamaste'),
+          gid: await lookupId('group', 'lamaste'),
+        });
 
         subtask.output = `Configuration written to ${configPath}`;
       },
@@ -325,35 +330,11 @@ export function panelTasks(ctx, task) {
     {
       title: 'Installing sudoers wrapper scripts',
       task: async (_ctx, subtask) => {
-        // The wrappers replace previous sudoers wildcards that were
-        // exploitable (see service-config.js comments). They MUST be installed
-        // before the sudoers file is written — the sudoers entries reference
-        // these absolute paths and visudo will reject the file otherwise (well,
-        // it doesn't actually verify existence, but we want them in place
-        // before the panel service starts and tries to call them).
-        const scriptsSrc = join(packageRoot, 'scripts');
-        const wrappers = SUDOERS_WRAPPERS;
-
-        for (const w of wrappers) {
-          const src = join(scriptsSrc, w.name);
-          if (!existsSync(src)) {
-            throw new Error(
-              `Sudoers wrapper script not found in package: ${src}. The provisioner package is incomplete.`,
-            );
-          }
-
-          // Validate the script parses as bash before installing — a syntax
-          // error would only surface at runtime, when the panel needs to sign
-          // a CSR and there is no fallback.
-          subtask.output = `Validating ${w.name} syntax...`;
-          await execa('bash', ['-n', src]);
-
-          // Install with explicit mode + ownership. install(1) is part of
-          // coreutils so it's always available on Ubuntu 24.04.
-          subtask.output = `Installing ${w.name} to ${w.dest}...`;
-          await execa('install', ['-o', 'root', '-g', 'root', '-m', '0755', src, w.dest]);
-        }
-
+        // The root-owned programs the sudoers rules name. They must be in
+        // place before the panel service starts and calls them.
+        await installSudoersWrappers(join(packageRoot, 'scripts'), (line) => {
+          subtask.output = line;
+        });
         subtask.output = 'Sudoers wrappers installed';
       },
       rendererOptions: { persistentOutput: true },
@@ -361,20 +342,7 @@ export function panelTasks(ctx, task) {
     {
       title: 'Writing sudoers rules',
       task: async (_ctx, subtask) => {
-        const sudoersContent = generateSudoersContent();
-        const sudoersPath = '/etc/sudoers.d/lamaste';
-        await writeFile(sudoersPath, sudoersContent, { mode: 0o440 });
-
-        subtask.output = 'Validating sudoers file...';
-        try {
-          await execa('visudo', ['-c', '-f', sudoersPath]);
-        } catch (error) {
-          // Remove invalid sudoers file to avoid locking out sudo
-          await rm(sudoersPath, { force: true });
-          throw new Error(
-            `Sudoers validation failed — file removed for safety.\n${error.stderr || error.message}`,
-          );
-        }
+        await installSudoersFile(generateSudoersContent());
 
         subtask.output = 'Sudoers rules written and validated';
       },

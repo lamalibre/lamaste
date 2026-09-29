@@ -11,19 +11,17 @@
  * 5. Re-enable IP:9292 vhost
  * 6. Restart serverd + reload nginx
  * 7. Print new P12 password
+ *
+ * The PKI directory and panel.json belong to the lamaste user — and the
+ * panel, if compromised, could have left symlinks there for root to write
+ * through. So every file operation inside them runs as lamaste (openssl, cp,
+ * chmod) or creates a fresh file (O_EXCL | O_NOFOLLOW) that is renamed into
+ * place; root never writes through an existing path there.
  */
 
 import crypto from 'node:crypto';
-import {
-  readFile,
-  writeFile,
-  rename,
-  access,
-  constants,
-  copyFile,
-  unlink,
-  open,
-} from 'node:fs/promises';
+import { readFile, rename, access, constants, unlink, open, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import chalk from 'chalk';
 import { execa } from 'execa';
 import { CONFIG_PATH, PKI_DIR, PANEL_SERVICE } from '../config.js';
@@ -48,6 +46,54 @@ async function atomicWritePassword(destPath, password) {
     await fh.close();
   }
   await rename(tmpPath, destPath);
+}
+
+/**
+ * uid/gid of the lamaste user, as execa options: commands run with them act
+ * inside the lamaste-owned PKI directory with lamaste's rights only.
+ *
+ * @returns {Promise<{ uid: number, gid: number }>}
+ */
+async function lamasteIdentity() {
+  const uid = Number.parseInt((await execa('id', ['-u', 'lamaste'])).stdout.trim(), 10);
+  const gid = Number.parseInt((await execa('id', ['-g', 'lamaste'])).stdout.trim(), 10);
+  if (!Number.isInteger(uid) || !Number.isInteger(gid)) {
+    throw new Error('Cannot resolve the lamaste user');
+  }
+  return { uid, gid };
+}
+
+/**
+ * Write `content` to `destPath` (in a lamaste-owned directory) as a fresh
+ * file owned by `owner`, renamed into place.
+ *
+ * @param {string} destPath
+ * @param {string} content
+ * @param {{ uid: number, gid: number }} owner
+ * @param {number} mode
+ */
+async function writeOwnedFile(destPath, content, owner, mode) {
+  const tmp = join(
+    dirname(destPath),
+    `.${basename(destPath)}.${crypto.randomBytes(8).toString('hex')}`,
+  );
+  const fh = await open(
+    tmp,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    await fh.writeFile(content, 'utf-8');
+    await fh.chown(owner.uid, owner.gid);
+    await fh.chmod(mode);
+    await fh.sync();
+  } catch (err) {
+    await fh.close();
+    await rm(tmp, { force: true });
+    throw err;
+  }
+  await fh.close();
+  await rename(tmp, destPath);
 }
 
 /**
@@ -91,6 +137,8 @@ export async function runResetAdmin({ json, passwordFile }) {
     process.exit(1);
   }
 
+  const lamaste = await lamasteIdentity();
+
   // 2. Verify CA exists
   try {
     await access(`${PKI_DIR}/ca.key`, constants.R_OK);
@@ -106,13 +154,11 @@ export async function runResetAdmin({ json, passwordFile }) {
   if (json) emitStep('generate-cert', 'running');
   let oldSerial = '';
   try {
-    const { stdout } = await execa('openssl', [
-      'x509',
-      '-in',
-      `${PKI_DIR}/client.crt`,
-      '-serial',
-      '-noout',
-    ]);
+    const { stdout } = await execa(
+      'openssl',
+      ['x509', '-in', `${PKI_DIR}/client.crt`, '-serial', '-noout'],
+      lamaste,
+    );
     const match = stdout.match(/serial=([A-Fa-f0-9]+)/);
     oldSerial = match ? match[1] : '';
   } catch {
@@ -121,39 +167,47 @@ export async function runResetAdmin({ json, passwordFile }) {
 
   // 4. Generate new admin key
   if (!json) console.log('  Generating new admin private key...');
-  await execa('openssl', ['genrsa', '-out', `${PKI_DIR}/client.key.new`, '4096']);
+  await execa('openssl', ['genrsa', '-out', `${PKI_DIR}/client.key.new`, '4096'], lamaste);
 
   // 5. Create CSR
   if (!json) console.log('  Creating certificate signing request...');
-  await execa('openssl', [
-    'req',
-    '-new',
-    '-key',
-    `${PKI_DIR}/client.key.new`,
-    '-out',
-    `${PKI_DIR}/client.csr`,
-    '-subj',
-    '/CN=admin/O=Lamaste',
-  ]);
+  await execa(
+    'openssl',
+    [
+      'req',
+      '-new',
+      '-key',
+      `${PKI_DIR}/client.key.new`,
+      '-out',
+      `${PKI_DIR}/client.csr`,
+      '-subj',
+      '/CN=admin/O=Lamaste',
+    ],
+    lamaste,
+  );
 
   // 6. Sign with CA
   if (!json) console.log('  Signing certificate with CA...');
-  await execa('openssl', [
-    'x509',
-    '-req',
-    '-in',
-    `${PKI_DIR}/client.csr`,
-    '-CA',
-    `${PKI_DIR}/ca.crt`,
-    '-CAkey',
-    `${PKI_DIR}/ca.key`,
-    '-CAcreateserial',
-    '-out',
-    `${PKI_DIR}/client.crt.new`,
-    '-days',
-    '730',
-    '-sha256',
-  ]);
+  await execa(
+    'openssl',
+    [
+      'x509',
+      '-req',
+      '-in',
+      `${PKI_DIR}/client.csr`,
+      '-CA',
+      `${PKI_DIR}/ca.crt`,
+      '-CAkey',
+      `${PKI_DIR}/ca.key`,
+      '-CAcreateserial',
+      '-out',
+      `${PKI_DIR}/client.crt.new`,
+      '-days',
+      '730',
+      '-sha256',
+    ],
+    lamaste,
+  );
 
   // 7. Create P12 bundle
   const p12Password = crypto.randomBytes(16).toString('hex');
@@ -180,7 +234,7 @@ export async function runResetAdmin({ json, passwordFile }) {
       '-passout',
       'stdin',
     ],
-    { input: p12Password },
+    { ...lamaste, input: p12Password },
   );
 
   if (json) emitStep('generate-cert', 'complete');
@@ -191,7 +245,11 @@ export async function runResetAdmin({ json, passwordFile }) {
   for (const ext of ['key', 'crt', 'p12']) {
     try {
       await access(`${PKI_DIR}/client.${ext}`, constants.F_OK);
-      await copyFile(`${PKI_DIR}/client.${ext}`, `${PKI_DIR}/client.${ext}.bak`);
+      await execa(
+        'cp',
+        ['--', `${PKI_DIR}/client.${ext}`, `${PKI_DIR}/client.${ext}.bak`],
+        lamaste,
+      );
     } catch {
       // Old file may not exist
     }
@@ -230,15 +288,9 @@ export async function runResetAdmin({ json, passwordFile }) {
   await unlink(`${PKI_DIR}/client.csr`).catch(() => {});
   await unlink(`${PKI_DIR}/ca.srl`).catch(() => {});
 
-  // 12. Set file permissions
-  await execa('chmod', ['600', `${PKI_DIR}/client.key`, `${PKI_DIR}/client.p12`]);
-  await execa('chmod', ['644', `${PKI_DIR}/client.crt`]);
-  await execa('chown', [
-    'lamaste:lamaste',
-    `${PKI_DIR}/client.key`,
-    `${PKI_DIR}/client.crt`,
-    `${PKI_DIR}/client.p12`,
-  ]);
+  // 12. Set file permissions (the files are lamaste's: openssl ran as lamaste)
+  await execa('chmod', ['600', `${PKI_DIR}/client.key`, `${PKI_DIR}/client.p12`], lamaste);
+  await execa('chmod', ['644', `${PKI_DIR}/client.crt`], lamaste);
 
   if (json) emitStep('install-cert', 'complete');
 
@@ -260,9 +312,7 @@ export async function runResetAdmin({ json, passwordFile }) {
         label: 'admin (reset from hardware-bound)',
         revokedAt: new Date().toISOString(),
       });
-      const tmpPath = `${revocationPath}.tmp`;
-      await writeFile(tmpPath, JSON.stringify(revoked, null, 2) + '\n', 'utf-8');
-      await rename(tmpPath, revocationPath);
+      await writeOwnedFile(revocationPath, JSON.stringify(revoked, null, 2) + '\n', lamaste, 0o600);
     }
     if (json) emitStep('revoke-old', 'complete');
   }
@@ -289,13 +339,7 @@ export async function runResetAdmin({ json, passwordFile }) {
   // 16. Update config
   if (!json) console.log('  Updating panel configuration...');
   config.adminAuthMode = 'p12';
-  const configTmp = `${CONFIG_PATH}.tmp`;
-  await writeFile(configTmp, JSON.stringify(config, null, 2) + '\n', {
-    encoding: 'utf-8',
-    mode: 0o640,
-  });
-  await rename(configTmp, CONFIG_PATH);
-  await execa('chown', ['lamaste:lamaste', CONFIG_PATH]);
+  await writeOwnedFile(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', lamaste, 0o640);
   if (json) emitStep('config', 'complete');
 
   // 17. Restart serverd

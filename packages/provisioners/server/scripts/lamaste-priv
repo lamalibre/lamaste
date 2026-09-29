@@ -1,0 +1,693 @@
+#!/usr/bin/node
+/**
+ * lamaste-priv — the root half of the Lamaste panel.
+ *
+ * The panel runs as the unprivileged `lamaste` user. Everything it must do as
+ * root that is not a fixed command line goes through this one program, which
+ * sudoers allows it to run (`/etc/sudoers.d/lamaste`). Each operation takes a
+ * fixed, validated set of arguments; content (vhost text, TOTP secrets) comes
+ * on stdin, never on the command line, so it is not written to the sudo log.
+ *
+ *   nginx-site write <name>            stdin: vhost text (validated, see below)
+ *   nginx-site backup <name>           copy <name> to <name>.bak
+ *   nginx-site restore <name>          move <name>.bak back to <name>
+ *   nginx-site discard-backup <name>   delete <name>.bak
+ *   nginx-site enable <name>           link <name> into sites-enabled
+ *   nginx-site disable <name>          unlink <name> from sites-enabled
+ *   nginx-site remove <name>           delete <name>, its link and its backup
+ *   authelia-totp <username>           stdin: base32 secret
+ *   self-update <version>              run create-lamaste@<version> detached
+ *
+ * Why vhosts are validated: nginx's master process runs as root and opens the
+ * files a configuration names — `access_log /etc/cron.d/x` with a crafted
+ * `log_format` is a root shell. A vhost is accepted only if every directive is
+ * on the allow-list below, in the context it belongs to, with arguments that
+ * cannot name a file outside the paths Lamaste serves. Anything else —
+ * including a directive nginx would accept — is refused.
+ *
+ * This file is installed root-owned (0755) at /usr/local/sbin/lamaste-priv by
+ * create-lamaste. It uses only Node.js built-ins and reads nothing the
+ * lamaste user can write, so it cannot be steered by the panel's own files.
+ * It is CommonJS on purpose: an extension-less script outside any package is
+ * loaded as CommonJS by every supported Node.js version.
+ */
+
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
+
+const SITES_AVAILABLE = '/etc/nginx/sites-available';
+const SITES_ENABLED = '/etc/nginx/sites-enabled';
+const MAX_VHOST_BYTES = 256 * 1024;
+
+const AUTHELIA_BIN = '/usr/local/bin/authelia';
+const AUTHELIA_CONFIG = '/etc/authelia/configuration.yml';
+const AUTHELIA_USER = 'lamaste-authelia';
+
+const SYSTEMD_RUN = '/usr/bin/systemd-run';
+const NPX = '/usr/bin/npx';
+
+class UsageError extends Error {}
+
+// ---------------------------------------------------------------------------
+// Site names
+// ---------------------------------------------------------------------------
+
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?';
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+/** Vhosts the panel writes. */
+const PANEL_SITE_RE = new RegExp(
+  `^lamalibre-lamaste-(?:panel-domain|auth|tunnel|app-${LABEL}|agent-panel-${LABEL}|site-${UUID})$`,
+);
+
+/** Vhosts create-lamaste writes that the panel may only switch on and off. */
+const TOGGLE_ONLY_SITES = new Set(['lamalibre-lamaste-panel-ip']);
+
+function assertSiteName(name, action) {
+  if (typeof name !== 'string' || name.length > 128) {
+    throw new UsageError('invalid site name');
+  }
+  if (PANEL_SITE_RE.test(name)) return;
+  if ((action === 'enable' || action === 'disable') && TOGGLE_ONLY_SITES.has(name)) return;
+  throw new UsageError(`site name not allowed for ${action}: ${name}`);
+}
+
+// ---------------------------------------------------------------------------
+// nginx configuration: tokenizer and parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Split nginx configuration text into tokens: words (quoted or bare), `{`,
+ * `}` and `;`. Comments run from a `#` at the start of a token to the end of
+ * the line, as in nginx.
+ *
+ * Anything whose meaning could differ between this tokenizer and nginx's is
+ * refused rather than interpreted: backslashes, `${`, control characters, and
+ * non-ASCII text outside comments.
+ */
+function tokenize(text) {
+  const tokens = [];
+  let i = 0;
+  let line = 1;
+  const n = text.length;
+  const isSpace = (c) => c === ' ' || c === '\t' || c === '\r' || c === '\n';
+  const fail = (msg) => {
+    throw new UsageError(`vhost line ${line}: ${msg}`);
+  };
+
+  while (i < n) {
+    const c = text[i];
+    if (c === '\n') {
+      line++;
+      i++;
+      continue;
+    }
+    if (isSpace(c)) {
+      i++;
+      continue;
+    }
+    if (c === '#') {
+      while (i < n && text[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '{' || c === '}' || c === ';') {
+      tokens.push({ type: c, line });
+      i++;
+      continue;
+    }
+
+    let value = '';
+    let quoted = false;
+    if (c === '"' || c === "'") {
+      quoted = true;
+      const quote = c;
+      i++;
+      for (;;) {
+        if (i >= n) fail('unterminated quoted string');
+        const d = text[i];
+        if (d === quote) {
+          i++;
+          break;
+        }
+        if (d === '\n') fail('newline inside a quoted string');
+        value += d;
+        i++;
+      }
+      if (i < n && !isSpace(text[i]) && text[i] !== ';' && text[i] !== '{' && text[i] !== '}') {
+        fail('unexpected character after a quoted string');
+      }
+    } else {
+      while (i < n) {
+        const d = text[i];
+        if (isSpace(d) || d === ';' || d === '{' || d === '}') break;
+        if (d === '"' || d === "'") fail('quote inside a word');
+        value += d;
+        i++;
+      }
+    }
+
+    for (let k = 0; k < value.length; k++) {
+      const code = value.charCodeAt(k);
+      if (code < 0x20 || code > 0x7e) fail('non-printable or non-ASCII character');
+    }
+    if (value.includes('\\')) fail('backslash');
+    if (value.includes('${')) fail('"${" variable syntax');
+    tokens.push({ type: 'word', value, quoted, line });
+  }
+  return tokens;
+}
+
+/**
+ * Parse tokens into directives: `{ name, args, block, line }`, where `block`
+ * is an array of child directives or null for a simple directive.
+ */
+function parse(tokens) {
+  let pos = 0;
+  const parseBlock = (depth) => {
+    const out = [];
+    for (;;) {
+      const t = tokens[pos];
+      if (t === undefined) {
+        if (depth > 0) throw new UsageError('vhost: unexpected end of file, missing "}"');
+        return out;
+      }
+      if (t.type === '}') {
+        if (depth === 0) throw new UsageError(`vhost line ${t.line}: unexpected "}"`);
+        pos++;
+        return out;
+      }
+      if (t.type !== 'word') {
+        throw new UsageError(`vhost line ${t.line}: unexpected "${t.type}"`);
+      }
+      const name = t.value;
+      const args = [];
+      pos++;
+      for (;;) {
+        const a = tokens[pos];
+        if (a === undefined)
+          throw new UsageError(`vhost line ${t.line}: "${name}" is not terminated`);
+        if (a.type === 'word') {
+          args.push(a.value);
+          pos++;
+          continue;
+        }
+        if (a.type === ';') {
+          pos++;
+          out.push({ name, args, block: null, line: t.line });
+          break;
+        }
+        if (a.type === '{') {
+          if (depth >= 8) throw new UsageError(`vhost line ${t.line}: blocks nested too deeply`);
+          pos++;
+          const block = parseBlock(depth + 1);
+          out.push({ name, args, block, line: t.line });
+          break;
+        }
+        throw new UsageError(`vhost line ${a.line}: unexpected "}"`);
+      }
+    }
+  };
+  return parseBlock(0);
+}
+
+// ---------------------------------------------------------------------------
+// nginx configuration: allow-list
+// ---------------------------------------------------------------------------
+
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const CERT_FILE_RE =
+  /^\/etc\/letsencrypt\/live\/[a-z0-9][a-z0-9.-]{0,252}\/(?:fullchain|privkey)\.pem$/;
+const SNIPPET_RE = /^\/etc\/nginx\/snippets\/lamalibre-lamaste-[a-z0-9-]{1,64}\.conf$/;
+const WEBROOT_RE = /^\/var\/www\/lamaste\/[A-Za-z0-9._/-]*$/;
+const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
+const VARIABLE_RE = /^\$[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const URI_PATH_RE = /^\/[A-Za-z0-9._~/-]*$/;
+
+function hasDotDotSegment(p) {
+  return p.split('/').some((seg) => seg === '..' || seg === '.');
+}
+
+function webrootPath(p) {
+  return WEBROOT_RE.test(p) && !hasDotDotSegment(p);
+}
+
+const argc = (min, max) => (args) => args.length >= min && args.length <= max;
+const each = (re) => (args) => args.length > 0 && args.every((a) => re.test(a));
+const oneOf =
+  (...values) =>
+  (args) =>
+    args.length === 1 && values.includes(args[0]);
+const any = () => true;
+
+/**
+ * Directives allowed in each context, with a check of their arguments. A
+ * directive not listed for its context is refused. `block: true` marks a
+ * block directive and names the context of its children.
+ */
+const RULES = {
+  // http{} level — the top of a sites-enabled file
+  main: {
+    server: { block: 'server', args: argc(0, 0) },
+    map: { block: 'map', args: (a) => a.length === 2 && a.every((v) => VARIABLE_RE.test(v)) },
+    limit_req_zone: {
+      args: (a) =>
+        a.length === 3 &&
+        VARIABLE_RE.test(a[0]) &&
+        /^zone=[a-z_]{1,32}:\d{1,4}[km]$/.test(a[1]) &&
+        /^rate=\d{1,6}r\/[sm]$/.test(a[2]),
+    },
+  },
+  server: {
+    // Port 80 belongs to create-lamaste's HTTPS redirect and to certbot's
+    // HTTP-01 challenges; panel vhosts serve TLS only.
+    listen: {
+      args: (a) =>
+        a.length >= 1 &&
+        /^(?:\[::\]:)?443$/.test(a[0]) &&
+        a.slice(1).every((f) => f === 'ssl' || f === 'http2'),
+    },
+    server_name: { args: each(HOSTNAME_RE) },
+    ssl_certificate: {
+      args: (a) => a.length === 1 && CERT_FILE_RE.test(a[0]) && !hasDotDotSegment(a[0]),
+    },
+    ssl_certificate_key: {
+      args: (a) => a.length === 1 && CERT_FILE_RE.test(a[0]) && !hasDotDotSegment(a[0]),
+    },
+    include: { args: (a) => a.length === 1 && SNIPPET_RE.test(a[0]) },
+    ssl_protocols: { args: each(/^TLSv1\.[23]$/) },
+    ssl_ciphers: { args: (a) => a.length === 1 && /^[A-Za-z0-9:!+@_-]{1,512}$/.test(a[0]) },
+    ssl_prefer_server_ciphers: { args: oneOf('on', 'off') },
+    client_max_body_size: { args: (a) => a.length === 1 && /^\d{1,6}[kKmMgG]?$/.test(a[0]) },
+    root: { args: (a) => a.length === 1 && webrootPath(a[0]) },
+    index: { args: each(/^[A-Za-z0-9._-]{1,64}$/) },
+    add_header: {
+      args: (a) =>
+        (a.length === 2 || (a.length === 3 && a[2] === 'always')) && HEADER_NAME_RE.test(a[0]),
+    },
+    proxy_set_header: { args: (a) => a.length === 2 && HEADER_NAME_RE.test(a[0]) },
+    error_page: { args: errorPageArgs },
+    return: { args: argc(1, 2) },
+    rewrite: { args: rewriteArgs },
+    location: { block: 'location', args: locationArgs },
+  },
+  location: {
+    location: { block: 'location', args: locationArgs },
+    if: { block: 'if', args: argc(1, 5) },
+    internal: { args: argc(0, 0) },
+    return: { args: argc(1, 2) },
+    rewrite: { args: rewriteArgs },
+    root: { args: (a) => a.length === 1 && webrootPath(a[0]) },
+    alias: { args: (a) => a.length === 1 && webrootPath(a[0]) },
+    index: { args: each(/^[A-Za-z0-9._-]{1,64}$/) },
+    try_files: { args: each(/^[A-Za-z0-9._/$=-]{1,256}$/) },
+    add_header: {
+      args: (a) =>
+        (a.length === 2 || (a.length === 3 && a[2] === 'always')) && HEADER_NAME_RE.test(a[0]),
+    },
+    error_page: { args: errorPageArgs },
+    client_max_body_size: { args: (a) => a.length === 1 && /^\d{1,6}[kKmMgG]?$/.test(a[0]) },
+    limit_req: {
+      args: (a) =>
+        a.length >= 1 &&
+        a.length <= 3 &&
+        /^zone=[a-z_]{1,32}$/.test(a[0]) &&
+        a.slice(1).every((f) => /^burst=\d{1,6}$/.test(f) || f === 'nodelay'),
+    },
+    proxy_pass: {
+      args: (a) =>
+        a.length === 1 && /^http:\/\/127\.0\.0\.1:\d{1,5}(?:\/[A-Za-z0-9._~/-]*)?$/.test(a[0]),
+    },
+    proxy_set_header: { args: (a) => a.length === 2 && HEADER_NAME_RE.test(a[0]) },
+    proxy_http_version: { args: oneOf('1.0', '1.1') },
+    proxy_read_timeout: { args: (a) => a.length === 1 && /^\d{1,7}[smhd]?$/.test(a[0]) },
+    proxy_send_timeout: { args: (a) => a.length === 1 && /^\d{1,7}[smhd]?$/.test(a[0]) },
+    proxy_buffers: {
+      args: (a) => a.length === 2 && /^\d{1,4}$/.test(a[0]) && /^\d{1,6}[kKmM]?$/.test(a[1]),
+    },
+    proxy_next_upstream: {
+      args: each(
+        /^(?:error|timeout|invalid_header|http_(?:500|502|503|504|403|404|429)|non_idempotent|off)$/,
+      ),
+    },
+    proxy_pass_request_body: { args: oneOf('on', 'off') },
+    auth_request: { args: (a) => a.length === 1 && (a[0] === 'off' || URI_PATH_RE.test(a[0])) },
+    auth_request_set: { args: (a) => a.length === 2 && VARIABLE_RE.test(a[0]) },
+  },
+  if: {
+    return: { args: argc(1, 2) },
+    rewrite: { args: rewriteArgs },
+  },
+};
+
+function errorPageArgs(a) {
+  if (a.length < 2) return false;
+  let k = 0;
+  while (k < a.length - 1 && /^\d{3}$/.test(a[k])) k++;
+  if (k === 0) return false;
+  if (k < a.length - 1 && /^=\d{0,3}$/.test(a[k])) k++;
+  return k === a.length - 1;
+}
+
+function rewriteArgs(a) {
+  return (
+    (a.length === 2 ||
+      (a.length === 3 && ['last', 'break', 'redirect', 'permanent'].includes(a[2]))) &&
+    a[0].length <= 512 &&
+    a[1].length <= 512
+  );
+}
+
+function locationArgs(a) {
+  if (a.length === 1) return a[0].length <= 512 && a[0].startsWith('/');
+  return a.length === 2 && ['=', '~', '~*', '^~'].includes(a[0]) && a[1].length <= 512;
+}
+
+function validateDirectives(directives, context) {
+  const rules = RULES[context];
+  for (const d of directives) {
+    if (context === 'map') {
+      // map entries are "key value;" pairs. `include` inside a map reads a
+      // file (as root) into the map's values — refused, like any block.
+      if (d.block !== null) throw new UsageError(`vhost line ${d.line}: block inside map`);
+      if (d.name === 'include') throw new UsageError(`vhost line ${d.line}: include inside map`);
+      if (
+        d.args.length !== 1 &&
+        !(d.args.length === 0 && ['hostnames', 'volatile'].includes(d.name))
+      ) {
+        throw new UsageError(`vhost line ${d.line}: malformed map entry`);
+      }
+      continue;
+    }
+    const rule = rules[d.name];
+    if (!rule) {
+      throw new UsageError(
+        `vhost line ${d.line}: directive "${d.name}" is not allowed in ${context}`,
+      );
+    }
+    if (!rule.args(d.args)) {
+      throw new UsageError(`vhost line ${d.line}: arguments of "${d.name}" are not allowed`);
+    }
+    if (rule.block) {
+      if (d.block === null) throw new UsageError(`vhost line ${d.line}: "${d.name}" needs a block`);
+      validateDirectives(d.block, rule.block);
+    } else if (d.block !== null) {
+      throw new UsageError(`vhost line ${d.line}: "${d.name}" takes no block`);
+    }
+  }
+}
+
+/** Throws UsageError unless `text` is a vhost Lamaste may install. */
+function validateVhost(text) {
+  if (Buffer.byteLength(text, 'utf8') > MAX_VHOST_BYTES) {
+    throw new UsageError('vhost is too large');
+  }
+  // Comments may carry any text; strip them before the ASCII checks by
+  // letting the tokenizer skip them.
+  const directives = parse(tokenize(text));
+  if (directives.length === 0) throw new UsageError('vhost is empty');
+  validateDirectives(directives, 'main');
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem helpers (all paths are in root-owned directories)
+// ---------------------------------------------------------------------------
+
+function fsyncDir(dir) {
+  const fd = fs.openSync(dir, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Atomically replace `dest` with `content` (temp file, fsync, rename). */
+function atomicWrite(dest, content, mode) {
+  const dir = path.dirname(dest);
+  const tmp = path.join(dir, `.lamaste-priv-${crypto.randomBytes(8).toString('hex')}`);
+  const fd = fs.openSync(
+    tmp,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+    mode,
+  );
+  try {
+    fs.writeSync(fd, content);
+    fs.fchmodSync(fd, mode);
+    fs.fsyncSync(fd);
+  } catch (err) {
+    fs.closeSync(fd);
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  fs.closeSync(fd);
+  try {
+    fs.renameSync(tmp, dest);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  fsyncDir(dir);
+}
+
+function unlinkIfPresent(p) {
+  try {
+    fs.unlinkSync(p);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+function isRegularFile(p) {
+  try {
+    return fs.lstatSync(p).isFile();
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+function readStdin(maxBytes) {
+  const chunks = [];
+  let total = 0;
+  const buf = Buffer.alloc(65536);
+  for (;;) {
+    let read;
+    try {
+      read = fs.readSync(0, buf, 0, buf.length, null);
+    } catch (err) {
+      if (err.code === 'EAGAIN') continue;
+      if (err.code === 'EOF') break;
+      throw err;
+    }
+    if (read === 0) break;
+    total += read;
+    if (total > maxBytes) throw new UsageError('input is too large');
+    chunks.push(Buffer.from(buf.subarray(0, read)));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
+
+function nginxSite(action, name) {
+  assertSiteName(name, action);
+  const available = path.join(SITES_AVAILABLE, name);
+  const enabled = path.join(SITES_ENABLED, name);
+  const backup = `${available}.bak`;
+
+  switch (action) {
+    case 'write': {
+      const text = readStdin(MAX_VHOST_BYTES + 1);
+      validateVhost(text);
+      atomicWrite(available, text, 0o644);
+      return;
+    }
+    case 'backup': {
+      if (!isRegularFile(available)) throw new UsageError(`${name} does not exist`);
+      atomicWrite(backup, fs.readFileSync(available), 0o644);
+      return;
+    }
+    case 'restore': {
+      if (!isRegularFile(backup)) throw new UsageError(`${name} has no backup`);
+      fs.renameSync(backup, available);
+      fsyncDir(SITES_AVAILABLE);
+      return;
+    }
+    case 'discard-backup':
+      unlinkIfPresent(backup);
+      return;
+    case 'enable': {
+      if (!isRegularFile(available)) throw new UsageError(`${name} does not exist`);
+      const tmp = path.join(
+        SITES_ENABLED,
+        `.lamaste-priv-${crypto.randomBytes(8).toString('hex')}`,
+      );
+      fs.symlinkSync(available, tmp);
+      try {
+        fs.renameSync(tmp, enabled);
+      } catch (err) {
+        unlinkIfPresent(tmp);
+        throw err;
+      }
+      fsyncDir(SITES_ENABLED);
+      return;
+    }
+    case 'disable':
+      unlinkIfPresent(enabled);
+      return;
+    case 'remove':
+      unlinkIfPresent(enabled);
+      unlinkIfPresent(available);
+      unlinkIfPresent(backup);
+      return;
+    default:
+      throw new UsageError(`unknown nginx-site action: ${action}`);
+  }
+}
+
+function lookupId(flag, name) {
+  const result = spawnSync('/usr/bin/id', [flag, name], { encoding: 'utf8', env: {} });
+  const id = Number.parseInt((result.stdout || '').trim(), 10);
+  if (result.status !== 0 || !Number.isInteger(id) || id <= 0) {
+    throw new Error(`user ${name} does not exist — run create-lamaste to repair the installation`);
+  }
+  return id;
+}
+
+/**
+ * Store a TOTP secret in Authelia's database with Authelia's own CLI, run as
+ * the Authelia service user (the database is its file).
+ */
+function autheliaTotp(username) {
+  // Same shape as the panel's username schema; a leading "-" would read as a flag.
+  if (typeof username !== 'string' || !/^[a-z0-9_][a-z0-9_-]{1,31}$/.test(username)) {
+    throw new UsageError('invalid username');
+  }
+  const secret = readStdin(1024).trim();
+  if (!/^[A-Z2-7]{16,128}$/.test(secret)) throw new UsageError('invalid TOTP secret');
+
+  const uid = lookupId('-u', AUTHELIA_USER);
+  const gid = lookupId('-g', AUTHELIA_USER);
+  const result = spawnSync(
+    AUTHELIA_BIN,
+    [
+      'storage',
+      'user',
+      'totp',
+      'generate',
+      '--secret',
+      secret,
+      '--force',
+      '--issuer',
+      'Lamaste',
+      '--algorithm',
+      'SHA1',
+      '--digits',
+      '6',
+      '--period',
+      '30',
+      '--config',
+      AUTHELIA_CONFIG,
+      '--',
+      username,
+    ],
+    {
+      uid,
+      gid,
+      cwd: '/',
+      env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent' },
+      encoding: 'utf8',
+      timeout: 60_000,
+    },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    // Authelia's error output does not echo the secret; its success output
+    // (a QR code / otpauth URI) does, so only failures are relayed.
+    throw new Error(
+      `authelia exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+}
+
+/**
+ * Start `create-lamaste@<version> --yes` (the redeploy path) in a transient
+ * systemd unit, two seconds from now: it stops and restarts the panel, so it
+ * must not run inside the panel's service, and the delay lets the panel's
+ * HTTP response reach the browser first.
+ */
+function selfUpdate(version) {
+  if (typeof version !== 'string' || !/^\d{1,4}\.\d{1,4}\.\d{1,6}$/.test(version)) {
+    throw new UsageError('version must be MAJOR.MINOR.PATCH');
+  }
+  const unit = `lamalibre-lamaste-update-${crypto.randomBytes(8).toString('hex')}`;
+  const result = spawnSync(
+    SYSTEMD_RUN,
+    [
+      '--unit',
+      unit,
+      '--description',
+      `Lamaste update to ${version}`,
+      '--on-active=2',
+      '--timer-property=AccuracySec=100ms',
+      '--property=Type=oneshot',
+      '--setenv=HOME=/root',
+      NPX,
+      '--yes',
+      `@lamalibre/create-lamaste@${version}`,
+      '--yes',
+    ],
+    { cwd: '/', env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' }, encoding: 'utf8', timeout: 30_000 },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `systemd-run exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+  process.stdout.write(`${unit}\n`);
+}
+
+function main(argv) {
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
+    throw new UsageError('must run as root (via sudo)');
+  }
+  process.umask(0o022);
+  const [op, ...rest] = argv;
+  switch (op) {
+    case 'nginx-site':
+      if (rest.length !== 2) throw new UsageError('usage: nginx-site <action> <name>');
+      nginxSite(rest[0], rest[1]);
+      return;
+    case 'authelia-totp':
+      if (rest.length !== 1) throw new UsageError('usage: authelia-totp <username>');
+      autheliaTotp(rest[0]);
+      return;
+    case 'self-update':
+      if (rest.length !== 1) throw new UsageError('usage: self-update <version>');
+      selfUpdate(rest[0]);
+      return;
+    default:
+      throw new UsageError(`unknown operation: ${op ?? '(none)'}`);
+  }
+}
+
+if (require.main === module) {
+  try {
+    main(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`lamaste-priv: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(err instanceof UsageError ? 2 : 1);
+  }
+} else {
+  module.exports = { validateVhost, tokenize, parse, assertSiteName, PANEL_SITE_RE, UsageError };
+}

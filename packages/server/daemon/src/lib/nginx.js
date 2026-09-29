@@ -1,37 +1,52 @@
 import { execa } from 'execa';
-import { writeFile as fsWriteFile, readdir, lstat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
 const SITES_ENABLED = '/etc/nginx/sites-enabled';
 
 /**
- * Check if a file exists at the given nginx path using sudo.
+ * The root helper that installs vhosts (create-lamaste installs it; see
+ * provisioners/server/scripts/lamaste-priv). It accepts only the site names
+ * the panel manages and only vhosts built from the directives these
+ * generators use: nginx opens the files a configuration names as root, so a
+ * free-form vhost would be a root shell for whoever controls the panel.
  */
-async function fileExistsSudo(filePath) {
+const PRIV = '/usr/local/sbin/lamaste-priv';
+
+/**
+ * Run one `lamaste-priv nginx-site` action.
+ *
+ * @param {'write'|'backup'|'restore'|'discard-backup'|'enable'|'disable'|'remove'} action
+ * @param {string} name
+ * @param {string} [content] - vhost text, for `write`
+ */
+async function siteAction(action, name, content) {
   try {
-    await execa('sudo', ['test', '-f', filePath]);
+    await execa('sudo', [PRIV, 'nginx-site', action, name], {
+      ...(content === undefined ? {} : { input: content }),
+    });
+  } catch (err) {
+    throw new Error(`nginx site ${action} failed for ${name}: ${err.stderr || err.message}`);
+  }
+}
+
+/** True when `name` exists in sites-available. The directory is world-readable. */
+async function siteExists(name) {
+  try {
+    await access(path.join(SITES_AVAILABLE, name));
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
   }
 }
 
 /**
- * Write content to an nginx site file using a temp file and sudo mv.
+ * Install `content` as sites-available/<name>.
  */
 async function writeVhostFile(name, content) {
-  const tmpFile = path.join(tmpdir(), `nginx-${name}-${crypto.randomBytes(4).toString('hex')}`);
-  await fsWriteFile(tmpFile, content, 'utf-8');
-
-  try {
-    await execa('sudo', ['mv', tmpFile, path.join(SITES_AVAILABLE, name)]);
-    await execa('sudo', ['chmod', '644', path.join(SITES_AVAILABLE, name)]);
-  } catch (err) {
-    throw new Error(`Failed to write nginx vhost file ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('write', name, content);
 }
 
 /**
@@ -622,19 +637,18 @@ async function isSiteEnabled(name) {
  */
 async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
   const availablePath = path.join(SITES_AVAILABLE, name);
-  const bakPath = `${availablePath}.bak`;
 
-  const existed = await fileExistsSudo(availablePath);
+  const existed = await siteExists(name);
   const wasEnabled = await isSiteEnabled(name);
   if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]);
+    await siteAction('backup', name);
   }
 
   const restore = async () => {
     if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
+      await siteAction('restore', name).catch(() => {});
     } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
+      await siteAction('remove', name).catch(() => {});
     }
     if (existed && wasEnabled) {
       await enableSite(name).catch(() => {});
@@ -663,7 +677,7 @@ async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
     await reload();
 
     if (existed) {
-      await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
+      await siteAction('discard-backup', name).catch(() => {});
     }
 
     return availablePath;
@@ -676,12 +690,8 @@ async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
 /**
  * Write a static site vhost with optional Authelia forward auth.
  *
- * Performs a safe write-with-rollback sequence (same as safeWriteVhost):
- * 1. Backup existing vhost (if any)
- * 2. Write the new vhost config
- * 3. Create symlink in sites-enabled
- * 4. Test nginx config
- * 5. On success: reload nginx; on failure: rollback to backup
+ * Written through safeWriteVhost (backup, write, enable, test, reload; on
+ * failure the previous file and link state are restored).
  *
  * @param {object} site - The site object from sites.json
  * @param {string} site.id - Site UUID
@@ -770,59 +780,7 @@ ${
 ${aliasBlock}`;
 
   const name = `lamalibre-lamaste-site-${site.id}`;
-  const availablePath = path.join(SITES_AVAILABLE, name);
-  const bakPath = `${availablePath}.bak`;
-
-  // 1. Backup existing vhost if present
-  const existed = await fileExistsSudo(availablePath);
-  if (existed) {
-    await execa('sudo', ['cp', availablePath, bakPath]);
-  }
-
-  try {
-    // 2. Write new vhost
-    await writeVhostFile(name, config);
-
-    // 3. Create symlink in sites-enabled
-    await enableSite(name);
-
-    // 4. Test nginx config
-    const result = await testConfig();
-    if (!result.valid) {
-      if (existed) {
-        await execa('sudo', ['mv', bakPath, availablePath]);
-      } else {
-        await execa('sudo', ['rm', '-f', availablePath]);
-        await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-      }
-      throw new Error(
-        `Nginx config test failed after writing vhost for ${site.fqdn}: ${result.error}`,
-      );
-    }
-
-    // 5. Reload nginx
-    await reload();
-
-    // Clean up backup on success
-    if (existed) {
-      await execa('sudo', ['rm', '-f', bakPath]).catch(() => {});
-    }
-
-    return availablePath;
-  } catch (err) {
-    if (err.message.includes('Nginx config test failed')) {
-      throw err;
-    }
-
-    // Rollback on unexpected errors
-    if (existed) {
-      await execa('sudo', ['mv', bakPath, availablePath]).catch(() => {});
-    } else {
-      await execa('sudo', ['rm', '-f', availablePath]).catch(() => {});
-      await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]).catch(() => {});
-    }
-    throw err;
-  }
+  return safeWriteVhost(name, config, site.fqdn, { enabled: true });
 }
 
 /**
@@ -869,13 +827,7 @@ server {
  */
 export async function removeStaticSiteVhost(siteId) {
   const name = `lamalibre-lamaste-site-${siteId}`;
-  try {
-    await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-    await execa('sudo', ['rm', '-f', path.join(SITES_AVAILABLE, name)]);
-    await execa('sudo', ['rm', '-f', `${path.join(SITES_AVAILABLE, name)}.bak`]);
-  } catch (err) {
-    throw new Error(`Failed to remove static site vhost ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('remove', name);
 
   const result = await testConfig();
   if (!result.valid) {
@@ -893,13 +845,7 @@ export async function removeStaticSiteVhost(siteId) {
  */
 export async function removeAppVhost(subdomain) {
   const name = `lamalibre-lamaste-app-${subdomain}`;
-  try {
-    await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-    await execa('sudo', ['rm', '-f', path.join(SITES_AVAILABLE, name)]);
-    await execa('sudo', ['rm', '-f', `${path.join(SITES_AVAILABLE, name)}.bak`]);
-  } catch (err) {
-    throw new Error(`Failed to remove app vhost ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('remove', name);
 
   const result = await testConfig();
   if (!result.valid) {
@@ -938,27 +884,14 @@ export async function reload() {
  * Enable a site by creating a symlink in sites-enabled.
  */
 export async function enableSite(name) {
-  try {
-    await execa('sudo', [
-      'ln',
-      '-sf',
-      path.join(SITES_AVAILABLE, name),
-      path.join(SITES_ENABLED, name),
-    ]);
-  } catch (err) {
-    throw new Error(`Failed to enable site ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('enable', name);
 }
 
 /**
  * Disable a site by removing its symlink from sites-enabled.
  */
 export async function disableSite(name) {
-  try {
-    await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-  } catch (err) {
-    throw new Error(`Failed to disable site ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('disable', name);
 }
 
 /**
@@ -1110,13 +1043,7 @@ export async function writeAgentPanelVhost(
  */
 export async function removeAgentPanelVhost(subdomain) {
   const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
-  try {
-    await execa('sudo', ['rm', '-f', path.join(SITES_ENABLED, name)]);
-    await execa('sudo', ['rm', '-f', path.join(SITES_AVAILABLE, name)]);
-    await execa('sudo', ['rm', '-f', `${path.join(SITES_AVAILABLE, name)}.bak`]);
-  } catch (err) {
-    throw new Error(`Failed to remove agent panel vhost ${name}: ${err.stderr || err.message}`);
-  }
+  await siteAction('remove', name);
 
   const result = await testConfig();
   if (!result.valid) {
@@ -1160,16 +1087,4 @@ export async function disableAgentPanelVhost(subdomain) {
   }
 
   await reload();
-}
-
-/**
- * List all enabled Lamaste sites.
- */
-export async function listEnabledSites() {
-  try {
-    const entries = await readdir(SITES_ENABLED);
-    return entries.filter((name) => name.startsWith('lamaste-'));
-  } catch {
-    return [];
-  }
 }

@@ -2,17 +2,17 @@
  * Shim — chisel service lifecycle lives in `@lamalibre/lamaste/server`.
  * This file wires the daemon's execa instance and resolved authfile path
  * to the parameterized core API.
+ *
+ * The binary and the unit are create-lamaste's (installed as root); the
+ * panel manages the key, the authfile and the service state.
  */
 
 import { execa } from 'execa';
+import { access } from 'node:fs/promises';
+import { CHISEL_BIN } from '@lamalibre/lamaste/server';
 import {
-  installChisel as installChiselCore,
   getInstalledChiselVersion as getInstalledChiselVersionCore,
   ensureChiselKey as ensureChiselKeyCore,
-  buildChiselUnit as buildChiselUnitCore,
-  writeChiselService as writeChiselServiceCore,
-  ensureChiselService as ensureChiselServiceCore,
-  isChiselProvisioned as isChiselProvisionedCore,
   startChisel as startChiselCore,
   reloadChisel as reloadChiselCore,
   stopChisel as stopChiselCore,
@@ -22,16 +22,18 @@ import {
 import { syncChiselAuthfile } from './chisel-users.js';
 import { applyAuthfileChange } from './chisel-runtime.js';
 
-function authFilePath() {
-  return process.env.LAMALIBRE_LAMASTE_CHISEL_AUTHFILE || '/etc/lamalibre/lamaste/chisel-users';
-}
-
 function keyFilePath() {
   return process.env.LAMALIBRE_LAMASTE_CHISEL_KEYFILE || '/etc/lamalibre/lamaste/chisel-server.key';
 }
 
-export function installChisel() {
-  return installChiselCore(execa);
+/** True once create-lamaste has installed the chisel binary. */
+export async function isChiselInstalled() {
+  try {
+    await access(CHISEL_BIN);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getInstalledChiselVersion() {
@@ -40,23 +42,6 @@ export function getInstalledChiselVersion() {
 
 export function ensureChiselKey() {
   return ensureChiselKeyCore(keyFilePath(), execa);
-}
-
-export function buildChiselUnit() {
-  return buildChiselUnitCore(authFilePath(), keyFilePath());
-}
-
-export function writeChiselService() {
-  return writeChiselServiceCore(authFilePath(), keyFilePath(), execa);
-}
-
-/** Rewrite the chisel unit if it differs; reports `{ changed }`. */
-export function ensureChiselService() {
-  return ensureChiselServiceCore(authFilePath(), keyFilePath(), execa);
-}
-
-export function isChiselProvisioned() {
-  return isChiselProvisionedCore();
 }
 
 export function startChisel() {

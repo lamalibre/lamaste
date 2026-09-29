@@ -7,14 +7,13 @@
 import { execa } from 'execa';
 import bcrypt from 'bcryptjs';
 import {
-  installAuthelia as installAutheliaCore,
+  isAutheliaInstalled as isAutheliaInstalledCore,
   writeAutheliaConfig as writeAutheliaConfigCore,
   createAutheliaUser,
   readAutheliaUsers,
   writeAutheliaUsers,
   readAutheliaUsersRaw,
   hashAutheliaPassword,
-  writeAutheliaService as writeAutheliaServiceCore,
   startAuthelia as startAutheliaCore,
   reloadAuthelia as reloadAutheliaCore,
   isAutheliaRunning as isAutheliaRunningCore,
@@ -29,36 +28,33 @@ import {
 // bcryptjs hasher — signature matches the core lib's BcryptHashFn.
 const bcryptHash = (password, cost) => bcrypt.hash(password, cost);
 
-export function installAuthelia() {
-  return installAutheliaCore(execa);
+/** True once create-lamaste has installed Authelia. */
+export function isAutheliaInstalled() {
+  return isAutheliaInstalledCore();
 }
 
 export function writeAutheliaConfig(domain, secrets) {
-  return writeAutheliaConfigCore(domain, secrets, execa);
+  return writeAutheliaConfigCore(domain, secrets);
 }
 
 export function createUser(username, password) {
-  return createAutheliaUser(username, password, execa, bcryptHash);
+  return createAutheliaUser(username, password, bcryptHash);
 }
 
 export function readUsers() {
-  return readAutheliaUsers(execa);
+  return readAutheliaUsers();
 }
 
 export function writeUsers(usersData) {
-  return writeAutheliaUsers(usersData, execa);
+  return writeAutheliaUsers(usersData);
 }
 
 export function readUsersRaw() {
-  return readAutheliaUsersRaw(execa);
+  return readAutheliaUsersRaw();
 }
 
 export function hashPassword(password) {
   return hashAutheliaPassword(password, bcryptHash);
-}
-
-export function writeAutheliaService() {
-  return writeAutheliaServiceCore(execa);
 }
 
 export function startAuthelia() {

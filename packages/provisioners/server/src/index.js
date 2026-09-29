@@ -133,14 +133,13 @@ function printUninstallGuide() {
   console.log(`
 ${b('Lamaste — Manual Removal Guide')}
 
-${y('⚠  Automated uninstall is not yet implemented.')}
-${y('   Follow the steps below to fully remove Lamaste from this machine.')}
+${y('Automated removal: sudo lamaste-server uninstall')}
+${y('Or follow the steps below to remove Lamaste by hand.')}
 
 ${b('1. Stop and disable services')}
 
-  ${c('sudo systemctl stop lamalibre-lamaste-serverd')}
-  ${c('sudo systemctl disable lamalibre-lamaste-serverd')}
-  ${c('sudo rm /etc/systemd/system/lamalibre-lamaste-serverd.service')}
+  ${c('sudo systemctl disable --now lamalibre-lamaste-serverd lamalibre-lamaste-gatekeeper chisel authelia')}
+  ${c('sudo rm /etc/systemd/system/{lamalibre-lamaste-serverd,lamalibre-lamaste-gatekeeper,chisel,authelia}.service')}
   ${c('sudo systemctl daemon-reload')}
 
 ${b('2. Remove nginx configuration')}
@@ -150,15 +149,20 @@ ${b('2. Remove nginx configuration')}
   ${c('sudo rm /etc/nginx/snippets/lamalibre-lamaste-*')}
   ${c('sudo nginx -t && sudo systemctl reload nginx')}
 
-${b('3. Remove Lamaste directories')}
+${b('3. Remove Lamaste directories and binaries')}
 
   ${c('sudo rm -rf /etc/lamalibre/lamaste/')}       ${d('# Configuration, PKI certificates, state')}
   ${c('sudo rm -rf /opt/lamalibre/lamaste/')}       ${d('# Panel server and client files')}
   ${c('sudo rm -rf /var/www/lamaste/')}   ${d('# Static site files')}
+  ${c('sudo rm -rf /etc/authelia/ /var/log/authelia/')}   ${d('# Authelia configuration, database, log')}
+  ${c('sudo rm /usr/local/bin/chisel /usr/local/bin/authelia')}
+  ${c('sudo rm /usr/local/sbin/lamaste-priv /usr/local/sbin/lamaste-certbot /usr/local/sbin/lamaste-cert-info')}
 
-${b('4. Remove lamaste user')}
+${b('4. Remove service accounts')}
 
   ${c('sudo userdel -r lamaste')}
+  ${c('sudo userdel lamaste-authelia')}
+  ${c('sudo groupdel lamaste-chisel')}
 
 ${b('5. Remove sudoers rules')}
 

@@ -1,43 +1,48 @@
 /**
  * Static site filesystem helpers.
  *
- * Path validation + sudo-mediated file operations under /var/www/lamaste/<siteId>.
- * Pure-ish: shells out via an injected `exec` function; no global state.
+ * Path validation + file operations under /var/www/lamaste/<siteId>. The web
+ * root belongs to the lamaste user with group www-data (create-lamaste sets
+ * it up): directories are setgid 2750 so everything created inside inherits
+ * the group, files are 0640 — nginx reads through the group, nobody else
+ * can. No privileges are needed.
  */
 
 import crypto from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { writeFile as fsWriteFile, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, lstat, mkdir, open, readdir, rename, rm, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 
-// ---------------------------------------------------------------------------
-// Exec abstraction
-// ---------------------------------------------------------------------------
+/** Directory and file modes inside the web root (see the module comment). */
+const DIR_MODE = 0o750;
+const FILE_MODE = 0o640;
 
-export interface ExecResult {
-  readonly stdout: string;
-  readonly stderr: string;
+function errnoCode(err: unknown): string | undefined {
+  return (err as NodeJS.ErrnoException | null)?.code;
 }
 
-export interface ExecError extends Error {
-  readonly stdout?: string;
-  readonly stderr?: string;
-}
-
-export interface ExecFn {
-  (file: string, args: string[]): Promise<ExecResult>;
-}
-
-function isExecError(err: unknown): err is ExecError {
-  return err instanceof Error;
-}
-
-function errText(err: unknown): string {
-  if (!isExecError(err)) return String(err);
-  return err.stderr || err.message;
+/**
+ * Write `content` to `destPath` atomically (temp file in the same directory,
+ * fsync, rename) with the web root's file mode.
+ */
+async function writeSiteFile(destPath: string, content: string): Promise<void> {
+  const tmp = path.join(path.dirname(destPath), `.upload-${crypto.randomBytes(8).toString('hex')}`);
+  try {
+    const fh = await open(tmp, 'wx', FILE_MODE);
+    try {
+      await fh.writeFile(content, 'utf-8');
+      await fh.chmod(FILE_MODE);
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    await rename(tmp, destPath);
+  } catch (err: unknown) {
+    await rm(tmp, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -176,16 +181,12 @@ function escapeHtml(str: string): string {
 }
 
 /**
- * Create the site directory with a default index.html, owned by www-data.
+ * Create the site directory with a default index.html.
  */
-export async function createSiteDirectory(
-  siteId: string,
-  siteName: string,
-  exec: ExecFn,
-): Promise<void> {
+export async function createSiteDirectory(siteId: string, siteName: string): Promise<void> {
   const siteRoot = getSiteRoot(siteId);
 
-  await exec('sudo', ['mkdir', '-p', siteRoot]);
+  await mkdir(siteRoot, { recursive: true, mode: DIR_MODE });
 
   const defaultHtml = `<!DOCTYPE html>
 <html lang="en">
@@ -209,24 +210,20 @@ export async function createSiteDirectory(
 </html>
 `;
 
-  const tmpFile = path.join(tmpdir(), `site-index-${crypto.randomBytes(4).toString('hex')}.html`);
-  await fsWriteFile(tmpFile, defaultHtml, 'utf-8');
-  await exec('sudo', ['mv', tmpFile, path.join(siteRoot, 'index.html')]);
-  await exec('sudo', ['chown', '-R', 'www-data:www-data', siteRoot]);
-  await exec('sudo', ['chmod', '-R', '755', siteRoot]);
+  await writeSiteFile(path.join(siteRoot, 'index.html'), defaultHtml);
 }
 
 /**
  * Remove a site directory. Rejects siteIds that would escape the sites root.
  */
-export async function removeSiteDirectory(siteId: string, exec: ExecFn): Promise<void> {
+export async function removeSiteDirectory(siteId: string): Promise<void> {
   const siteRoot = getSiteRoot(siteId);
 
   if (!siteRoot.startsWith(SITES_ROOT + '/') || siteId.includes('/') || siteId.includes('..')) {
     throw new Error(`Invalid site ID: ${siteId}`);
   }
 
-  await exec('sudo', ['rm', '-rf', siteRoot]);
+  await rm(siteRoot, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -242,12 +239,12 @@ export interface SiteListEntry {
 }
 
 /**
- * List files and directories at a path within a site.
+ * List files and directories at a path within a site. Symbolic links (which
+ * the panel never creates) are not listed.
  */
 export async function listFiles(
   siteId: string,
   relativePath: string = '.',
-  exec: ExecFn,
 ): Promise<SiteListEntry[]> {
   const siteRoot = getSiteRoot(siteId);
   const cleanPath = relativePath === '.' ? '.' : validatePath(relativePath);
@@ -257,46 +254,38 @@ export async function listFiles(
     throw new Error('Path traversal detected');
   }
 
+  let names: string[];
   try {
-    const { stdout } = await exec('sudo', [
-      'find',
-      targetDir,
-      '-maxdepth',
-      '1',
-      '-mindepth',
-      '1',
-      '-printf',
-      '%f\\t%y\\t%s\\t%T@\\n',
-    ]);
-
-    if (!stdout.trim()) {
-      return [];
-    }
-
-    return stdout
-      .trim()
-      .split('\n')
-      .map((line): SiteListEntry => {
-        const [name = '', type = '', sizeStr = '0', mtime = '0'] = line.split('\t');
-        const entryRelPath = cleanPath === '.' ? name : path.join(cleanPath, name);
-        return {
-          name,
-          type: type === 'd' ? 'directory' : 'file',
-          size: parseInt(sizeStr, 10) || 0,
-          modifiedAt: new Date(parseFloat(mtime) * 1000).toISOString(),
-          relativePath: entryRelPath,
-        };
-      })
-      .sort((a, b) => {
-        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+    names = await readdir(targetDir);
   } catch (err: unknown) {
-    if (isExecError(err) && err.stderr?.includes('No such file or directory')) {
+    if (errnoCode(err) === 'ENOENT' || errnoCode(err) === 'ENOTDIR') {
       throw new Error(`Directory not found: ${cleanPath}`);
     }
-    throw new Error(`Failed to list files: ${errText(err)}`);
+    throw new Error(`Failed to list files: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  const entries: SiteListEntry[] = [];
+  for (const name of names) {
+    let st;
+    try {
+      st = await lstat(path.join(targetDir, name));
+    } catch (err: unknown) {
+      if (errnoCode(err) === 'ENOENT') continue; // removed while listing
+      throw err;
+    }
+    if (!st.isFile() && !st.isDirectory()) continue;
+    entries.push({
+      name,
+      type: st.isDirectory() ? 'directory' : 'file',
+      size: st.size,
+      modifiedAt: st.mtime.toISOString(),
+      relativePath: cleanPath === '.' ? name : path.join(cleanPath, name),
+    });
+  }
+  return entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -305,13 +294,13 @@ export async function listFiles(
 
 /**
  * Save an uploaded file to a site directory using streaming
- * (memory-safe for small droplets).
+ * (memory-safe for small droplets). The upload lands in a temporary file
+ * next to its destination and replaces it atomically.
  */
 export async function saveUploadedFile(
   siteId: string,
   relativePath: string,
   fileStream: Readable,
-  exec: ExecFn,
 ): Promise<void> {
   const cleanPath = validatePath(relativePath);
   const siteRoot = getSiteRoot(siteId);
@@ -322,26 +311,16 @@ export async function saveUploadedFile(
   }
 
   const parentDir = path.dirname(destPath);
-  await exec('sudo', ['mkdir', '-p', parentDir]);
-
-  const tmpFile = path.join(tmpdir(), `site-upload-${crypto.randomBytes(8).toString('hex')}`);
+  const tmpFile = path.join(parentDir, `.upload-${crypto.randomBytes(8).toString('hex')}`);
 
   try {
-    const writeStream = createWriteStream(tmpFile);
+    await mkdir(parentDir, { recursive: true, mode: DIR_MODE });
+    const writeStream = createWriteStream(tmpFile, { flags: 'wx', mode: FILE_MODE });
     await pipeline(fileStream, writeStream);
-
-    await exec('sudo', ['mv', tmpFile, destPath]);
-    await exec('sudo', ['chown', 'www-data:www-data', destPath]);
-    await exec('sudo', ['chmod', '644', destPath]);
-
-    // Restore parent directory ownership
-    await exec('sudo', ['chown', '-R', 'www-data:www-data', siteRoot]);
+    await chmod(tmpFile, FILE_MODE);
+    await rename(tmpFile, destPath);
   } catch (err: unknown) {
-    try {
-      await unlink(tmpFile);
-    } catch {
-      // ignore
-    }
+    await unlink(tmpFile).catch(() => undefined);
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to save file: ${message}`);
   }
@@ -350,11 +329,7 @@ export async function saveUploadedFile(
 /**
  * Delete a file or directory within a site.
  */
-export async function deleteFile(
-  siteId: string,
-  relativePath: string,
-  exec: ExecFn,
-): Promise<void> {
+export async function deleteFile(siteId: string, relativePath: string): Promise<void> {
   const cleanPath = validatePath(relativePath);
   const siteRoot = getSiteRoot(siteId);
   const targetPath = path.join(siteRoot, cleanPath);
@@ -363,7 +338,7 @@ export async function deleteFile(
     throw new Error('Path traversal detected');
   }
 
-  await exec('sudo', ['rm', '-rf', targetPath]);
+  await rm(targetPath, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -371,20 +346,40 @@ export async function deleteFile(
 // ---------------------------------------------------------------------------
 
 /**
- * Get the total size of a site directory in bytes.
+ * Get the total size of a site directory in bytes (apparent size of every
+ * entry, like `du -sb`; symbolic links are not followed).
  */
-export async function getSiteSize(siteId: string, exec: ExecFn): Promise<number> {
-  const siteRoot = getSiteRoot(siteId);
-
-  try {
-    const { stdout } = await exec('sudo', ['du', '-sb', siteRoot]);
-    const first = stdout.split('\t')[0] ?? '0';
-    const size = parseInt(first, 10);
-    return isNaN(size) ? 0 : size;
-  } catch (err: unknown) {
-    if (isExecError(err) && err.stderr?.includes('No such file or directory')) {
-      return 0;
+export async function getSiteSize(siteId: string): Promise<number> {
+  const walk = async (dir: string): Promise<number> => {
+    let total = 0;
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch (err: unknown) {
+      if (errnoCode(err) === 'ENOENT') return 0;
+      throw err;
     }
-    throw new Error(`Failed to get site size: ${errText(err)}`);
+    for (const name of names) {
+      const p = path.join(dir, name);
+      let st;
+      try {
+        st = await lstat(p);
+      } catch (err: unknown) {
+        if (errnoCode(err) === 'ENOENT') continue;
+        throw err;
+      }
+      total += st.size;
+      if (st.isDirectory()) total += await walk(p);
+    }
+    return total;
+  };
+
+  const siteRoot = getSiteRoot(siteId);
+  try {
+    const st = await lstat(siteRoot);
+    return st.size + (st.isDirectory() ? await walk(siteRoot) : 0);
+  } catch (err: unknown) {
+    if (errnoCode(err) === 'ENOENT') return 0;
+    throw new Error(`Failed to get site size: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

@@ -12,8 +12,10 @@ const CreateInvitationSchema = z.object({
     .min(2)
     .max(32)
     .regex(
-      /^[a-z0-9_-]+$/,
-      'Username must contain only lowercase alphanumeric characters, underscores, and hyphens',
+      // Same rule as the users API. A leading "-" would read as a flag to
+      // Authelia's CLI when a TOTP secret is stored for the user.
+      /^[a-z0-9][a-z0-9_-]*$/,
+      'Username must start with a lowercase letter or digit and may contain underscores or hyphens',
     ),
   email: z.string().email(),
   groups: z.array(z.string()).optional().default([]),

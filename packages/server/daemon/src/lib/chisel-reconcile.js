@@ -7,45 +7,49 @@
  *    enrolled while credential minting failed).
  * 2. Tunnels persisted before tunnels had owners are bound where the owner is
  *    certain (see `bindUnownedTunnels`); the rest stay unowned and dark.
- * 3. Once onboarding has provisioned chisel: the pinned chisel release is
- *    installed, the unit is current (runs as group lamaste-chisel), and the
- *    authfile is rewritten from state with its ownership and mode re-applied.
- * 4. Chisel is restarted when the binary, the unit or a revocation requires
- *    it, and started if it is enabled but not running.
+ * 3. Once onboarding has completed: the server key exists and the authfile
+ *    is rewritten from state with its ownership and mode re-applied.
+ * 4. Chisel is restarted when a revocation requires it, and started if it is
+ *    enabled but not running.
  *
- * Fail closed: if steps 1–3 cannot establish a correct authfile and unit,
- * chisel is stopped AND disabled, and a marker file records why. An authfile
- * left by an older version may grant every agent every port (`.*`) — keeping
- * that live because reconciliation failed would silently re-open what this
+ * The binary (the pinned release) and the unit are create-lamaste's, which
+ * installs them as root and restarts chisel when either changes. The panel
+ * only checks the installed version: an older chisel does not reload its
+ * authfile reliably, so until the pinned release runs, chisel-runtime.js
+ * restarts it on every authfile change.
+ *
+ * Fail closed: if steps 1–3 cannot establish a correct authfile, chisel is
+ * stopped AND disabled, and a marker file records why. An authfile left by
+ * an older version may grant every agent every port (`.*`) — keeping that
+ * live because reconciliation failed would silently re-open what this
  * version closes, and a disabled unit keeps a reboot from starting it before
  * the panel has reconciled. Reconciliation is retried with backoff until it
  * succeeds; then chisel is enabled and started again and the marker removed.
- *
- * A failed download of the pinned binary is not a reason to stop chisel: the
- * authfile and unit enforce access, and chisel-runtime.js restarts chisel on
- * every change while an older binary runs. It is retried with backoff too.
  */
 
 import { execa } from 'execa';
 import { rm, writeFile, access } from 'node:fs/promises';
 import path from 'node:path';
-import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import { AGENT_LABEL_REGEX, CHISEL_RELEASE } from '@lamalibre/lamaste';
 import { bindUnownedTunnels, withTunnelLock, withheldTunnels } from '@lamalibre/lamaste/server';
 import { readTunnels, writeTunnels } from './state.js';
 import { loadAgentRegistry } from './mtls.js';
 import { migrateChiselCredentialsIfNeeded, syncChiselAuthfile } from './chisel-users.js';
 import {
   ensureChiselKey,
-  ensureChiselService,
   getInstalledChiselVersion,
-  installChisel,
-  isChiselProvisioned,
   isChiselRunning,
   reloadChisel,
   startChisel,
   stopChisel,
 } from './chisel.js';
 import { setChiselRunningPinnedRelease } from './chisel-runtime.js';
+import { getConfig } from './config.js';
+
+/** Chisel is the panel's to run once onboarding has completed. */
+function isOnboarded() {
+  return getConfig().onboarding?.status === 'COMPLETED';
+}
 
 /** Present while chisel is held down by a failed reconciliation. */
 function failClosedMarker() {
@@ -112,8 +116,9 @@ async function bindOwnership(logger) {
  * @returns {Promise<{ provisioned: boolean, binaryPinned: boolean }>}
  */
 export async function reconcileChiselServer(logger) {
-  const provisioned = await isChiselProvisioned();
+  const provisioned = isOnboarded();
   let migrateRevoked = false;
+  let revoked;
   try {
     // Its authfile write can already be the one that withdraws something
     // (state persisted before a crash, but never synced) — keep that for the
@@ -124,52 +129,28 @@ export async function reconcileChiselServer(logger) {
     ));
     await bindOwnership(logger);
     if (!provisioned) {
-      // Onboarding has not installed chisel yet; keep the authfile correct
+      // Onboarding has not started chisel yet; keep the authfile correct
       // for when it does.
       await syncChiselAuthfile({ force: true });
       return { provisioned: false, binaryPinned: false };
     }
     await ensureChiselKey();
-  } catch (err) {
-    await failClosed(logger, provisioned);
-    throw err;
-  }
-
-  let binaryChanged = false;
-  let binaryPinned = true;
-  try {
-    const result = await installChisel();
-    binaryChanged = result.installed === true;
-    if (binaryChanged) {
-      logger.info(
-        { from: result.previousVersion ?? null, to: result.version },
-        'Installed the pinned chisel release',
-      );
-    }
-  } catch (err) {
-    binaryPinned = false;
-    if ((await getInstalledChiselVersion()) === null) {
-      await failClosed(logger, provisioned);
-      throw err;
-    }
-    logger.error(
-      { err },
-      'Could not install the pinned chisel release; the installed chisel keeps running and ' +
-        'is restarted on every authfile change until the upgrade succeeds',
-    );
-  }
-
-  let unitChanged;
-  let revoked;
-  try {
-    ({ changed: unitChanged } = await ensureChiselService());
     ({ revoked } = await syncChiselAuthfile({ force: true }));
   } catch (err) {
     await failClosed(logger, provisioned);
     throw err;
   }
-
   revoked = revoked || migrateRevoked;
+
+  const installed = await getInstalledChiselVersion();
+  const binaryPinned = installed === CHISEL_RELEASE.version;
+  if (!binaryPinned) {
+    logger.error(
+      { installed, pinned: CHISEL_RELEASE.version },
+      'The installed chisel is not the pinned release — run create-lamaste on the server to ' +
+        'install it. Until then chisel is restarted on every authfile change.',
+    );
+  }
 
   if (await isFailClosed()) {
     await execa('sudo', ['systemctl', 'enable', 'chisel']);
@@ -177,21 +158,15 @@ export async function reconcileChiselServer(logger) {
     await rm(failClosedMarker(), { force: true });
     logger.info({}, 'Chisel re-enabled and started: reconciliation succeeded');
   } else if (await isChiselRunning()) {
-    if (binaryChanged || unitChanged || revoked) {
+    if (revoked) {
       await reloadChisel();
-      logger.info({ binaryChanged, unitChanged, revoked }, 'Chisel restarted after reconciliation');
+      logger.info({}, 'Chisel restarted after reconciliation withdrew access');
     }
   } else if (await isChiselEnabled()) {
     await startChisel();
     logger.info({}, 'Chisel started after reconciliation');
   }
   setChiselRunningPinnedRelease(binaryPinned);
-
-  if (!binaryPinned) {
-    const err = new Error('Pinned chisel release not installed');
-    err.retryOnly = true;
-    throw err;
-  }
   return { provisioned: true, binaryPinned };
 }
 
@@ -220,7 +195,7 @@ async function failClosed(logger, provisioned) {
   }
   logger.error(
     {},
-    'Chisel stopped: its authfile or unit could not be brought in line with the tunnel ' +
+    'Chisel stopped: its authfile could not be brought in line with the tunnel ' +
       'state, and an authfile from an older version may grant more than it should. ' +
       'Tunnels stay down until reconciliation succeeds; it is retried automatically.',
   );
@@ -229,9 +204,8 @@ async function failClosed(logger, provisioned) {
 /**
  * Run reconciliation in the background now and, on failure, again with
  * exponential backoff until it succeeds. Never throws and never blocks
- * startup: installing the pinned binary may mean a download, and the panel
- * must stay reachable meanwhile — it is how an administrator fixes whatever
- * made reconciliation fail.
+ * startup: the panel must stay reachable meanwhile — it is how an
+ * administrator fixes whatever made reconciliation fail.
  */
 export function startChiselReconciler(logger) {
   let delay = RETRY_MIN_MS;
@@ -240,9 +214,7 @@ export function startChiselReconciler(logger) {
       await reconcileChiselServer(logger);
       return true;
     } catch (err) {
-      if (!err.retryOnly) {
-        logger.error({ err }, 'Chisel reconciliation failed');
-      }
+      logger.error({ err }, 'Chisel reconciliation failed');
       return false;
     }
   };

@@ -1,7 +1,6 @@
 import { execa } from 'execa';
-import { writeFile, mkdir, unlink } from 'node:fs/promises';
+import { writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { ensureHttpRedirect } from '../lib/http-redirect.js';
 
 /**
@@ -198,17 +197,6 @@ server {
         await writeFile('/etc/nginx/sites-available/lamalibre-lamaste-panel-ip', vhostConfig);
 
         subtask.output = 'Vhost written to /etc/nginx/sites-available/lamalibre-lamaste-panel-ip';
-      },
-      rendererOptions: { persistentOutput: true },
-    },
-    {
-      title: 'Deploying certificate help page',
-      task: async (_ctx, subtask) => {
-        const helpDir = '/opt/lamalibre/lamaste/lamaste-server-ui';
-        await mkdir(helpDir, { recursive: true });
-        const html = generateCertHelpPage(ctx);
-        await writeFile(`${helpDir}/cert-help.html`, html);
-        subtask.output = 'Certificate help page deployed';
       },
       rendererOptions: { persistentOutput: true },
     },

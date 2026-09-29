@@ -14,7 +14,8 @@
     "build:agent-panel-web": "npm run build:web -w packages/agent/ui && cp -r packages/agent/ui/dist-web/. packages/agent/daemon/panel-dist/",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "npm run --workspaces --if-present test"
   },
   "engines": {
     "node": ">=20.0.0"

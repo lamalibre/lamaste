@@ -230,6 +230,29 @@ export function chiselAssetUrl(arch: ChiselArch): string {
 }
 
 /**
+ * The Authelia release every Lamaste server runs, pinned by version and by
+ * the SHA-256 of each release tarball published on GitHub. The installer
+ * verifies the download against these digests before unpacking it. The
+ * configuration the panel writes (`identity_validation`, `session.cookies`,
+ * `server.address`) needs 4.38 or later.
+ */
+export const AUTHELIA_RELEASE = Object.freeze({
+  version: '4.39.28',
+  sha256: Object.freeze({
+    'linux-amd64': 'e8ad9ff965cbf3b93138945e13cb4b7874c999c254772b2bb77952863177699c',
+    'linux-arm64': '089f3f8bdcba962024e15283811256cea28032d1cdccc56cf4e4c1b284022faa',
+  }),
+});
+
+export type AutheliaArch = keyof typeof AUTHELIA_RELEASE.sha256;
+
+/** Download URL of the pinned Authelia release tarball for `arch`. */
+export function autheliaAssetUrl(arch: AutheliaArch): string {
+  const v = AUTHELIA_RELEASE.version;
+  return `https://github.com/authelia/authelia/releases/download/v${v}/authelia-v${v}-${arch}.tar.gz`;
+}
+
+/**
  * The mandatory capability every regular agent receives.
  */
 export const DEFAULT_AGENT_CAPABILITY: BaseCapability = 'tunnels:read';

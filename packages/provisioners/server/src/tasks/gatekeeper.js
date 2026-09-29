@@ -1,11 +1,45 @@
 import crypto from 'node:crypto';
 import { execa } from 'execa';
-import { writeFile, mkdir, cp } from 'node:fs/promises';
+import { writeFile, mkdir, cp, rm, lstat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { generateGatekeeperServiceUnit } from '../lib/service-config.js';
+import { lookupId } from '../lib/accounts.js';
+import { writeFileNoFollow } from '../lib/ownership.js';
+
+/**
+ * Deploy the gatekeeper package from vendor/ into <installDir>/gatekeeper,
+ * root-owned (the service runs it as lamaste, which may read but not change
+ * it). Shared by the full install and the redeploy.
+ *
+ * @param {string} vendorDir
+ * @param {string} installDir
+ * @returns {Promise<boolean>} false when the package is not bundled
+ */
+export async function deployGatekeeperPackage(vendorDir, installDir) {
+  const gatekeeperSrc = join(vendorDir, 'gatekeeper');
+  const gatekeeperDest = `${installDir}/gatekeeper`;
+  if (!existsSync(gatekeeperSrc)) return false;
+
+  await mkdir(gatekeeperDest, { recursive: true });
+  await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
+  await rm(join(gatekeeperDest, 'dist'), { recursive: true, force: true });
+  await cp(join(gatekeeperSrc, 'dist'), join(gatekeeperDest, 'dist'), { recursive: true });
+  await execa('npm', ['install', '--production', '--ignore-scripts'], { cwd: gatekeeperDest });
+  return true;
+}
+
+async function exists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
 
 /**
  * Gatekeeper deployment subtasks: deploy package, create state files,
@@ -28,28 +62,11 @@ export function gatekeeperTasks(ctx, task) {
     {
       title: 'Deploying gatekeeper package',
       task: async (_ctx, subtask) => {
-        const gatekeeperSrc = join(vendorDir, 'gatekeeper');
-        const gatekeeperDest = `${installDir}/gatekeeper`;
-
-        if (!existsSync(gatekeeperSrc)) {
+        subtask.output = 'Copying gatekeeper files and installing dependencies...';
+        if (!(await deployGatekeeperPackage(vendorDir, installDir))) {
           subtask.output = 'Gatekeeper package not found in vendor, skipping';
           return;
         }
-
-        await mkdir(gatekeeperDest, { recursive: true });
-
-        subtask.output = 'Copying gatekeeper files...';
-        await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
-        await cp(join(gatekeeperSrc, 'dist'), join(gatekeeperDest, 'dist'), {
-          recursive: true,
-        });
-
-        subtask.output = 'Installing production dependencies...';
-        await execa('npm', ['install', '--production', '--ignore-scripts'], {
-          cwd: gatekeeperDest,
-        });
-
-        await execa('chown', ['-R', 'lamaste:lamaste', gatekeeperDest]);
         subtask.output = 'Gatekeeper package deployed';
       },
       rendererOptions: { persistentOutput: true },
@@ -61,21 +78,25 @@ export function gatekeeperTasks(ctx, task) {
         const grantsPath = join(configDir, 'access-grants.json');
         const settingsPath = join(configDir, 'gatekeeper.json');
 
-        // Create empty state files if they don't exist
-        if (!existsSync(groupsPath)) {
-          await writeFile(groupsPath, '{"groups":[]}\n', { encoding: 'utf-8', mode: 0o600 });
+        // Create empty state files if they don't exist. The config
+        // directory belongs to lamaste: never write through what is there.
+        const owner = {
+          uid: await lookupId('user', 'lamaste'),
+          gid: await lookupId('group', 'lamaste'),
+          mode: 0o600,
+        };
+        if (!(await exists(groupsPath))) {
+          await writeFileNoFollow(groupsPath, '{"groups":[]}\n', owner);
           subtask.output = 'Created groups.json';
         }
-        if (!existsSync(grantsPath)) {
-          await writeFile(grantsPath, '{"grants":[]}\n', { encoding: 'utf-8', mode: 0o600 });
+        if (!(await exists(grantsPath))) {
+          await writeFileNoFollow(grantsPath, '{"grants":[]}\n', owner);
           subtask.output = 'Created access-grants.json';
         }
-        if (!existsSync(settingsPath)) {
-          await writeFile(settingsPath, '{}\n', { encoding: 'utf-8', mode: 0o600 });
+        if (!(await exists(settingsPath))) {
+          await writeFileNoFollow(settingsPath, '{}\n', owner);
           subtask.output = 'Created gatekeeper.json';
         }
-
-        await execa('chown', ['lamaste:lamaste', groupsPath, grantsPath, settingsPath]);
         subtask.output = 'State files ready';
       },
       rendererOptions: { persistentOutput: true },

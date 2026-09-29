@@ -11,7 +11,8 @@
   "scripts": {
     "dev": "node --watch src/index.js | pino-pretty",
     "build": "echo 'No build step for lamaste-serverd'",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",

@@ -6,7 +6,7 @@
  */
 
 import crypto from 'node:crypto';
-import { access, constants, readFile } from 'node:fs/promises';
+import { access, constants, mkdir, readFile } from 'node:fs/promises';
 import {
   BASE_CAPABILITIES,
   PLUGIN_AGENT_CN_PREFIX,
@@ -30,13 +30,6 @@ export interface MtlsCertInfo {
   readonly daysUntilExpiry: number;
   readonly path: string;
   readonly expiringSoon: boolean;
-}
-
-export interface RotationResult {
-  readonly ok: true;
-  readonly p12Password: string;
-  readonly expiresAt: string;
-  readonly warning: string;
 }
 
 export interface AgentCertResult {
@@ -125,14 +118,7 @@ function withRegistryLock<T>(fn: () => Promise<T>): Promise<T> {
  */
 export async function readCertExpiry(certPath: string, exec: ExecFn): Promise<CertExpiry | null> {
   try {
-    const { stdout } = await exec('sudo', [
-      'openssl',
-      'x509',
-      '-in',
-      certPath,
-      '-enddate',
-      '-noout',
-    ]);
+    const { stdout } = await exec('openssl', ['x509', '-in', certPath, '-enddate', '-noout']);
     const match = stdout.match(/notAfter=(.+)/);
     if (!match?.[1]) return null;
 
@@ -185,157 +171,6 @@ export async function getMtlsCerts(pkiDir: string, exec: ExecFn): Promise<MtlsCe
   }
 
   return certs;
-}
-
-// ---------------------------------------------------------------------------
-// mTLS client cert rotation
-// ---------------------------------------------------------------------------
-
-/**
- * Rotate the mTLS client certificate.
- * Generates a new key, CSR, signs with existing CA, creates PKCS12 bundle.
- * Backs up old files before replacement.
- */
-export async function rotateClientCert(
-  pkiDir: string,
-  exec: ExecFn,
-  logger: MtlsLogger,
-): Promise<RotationResult> {
-  // Verify CA key exists
-  try {
-    await access(`${pkiDir}/ca.key`, constants.R_OK);
-  } catch {
-    try {
-      await exec('sudo', ['test', '-r', `${pkiDir}/ca.key`]);
-    } catch {
-      throw new MtlsError('CA key not found — cannot sign new certificate', 'CA_KEY_NOT_FOUND');
-    }
-  }
-
-  const newKeyPath = `${pkiDir}/client.key.new`;
-  const csrPath = `${pkiDir}/client.csr`;
-  const newCertPath = `${pkiDir}/client.crt.new`;
-  const newP12Path = `${pkiDir}/client.p12.new`;
-
-  const p12Password = crypto.randomBytes(16).toString('hex');
-
-  try {
-    // 1. Generate new client private key
-    logger.info({}, 'Generating new client private key');
-    await exec('sudo', ['openssl', 'genrsa', '-out', newKeyPath, '4096']);
-
-    // 2. Create CSR
-    logger.info({}, 'Creating certificate signing request');
-    await exec('sudo', [
-      'openssl',
-      'req',
-      '-new',
-      '-key',
-      newKeyPath,
-      '-out',
-      csrPath,
-      '-subj',
-      '/CN=Lamaste Client/O=Lamaste',
-    ]);
-
-    // 3. Sign with CA (2-year validity)
-    logger.info({}, 'Signing certificate with CA');
-    await exec('sudo', [
-      'openssl',
-      'x509',
-      '-req',
-      '-in',
-      csrPath,
-      '-CA',
-      `${pkiDir}/ca.crt`,
-      '-CAkey',
-      `${pkiDir}/ca.key`,
-      '-CAcreateserial',
-      '-out',
-      newCertPath,
-      '-days',
-      '730',
-      '-sha256',
-    ]);
-
-    // 4. Create PKCS12 bundle
-    logger.info({}, 'Creating PKCS12 bundle');
-    await exec(
-      'sudo',
-      [
-        'openssl',
-        'pkcs12',
-        '-export',
-        '-keypbe',
-        'PBE-SHA1-3DES',
-        '-certpbe',
-        'PBE-SHA1-3DES',
-        '-macalg',
-        'sha1',
-        '-out',
-        newP12Path,
-        '-inkey',
-        newKeyPath,
-        '-in',
-        newCertPath,
-        '-certfile',
-        `${pkiDir}/ca.crt`,
-        '-passout',
-        'stdin',
-      ],
-      { input: p12Password },
-    );
-
-    // 5. Back up current files
-    logger.info({}, 'Backing up current certificates');
-    await exec('sudo', ['cp', `${pkiDir}/client.crt`, `${pkiDir}/client.crt.bak`]);
-    await exec('sudo', ['cp', `${pkiDir}/client.key`, `${pkiDir}/client.key.bak`]);
-    await exec('sudo', ['cp', `${pkiDir}/client.p12`, `${pkiDir}/client.p12.bak`]);
-
-    // 6. Move new files into place
-    logger.info({}, 'Installing new certificates');
-    await exec('sudo', ['mv', newKeyPath, `${pkiDir}/client.key`]);
-    await exec('sudo', ['mv', newCertPath, `${pkiDir}/client.crt`]);
-    await exec('sudo', ['mv', newP12Path, `${pkiDir}/client.p12`]);
-
-    // 7. Clean up CSR and serial file
-    await exec('sudo', ['rm', '-f', csrPath, `${pkiDir}/ca.srl`]);
-
-    // 8. Set file permissions and ownership
-    await exec('sudo', ['chmod', '600', `${pkiDir}/client.key`]);
-    await exec('sudo', ['chmod', '644', `${pkiDir}/client.crt`]);
-    await exec('sudo', ['chmod', '600', `${pkiDir}/client.p12`]);
-    await exec('sudo', [
-      'chown',
-      'lamaste:lamaste',
-      `${pkiDir}/client.key`,
-      `${pkiDir}/client.crt`,
-      `${pkiDir}/client.p12`,
-      `${pkiDir}/client.key.bak`,
-      `${pkiDir}/client.crt.bak`,
-      `${pkiDir}/client.p12.bak`,
-    ]);
-
-    // 9. Read the new expiry
-    const expiry = await readCertExpiry(`${pkiDir}/client.crt`, exec);
-
-    return {
-      ok: true,
-      p12Password,
-      expiresAt: expiry?.expiresAt ?? new Date(Date.now() + 730 * 86400000).toISOString(),
-      warning:
-        'Your current browser certificate is now invalid. Download and import the new certificate before closing this page.',
-    };
-  } catch (err: unknown) {
-    logger.error({ err }, 'mTLS rotation failed, cleaning up');
-    await exec('sudo', ['rm', '-f', newKeyPath, csrPath, newCertPath, newP12Path]).catch(() => {});
-
-    if (err instanceof MtlsError) throw err;
-    const stderr =
-      err instanceof Error && 'stderr' in err ? (err as { stderr: string }).stderr : '';
-    const message = err instanceof Error ? err.message : String(err);
-    throw new MtlsError(`mTLS rotation failed: ${stderr || message}`, 'ROTATION_FAILED');
-  }
 }
 
 /**
@@ -543,11 +378,7 @@ export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<Agent
     try {
       await access(`${pkiDir}/ca.key`, constants.R_OK);
     } catch {
-      try {
-        await exec('sudo', ['test', '-r', `${pkiDir}/ca.key`]);
-      } catch {
-        throw new MtlsError('CA key not found — cannot sign new certificate', 'CA_KEY_NOT_FOUND');
-      }
+      throw new MtlsError('CA key not found — cannot sign new certificate', 'CA_KEY_NOT_FOUND');
     }
 
     const agentDirPath = `${agentsDir(pkiDir)}/${label}`;
@@ -559,23 +390,18 @@ export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<Agent
     const p12Password = crypto.randomBytes(16).toString('hex');
 
     try {
-      // 1. Create agents base directory and hand to lamaste
+      // 1. Create the agent's directory. The panel is the CA: it owns the
+      // PKI directory, so nothing here needs privileges.
       logger.info({ label }, 'Creating agent certificate directory');
-      await exec('sudo', ['mkdir', '-p', agentsDir(pkiDir)]);
-      await exec('sudo', ['chown', 'lamaste:lamaste', agentsDir(pkiDir)]);
-
-      // Create the per-agent subdirectory
-      await exec('mkdir', ['-p', agentDirPath]);
+      await mkdir(agentDirPath, { recursive: true, mode: 0o700 });
 
       // 2. Generate 4096-bit RSA key
       logger.info({ label }, 'Generating agent private key');
-      await exec('sudo', ['openssl', 'genrsa', '-out', keyPath, '4096']);
-      await exec('sudo', ['chown', '-R', 'lamaste:lamaste', agentDirPath]);
+      await exec('openssl', ['genrsa', '-out', keyPath, '4096']);
 
       // 3. Create CSR with agent-scoped CN
       logger.info({ label }, 'Creating certificate signing request');
-      await exec('sudo', [
-        'openssl',
+      await exec('openssl', [
         'req',
         '-new',
         '-key',
@@ -588,8 +414,7 @@ export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<Agent
 
       // 4. Sign with CA (2-year validity)
       logger.info({ label }, 'Signing certificate with CA');
-      await exec('sudo', [
-        'openssl',
+      await exec('openssl', [
         'x509',
         '-req',
         '-in',
@@ -609,9 +434,8 @@ export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<Agent
       // 5. Create PKCS12 bundle (legacy flags for macOS compatibility)
       logger.info({ label }, 'Creating PKCS12 bundle');
       await exec(
-        'sudo',
+        'openssl',
         [
-          'openssl',
           'pkcs12',
           '-export',
           '-keypbe',
@@ -633,9 +457,6 @@ export function generateAgentCert(opts: GenerateAgentCertOptions): Promise<Agent
         ],
         { input: p12Password },
       );
-
-      // 6. Ensure all generated files are owned by lamaste
-      await exec('sudo', ['chown', '-R', 'lamaste:lamaste', agentDirPath]);
 
       // 7. Read serial number
       const { stdout: serialOut } = await exec('openssl', [

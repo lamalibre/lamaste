@@ -24,6 +24,8 @@ export {
   LETSENCRYPT_EMAIL_REGEX,
   CHISEL_RELEASE,
   chiselAssetUrl,
+  AUTHELIA_RELEASE,
+  autheliaAssetUrl,
   DEFAULT_AGENT_CAPABILITY,
   PLUGIN_AGENT_CN_PREFIX,
   PLUGIN_MODES,
@@ -41,7 +43,20 @@ export type {
   PluginMode,
   CuratedPlugin,
   ChiselArch,
+  AutheliaArch,
 } from './constants.js';
+
+// Verified downloads of the pinned chisel / Authelia releases
+export {
+  curlDownloadArgs,
+  normaliseChiselVersion,
+  isPinnedChiselVersion,
+  downloadVerifiedChisel,
+  downloadVerifiedAuthelia,
+  normaliseAutheliaVersion,
+} from './chisel-download.js';
+
+export type { FetchToFile } from './chisel-download.js';
 
 // Types
 export type {

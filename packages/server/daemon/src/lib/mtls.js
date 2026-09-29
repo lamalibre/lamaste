@@ -12,7 +12,7 @@
  */
 import { execa } from 'execa';
 import crypto from 'node:crypto';
-import { access, constants } from 'node:fs/promises';
+import { access, constants, mkdir } from 'node:fs/promises';
 import {
   BASE_CAPABILITIES as CORE_BASE_CAPABILITIES,
   PLUGIN_AGENT_CN_PREFIX as CORE_PLUGIN_AGENT_CN_PREFIX,
@@ -26,6 +26,7 @@ import {
   rotateChiselCredential as rotateChiselCredentialLib,
 } from './chisel-users.js';
 import { getStateDb } from './state-db.js';
+import { randomCertSerial, signAgentCsr } from './pki-sign.js';
 
 const PKI_DIR = process.env.LAMALIBRE_LAMASTE_PKI_DIR || '/etc/lamalibre/lamaste/pki';
 
@@ -74,14 +75,7 @@ export function fingerprintCertPem(certPem) {
  */
 export async function readCertExpiry(certPath) {
   try {
-    const { stdout } = await execa('sudo', [
-      'openssl',
-      'x509',
-      '-in',
-      certPath,
-      '-enddate',
-      '-noout',
-    ]);
+    const { stdout } = await execa('openssl', ['x509', '-in', certPath, '-enddate', '-noout']);
     const match = stdout.match(/notAfter=(.+)/);
     if (!match) return null;
 
@@ -141,22 +135,10 @@ export async function getMtlsCerts() {
 /**
  * Rotate the mTLS client certificate (admin's own P12).
  *
- * SECURITY (B9): the panel daemon can no longer rotate the admin client cert
- * via sudo. The previous implementation relied on:
- *   - A wildcard sudoers entry `openssl x509 -req -in /etc/lamalibre/lamaste/pki/* *`
- *     that let any CSR subject be passed via -subj.
- *   - A wildcard sudoers entry `mv /etc/lamalibre/lamaste/pki/*.new /etc/lamalibre/lamaste/pki/*`
- *     that let any file in the PKI dir be overwritten.
- *
- * The replacement signing wrapper hardcodes the CA paths, rejects CN=admin
- * (and only allows agent / plugin-agent shapes), and constrains both source
- * and destination to /etc/lamalibre/lamaste/pki/agents/. The replacement rename
- * wrapper does not allow writing to the panel's own client.{key,crt,p12}
- * paths either.
- *
- * Admin cert rotation now lives only in `lamaste-server reset-admin`, which
- * runs as root directly. This stub returns a clear, actionable 503 so the
- * existing route surfaces a useful error instead of a sudo failure.
+ * SECURITY (B9): the panel does not issue admin certificates. Admin cert
+ * rotation lives only in `lamaste-server reset-admin`, run on the server
+ * console. This stub returns a clear, actionable 503 so the existing route
+ * surfaces a useful error.
  *
  * @param {import('pino').Logger} logger
  * @returns {Promise<never>}
@@ -404,13 +386,9 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
     try {
       await access(`${PKI_DIR}/ca.key`, constants.R_OK);
     } catch {
-      try {
-        await execa('sudo', ['test', '-r', `${PKI_DIR}/ca.key`]);
-      } catch {
-        throw Object.assign(new Error('CA key not found — cannot sign new certificate'), {
-          statusCode: 500,
-        });
-      }
+      throw Object.assign(new Error('CA key not found — cannot sign new certificate'), {
+        statusCode: 500,
+      });
     }
 
     const agentDir = `${AGENTS_DIR}/${label}`;
@@ -422,23 +400,17 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
     const p12Password = crypto.randomBytes(16).toString('hex');
 
     try {
-      // 1. Create agents base directory (root-owned initially) and hand to lamaste
+      // 1. Create the agent's directory (the panel owns the PKI directory)
       logger.info({ label }, 'Creating agent certificate directory');
-      await execa('sudo', ['mkdir', '-p', AGENTS_DIR]);
-      await execa('sudo', ['chown', 'lamaste:lamaste', AGENTS_DIR]);
+      await mkdir(agentDir, { recursive: true, mode: 0o700 });
 
-      // Create the per-agent subdirectory (lamaste now owns AGENTS_DIR)
-      await execa('mkdir', ['-p', agentDir]);
-
-      // 2. Generate 4096-bit RSA key (sudo for openssl, output to lamaste-owned dir)
+      // 2. Generate 4096-bit RSA key
       logger.info({ label }, 'Generating agent private key');
-      await execa('sudo', ['openssl', 'genrsa', '-out', keyPath, '4096']);
-      await execa('sudo', ['chown', '-R', 'lamaste:lamaste', agentDir]);
+      await execa('openssl', ['genrsa', '-out', keyPath, '4096']);
 
       // 3. Create CSR with agent-scoped CN
       logger.info({ label }, 'Creating certificate signing request');
-      await execa('sudo', [
-        'openssl',
+      await execa('openssl', [
         'req',
         '-new',
         '-key',
@@ -449,30 +421,15 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
         `/CN=agent:${label}/O=Lamaste`,
       ]);
 
-      // 4. Sign with CA (2-year validity) via the root-wrapper. The wrapper
-      //    rejects CN=admin, validates the agent label shape, and constrains
-      //    both input and output paths to /etc/lamalibre/lamaste/pki/agents/. Replaces
-      //    a former wildcard sudoers rule (B9 hardening).
-      logger.info({ label }, 'Signing certificate with CA via wrapper');
-      // Generate a 16-byte serial as lower-case hex (no leading zero) — the
-      // wrapper validates ^[0-9a-f]{1,32}$ and feeds it to openssl as
-      // `-set_serial 0x<serial>`.
-      let signSerial = crypto.randomBytes(16).toString('hex').replace(/^0+/, '');
-      if (signSerial.length === 0) signSerial = '1';
-      await execa('sudo', [
-        '/usr/local/sbin/lamaste-sign-csr',
-        csrPath,
-        certPath,
-        signSerial,
-        '730',
-      ]);
+      // 4. Sign with CA (2-year validity)
+      logger.info({ label }, 'Signing certificate with CA');
+      await signAgentCsr(csrPath, certPath, randomCertSerial(), 730);
 
       // 5. Create PKCS12 bundle (legacy flags for macOS compatibility)
       logger.info({ label }, 'Creating PKCS12 bundle');
       await execa(
-        'sudo',
+        'openssl',
         [
-          'openssl',
           'pkcs12',
           '-export',
           '-keypbe',
@@ -494,9 +451,6 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
         ],
         { input: p12Password },
       );
-
-      // 6. Ensure all generated files are owned by lamaste
-      await execa('sudo', ['chown', '-R', 'lamaste:lamaste', agentDir]);
 
       // 7. Read the serial number from the signed certificate
       const { stdout: serialOut } = await execa('openssl', [

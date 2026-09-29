@@ -1,17 +1,29 @@
 import { execa } from 'execa';
-import { writeFile, readFile, mkdir, cp, rm, rename, open } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, mkdtemp, cp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-  generateServiceUnit,
-  generateSudoersContent,
-  SUDOERS_WRAPPERS,
-  CHISEL_GROUP,
-} from '../lib/service-config.js';
-import { ensureChiselGroup } from '../lib/chisel-group.js';
+import { generateServiceUnit, generateSudoersContent } from '../lib/service-config.js';
+import { lookupId } from '../lib/accounts.js';
 import { ensureHttpRedirect } from '../lib/http-redirect.js';
+import { generateCertHelpPage } from '../lib/cert-help-page.js';
+import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
+import { provisionRelayServices } from '../lib/relay-services.js';
+import { installSudoersFile, installSudoersWrappers } from '../lib/wrappers.js';
+import { deployGatekeeperPackage } from './gatekeeper.js';
+
+const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
+
+async function isActive(service) {
+  try {
+    const { stdout } = await execa('systemctl', ['is-active', service]);
+    return stdout.trim() === 'active';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Read the installed serverd's package.json version, or null if not found.
@@ -42,9 +54,14 @@ async function getLatestNpmVersion() {
 }
 
 /**
- * Panel redeployment subtasks. Only updates serverd and lamaste-server-ui files,
- * runs npm install, merges config, and restarts the service. Does not touch
- * OS hardening, mTLS certs, nginx, or any other system configuration.
+ * Panel redeployment subtasks — the upgrade path, also run by the panel's
+ * self-update (`lamaste-priv self-update`). Updates the panel, CLI, UI, docs
+ * and gatekeeper; installs the pinned chisel and Authelia releases, their
+ * units, the sudoers rules and the programs they name; restarts what
+ * changed. Does not touch OS hardening, mTLS certs or the panel's vhosts.
+ *
+ * Runs as root and may be started by a compromised panel, so it never
+ * writes through a path the lamaste user controls (see lib/ownership.js).
  *
  * @param {object} ctx  Shared installer context.
  * @param {object} task Parent Listr2 task reference.
@@ -71,22 +88,30 @@ export function redeployTasks(ctx, task) {
       rendererOptions: { persistentOutput: true },
     },
     {
-      title: 'Stopping panel service',
+      title: 'Stopping panel services',
       task: async (_ctx, subtask) => {
-        try {
-          const { stdout: status } = await execa('systemctl', [
-            'is-active',
-            'lamalibre-lamaste-serverd',
-          ]);
-          if (status.trim() === 'active') {
-            await execa('systemctl', ['stop', 'lamalibre-lamaste-serverd']);
-            subtask.output = 'Service stopped';
-          } else {
-            subtask.output = `Service was not running (${status.trim()})`;
-          }
-        } catch {
-          subtask.output = 'Service was not running';
-        }
+        const panelActive = await isActive('lamalibre-lamaste-serverd');
+        if (panelActive) await execa('systemctl', ['stop', 'lamalibre-lamaste-serverd']);
+        // Gatekeeper runs from the install directory, which may be replaced.
+        ctx.gatekeeperWasActive = await isActive(GATEKEEPER_SERVICE);
+        if (ctx.gatekeeperWasActive) await execa('systemctl', ['stop', GATEKEEPER_SERVICE]);
+        subtask.output = panelActive ? 'Services stopped' : 'Panel was not running';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Securing the install directory',
+      task: async (_ctx, subtask) => {
+        // Earlier versions gave the install directory to the lamaste user.
+        // Code root runs (the lamaste-server CLI) and code the panel runs
+        // must not be writable by the panel: the old tree is moved aside,
+        // every component is redeployed into a fresh root-owned directory,
+        // and the old tree is removed at the end.
+        const { previous } = await ensureRootOwnedInstallDir(installDir);
+        ctx.previousInstallDir = previous;
+        subtask.output = previous
+          ? `Moved the lamaste-owned tree aside (${previous}); redeploying into a root-owned directory`
+          : 'Install directory is root-owned';
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -94,14 +119,16 @@ export function redeployTasks(ctx, task) {
       title: 'Updating serverd',
       task: async (_ctx, subtask) => {
         const serverDest = join(installDir, 'serverd');
-        const tmpDir = join('/tmp', `lamaste-panel-update-${Date.now()}`);
+        // A fresh root-private directory: a predictable /tmp path could be
+        // prepared in advance by another local user.
+        const tmpDir = await mkdtemp(join(tmpdir(), 'lamaste-panel-update-'));
 
         try {
           // Download the package tarball to a temp directory via npm pack,
           // then extract. We cannot `npm install` inside serverDest because
           // its package.json has the same name — npm refuses to install a
           // package as a dependency of itself.
-          await execa('mkdir', ['-p', tmpDir]);
+          await mkdir(serverDest, { recursive: true });
 
           subtask.output = 'Downloading @lamalibre/lamaste-serverd from npm...';
           const { stdout: tarball } = await execa('npm', [
@@ -128,8 +155,6 @@ export function redeployTasks(ctx, task) {
           await execa('npm', ['install', '--production', '--ignore-scripts'], {
             cwd: serverDest,
           });
-
-          await execa('chown', ['-R', 'lamaste:lamaste', serverDest]);
 
           subtask.output = `Panel server updated to ${ctx.latestVersion || 'latest'}`;
         } finally {
@@ -165,7 +190,6 @@ export function redeployTasks(ctx, task) {
 
         subtask.output = 'Installing lamaste-server CLI dependencies...';
         await execa('npm', ['install', '--production', '--ignore-scripts'], { cwd: cliDest });
-        await execa('chown', ['-R', 'lamaste:lamaste', cliDest]);
 
         const serverBin = join(cliDest, 'bin', 'lamaste-server.js');
         await execa('chmod', ['+x', serverBin]);
@@ -204,11 +228,11 @@ export function redeployTasks(ctx, task) {
         }
 
         subtask.output = 'Copying lamaste-server-ui dist...';
+        await mkdir(clientDest, { recursive: true });
         const distDest = join(clientDest, 'dist');
         await rm(distDest, { recursive: true, force: true });
         await cp(prebuiltDist, distDest, { recursive: true });
 
-        await execa('chown', ['-R', 'lamaste:lamaste', clientDest]);
         subtask.output = 'Panel client updated';
       },
       rendererOptions: { persistentOutput: true },
@@ -223,11 +247,29 @@ export function redeployTasks(ctx, task) {
           subtask.output = 'Copying version-stamped docs...';
           await rm(docsDest, { recursive: true, force: true });
           await cp(docsSrc, docsDest, { recursive: true });
-          await execa('chown', ['-R', 'lamaste:lamaste', docsDest]);
           subtask.output = 'Documentation updated';
         } else {
           subtask.output = 'No bundled docs found — skipping';
         }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Updating gatekeeper',
+      task: async (_ctx, subtask) => {
+        subtask.output = (await deployGatekeeperPackage(vendorDir, installDir))
+          ? 'Gatekeeper updated'
+          : 'Gatekeeper not bundled — skipping';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Updating certificate help page',
+      task: async (_ctx, subtask) => {
+        const helpDir = join(installDir, 'lamaste-server-ui');
+        await mkdir(helpDir, { recursive: true });
+        await writeFile(join(helpDir, 'cert-help.html'), generateCertHelpPage(ctx));
+        subtask.output = 'Certificate help page written';
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -251,15 +293,32 @@ export function redeployTasks(ctx, task) {
           staticDir: join(installDir, 'server-ui', 'dist'),
         };
 
-        const tmpConfigPath = `${configPath}.tmp`;
-        await writeFile(tmpConfigPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-        const fd = await open(tmpConfigPath, 'r');
-        await fd.sync();
-        await fd.close();
-        await rename(tmpConfigPath, configPath);
-        await execa('chown', ['lamaste:lamaste', configPath]);
+        // The config directory belongs to lamaste: write a fresh file and
+        // rename it into place, never through what is already there.
+        await writeFileNoFollow(configPath, JSON.stringify(config, null, 2) + '\n', {
+          mode: 0o600,
+          uid: await lookupId('user', 'lamaste'),
+          gid: await lookupId('group', 'lamaste'),
+        });
 
         subtask.output = 'Configuration updated';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Updating chisel and Authelia',
+      task: async (_ctx, subtask) => {
+        // Authelia is stopped while its files change hands (earlier versions
+        // ran it as root: a root process writing its database during the
+        // migration would leave root-owned files the new account cannot
+        // open) and while its binary is replaced; it is started again below.
+        ctx.autheliaWasActive = await isActive('authelia');
+        if (ctx.autheliaWasActive) await execa('systemctl', ['stop', 'authelia']);
+        const result = await provisionRelayServices(ctx, (line) => {
+          subtask.output = line;
+        });
+        ctx.chiselChanged = result.chiselChanged;
+        subtask.output = 'chisel and Authelia up to date';
       },
       rendererOptions: { persistentOutput: true },
     },
@@ -270,44 +329,13 @@ export function redeployTasks(ctx, task) {
         const serviceUnit = generateServiceUnit({ installDir, configDir });
         await writeFile('/etc/systemd/system/lamalibre-lamaste-serverd.service', serviceUnit);
 
-        // The panel writes the chisel authfile for this group and its unit
-        // names it in SupplementaryGroups=; both must exist before it starts.
-        subtask.output = `Ensuring ${CHISEL_GROUP} group...`;
-        await ensureChiselGroup();
-
-        // Install / refresh sudoers wrapper scripts before writing the
-        // sudoers file. The sudoers entries reference these absolute paths,
-        // and the panel calls them at runtime (CSR signing, PKI renames,
-        // certbot, certificate reads) in place of former wildcard sudoers
-        // entries that were exploitable — see service-config.js comments.
-        const scriptsSrc = join(dirname(thisFile), '..', '..', 'scripts');
-        const wrappers = SUDOERS_WRAPPERS;
-        for (const w of wrappers) {
-          const src = join(scriptsSrc, w.name);
-          if (!existsSync(src)) {
-            throw new Error(
-              `Sudoers wrapper script not found in package: ${src}. The provisioner package is incomplete.`,
-            );
-          }
-          subtask.output = `Validating ${w.name} syntax...`;
-          await execa('bash', ['-n', src]);
-          subtask.output = `Installing ${w.name} to ${w.dest}...`;
-          await execa('install', ['-o', 'root', '-g', 'root', '-m', '0755', src, w.dest]);
-        }
+        // The programs the sudoers rules name go in first; retired ones go.
+        await installSudoersWrappers(join(dirname(thisFile), '..', '..', 'scripts'), (line) => {
+          subtask.output = line;
+        });
 
         subtask.output = 'Writing sudoers rules...';
-        const sudoersContent = generateSudoersContent();
-        const sudoersPath = '/etc/sudoers.d/lamaste';
-        await writeFile(sudoersPath, sudoersContent, { mode: 0o440 });
-
-        try {
-          await execa('visudo', ['-c', '-f', sudoersPath]);
-        } catch (error) {
-          await rm(sudoersPath, { force: true });
-          throw new Error(
-            `Sudoers validation failed — file removed for safety.\n${error.stderr || error.message}`,
-          );
-        }
+        await installSudoersFile(generateSudoersContent());
 
         subtask.output = 'Systemd unit and sudoers updated';
       },
@@ -334,6 +362,22 @@ export function redeployTasks(ctx, task) {
       task: async (_ctx, subtask) => {
         subtask.output = 'Reloading systemd daemon...';
         await execa('systemctl', ['daemon-reload']);
+
+        // A new binary or unit takes effect on restart. try-restart leaves a
+        // service that is not running (not yet onboarded, or held down by the
+        // panel's fail-closed reconciliation) alone.
+        if (ctx.chiselChanged) {
+          subtask.output = 'Restarting chisel...';
+          await execa('systemctl', ['try-restart', 'chisel']);
+        }
+        if (ctx.autheliaWasActive) {
+          subtask.output = 'Starting Authelia...';
+          await execa('systemctl', ['start', 'authelia']);
+        }
+        if (ctx.gatekeeperWasActive) {
+          subtask.output = 'Starting gatekeeper...';
+          await execa('systemctl', ['start', GATEKEEPER_SERVICE]);
+        }
 
         subtask.output = 'Starting lamalibre-lamaste-serverd...';
         await execa('systemctl', ['start', 'lamalibre-lamaste-serverd']);
@@ -377,6 +421,16 @@ export function redeployTasks(ctx, task) {
           ]);
           throw new Error(`Panel health check failed.\nRecent logs:\n${logs}\n${error.message}`);
         }
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Removing the previous install directory',
+      skip: () => (ctx.previousInstallDir ? false : 'Nothing to remove'),
+      task: async (_ctx, subtask) => {
+        // coreutils rm: does not follow symlinks the old (lamaste-owned) tree holds.
+        await removeTree(ctx.previousInstallDir);
+        subtask.output = `Removed ${ctx.previousInstallDir}`;
       },
       rendererOptions: { persistentOutput: true },
     },

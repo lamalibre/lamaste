@@ -38,7 +38,6 @@ export {
   MtlsError,
   readCertExpiry,
   getMtlsCerts,
-  rotateClientCert,
   getP12Path,
   loadAgentRegistry,
   saveAgentRegistry,
@@ -58,7 +57,6 @@ export {
 export type {
   CertExpiry,
   MtlsCertInfo,
-  RotationResult,
   AgentCertResult,
   AgentCertEntry,
   AgentRegistry,
@@ -161,7 +159,7 @@ export {
   deleteFile,
   getSiteSize,
 } from './files.js';
-export type { SiteListEntry, ExecFn as FilesExecFn } from './files.js';
+export type { SiteListEntry } from './files.js';
 
 // --- Certbot ---
 export {
@@ -201,14 +199,13 @@ export {
   AUTHELIA_USERS,
   AUTHELIA_SECRETS,
   AUTHELIA_LOG_DIR,
-  installAuthelia,
+  isAutheliaInstalled,
   writeAutheliaConfig,
   createUser as createAutheliaUser,
   readUsers as readAutheliaUsers,
   writeUsers as writeAutheliaUsers,
   readUsersRaw as readAutheliaUsersRaw,
   hashPassword as hashAutheliaPassword,
-  writeAutheliaService,
   startAuthelia,
   reloadAuthelia,
   isAutheliaRunning,
@@ -226,7 +223,6 @@ export type {
   UsersYamlFile,
   ProtectedSiteRule,
   BcryptHashFn,
-  InstallResult as AutheliaInstallResult,
   ExecFn as AutheliaExecFn,
 } from './authelia.js';
 
@@ -256,14 +252,8 @@ export type {
 export {
   CHISEL_BIN,
   CHISEL_SERVICE,
-  CHISEL_UNIT_PATH,
-  installChisel,
   getInstalledChiselVersion,
   ensureChiselKey,
-  buildChiselUnit,
-  writeChiselService,
-  ensureChiselService,
-  isChiselProvisioned,
   startChisel,
   reloadChisel,
   stopChisel,
@@ -271,7 +261,6 @@ export {
   getChiselStatus,
 } from './chisel.js';
 export type {
-  InstallResult as ChiselInstallResult,
   ServiceActiveStatus as ChiselServiceActiveStatus,
   ServiceStatus as ChiselServiceStatus,
   ExecFn as ChiselExecFn,

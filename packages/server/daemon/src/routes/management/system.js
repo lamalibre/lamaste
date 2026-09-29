@@ -1,13 +1,18 @@
 import { execFile } from 'node:child_process';
-import { readFile, writeFile, rename, open, unlink, mkdir } from 'node:fs/promises';
+import { promisify } from 'node:util';
+import { readFile, writeFile, rename, open, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { getSystemStats } from '../../lib/system-stats.js';
 import { getConfig } from '../../lib/config.js';
 import { setPluginCapabilities } from '../../lib/mtls.js';
 import { getPluginCapabilities } from '../../lib/plugins.js';
 import { PLUGIN_CAPABILITY_REGEX } from '@lamalibre/lamaste';
+
+const execFileAsync = promisify(execFile);
+
+/** Root helper that starts create-lamaste in a transient unit (see lamaste-priv). */
+const PRIV = '/usr/local/sbin/lamaste-priv';
 
 // Persist agent-reported capabilities so they survive server restarts
 const AGENT_CAPS_FILE = () => join(getConfig().dataDir, 'agent-plugin-caps.json');
@@ -73,14 +78,13 @@ export default async function systemRoutes(fastify, _opts) {
   // ------------------------------------------------------------------
   // POST /system/update — trigger a panel server update
   //
-  // Uses `systemd-run` to launch the update script in a transient
-  // systemd unit. This is critical: the panel runs as the
-  // lamalibre-lamaste-serverd service, and systemd's default
-  // KillMode (control-group) kills ALL processes in the cgroup when
-  // the service stops. A detached child (spawn + unref) still lives
-  // in the parent's cgroup, so it gets killed when the installer runs
-  // `systemctl stop lamalibre-lamaste-serverd`. `systemd-run` places the script
-  // in its own cgroup, letting it survive the panel restart.
+  // The root helper `lamaste-priv self-update <version>` starts
+  // `create-lamaste@<version> --yes` (the redeploy path) in a transient
+  // systemd unit, two seconds from now. A transient unit is critical: the
+  // panel runs as the lamalibre-lamaste-serverd service, and systemd's
+  // default KillMode (control-group) kills ALL processes in the cgroup
+  // when the installer stops the service. The helper takes only the
+  // version — the panel never supplies a script for root to run.
   //
   // Returns 202 immediately — caller should poll /api/health until
   // the server comes back with the new version.
@@ -89,7 +93,7 @@ export default async function systemRoutes(fastify, _opts) {
     '/system/update',
     {
       preHandler: fastify.requireRole(['admin']),
-      // Moderate tier — spawns a privileged update script via systemd-run;
+      // Moderate tier — starts a privileged update via lamaste-priv;
       // the global 100/min default is too generous for an operation that
       // restarts the panel daemon.
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
@@ -98,52 +102,18 @@ export default async function systemRoutes(fastify, _opts) {
       const body = UpdateBodySchema.parse(request.body);
       const { version } = body;
 
-      // Write the update script to /etc/lamalibre/lamaste/ (NOT /tmp) because the
-      // panel service uses PrivateTmp=true — files written to /tmp are in a
-      // private namespace invisible to other systemd units.
-      const scriptId = crypto.randomBytes(8).toString('hex');
-      const configDir = getConfig().dataDir;
-      // Extension must be .sh to match the tightened sudoers glob
-      const scriptPath = join(configDir, `update-${scriptId}.sh`);
-
-      // Build script without interpolating user input — version is validated
-      // by the Zod regex above (/^\d+\.\d+\.\d+$/), but we avoid the fragile
-      // pattern of template-literal shell scripts. scriptPath is server-derived
-      // (dataDir + random hex) but we still quote it defensively.
-      const escapedScriptPath = scriptPath.replace(/'/g, "'\\''");
-      const script =
-        [
-          '#!/bin/bash',
-          'set -e',
-          '',
-          '# Give the HTTP response time to flush',
-          'sleep 2',
-          '',
-          '# Run the installer in redeploy mode — it stops and restarts the panel service',
-          `npx --yes '@lamalibre/create-lamaste@${version}' --yes 2>&1 || true`,
-          '',
-          '# Self-cleanup',
-          `rm -f '${escapedScriptPath}'`,
-        ].join('\n') + '\n';
-
-      await writeFile(scriptPath, script, { mode: 0o700 });
-
-      // Launch in a transient systemd unit so the script survives
-      // the panel service being stopped and restarted by the installer.
-      // Uses sudo because the panel runs as the lamaste user, and
-      // systemd-run needs root to create system-level transient units.
-      const unitName = `lamalibre-lamaste-update-${scriptId}`;
-      execFile(
-        'sudo',
-        ['systemd-run', '--unit', unitName, '--no-block', '/usr/bin/bash', scriptPath],
-        (err) => {
-          if (err) {
-            request.log.error({ err, version }, 'Failed to launch update unit');
-            // Clean up the update script if systemd-run fails
-            unlink(scriptPath).catch(() => {});
-          }
-        },
-      );
+      let unitName;
+      try {
+        const { stdout } = await execFileAsync('sudo', [PRIV, 'self-update', version], {
+          timeout: 30_000,
+        });
+        unitName = stdout.trim();
+      } catch (err) {
+        request.log.error({ err, version }, 'Failed to launch update unit');
+        return reply.code(500).send({
+          error: `Could not start the update: ${err.stderr?.trim() || err.message}`,
+        });
+      }
 
       request.log.info({ version, unit: unitName }, 'Panel update initiated via systemd-run');
 

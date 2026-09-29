@@ -4,6 +4,9 @@ export const ALLOWED_SERVICES = ['nginx', 'chisel', 'authelia', 'lamalibre-lamas
 
 const ALLOWED_ACTIONS = ['start', 'stop', 'restart', 'reload'];
 
+/** Services whose unit supports `reload` (and has a sudoers rule for it). */
+const RELOADABLE_SERVICES = ['nginx', 'authelia'];
+
 /**
  * Format a duration in milliseconds to a human-readable string like "2d 5h 30m".
  */
@@ -106,6 +109,11 @@ export async function executeServiceAction(name, action) {
     const err = new Error(
       'Cannot stop the panel service from the UI — it would terminate this session',
     );
+    err.statusCode = 400;
+    throw err;
+  }
+  if (action === 'reload' && !RELOADABLE_SERVICES.includes(name)) {
+    const err = new Error(`${name} does not support reload — use restart`);
     err.statusCode = 400;
     throw err;
   }

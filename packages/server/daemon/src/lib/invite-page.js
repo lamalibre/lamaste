@@ -1,25 +1,35 @@
-import { execa } from 'execa';
-import { writeFile as fsWriteFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import crypto from 'node:crypto';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
+import path from 'node:path';
 
 const INVITE_DIR = '/var/www/lamaste/invite';
 
 /**
- * Generate and write the invitation acceptance HTML page.
- * Creates the directory and writes index.html via sudo.
+ * Generate and write the invitation acceptance HTML page. The web root
+ * belongs to the lamaste user (group www-data, setgid directories), so no
+ * privileges are needed; the file is 0640 and nginx reads it via the group.
  */
 export async function writeInvitePage() {
   const html = generateInvitePageHtml();
 
-  await execa('sudo', ['mkdir', '-p', INVITE_DIR]);
+  await mkdir(INVITE_DIR, { recursive: true, mode: 0o750 });
 
-  const tmpFile = path.join(tmpdir(), `invite-page-${crypto.randomBytes(4).toString('hex')}`);
-  await fsWriteFile(tmpFile, html, 'utf-8');
-
-  await execa('sudo', ['mv', tmpFile, path.join(INVITE_DIR, 'index.html')]);
-  await execa('sudo', ['chmod', '644', path.join(INVITE_DIR, 'index.html')]);
+  const dest = path.join(INVITE_DIR, 'index.html');
+  const tmp = path.join(INVITE_DIR, `.index-${crypto.randomBytes(8).toString('hex')}.html`);
+  try {
+    const fh = await open(tmp, 'wx', 0o640);
+    try {
+      await fh.writeFile(html, 'utf-8');
+      await fh.chmod(0o640);
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+    await rename(tmp, dest);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 function generateInvitePageHtml() {
