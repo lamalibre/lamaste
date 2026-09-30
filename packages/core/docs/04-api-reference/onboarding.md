@@ -154,7 +154,7 @@ The endpoint is idempotent during the `FRESH` and `DOMAIN_SET` states — you ca
 
 ### `POST /api/onboarding/verify-dns`
 
-Checks whether the configured domain's DNS A records point to the droplet's IP address. Also checks for wildcard DNS (optional but recommended).
+Checks whether the three subdomains Lamaste itself serves — `panel.`, `auth.` and `tunnel.` — resolve to the droplet's IP address. These are the names provisioning issues certificates for. It also reports the wildcard and the base domain itself, neither of which is required.
 
 **Request:**
 
@@ -172,11 +172,17 @@ curl -s -K ~/.curl-lamaste \
 {
   "ok": true,
   "domain": "example.com",
-  "resolvedIps": ["203.0.113.42"],
   "expectedIp": "203.0.113.42",
+  "records": [
+    { "name": "panel.example.com", "resolvedIps": ["203.0.113.42"], "ok": true },
+    { "name": "auth.example.com", "resolvedIps": ["203.0.113.42"], "ok": true },
+    { "name": "tunnel.example.com", "resolvedIps": ["203.0.113.42"], "ok": true }
+  ],
+  "apexOk": true,
+  "apexResolvedIps": ["203.0.113.42"],
   "wildcardOk": true,
   "wildcardResolvedIps": ["203.0.113.42"],
-  "message": "DNS is correctly configured. Both base domain and wildcard resolve to your server."
+  "message": "DNS is correctly configured. panel, auth and tunnel resolve to your server."
 }
 ```
 
@@ -186,37 +192,51 @@ curl -s -K ~/.curl-lamaste \
 {
   "ok": false,
   "domain": "example.com",
-  "resolvedIps": [],
   "expectedIp": "203.0.113.42",
+  "records": [
+    { "name": "panel.example.com", "resolvedIps": [], "ok": false },
+    { "name": "auth.example.com", "resolvedIps": [], "ok": false },
+    { "name": "tunnel.example.com", "resolvedIps": [], "ok": false }
+  ],
+  "apexOk": false,
+  "apexResolvedIps": [],
   "wildcardOk": false,
   "wildcardResolvedIps": [],
-  "message": "Domain does not resolve yet. Please add an A record pointing example.com to 203.0.113.42. DNS propagation can take up to 48 hours, but usually completes within minutes."
+  "message": "panel.example.com does not resolve; auth.example.com does not resolve; tunnel.example.com does not resolve. Point panel.example.com, auth.example.com, tunnel.example.com (or a wildcard *.example.com) at 203.0.113.42. DNS propagation can take up to 48 hours, but usually completes within minutes."
 }
 ```
 
-**Response (200) — Base OK, no wildcard:**
+**Response (200) — base domain served by another host:**
 
 ```json
 {
   "ok": true,
   "domain": "example.com",
-  "resolvedIps": ["203.0.113.42"],
   "expectedIp": "203.0.113.42",
-  "wildcardOk": false,
-  "wildcardResolvedIps": [],
-  "message": "Base domain resolves correctly. Wildcard DNS is not configured — you will need to add individual subdomain records for each tunnel."
+  "records": [
+    { "name": "panel.example.com", "resolvedIps": ["203.0.113.42"], "ok": true },
+    { "name": "auth.example.com", "resolvedIps": ["203.0.113.42"], "ok": true },
+    { "name": "tunnel.example.com", "resolvedIps": ["203.0.113.42"], "ok": true }
+  ],
+  "apexOk": false,
+  "apexResolvedIps": ["198.51.100.7"],
+  "wildcardOk": true,
+  "wildcardResolvedIps": ["203.0.113.42"],
+  "message": "DNS is correctly configured. panel, auth and tunnel resolve to your server. example.com itself does not point to this server — that is only needed to serve a site on it."
 }
 ```
 
-| Field                 | Type       | Description                                           |
-| --------------------- | ---------- | ----------------------------------------------------- |
-| `ok`                  | `boolean`  | `true` if the base domain resolves to the expected IP |
-| `domain`              | `string`   | The domain being verified                             |
-| `resolvedIps`         | `string[]` | IP addresses the base domain resolves to              |
-| `expectedIp`          | `string`   | The droplet's public IP                               |
-| `wildcardOk`          | `boolean`  | `true` if wildcard DNS is configured                  |
-| `wildcardResolvedIps` | `string[]` | IP addresses the wildcard resolves to                 |
-| `message`             | `string`   | Human-readable diagnostic message                     |
+| Field                 | Type       | Description                                                         |
+| --------------------- | ---------- | ------------------------------------------------------------------- |
+| `ok`                  | `boolean`  | `true` if `panel.`, `auth.` and `tunnel.` all resolve to the server |
+| `domain`              | `string`   | The domain being verified                                           |
+| `expectedIp`          | `string`   | The droplet's public IP                                             |
+| `records`             | `object[]` | One entry per required name: `name`, `resolvedIps`, `ok`            |
+| `apexOk`              | `boolean`  | `true` if the base domain itself resolves to the server (optional)  |
+| `apexResolvedIps`     | `string[]` | IP addresses the base domain resolves to                            |
+| `wildcardOk`          | `boolean`  | `true` if wildcard DNS is configured (optional)                     |
+| `wildcardResolvedIps` | `string[]` | IP addresses the wildcard resolves to                               |
+| `message`             | `string`   | Human-readable diagnostic message                                   |
 
 **Errors:**
 
@@ -229,7 +249,7 @@ curl -s -K ~/.curl-lamaste \
 
 The endpoint can be called repeatedly — it is safe to poll while waiting for DNS propagation. The state only advances when verification succeeds.
 
-The wildcard check probes `test-lamaste-check.<domain>`. Wildcard DNS is optional; tunnels will still work with individual A records.
+The wildcard check probes `test-lamaste-check.<domain>`. Wildcard DNS is optional; tunnels will still work with individual A records. The base domain is optional too: it can keep pointing at another host, and is only needed once a site is served on it.
 
 ---
 

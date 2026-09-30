@@ -58,23 +58,23 @@ State is persisted in `/etc/lamalibre/lamaste/panel.json` under the `onboarding`
 │                                                  │
 │  Type   Name              Value                  │
 │  ─────  ────────────────  ─────────────────────  │
-│  A      example.com       203.0.113.42           │
 │  A      *.example.com     203.0.113.42           │
+│  A      example.com       203.0.113.42           │
 │                                                  │
-│  The wildcard record enables subdomains for      │
-│  tunneled applications (e.g., app1.example.com)  │
+│  The wildcard covers panel, auth, tunnel and     │
+│  every tunnel; the base record is optional       │
 │                                                  │
 │           [◀ Back]     [Verify DNS →]            │
 └─────────────────────────────────────────────────┘
 ```
 
-**API:** `POST /api/onboarding/verify-dns` → resolves domain A record, checks it matches droplet IP
+**API:** `POST /api/onboarding/verify-dns` → resolves `panel.`, `auth.` and `tunnel.` A records, checks they match the droplet IP (the wildcard and the base domain are reported, not required)
 
 **Behavior:**
 
 - Shows spinner during verification
 - If DNS doesn't resolve yet: "DNS not propagated yet. This can take a few minutes. Try again."
-- If DNS points to wrong IP: "DNS resolves to X.X.X.X but this server is Y.Y.Y.Y"
+- If a required name points to the wrong IP: "panel.example.com resolves to X.X.X.X (expected Y.Y.Y.Y)"
 - If OK: proceeds to step 3
 
 ### Step 3: Stack Provisioning

@@ -13,6 +13,8 @@
  * hooks, `--nginx-ctl`, openssl `-engine`) into running code as root.
  */
 
+import { CORE_SUBDOMAINS } from '../constants.js';
+
 /** `lamaste-certbot issue|renew|renew-all|list` — see the provisioner's scripts/. */
 export const CERTBOT_WRAPPER = '/usr/local/sbin/lamaste-certbot';
 /** `lamaste-cert-info <lineage> enddate|checkend|san` — see the provisioner's scripts/. */
@@ -154,10 +156,9 @@ export async function issueCoreCerts(
   email: string,
   exec: ExecFn,
 ): Promise<IssueCertResult[]> {
-  const subdomains = ['panel', 'auth', 'tunnel'];
   const results: IssueCertResult[] = [];
 
-  for (const sub of subdomains) {
+  for (const sub of CORE_SUBDOMAINS) {
     const fqdn = `${sub}.${domain}`;
     try {
       const result = await issueCert(fqdn, email, exec);

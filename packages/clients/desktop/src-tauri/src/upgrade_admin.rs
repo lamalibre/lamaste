@@ -4,15 +4,12 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 /// Resolve the path to the create-lamaste-admin CLI entry point.
-fn admin_upgrade_cli_path() -> PathBuf {
-    let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../create-lamaste-admin/bin/create-lamaste-admin.js");
-    if let Ok(canonical) = workspace_path.canonicalize() {
-        if canonical.exists() {
-            return canonical;
-        }
-    }
-    PathBuf::from("create-lamaste-admin")
+fn admin_upgrade_cli_path() -> Result<PathBuf, String> {
+    crate::cli_path::resolve_node_cli(
+        "provisioners/admin/bin/create-lamaste-admin.js",
+        "create-lamaste-admin",
+        "@lamalibre/create-lamaste-admin",
+    )
 }
 
 /// Atomically write servers.json: tmp -> fsync -> chmod 0600 -> rename.
@@ -90,7 +87,7 @@ fn upgrade_impl(server_id: &str) -> Result<(), String> {
     let output_p12_path = server_dir.join("admin.p12");
 
     // 3. Spawn the CLI in --json mode
-    let cli_path = admin_upgrade_cli_path();
+    let cli_path = admin_upgrade_cli_path()?;
     let mut child = std::process::Command::new("node")
         .arg(&cli_path)
         .args([

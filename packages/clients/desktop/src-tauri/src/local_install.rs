@@ -71,7 +71,7 @@ fn create_lamaste_cli_path() -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     {
         let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../create-lamaste/bin/create-lamaste.js");
+            .join("../../../provisioners/server/bin/create-lamaste.js");
         if let Ok(canonical) = workspace_path.canonicalize() {
             if canonical.exists() {
                 return Ok(canonical);

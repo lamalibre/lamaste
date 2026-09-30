@@ -25,6 +25,7 @@ mod agent_client;
 mod agents;
 mod api;
 mod branding;
+mod cli_path;
 mod cloud;
 mod config;
 mod credentials;

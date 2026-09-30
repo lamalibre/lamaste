@@ -58,6 +58,8 @@ Not yet published; the date is set at release. All lockstep packages move to 4.0
 
 ### Changed
 
+- **Onboarding DNS verification checks the names the relay serves.** `POST /api/onboarding/verify-dns` now requires `panel.`, `auth.` and `tunnel.<domain>` to resolve to the server — the names provisioning issues certificates for — instead of the base domain itself. A base domain that another host still serves no longer blocks onboarding; it and the wildcard are reported as optional. The response replaces `resolvedIps` with `records[]` (`name`, `resolvedIps`, `ok`), `apexOk` and `apexResolvedIps`. The cloud provisioner and the desktop wizard say that an existing base-domain record is left alone unless overridden, and what overriding does.
+
 - **Breaking:** admin `POST /api/tunnels` requires `agentLabel` naming an enrolled, non-revoked agent. Agent certificates default to themselves and cannot name another agent; plugin-agent certificates cannot create tunnels (they hold no chisel credential).
 - **Breaking:** `chiselArgs` are `['client', <serverUrl>, ...remotes]`. See the upgrade notes.
 - **Breaking:** onboarding no longer installs chisel or Authelia; it expects create-lamaste to have installed them (a server that is missing either is told to re-run create-lamaste). Onboarding's first two steps are now titled "Starting Chisel" and "Configuring Authelia" (ids unchanged).
@@ -89,6 +91,8 @@ Not yet published; the date is set at release. All lockstep packages move to 4.0
 - Every wildcard sudoers rule, `systemctl daemon-reload`, and the rules for certbot, Let's Encrypt `openssl` reads and the chisel authfile (see Security).
 
 ### Fixed
+
+- The desktop app could not start `lamaste-cloud`, `create-lamaste` or `create-lamaste-admin`: their workspace paths predated the `packages/<group>/<name>` layout, and the fallback handed `node` a bare command name, which it resolves against the working directory instead of PATH. Creating a server, discovering servers and the admin certificate upgrade all failed. The paths are corrected and the fallback locates the globally installed command.
 
 - The redeploy never updated the gatekeeper; it now redeploys it with the rest.
 - Adding a site alias (or verifying a custom domain) whose DNS query is refused or fails answered 500; any resolver failure now means "does not resolve here" and gets the 400 with the A record to add.

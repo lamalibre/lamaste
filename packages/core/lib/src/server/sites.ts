@@ -8,6 +8,7 @@
 
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
+import { CORE_SUBDOMAINS } from '../constants.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -198,7 +199,7 @@ function validateAliases(
   if (normalised.length > MAX_SITE_ALIASES) {
     throw new SiteError(`At most ${MAX_SITE_ALIASES} aliases per site`, 'INVALID_ALIAS');
   }
-  const core = new Set(['panel', 'auth', 'tunnel'].map((s) => `${s}.${domain}`));
+  const core = new Set(CORE_SUBDOMAINS.map((s) => `${s}.${domain}`));
   const tunnelHosts = new Set(tunnels.map((t) => `${t.subdomain}.${domain}`));
   for (const alias of normalised) {
     if (!HOSTNAME_RE.test(alias)) {

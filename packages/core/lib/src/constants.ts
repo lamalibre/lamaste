@@ -192,6 +192,15 @@ export function isTunnelPortAllowed(port: number): boolean {
 }
 
 /**
+ * The subdomains of the base domain the relay itself serves: the panel,
+ * the Authelia portal and the chisel endpoint. They are the only names
+ * onboarding issues certificates for, so they are the only names onboarding
+ * requires to resolve to the relay — the base domain's apex may stay with
+ * another host until a site is put on it.
+ */
+export const CORE_SUBDOMAINS = ['panel', 'auth', 'tunnel'] as const;
+
+/**
  * The Let's Encrypt registration email the relay accepts — the exact rule the
  * root-owned `lamaste-certbot` wrapper enforces before calling certbot, so the
  * panel rejects at onboarding what certbot issuance would later refuse. The

@@ -386,20 +386,12 @@ fn migrate_p12_passwords(
 }
 
 /// Resolve the path to the lamaste-cloud CLI entry point.
-/// Uses the workspace path (CARGO_MANIFEST_DIR is baked at compile time),
-/// then falls back to PATH lookup.
-fn cloud_cli_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR is set at compile time — works in both debug and release
-    let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../lamaste-cloud/bin/lamaste-cloud.js");
-    if let Ok(canonical) = workspace_path.canonicalize() {
-        if canonical.exists() {
-            return canonical;
-        }
-    }
-
-    // Fallback: assume lamaste-cloud is in PATH
-    PathBuf::from("lamaste-cloud")
+fn cloud_cli_path() -> Result<PathBuf, String> {
+    crate::cli_path::resolve_node_cli(
+        "sdks/cloud/bin/lamaste-cloud.js",
+        "lamaste-cloud",
+        "@lamalibre/lamaste-cloud",
+    )
 }
 
 /// Run a lamaste-cloud CLI command and return the stdout output.
@@ -407,7 +399,7 @@ fn run_cloud_cmd(
     args: &[&str],
     token: &str,
 ) -> Result<String, String> {
-    let cli_path = cloud_cli_path();
+    let cli_path = cloud_cli_path()?;
 
     let output = std::process::Command::new("node")
         .arg(&cli_path)
@@ -445,7 +437,7 @@ fn run_storage_cmd(
     access_key: &str,
     secret_key: &str,
 ) -> Result<String, String> {
-    let cli_path = cloud_cli_path();
+    let cli_path = cloud_cli_path()?;
 
     let output = std::process::Command::new("node")
         .arg(&cli_path)
@@ -479,7 +471,7 @@ fn run_storage_cmd(
 
 /// Run a lamaste-cloud CLI command that requires no credentials.
 fn run_cloud_cmd_no_credentials(args: &[&str]) -> Result<String, String> {
-    let cli_path = cloud_cli_path();
+    let cli_path = cloud_cli_path()?;
 
     let output = std::process::Command::new("node")
         .arg(&cli_path)
@@ -861,7 +853,7 @@ pub async fn provision_server(
         .ok_or("No cloud token stored. Please add your API token first.")?;
 
     tokio::task::spawn_blocking(move || {
-        let cli_path = cloud_cli_path();
+        let cli_path = cloud_cli_path()?;
 
         let mut args = vec![
             "provision".to_string(),
@@ -1399,7 +1391,7 @@ pub async fn provision_storage_server(
         .map_err(|e| format!("Task failed: {}", e))??;
 
     tokio::task::spawn_blocking(move || {
-        let cli_path = cloud_cli_path();
+        let cli_path = cloud_cli_path()?;
 
         let mut args = vec![
             "provision-storage".to_string(),

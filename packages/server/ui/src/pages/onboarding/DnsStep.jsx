@@ -40,52 +40,78 @@ function DnsRecord({ type, name, value }) {
   );
 }
 
+function RecordResult({ name, ok, resolvedIps, expectedIp }) {
+  return (
+    <div className="flex items-start gap-2">
+      {ok ? (
+        <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-400" />
+      ) : (
+        <XCircle size={18} className="mt-0.5 shrink-0 text-red-400" />
+      )}
+      <div className="text-sm">
+        <span className={ok ? 'text-green-400' : 'text-red-400'}>{name}</span>
+        {ok ? (
+          <span className="text-zinc-400"> resolves to {expectedIp}</span>
+        ) : resolvedIps.length > 0 ? (
+          <span className="text-zinc-400">
+            {' '}
+            resolves to {resolvedIps.join(', ')} (expected {expectedIp})
+          </span>
+        ) : (
+          <span className="text-zinc-400"> does not resolve</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OptionalResult({ name, ok, expectedIp, missingText }) {
+  return (
+    <div className="flex items-start gap-2">
+      {ok ? (
+        <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-400" />
+      ) : (
+        <AlertTriangle size={18} className="mt-0.5 shrink-0 text-yellow-400" />
+      )}
+      <div className="text-sm">
+        <span className={ok ? 'text-green-400' : 'text-yellow-400'}>{name}</span>
+        {ok ? (
+          <span className="text-zinc-400"> resolves to {expectedIp}</span>
+        ) : (
+          <span className="text-zinc-400"> {missingText}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VerificationResult({ result }) {
   if (!result) return null;
 
   return (
     <div className="mt-5 space-y-3 rounded-md border border-zinc-700 bg-zinc-900 p-4">
-      <div className="flex items-start gap-2">
-        {result.ok ? (
-          <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-400" />
-        ) : (
-          <XCircle size={18} className="mt-0.5 shrink-0 text-red-400" />
-        )}
-        <div className="text-sm">
-          <span className={result.ok ? 'text-green-400' : 'text-red-400'}>{result.domain}</span>
-          {result.ok ? (
-            <span className="text-zinc-400"> resolves to {result.expectedIp}</span>
-          ) : result.resolvedIps.length > 0 ? (
-            <span className="text-zinc-400">
-              {' '}
-              resolves to {result.resolvedIps.join(', ')} (expected {result.expectedIp})
-            </span>
-          ) : (
-            <span className="text-zinc-400"> does not resolve</span>
-          )}
-        </div>
-      </div>
+      {result.records.map((record) => (
+        <RecordResult
+          key={record.name}
+          name={record.name}
+          ok={record.ok}
+          resolvedIps={record.resolvedIps}
+          expectedIp={result.expectedIp}
+        />
+      ))}
 
-      <div className="flex items-start gap-2">
-        {result.wildcardOk ? (
-          <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-400" />
-        ) : (
-          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-yellow-400" />
-        )}
-        <div className="text-sm">
-          <span className={result.wildcardOk ? 'text-green-400' : 'text-yellow-400'}>
-            *.{result.domain}
-          </span>
-          {result.wildcardOk ? (
-            <span className="text-zinc-400"> resolves to {result.expectedIp}</span>
-          ) : (
-            <span className="text-zinc-400">
-              {' '}
-              not configured — you can add individual subdomain records later
-            </span>
-          )}
-        </div>
-      </div>
+      <OptionalResult
+        name={`*.${result.domain}`}
+        ok={result.wildcardOk}
+        expectedIp={result.expectedIp}
+        missingText="not configured — you can add individual subdomain records later"
+      />
+      <OptionalResult
+        name={result.domain}
+        ok={result.apexOk}
+        expectedIp={result.expectedIp}
+        missingText="does not point here — only needed to serve a site on the domain itself"
+      />
 
       <p className="text-sm text-zinc-400">{result.message}</p>
     </div>
@@ -152,8 +178,8 @@ export default function DnsStep({ domain, ip, onComplete, onBack }) {
             </tr>
           </thead>
           <tbody className="bg-zinc-900">
-            <DnsRecord type="A" name={domain} value={ip} />
             <DnsRecord type="A" name={`*.${domain}`} value={ip} />
+            <DnsRecord type="A" name={domain} value={ip} />
           </tbody>
         </table>
       </div>
@@ -162,8 +188,13 @@ export default function DnsStep({ domain, ip, onComplete, onBack }) {
         DNS propagation can take up to 48 hours, but usually completes within a few minutes.
       </p>
       <p className="mt-1 text-xs text-zinc-500">
-        The wildcard record (*.{domain}) allows Lamaste to create subdomains for your tunnels
-        automatically.
+        The wildcard record (*.{domain}) covers the panel, auth and tunnel subdomains Lamaste needs
+        and every tunnel you create later. Without it, add an A record for each of panel.{domain},
+        auth.{domain} and tunnel.{domain}.
+      </p>
+      <p className="mt-1 text-xs text-zinc-500">
+        The record for {domain} itself is optional — it is only needed to serve a site on the
+        domain, and can stay with another host until then.
       </p>
 
       <VerificationResult result={result} />

@@ -1,4 +1,5 @@
 import dns from 'node:dns/promises';
+import { CORE_SUBDOMAINS } from '@lamalibre/lamaste';
 import { getConfig, updateConfig } from '../../lib/config.js';
 
 /**
@@ -18,17 +19,33 @@ async function resolveA(hostname) {
 /**
  * Build a human-readable diagnostic message for the DNS verification result.
  */
-function buildMessage({ domain, expectedIp, baseOk, wildcardOk, resolvedIps }) {
-  if (baseOk && wildcardOk) {
-    return 'DNS is correctly configured. Both base domain and wildcard resolve to your server.';
+function buildMessage({ domain, expectedIp, records, wildcardOk, apexOk }) {
+  const failing = records.filter((r) => !r.ok);
+  if (failing.length > 0) {
+    const details = failing
+      .map((r) =>
+        r.resolvedIps.length > 0
+          ? `${r.name} resolves to ${r.resolvedIps.join(', ')}`
+          : `${r.name} does not resolve`,
+      )
+      .join('; ');
+    return `${details}. Point ${failing.map((r) => r.name).join(', ')} (or a wildcard *.${domain}) at ${expectedIp}. DNS propagation can take up to 48 hours, but usually completes within minutes.`;
   }
-  if (baseOk && !wildcardOk) {
-    return 'Base domain resolves correctly. Wildcard DNS is not configured — you will need to add individual subdomain records for each tunnel.';
+
+  const notes = [];
+  if (!wildcardOk) {
+    notes.push(
+      'Wildcard DNS is not configured — you will need to add individual subdomain records for each tunnel.',
+    );
   }
-  if (!baseOk && resolvedIps.length > 0) {
-    return `Domain resolves to ${resolvedIps.join(', ')} but your server IP is ${expectedIp}. Please update your A record.`;
+  if (!apexOk) {
+    notes.push(
+      `${domain} itself does not point to this server — that is only needed to serve a site on it.`,
+    );
   }
-  return `Domain does not resolve yet. Please add an A record pointing ${domain} to ${expectedIp}. DNS propagation can take up to 48 hours, but usually completes within minutes.`;
+  return ['DNS is correctly configured. panel, auth and tunnel resolve to your server.', ...notes]
+    .join(' ')
+    .trim();
 }
 
 export default async function dnsRoute(fastify, _opts) {
@@ -45,26 +62,37 @@ export default async function dnsRoute(fastify, _opts) {
 
     const { domain, ip: expectedIp } = config;
 
-    const [resolvedIps, wildcardResolvedIps] = await Promise.all([
+    // Onboarding issues certificates for the core subdomains only, so those
+    // are the names that must resolve here. The apex is reported but not
+    // required: it may still belong to another host until a site is put on it.
+    const coreNames = CORE_SUBDOMAINS.map((sub) => `${sub}.${domain}`);
+    const [coreResolved, apexResolvedIps, wildcardResolvedIps] = await Promise.all([
+      Promise.all(coreNames.map((name) => resolveA(name))),
       resolveA(domain),
       resolveA(`test-lamaste-check.${domain}`),
     ]);
 
-    const baseOk = resolvedIps.includes(expectedIp);
+    const records = coreNames.map((name, i) => {
+      const resolvedIps = coreResolved[i] ?? [];
+      return { name, resolvedIps, ok: resolvedIps.includes(expectedIp) };
+    });
+    const ok = records.every((r) => r.ok);
+    const apexOk = apexResolvedIps.includes(expectedIp);
     const wildcardOk = wildcardResolvedIps.includes(expectedIp);
-    const ok = baseOk;
 
     if (ok) {
       await updateConfig({ onboarding: { status: 'DNS_READY' } });
     }
 
-    const message = buildMessage({ domain, expectedIp, baseOk, wildcardOk, resolvedIps });
+    const message = buildMessage({ domain, expectedIp, records, wildcardOk, apexOk });
 
     return {
       ok,
       domain,
-      resolvedIps,
       expectedIp,
+      records,
+      apexOk,
+      apexResolvedIps,
       wildcardOk,
       wildcardResolvedIps,
       message,

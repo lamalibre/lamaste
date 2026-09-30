@@ -213,6 +213,10 @@ export async function deleteDomainRecord(
 /**
  * Create or update A and wildcard A records for a Lamaste panel domain.
  *
+ * Onboarding needs the wildcard (it carries `panel.`, `auth.` and `tunnel.`);
+ * the base record only matters once a site is served on that name, so an
+ * existing one that points elsewhere is a warning, not a failure.
+ *
  * Handles three cases for each record:
  * - No existing record: create it
  * - Existing record points to the same IP: skip (idempotent)
@@ -256,8 +260,9 @@ export async function setupDnsRecords(
     } else {
       warnings.push(
         `A record for "${aName === '@' ? domain : `${aName}.${domain}`}" ` +
-          `points to ${existingA.data} (expected ${dropletIp}). ` +
-          `Update it manually in the DigitalOcean DNS console.`,
+          `points to ${existingA.data} and was left unchanged. ` +
+          `Lamaste only needs it to serve a site on that name; ` +
+          `update it in the DigitalOcean DNS console when you want that.`,
       );
     }
   } else {

@@ -40,14 +40,16 @@ The domain must be a valid fully qualified domain name. The email is registered 
 
 The wizard now shows the DNS records you need to create at your domain registrar or DNS provider.
 
-You need two A records:
+The wizard lists two A records:
 
 | Type  | Name            | Value          |
 | ----- | --------------- | -------------- |
-| **A** | `example.com`   | `203.0.113.42` |
 | **A** | `*.example.com` | `203.0.113.42` |
+| **A** | `example.com`   | `203.0.113.42` |
 
-The first record points your base domain to the server. The second is a wildcard record that allows Lamaste to create subdomains (like `app.example.com`, `blog.example.com`) without adding individual DNS records each time.
+The wildcard record covers the three subdomains Lamaste itself serves (`panel.`, `auth.` and `tunnel.`) and lets it create subdomains (like `app.example.com`, `blog.example.com`) without adding individual DNS records each time. Without a wildcard, add an A record for each of `panel.example.com`, `auth.example.com` and `tunnel.example.com`.
+
+The record for the base domain is optional. It is only needed to serve a site on `example.com` itself, so if another host serves that name today, leave it where it is — onboarding does not require it.
 
 **How to add these records** (varies by provider):
 
@@ -83,16 +85,17 @@ DNS propagation usually takes a few minutes but can take up to 48 hours in some 
 
 After adding the records, click **Verify DNS** in the wizard.
 
-The server checks two things:
+The server checks:
 
-1. **Base domain resolution** — Does `example.com` resolve to your server's IP?
-2. **Wildcard resolution** — Does `*.example.com` resolve to your server's IP?
+1. **Required** — Do `panel.example.com`, `auth.example.com` and `tunnel.example.com` resolve to your server's IP? Provisioning issues certificates for exactly these names.
+2. **Optional: wildcard** — Does `*.example.com` resolve to your server's IP?
+3. **Optional: base domain** — Does `example.com` itself resolve to your server's IP?
 
-**If both pass:** You see two green checkmarks and the message "DNS is correctly configured. Both base domain and wildcard resolve to your server." Click **Continue**.
+**If the three required names pass:** You see a green checkmark for each and the message "DNS is correctly configured. panel, auth and tunnel resolve to your server." Click **Continue**.
 
-**If base passes but wildcard fails:** You see a green checkmark for the base domain and a yellow warning for the wildcard. The message reads "Base domain resolves correctly. Wildcard DNS is not configured — you will need to add individual subdomain records for each tunnel." You can still continue — wildcard DNS is recommended but not required. Without it, you add an A record manually for each tunnel subdomain.
+**If the wildcard or the base domain does not point here:** You see a yellow warning for it and can still continue. Without a wildcard you add an A record manually for each tunnel subdomain. The base domain only has to point here once you serve a site on it.
 
-**If base fails:** You see a red X. The message tells you what IP the domain resolves to (or that it does not resolve yet). Wait a few minutes and click **Verify DNS** again.
+**If a required name fails:** You see a red X next to it. The message tells you what IP the name resolves to (or that it does not resolve yet). Wait a few minutes and click **Verify DNS** again.
 
 **If something goes wrong:** DNS propagation delays are the most common issue. Use a tool like `dig example.com` or [dnschecker.org](https://dnschecker.org) to verify your records are propagating. Some registrars cache aggressively — try clearing the DNS cache or waiting longer.
 
@@ -208,10 +211,11 @@ Each provisioning task calls library functions in `packages/lamaste-serverd/src/
 
 ### DNS Verification Logic
 
-The DNS check resolves two hostnames using Node's `dns.resolve4()`:
+The DNS check resolves these hostnames using Node's `dns.resolve4()`:
 
-1. `example.com` — must resolve to the server IP (required)
+1. `panel.example.com`, `auth.example.com`, `tunnel.example.com` — must resolve to the server IP (required; `CORE_SUBDOMAINS` in `@lamalibre/lamaste`)
 2. `test-lamaste-check.example.com` — tests wildcard resolution (optional)
+3. `example.com` — reported, not required
 
 The test subdomain `test-lamaste-check` is chosen to be unlikely to have an explicit A record, so resolution only succeeds if a wildcard record is present.
 

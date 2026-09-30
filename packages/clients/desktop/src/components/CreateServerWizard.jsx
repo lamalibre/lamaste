@@ -615,8 +615,10 @@ function DomainStep({
                   <div className="flex items-start gap-1.5">
                     <AlertTriangle size={12} className="text-amber-400 mt-0.5 shrink-0" />
                     <p className="text-xs text-amber-400 leading-relaxed">
-                      Existing A records found. Override them with the new server&apos;s IP during
-                      provisioning?
+                      Existing A records found. Overriding moves those names to the new server
+                      immediately — anything they serve today stops being reachable. Lamaste only
+                      needs the wildcard record; leave {fqdnPreview} alone if another host still
+                      serves it.
                     </p>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
