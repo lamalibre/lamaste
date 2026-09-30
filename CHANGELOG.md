@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [4.0.0] - Unreleased
+## [4.0.0] - 2026-09-30
 
-Not yet published; the date is set at release. All lockstep packages move to 4.0.0 (npm's latest is 3.0.0; the tree still said 2.0.0).
+All lockstep packages move to 4.0.0, the first release of the `lamaste` packages on npm (3.0.0 was published to the development registry only; the tree still said 2.0.0).
 
 ### Upgrade notes
 
