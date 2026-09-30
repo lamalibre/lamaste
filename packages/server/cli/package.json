@@ -3,7 +3,7 @@
   "version": "4.0.0",
   "description": "Server operations CLI for Lamaste",
   "type": "module",
-  "license": "SEE LICENSE IN ../../LICENSE.md",
+  "license": "SEE LICENSE IN LICENSE.md",
   "author": "Code Lama Software",
   "bin": {
     "lamaste-server": "bin/lamaste-server.js"
