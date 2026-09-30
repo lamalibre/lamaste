@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop app started from Finder or the Dock could not run `node`, `npm` or any globally installed CLI: it inherited the session's minimal PATH instead of the user's shell PATH, so token validation, server creation and agent installs failed when Node.js came from Homebrew or a version manager. The app now adopts the login shell's PATH at startup.
+- Creating a server failed at the droplet step with `422 … invalid key identifiers` (`lamaste-cloud`). The provisioning SSH key's numeric ID was sent as a string, which DigitalOcean reads as a fingerprint; it is now sent as a number, and the request is retried briefly when a key uploaded a moment earlier is not yet visible to the Droplet service.
+- The Create Server wizard reported every token-validation failure as "Token rejected" with a list of scopes to select, hiding the actual error. It now shows the error and reserves the scope hint for tokens whose scopes are wrong.
+
 ## [4.0.0] - 2026-09-30
 
 All lockstep packages move to 4.0.0, the first release of the `lamaste` packages on npm (3.0.0 was published to the development registry only; the tree still said 2.0.0).

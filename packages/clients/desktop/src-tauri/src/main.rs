@@ -35,6 +35,7 @@ mod local_install;
 mod local_plugins;
 mod mode;
 mod services;
+mod shell_env;
 mod plugins;
 mod tray;
 mod upgrade_admin;
@@ -67,6 +68,9 @@ fn urlencoding_decode(input: &str) -> String {
 }
 
 fn main() {
+    // Before anything spawns a thread or a process: see shell_env.
+    shell_env::adopt_login_shell_path();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())

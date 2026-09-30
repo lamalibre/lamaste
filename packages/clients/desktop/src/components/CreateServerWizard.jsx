@@ -215,7 +215,11 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
             <span
               className={`text-xs font-medium ${validation.valid ? 'text-green-400' : 'text-red-400'}`}
             >
-              {validation.valid ? 'Token is valid' : 'Token rejected'}
+              {validation.valid
+                ? 'Token is valid'
+                : validation.error
+                  ? 'Could not validate the token'
+                  : 'Token rejected'}
             </span>
             {validation.email && (
               <span className="text-xs text-zinc-500 ml-auto">{validation.email}</span>
@@ -254,7 +258,11 @@ function ProviderStep({ token, setToken, validation, onValidate, validating, sav
             </div>
           )}
 
-          {!validation.valid && (
+          {validation.error && (
+            <p className="text-xs text-red-400 font-mono break-words">{validation.error}</p>
+          )}
+
+          {!validation.valid && !validation.error && (
             <div className="mt-2 pt-2 border-t border-zinc-800">
               <p className="text-xs text-zinc-400 mb-1">
                 Create a scoped token with only these permissions:

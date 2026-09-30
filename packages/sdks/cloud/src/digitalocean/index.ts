@@ -15,7 +15,7 @@ import type {
   DODomainRecord,
   DnsSetupResult,
 } from '../types.js';
-import { CloudError } from '../errors.js';
+import { CloudError, CloudHttpError } from '../errors.js';
 import { doGet, doPost, doDelete, assertObject, assertField } from './api.js';
 import { validateDOToken } from './scopes.js';
 import { probeRegionLatencies } from './latency.js';
@@ -44,6 +44,10 @@ const REQUIRED_TAGS = [ECOSYSTEM_MANAGED_TAG, PRODUCT_TAG] as const;
 
 /** Default droplet size: 512MB / 1 vCPU / 10GB ($4/mo). */
 const DEFAULT_SIZE = 's-1vcpu-512mb-10gb';
+
+/** How often, and how far apart, droplet creation is retried while a new SSH key propagates. */
+const SSH_KEY_VISIBILITY_ATTEMPTS = 5;
+const SSH_KEY_VISIBILITY_DELAY_MS = 3_000;
 
 /** Default image: Ubuntu 24.04 LTS. */
 const DEFAULT_IMAGE = 'ubuntu-24-04-x64';
@@ -184,24 +188,43 @@ export class DigitalOceanProvider implements CloudProvider {
   async createServer(options: CreateServerOptions): Promise<Server> {
     const tags = [...REQUIRED_TAGS, ...(options.tags ?? [])];
 
-    const { body } = await doPost(
-      '/v2/droplets',
-      {
-        name: options.name,
-        region: options.region,
-        size: options.size ?? DEFAULT_SIZE,
-        image: DEFAULT_IMAGE,
-        ssh_keys: [options.sshKeyId],
-        tags,
-        ipv6: false,
-        monitoring: false,
-      },
-      { token: this.token, timeoutMs: 60_000 },
-    );
+    // DO takes `ssh_keys` entries as integer IDs or as fingerprint strings. A
+    // numeric ID sent as a string is read as a fingerprint and refused, so the
+    // ID this SDK carries as a string goes back on the wire as a number.
+    const sshKey = /^\d+$/.test(options.sshKeyId) ? Number(options.sshKeyId) : options.sshKeyId;
 
-    assertObject(body, 'create droplet response');
-    assertField(body, 'droplet', 'object', 'create droplet response');
-    return parseDroplet(body.droplet as Record<string, unknown>);
+    const payload = {
+      name: options.name,
+      region: options.region,
+      size: options.size ?? DEFAULT_SIZE,
+      image: DEFAULT_IMAGE,
+      ssh_keys: [sshKey],
+      tags,
+      ipv6: false,
+      monitoring: false,
+    };
+
+    // A key uploaded a moment ago is not always visible to the Droplet
+    // service yet; DO then answers 422 "invalid key identifiers". Nothing was
+    // created, so the request is safe to repeat.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const { body } = await doPost('/v2/droplets', payload, {
+          token: this.token,
+          timeoutMs: 60_000,
+        });
+        assertObject(body, 'create droplet response');
+        assertField(body, 'droplet', 'object', 'create droplet response');
+        return parseDroplet(body.droplet as Record<string, unknown>);
+      } catch (err: unknown) {
+        const keyNotVisibleYet =
+          err instanceof CloudHttpError &&
+          err.statusCode === 422 &&
+          err.message.includes('invalid key identifiers');
+        if (!keyNotVisibleYet || attempt >= SSH_KEY_VISIBILITY_ATTEMPTS) throw err;
+        await new Promise((resolve) => setTimeout(resolve, SSH_KEY_VISIBILITY_DELAY_MS));
+      }
+    }
   }
 
   async getServer(id: string): Promise<Server> {
