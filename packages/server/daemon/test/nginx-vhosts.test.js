@@ -94,3 +94,28 @@ test('every generated vhost passes the lamaste-priv allow-list', async () => {
     assert.doesNotThrow(() => validateVhost(text), name);
   }
 });
+
+test('the auth vhost serves the OIDC discovery, JWKS and token endpoints without forward auth', async () => {
+  // Authelia is the relay's OpenID Connect provider: a CLI running the
+  // device-code flow and Feria verifying JWTs reach these paths before any
+  // session exists. They must fall through to the plain proxy location.
+  const text = await readFile(path.join(captured, 'lamalibre-lamaste-auth'), 'utf8');
+  const locations = [...text.matchAll(/location\s+(\S+)\s*\{/g)].map((m) => m[1]);
+  for (const oidcPath of [
+    '/.well-known/openid-configuration',
+    '/jwks.json',
+    '/api/oidc/token',
+    '/api/oidc/device-authorization',
+    '/api/oidc/userinfo',
+  ]) {
+    const guarded = locations.filter((l) => l !== '/' && oidcPath.startsWith(l));
+    assert.deepEqual(guarded, [], `${oidcPath} must not be matched by a guarded location`);
+  }
+  const catchAll = /location \/ \{([^}]*)\}/.exec(text);
+  assert.ok(catchAll, 'catch-all location');
+  assert.match(catchAll[1], /proxy_pass http:\/\/127\.0\.0\.1:9091;/);
+  assert.doesNotMatch(catchAll[1], /auth_request/);
+  // Host and X-Forwarded-Proto reach Authelia so the issuer it derives is https://auth.<domain>.
+  assert.match(text, /proxy_set_header Host \$host;/);
+  assert.match(text, /proxy_set_header X-Forwarded-Proto \$scheme;/);
+});

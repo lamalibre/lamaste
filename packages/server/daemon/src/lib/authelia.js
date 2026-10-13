@@ -75,12 +75,13 @@ export function updateAccessControl(sites) {
 }
 
 /**
- * Make Authelia's OIDC provider serve exactly these plugin clients.
+ * Make Authelia's OIDC provider serve exactly these clients.
  * @param {string} domain
  * @param {import('@lamalibre/lamaste/server').AutheliaOidcClient[]} clients
+ * @param {import('@lamalibre/lamaste/server').OidcProviderOptions} [options]
  */
-export function updateOidcProvider(domain, clients) {
-  return updateAutheliaOidcProvider(domain, clients, execa);
+export function updateOidcProvider(domain, clients, options = {}) {
+  return updateAutheliaOidcProvider(domain, clients, execa, options);
 }
 
 export function createUserFromInvitation(username, email, groups, hashedPassword) {

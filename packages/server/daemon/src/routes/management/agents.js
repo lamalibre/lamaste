@@ -15,7 +15,7 @@ import {
 import { z } from 'zod';
 import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
-import { brokerAgentToken } from '../../lib/registry-credential.js';
+import { acquireAgentToken } from '../../lib/registry-credential.js';
 
 /**
  * An agent may rotate its own chisel credential at most this often. Every
@@ -124,6 +124,11 @@ export default async function agentsRoutes(fastify, _opts) {
   // from the mTLS cert; the token is owned by `agent:<label>` on the
   // registry, so its audit log says which agent installed what.
   //
+  // The token is cached per agent until five minutes before it expires, so
+  // repeated installs within the hour get the same one; an agent may be
+  // issued at most ten new tokens per hour (429 + Retry-After beyond that).
+  // The per-IP limit stays as a backstop.
+  //
   // 404 when the panel has no registry credential configured — the agent
   // then installs from the public registry as before.
   // ------------------------------------------------------------------
@@ -135,6 +140,14 @@ export default async function agentsRoutes(fastify, _opts) {
       config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
+      // requireRole lets the admin master role through every guard; an admin
+      // certificate has no agent identity to broker for. Plugin-agents pass
+      // here and are answered 400 below.
+      if (request.certRole !== 'agent' && request.certRole !== 'plugin-agent') {
+        return reply
+          .code(403)
+          .send({ error: 'Only an agent certificate can obtain a registry credential' });
+      }
       const label = request.certLabel;
       if (!label) {
         return reply.code(400).send({
@@ -145,16 +158,32 @@ export default async function agentsRoutes(fastify, _opts) {
         return reply.code(400).send({ error: 'Plugin-agents do not install plugins' });
       }
       try {
-        const credential = await brokerAgentToken(label);
-        if (!credential) {
+        const acquired = await acquireAgentToken(label);
+        if (!acquired) {
           return reply.code(404).send({
             error: 'No registry credential is configured on this panel',
-            hint: 'lamaste-server registry-credential set --url <registry>',
+            hint: 'lamaste-server registry-credential set --url <registry> --oidc',
           });
         }
+        if (!acquired.ok) {
+          request.log.warn(
+            { label, retryAfterSeconds: acquired.retryAfterSeconds },
+            'Agent exceeded its registry token issuance limit',
+          );
+          return reply.code(429).header('Retry-After', String(acquired.retryAfterSeconds)).send({
+            error: 'This agent has been issued its hourly share of registry tokens',
+            retryAfterSeconds: acquired.retryAfterSeconds,
+          });
+        }
+        const { credential } = acquired;
         request.log.info(
-          { label, tokenId: credential.tokenId, expiresAt: credential.expiresAt },
-          'Brokered registry token for agent',
+          {
+            label,
+            tokenId: credential.tokenId,
+            expiresAt: credential.expiresAt,
+            cached: acquired.cached,
+          },
+          acquired.cached ? 'Reused registry token for agent' : 'Brokered registry token for agent',
         );
         return credential;
       } catch (err) {

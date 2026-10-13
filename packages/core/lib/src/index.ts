@@ -83,9 +83,16 @@ export {
   validateManifest,
   OidcClientSchema,
   OIDC_GRANT_TYPES,
+  OIDC_ACCESS_TOKEN_CLAIMS,
+  OIDC_ACCESS_TOKEN_CLAIM_SCOPES,
 } from './schemas.js';
 
-export type { ParsedManifest, OidcClientDeclaration } from './schemas.js';
+export type {
+  ParsedManifest,
+  OidcClientDeclaration,
+  OidcGrantType,
+  OidcAccessTokenClaim,
+} from './schemas.js';
 
 // File helpers
 export {

@@ -211,17 +211,22 @@ function assertSafeLamalibrePackage(packageName) {
 }
 
 /**
- * After a lifecycle change, bring Authelia's OIDC clients in line with the
- * enabled plugins. Best effort — logged, never thrown — so a plugin
- * operation does not fail because Authelia could not be restarted.
+ * After a lifecycle change, bring Authelia's OIDC clients and the secret
+ * store in line with the installed plugins. Best effort — logged, never
+ * thrown — so a plugin operation does not fail because Authelia could not
+ * be restarted. Returns the secrets of confidential clients this change
+ * created (`[{ id, secret }]`), shown to the admin exactly once.
  * @param {import('pino').Logger} logger
+ * @returns {Promise<Array<{ id: string, secret: string }>>}
  */
 async function syncOidcClientsBestEffort(logger) {
   try {
-    const { syncPluginOidcClients } = await import('./plugin-oidc.js');
-    await syncPluginOidcClients(logger);
+    const { syncOidcClients } = await import('./plugin-oidc.js');
+    const result = await syncOidcClients(logger);
+    return (result?.createdSecrets ?? []).map(({ id, secret }) => ({ id, secret }));
   } catch (err) {
     logger.warn({ err: err.message }, 'Failed to sync plugin OIDC clients to Authelia');
+    return [];
   }
 }
 
@@ -382,8 +387,8 @@ export function installPlugin(packageName, logger) {
     }
 
     logger.info({ name: manifest.name, packageName }, 'Plugin installed');
-    await syncOidcClientsBestEffort(logger);
-    return entry;
+    const oidcClients = await syncOidcClientsBestEffort(logger);
+    return { ...entry, oidcClients };
   });
 }
 
@@ -487,8 +492,8 @@ export function enablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin enabled');
-    await syncOidcClientsBestEffort(logger);
-    return { ok: true, name, status: 'enabled' };
+    const oidcClients = await syncOidcClientsBestEffort(logger);
+    return { ok: true, name, status: 'enabled', oidcClients };
   });
 }
 

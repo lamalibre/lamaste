@@ -83,40 +83,148 @@ export const OIDC_GRANT_TYPES = [
   'urn:ietf:params:oauth:grant-type:device_code',
   'authorization_code',
   'refresh_token',
+  'client_credentials',
 ] as const;
 
+export type OidcGrantType = (typeof OIDC_GRANT_TYPES)[number];
+
 /**
- * A public OIDC client declared by a plugin manifest — e.g. a CLI that logs
- * in through the relay's Authelia with the device-code flow. Lamaste writes
- * it into `identity_providers.oidc.clients` when the plugin is enabled and
- * removes it when the plugin is disabled or uninstalled.
- *
- * Only public clients (no secret) are accepted from manifests; a
- * confidential client would need a secret Lamaste has no safe way to hand
- * back to the plugin.
+ * Claims a client may ask to have copied into its JWT access tokens, and the
+ * scope each one needs. Authelia puts `groups`, `preferred_username`, `name`
+ * and `email` in the UserInfo response by default; a resource server that
+ * verifies the access token offline (Feria mapping `groups` to registry
+ * scopes) needs them in the token, which takes a claims policy
+ * (`identity_providers.oidc.claims_policies.<client>.access_token`) — and a
+ * claim is only copied "provided the relevant scope was granted".
  */
-export const OidcClientSchema = z.object({
-  /** Must be the plugin's route or `<route>-<suffix>` — enforced at the manifest level. */
-  id: z
-    .string()
-    .min(1)
-    .max(100)
-    .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
-  name: z.string().min(1).max(100).optional(),
-  grantTypes: z.array(z.enum(OIDC_GRANT_TYPES)).min(1).max(3),
-  scopes: z
-    .array(z.string().regex(/^[a-z_]+$/, 'Scope names are lowercase letters and underscores'))
-    .min(1)
-    .max(20)
-    .default(['openid']),
-  /** Audiences the client may request; `{domain}` is replaced with the relay domain. */
-  audience: z.array(z.string().min(1).max(300)).max(10).default([]),
-  redirectUris: z.array(z.string().url()).max(10).default([]),
-  /** `RS256` makes access tokens JWTs (RFC 9068) a resource server can verify offline. */
-  accessTokenSignedResponseAlg: z.enum(['none', 'RS256']).default('RS256'),
-  authorizationPolicy: z.enum(['one_factor', 'two_factor']).default('two_factor'),
-  requirePkce: z.boolean().default(false),
-});
+export const OIDC_ACCESS_TOKEN_CLAIM_SCOPES = {
+  groups: 'groups',
+  preferred_username: 'profile',
+  name: 'profile',
+  email: 'email',
+} as const;
+
+export const OIDC_ACCESS_TOKEN_CLAIMS = Object.keys(OIDC_ACCESS_TOKEN_CLAIM_SCOPES) as [
+  keyof typeof OIDC_ACCESS_TOKEN_CLAIM_SCOPES,
+  ...(keyof typeof OIDC_ACCESS_TOKEN_CLAIM_SCOPES)[],
+];
+
+export type OidcAccessTokenClaim = keyof typeof OIDC_ACCESS_TOKEN_CLAIM_SCOPES;
+
+/** Scopes a client whose only grant is `client_credentials` may not carry (Authelia refuses them). */
+const OIDC_USER_ONLY_SCOPES: readonly string[] = ['openid', 'offline', 'offline_access'];
+
+/**
+ * An OIDC client declared by a plugin manifest — e.g. a CLI that logs in
+ * through the relay's Authelia with the device-code flow, or a service that
+ * authenticates with the client-credentials grant. Lamaste writes it into
+ * `identity_providers.oidc.clients` when the plugin is enabled and removes
+ * it when the plugin is disabled or uninstalled.
+ *
+ * A client is public (no secret, `token_endpoint_auth_method: none`) unless
+ * `confidential` is set. For a confidential client Lamaste generates the
+ * secret itself when the client first appears: Authelia's configuration
+ * receives only its pbkdf2 digest, the plaintext is stored at
+ * `<stateDir>/oidc-clients.json` (0600), returned once by the install or
+ * enable response, and again by `rotate-secret`.
+ */
+export const OidcClientSchema = z
+  .object({
+    /** Must be the plugin's route or `<route>-<suffix>` — enforced at the manifest level. */
+    id: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
+    name: z.string().min(1).max(100).optional(),
+    grantTypes: z.array(z.enum(OIDC_GRANT_TYPES)).min(1).max(OIDC_GRANT_TYPES.length),
+    scopes: z
+      .array(z.string().regex(/^[a-z_]+$/, 'Scope names are lowercase letters and underscores'))
+      .min(1)
+      .max(20)
+      .default(['openid']),
+    /** Audiences the client may request; `{domain}` is replaced with the relay domain. */
+    audience: z.array(z.string().min(1).max(300)).max(10).default([]),
+    redirectUris: z.array(z.string().url()).max(10).default([]),
+    /** `RS256` makes access tokens JWTs (RFC 9068) a resource server can verify offline. */
+    accessTokenSignedResponseAlg: z.enum(['none', 'RS256']).default('RS256'),
+    /** Claims copied into JWT access tokens through a per-client claims policy. */
+    accessTokenClaims: z
+      .array(z.enum(OIDC_ACCESS_TOKEN_CLAIMS))
+      .max(OIDC_ACCESS_TOKEN_CLAIMS.length)
+      .default([]),
+    /**
+     * `one_factor` or `two_factor` for the user-facing grants. A client with
+     * the `client_credentials` grant has no end user: Authelia requires
+     * `one_factor` there, which is the default for such a client.
+     */
+    authorizationPolicy: z.enum(['one_factor', 'two_factor']).optional(),
+    requirePkce: z.boolean().default(false),
+    /** A confidential client authenticates to the token endpoint with a Lamaste-generated secret. */
+    confidential: z.boolean().default(false),
+  })
+  .superRefine((client, ctx) => {
+    const grants = new Set<string>(client.grantTypes);
+    const clientCredentials = grants.has('client_credentials');
+    if (clientCredentials && !client.confidential) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['grantTypes'],
+        message: 'The client_credentials grant requires a confidential client',
+      });
+    }
+    if (grants.has('authorization_code') && client.redirectUris.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['redirectUris'],
+        message: 'The authorization_code grant requires at least one redirect URI',
+      });
+    }
+    // Authelia (validator/identity_providers.go, v4.39.28) applies both
+    // rules whenever client_credentials is among the grants, not only when
+    // it is the sole grant.
+    if (clientCredentials) {
+      const forbidden = client.scopes.filter((s) => OIDC_USER_ONLY_SCOPES.includes(s));
+      if (forbidden.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['scopes'],
+          message: `A client with the client_credentials grant may not have the scopes ${forbidden.join(', ')}`,
+        });
+      }
+      if (client.authorizationPolicy === 'two_factor') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['authorizationPolicy'],
+          message:
+            'A client with the client_credentials grant has no end user: its authorizationPolicy must be one_factor (the default for such a client)',
+        });
+      }
+    }
+    if (new Set(client.accessTokenClaims).size !== client.accessTokenClaims.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['accessTokenClaims'],
+        message: 'accessTokenClaims must not repeat a claim',
+      });
+    }
+    client.accessTokenClaims.forEach((claim, idx) => {
+      const needed = OIDC_ACCESS_TOKEN_CLAIM_SCOPES[claim];
+      if (!client.scopes.includes(needed)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['accessTokenClaims', idx],
+          message: `Access token claim "${claim}" needs the "${needed}" scope, which the client does not declare`,
+        });
+      }
+    });
+  })
+  .transform((client) => ({
+    ...client,
+    authorizationPolicy:
+      client.authorizationPolicy ??
+      (client.grantTypes.includes('client_credentials') ? 'one_factor' : 'two_factor'),
+  }));
 
 export type OidcClientDeclaration = z.infer<typeof OidcClientSchema>;
 

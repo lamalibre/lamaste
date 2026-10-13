@@ -7,6 +7,12 @@
  *   enable <name>        Enable a plugin
  *   disable <name>       Disable a plugin
  *   uninstall <name>     Remove a plugin (must be disabled first)
+ *   oidc-clients <name>  The OIDC clients a plugin declares on Authelia
+ *   rotate-secret <name> <clientId>
+ *                        New secret for a confidential OIDC client (shown once)
+ *
+ * The OIDC subcommands go through the running panel: writing a client to
+ * Authelia is the panel's job.
  */
 
 import chalk from 'chalk';
@@ -20,6 +26,7 @@ import {
 } from '@lamalibre/lamaste/server';
 import { STATE_DIR, PANEL_SERVICE } from '../config.js';
 import { exec } from '../exec.js';
+import { panelRequest } from '../panel-api.js';
 import { createLogger } from '../logger.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 
@@ -47,6 +54,10 @@ export async function runPlugins(args, { json }) {
       return disablePluginCmd(args[1], { json });
     case 'uninstall':
       return uninstallPluginCmd(args[1], { json });
+    case 'oidc-clients':
+      return oidcClientsCmd(args[1], { json });
+    case 'rotate-secret':
+      return rotateSecretCmd(args[1], args[2], { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -65,6 +76,9 @@ ${b('Subcommands:')}
   ${c('enable <name>')}        Enable a plugin
   ${c('disable <name>')}       Disable a plugin
   ${c('uninstall <name>')}     Remove a disabled plugin
+  ${c('oidc-clients <name>')}  OIDC clients the plugin declares on Authelia (no secrets)
+  ${c('rotate-secret <name> <clientId>')}
+                       Replace a confidential client's secret — printed once
 `);
 }
 
@@ -250,6 +264,79 @@ async function uninstallPluginCmd(name, { json }) {
     }
     process.exit(1);
   }
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {{ json: boolean }} options
+ */
+async function oidcClientsCmd(name, { json }) {
+  if (!name) {
+    const msg = 'Usage: lamaste-server plugins oidc-clients <name>';
+    if (json) emitError(msg);
+    else console.error(`\n  ${msg}\n`);
+    process.exit(1);
+  }
+  const result = await panelRequest('GET', `/api/plugins/${encodeURIComponent(name)}/oidc-clients`);
+  if (json) {
+    emit(result);
+    return;
+  }
+  const clients = result.clients ?? [];
+  if (clients.length === 0) {
+    console.log(`\n  Plugin ${chalk.cyan(name)} declares no OIDC clients.\n`);
+    return;
+  }
+  const b = chalk.bold;
+  const d = chalk.dim;
+  console.log('');
+  console.log(b(`  OIDC clients of ${name}`));
+  console.log(d('  ' + '\u2500'.repeat(40)));
+  for (const c of clients) {
+    const kind = c.confidential ? chalk.yellow('confidential') : chalk.green('public');
+    const served = c.enabled ? '' : d(' (plugin disabled — not served)');
+    console.log(`  ${chalk.cyan(c.id)}  ${kind}${served}`);
+    console.log(`    grants:   ${c.grantTypes.join(', ')}`);
+    console.log(`    scopes:   ${c.scopes.join(', ')}`);
+    if (c.audience.length > 0) console.log(`    audience: ${c.audience.join(', ')}`);
+    if (c.accessTokenClaims.length > 0) {
+      console.log(`    claims:   ${c.accessTokenClaims.join(', ')} (in access tokens)`);
+    }
+    if (c.confidential) {
+      console.log(
+        `    secret:   created ${c.secretCreatedAt ?? d('(not yet)')}${
+          c.secretRotatedAt ? `, rotated ${c.secretRotatedAt}` : ''
+        }`,
+      );
+    }
+  }
+  console.log('');
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {string | undefined} clientId
+ * @param {{ json: boolean }} options
+ */
+async function rotateSecretCmd(name, clientId, { json }) {
+  if (!name || !clientId) {
+    const msg = 'Usage: lamaste-server plugins rotate-secret <name> <clientId>';
+    if (json) emitError(msg);
+    else console.error(`\n  ${msg}\n`);
+    process.exit(1);
+  }
+  const result = await panelRequest(
+    'POST',
+    `/api/plugins/${encodeURIComponent(name)}/oidc-clients/${encodeURIComponent(clientId)}/rotate-secret`,
+  );
+  if (json) {
+    emit(result);
+    return;
+  }
+  console.log(
+    `\n  ${chalk.green('✓')} Secret of ${chalk.cyan(clientId)} rotated at ${result.rotatedAt}`,
+  );
+  console.log(`  ${chalk.bold('New secret (shown once):')} ${result.secret}\n`);
 }
 
 const MUTATING = new Set(['install', 'enable', 'disable', 'uninstall']);

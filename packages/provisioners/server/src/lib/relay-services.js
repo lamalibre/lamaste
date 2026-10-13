@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureAutheliaUser, ensureChiselGroup, lookupId } from './accounts.js';
 import { installPinnedAuthelia, installPinnedChisel } from './binaries.js';
+import { ensureOidcIssuerKey } from './oidc-issuer-key.js';
 import {
   chownTree,
   ensureDirectory,
@@ -79,6 +80,9 @@ export async function provisionRelayServices(ctx, report) {
   });
   await ensureDirectory(AUTHELIA_LOG_DIR, { uid: autheliaUid, gid: autheliaGid, mode: 0o750 });
   await chownTree(AUTHELIA_LOG_DIR, `${autheliaUid}:${autheliaGid}`);
+  // The OIDC issuer key: Authelia's alone, generated here so the panel —
+  // which writes the configuration that references it — never holds it.
+  await ensureOidcIssuerKey({ autheliaUid, autheliaGid, report });
   // chisel runs as nobody:lamaste-chisel; the panel creates the key (as
   // lamaste, group lamaste-chisel). Earlier versions made it nobody:nogroup 0400.
   await setFileOwnership(join(ctx.configDir, 'chisel-server.key'), {

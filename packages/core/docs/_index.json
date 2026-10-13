@@ -191,6 +191,11 @@
           "title": "Gatekeeper API",
           "slug": "api-gatekeeper",
           "file": "04-api-reference/gatekeeper.md"
+        },
+        {
+          "title": "Registry Credential & OIDC Clients",
+          "slug": "api-registry-and-oidc",
+          "file": "04-api-reference/registry-and-oidc.md"
         }
       ]
     },

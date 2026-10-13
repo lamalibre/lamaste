@@ -187,6 +187,15 @@ export const AUTHELIA_BIN = '/usr/local/bin/authelia';
 export const CHISEL_UNIT_PATH = '/etc/systemd/system/chisel.service';
 export const AUTHELIA_UNIT_PATH = '/etc/systemd/system/authelia.service';
 export const AUTHELIA_CONFIG_DIR = '/etc/authelia';
+/** RSA key Authelia signs OpenID Connect tokens with (0600, the Authelia account; see lib/oidc-issuer-key.js). */
+export const AUTHELIA_OIDC_KEY_PATH = `${AUTHELIA_CONFIG_DIR}/oidc-issuer.pem`;
+/**
+ * Authelia's configuration is rendered as a Go template: that is how it
+ * reads the OIDC issuer key (`{{ secret "…" }}`) without the panel, which
+ * writes the configuration, ever holding the key. Set on the unit and on
+ * every `authelia` CLI invocation (lamaste-priv authelia-totp).
+ */
+export const AUTHELIA_CONFIG_FILTERS_ENV = 'X_AUTHELIA_CONFIG_FILTERS=template';
 export const AUTHELIA_LOG_DIR = '/var/log/authelia';
 export const WEB_ROOT = '/var/www/lamaste';
 
@@ -257,6 +266,7 @@ User=${AUTHELIA_USER}
 Group=${AUTHELIA_USER}
 UMask=027
 Environment=AUTHELIA_SERVER_DISABLE_HEALTHCHECK=true
+Environment=${AUTHELIA_CONFIG_FILTERS_ENV}
 ExecStart=${AUTHELIA_BIN} --config ${AUTHELIA_CONFIG_DIR}/configuration.yml
 Restart=always
 RestartSec=5

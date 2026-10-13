@@ -176,79 +176,76 @@ export async function writeAutheliaConfig(
 ): Promise<string> {
   const { jwtSecret, sessionSecret, storageEncryptionKey } = secrets;
 
-  const configContent = yaml.dump(
-    {
-      server: {
-        address: 'tcp://127.0.0.1:9091/',
-      },
-      log: {
-        level: 'info',
-        file_path: path.join(AUTHELIA_LOG_DIR, 'authelia.log'),
-      },
-      identity_validation: {
-        reset_password: {
-          jwt_secret: jwtSecret,
-        },
-      },
-      authentication_backend: {
-        file: {
-          path: AUTHELIA_USERS,
-          password: {
-            algorithm: 'bcrypt',
-            bcrypt: {
-              cost: 12,
-            },
-          },
-        },
-      },
-      access_control: {
-        default_policy: 'two_factor',
-      },
-      session: {
-        // Authelia's default cookie name. Keep this in sync with the rest of
-        // the stack — the nginx `lamaste_authz` cache key reads
-        // `$cookie_authelia_session`, Gatekeeper's cookie extractor looks
-        // for `authelia_session=`, and the e2e cookie-jar fixtures write
-        // `authelia_session`. Renaming it here (e.g. to `lamaste_session`)
-        // silently breaks forward-auth: nginx forwards the cookie unchanged,
-        // Gatekeeper fails to find it, returns 401, and nginx redirects to
-        // the Authelia portal — even for freshly-authenticated sessions.
-        name: 'authelia_session',
-        secret: sessionSecret,
-        cookies: [
-          {
-            domain,
-            authelia_url: `https://auth.${domain}`,
-            default_redirection_url: `https://${domain}`,
-          },
-        ],
-        expiration: '12h',
-        inactivity: '2h',
-      },
-      regulation: {
-        max_retries: 5,
-        find_time: '2m',
-        ban_time: '5m',
-      },
-      storage: {
-        encryption_key: storageEncryptionKey,
-        local: {
-          path: path.join(AUTHELIA_CONFIG_DIR, 'db.sqlite3'),
-        },
-      },
-      notifier: {
-        filesystem: {
-          filename: path.join(AUTHELIA_CONFIG_DIR, 'notifications.txt'),
-        },
-      },
-      totp: {
-        issuer: 'Lamaste',
-        period: 30,
-        digits: 6,
+  const configContent = dumpAutheliaConfig({
+    server: {
+      address: 'tcp://127.0.0.1:9091/',
+    },
+    log: {
+      level: 'info',
+      file_path: path.join(AUTHELIA_LOG_DIR, 'authelia.log'),
+    },
+    identity_validation: {
+      reset_password: {
+        jwt_secret: jwtSecret,
       },
     },
-    { lineWidth: -1 },
-  );
+    authentication_backend: {
+      file: {
+        path: AUTHELIA_USERS,
+        password: {
+          algorithm: 'bcrypt',
+          bcrypt: {
+            cost: 12,
+          },
+        },
+      },
+    },
+    access_control: {
+      default_policy: 'two_factor',
+    },
+    session: {
+      // Authelia's default cookie name. Keep this in sync with the rest of
+      // the stack — the nginx `lamaste_authz` cache key reads
+      // `$cookie_authelia_session`, Gatekeeper's cookie extractor looks
+      // for `authelia_session=`, and the e2e cookie-jar fixtures write
+      // `authelia_session`. Renaming it here (e.g. to `lamaste_session`)
+      // silently breaks forward-auth: nginx forwards the cookie unchanged,
+      // Gatekeeper fails to find it, returns 401, and nginx redirects to
+      // the Authelia portal — even for freshly-authenticated sessions.
+      name: 'authelia_session',
+      secret: sessionSecret,
+      cookies: [
+        {
+          domain,
+          authelia_url: `https://auth.${domain}`,
+          default_redirection_url: `https://${domain}`,
+        },
+      ],
+      expiration: '12h',
+      inactivity: '2h',
+    },
+    regulation: {
+      max_retries: 5,
+      find_time: '2m',
+      ban_time: '5m',
+    },
+    storage: {
+      encryption_key: storageEncryptionKey,
+      local: {
+        path: path.join(AUTHELIA_CONFIG_DIR, 'db.sqlite3'),
+      },
+    },
+    notifier: {
+      filesystem: {
+        filename: path.join(AUTHELIA_CONFIG_DIR, 'notifications.txt'),
+      },
+    },
+    totp: {
+      issuer: 'Lamaste',
+      period: 30,
+      digits: 6,
+    },
+  });
 
   try {
     await writeAutheliaFile(AUTHELIA_CONFIG, configContent, 0o640);
@@ -465,10 +462,7 @@ async function rewriteAutheliaConfig(
   // Read current config
   let currentConfig: Record<string, unknown>;
   try {
-    const loaded = yaml.load(await readFile(AUTHELIA_CONFIG, 'utf-8')) as Record<
-      string,
-      unknown
-    > | null;
+    const loaded = await loadAutheliaConfigFile();
     if (!loaded) {
       throw new Error('Authelia configuration is empty or invalid');
     }
@@ -576,11 +570,7 @@ async function rewriteAutheliaConfig(
     // whatever values the YAML round-trip produced.
   }
 
-  const configContent = yaml.dump(currentConfig, {
-    lineWidth: -1,
-    quotingType: "'",
-    forceQuotes: false,
-  });
+  const configContent = dumpAutheliaConfig(currentConfig);
 
   // Backup current config before writing
   const bakPath = `${AUTHELIA_CONFIG}.bak`;
@@ -673,22 +663,111 @@ export async function updateAccessControl(
 
 /**
  * Authelia is the relay's identity provider for plugin clients too — a CLI
- * logging in with the device-code flow (Feria's `feria login`), later
- * service principals. Plugins declare public clients in their manifest
- * (`oidcClients`); Lamaste renders them into
- * `identity_providers.oidc.clients`, signing tokens with an RSA key it
- * generates once at `/etc/authelia/oidc-issuer.pem`.
+ * logging in with the device-code flow (Feria's `feria login`), a service
+ * authenticating with the client-credentials grant (Lamaste's own
+ * `lamaste-server` principal brokering registry tokens). Plugins declare
+ * clients in their manifest (`oidcClients`); Lamaste renders them into
+ * `identity_providers.oidc.clients`.
  *
- * The block is removed entirely when no enabled plugin declares a client:
- * Authelia refuses an `oidc` section without clients.
+ * Tokens are signed with an RSA key that create-lamaste generates at
+ * `/etc/authelia/oidc-issuer.pem`, owned by the Authelia account and
+ * readable by nobody else — not by the panel. The configuration therefore
+ * does not carry the key: Authelia runs with the `template` configuration
+ * filter (`X_AUTHELIA_CONFIG_FILTERS=template`, set by create-lamaste in its
+ * unit) and the key is pulled in with `{{ secret "<path>" }}` at load time.
+ * The whole file is then a Go template, so the writer refuses any `{{` or
+ * `}}` it would otherwise emit.
+ *
+ * The block is removed entirely when no client is declared: Authelia
+ * refuses an `oidc` section without clients.
  */
 
-/** RSA private key Authelia signs ID and JWT access tokens with. */
+/** RSA private key Authelia signs ID and JWT access tokens with (0600, lamaste-authelia). */
 export const AUTHELIA_OIDC_KEY = path.join(AUTHELIA_CONFIG_DIR, 'oidc-issuer.pem');
+
+/** `key_id` of the issuer key in the JWKS. */
+export const AUTHELIA_OIDC_KEY_ID = 'lamaste-oidc';
+
+/**
+ * What the YAML carries in `jwks[].key` between reading and writing. The
+ * file on disk has the template expression instead; js-yaml cannot parse
+ * that line (`{{` opens a flow mapping), so the reader swaps it for this
+ * sentinel and the writer swaps it back.
+ */
+export const OIDC_KEY_TEMPLATE_SENTINEL = '__LAMASTE_OIDC_ISSUER_KEY__';
+
+/**
+ * The template line Authelia reads the issuer key with. `indent` is the
+ * column of `key:`; `mindent` gets the column of the PEM lines, one level
+ * deeper, so the multi-line scalar nests correctly under it.
+ */
+export function oidcIssuerKeyTemplateLine(indent: number): string {
+  return `${' '.repeat(indent)}key: {{ secret "${AUTHELIA_OIDC_KEY}" | mindent ${indent + 2} "|" | msquote }}`;
+}
+
+const OIDC_KEY_TEMPLATE_LINE_RE =
+  /^( *)key: \{\{ secret "[^"]+" \| mindent \d+ "\|" \| msquote \}\}\s*$/;
+const OIDC_KEY_SENTINEL_LINE_RE = new RegExp(`^( *)key: '?${OIDC_KEY_TEMPLATE_SENTINEL}'?\\s*$`);
+
+/** Configuration text as stored → text js-yaml can parse. Pure. */
+export function sentinelizeAutheliaConfig(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => {
+      const m = OIDC_KEY_TEMPLATE_LINE_RE.exec(line);
+      return m ? `${m[1] ?? ''}key: ${OIDC_KEY_TEMPLATE_SENTINEL}` : line;
+    })
+    .join('\n');
+}
+
+/**
+ * Rendered YAML (sentinel inside) → the text Authelia reads. Refuses a
+ * document containing `{{` or `}}` anywhere: with the template filter on,
+ * such a value would be executed, not stored. Pure.
+ */
+export function renderAutheliaConfigTemplate(yamlText: string): string {
+  if (yamlText.includes('{{') || yamlText.includes('}}')) {
+    throw new Error(
+      'Authelia configuration must not contain "{{" or "}}": the file is rendered as a Go template',
+    );
+  }
+  return yamlText
+    .split('\n')
+    .map((line) => {
+      const m = OIDC_KEY_SENTINEL_LINE_RE.exec(line);
+      return m ? oidcIssuerKeyTemplateLine((m[1] ?? '').length) : line;
+    })
+    .join('\n');
+}
+
+/** Dump a configuration object the way every writer here does. */
+function dumpAutheliaConfig(config: Record<string, unknown>): string {
+  return renderAutheliaConfigTemplate(
+    yaml.dump(config, { lineWidth: -1, quotingType: "'", forceQuotes: false }),
+  );
+}
+
+/** Read and parse `configuration.yml` (template line sentinelized). */
+async function loadAutheliaConfigFile(): Promise<Record<string, unknown> | null> {
+  const text = await readFile(AUTHELIA_CONFIG, 'utf-8');
+  return yaml.load(sentinelizeAutheliaConfig(text)) as Record<string, unknown> | null;
+}
 
 /** A manifest client with the plugin that declared it. */
 export interface AutheliaOidcClient extends OidcClientDeclaration {
   plugin: string;
+}
+
+/** Secrets of confidential clients, as pbkdf2 digests Authelia accepts, keyed by client id. */
+export type OidcClientSecretDigests = Readonly<Record<string, string>>;
+
+/** Custom scope definitions for `identity_providers.oidc.scopes`. */
+export type OidcScopeDefinitions = Readonly<Record<string, { claims: readonly string[] }>>;
+
+export interface OidcProviderOptions {
+  /** Required for every confidential client in the list. */
+  secretDigests?: OidcClientSecretDigests;
+  scopes?: OidcScopeDefinitions;
 }
 
 /** `{domain}` in an audience or redirect URI becomes the relay domain. */
@@ -696,25 +775,55 @@ function expandDomain(value: string, domain: string): string {
   return value.replaceAll('{domain}', domain);
 }
 
-/** The `clients[]` entry Authelia expects for one manifest client. Pure. */
+const USER_FACING_GRANTS: readonly string[] = [
+  'urn:ietf:params:oauth:grant-type:device_code',
+  'authorization_code',
+  'refresh_token',
+];
+
+/**
+ * The `clients[]` entry Authelia expects for one client. A confidential
+ * client needs the pbkdf2 digest of its secret. Pure.
+ */
 export function renderOidcClient(
   domain: string,
   client: AutheliaOidcClient,
+  secretDigest?: string,
 ): Record<string, unknown> {
+  if (client.confidential && !secretDigest) {
+    throw new Error(`OIDC client "${client.id}" is confidential but has no secret digest`);
+  }
+  if (!client.confidential && secretDigest) {
+    throw new Error(`OIDC client "${client.id}" is public and must not carry a secret`);
+  }
   const entry: Record<string, unknown> = {
     client_id: client.id,
     client_name: client.name ?? `${client.plugin} (${client.id})`,
-    public: true,
-    authorization_policy: client.authorizationPolicy,
-    // Every consent is asked for explicitly — a device-flow approval screen
-    // must say what is being granted.
-    consent_mode: 'explicit',
-    scopes: [...client.scopes],
-    grant_types: [...client.grantTypes],
-    token_endpoint_auth_method: 'none',
-    access_token_signed_response_alg: client.accessTokenSignedResponseAlg,
-    requested_audience_mode: 'explicit',
   };
+  if (client.confidential) {
+    entry.client_secret = secretDigest;
+  } else {
+    entry.public = true;
+  }
+  // Authelia 4.39 refuses anything but one_factor on a client with the
+  // client_credentials grant (there is no end user to challenge).
+  entry.authorization_policy = client.grantTypes.includes('client_credentials')
+    ? 'one_factor'
+    : client.authorizationPolicy;
+  // Every consent is asked for explicitly — a device-flow approval screen
+  // must say what is being granted. A pure service client has no user to
+  // ask.
+  if (client.grantTypes.some((g) => USER_FACING_GRANTS.includes(g))) {
+    entry.consent_mode = 'explicit';
+  }
+  entry.scopes = [...client.scopes];
+  entry.grant_types = [...client.grantTypes];
+  entry.token_endpoint_auth_method = client.confidential ? 'client_secret_basic' : 'none';
+  entry.access_token_signed_response_alg = client.accessTokenSignedResponseAlg;
+  entry.requested_audience_mode = 'explicit';
+  if (client.accessTokenClaims.length > 0) {
+    entry.claims_policy = client.id;
+  }
   if (client.audience.length > 0) {
     entry.audience = client.audience.map((a) => expandDomain(a, domain));
   }
@@ -725,36 +834,50 @@ export function renderOidcClient(
   return entry;
 }
 
-/** The whole `identity_providers.oidc` section. Pure. */
+/**
+ * One claims policy per client that asks for claims in its access tokens,
+ * named after the client (`claims_policy: <id>` on the client). Pure.
+ */
+export function renderOidcClaimsPolicies(
+  clients: readonly AutheliaOidcClient[],
+): Record<string, { access_token: string[] }> {
+  const policies: Record<string, { access_token: string[] }> = {};
+  for (const client of clients) {
+    if (client.accessTokenClaims.length === 0) continue;
+    policies[client.id] = { access_token: [...client.accessTokenClaims] };
+  }
+  return policies;
+}
+
+/** The whole `identity_providers.oidc` section, with the sentinel for the key. Pure. */
 export function buildOidcProviderSection(
   domain: string,
   hmacSecret: string,
-  issuerKeyPem: string,
   clients: readonly AutheliaOidcClient[],
+  options: OidcProviderOptions = {},
 ): Record<string, unknown> {
-  return {
+  const digests = options.secretDigests ?? {};
+  const section: Record<string, unknown> = {
     hmac_secret: hmacSecret,
-    jwks: [{ key_id: 'lamaste-oidc', algorithm: 'RS256', use: 'sig', key: issuerKeyPem }],
+    jwks: [
+      {
+        key_id: AUTHELIA_OIDC_KEY_ID,
+        algorithm: 'RS256',
+        use: 'sig',
+        key: OIDC_KEY_TEMPLATE_SENTINEL,
+      },
+    ],
     lifespans: { device_code: '10 minutes' },
-    clients: clients.map((c) => renderOidcClient(domain, c)),
   };
-}
-
-/**
- * Generate the issuer key on first use (RSA 4096, readable by Authelia's
- * group only). Returns the PEM.
- */
-export async function ensureOidcIssuerKey(): Promise<{ generated: boolean; keyPem: string }> {
-  try {
-    const existing = await readFile(AUTHELIA_OIDC_KEY, 'utf-8');
-    if (existing.includes('PRIVATE KEY')) return { generated: false, keyPem: existing };
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  const policies = renderOidcClaimsPolicies(clients);
+  if (Object.keys(policies).length > 0) section.claims_policies = policies;
+  if (options.scopes && Object.keys(options.scopes).length > 0) {
+    section.scopes = Object.fromEntries(
+      Object.entries(options.scopes).map(([name, def]) => [name, { claims: [...def.claims] }]),
+    );
   }
-  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 4096 });
-  const keyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-  await writeAutheliaFile(AUTHELIA_OIDC_KEY, keyPem, 0o640);
-  return { generated: true, keyPem };
+  section.clients = clients.map((c) => renderOidcClient(domain, c, digests[c.id]));
+  return section;
 }
 
 /** The OIDC HMAC secret lives with the other panel-owned secrets in `.secrets.json`. */
@@ -776,10 +899,7 @@ async function ensureOidcHmacSecret(): Promise<string> {
 /** Current `identity_providers.oidc` section, or `null`. */
 async function readCurrentOidcSection(): Promise<Record<string, unknown> | null> {
   try {
-    const loaded = yaml.load(await readFile(AUTHELIA_CONFIG, 'utf-8')) as Record<
-      string,
-      unknown
-    > | null;
+    const loaded = await loadAutheliaConfigFile();
     const ip = loaded?.identity_providers as { oidc?: Record<string, unknown> } | undefined;
     return ip?.oidc ?? null;
   } catch {
@@ -788,14 +908,23 @@ async function readCurrentOidcSection(): Promise<Record<string, unknown> | null>
 }
 
 /**
+ * True when the issuer key create-lamaste provisions is in place. The
+ * panel cannot read it (0600, Authelia's account) — only see that it exists.
+ */
+export function isOidcIssuerKeyProvisioned(): Promise<boolean> {
+  return fileExists(AUTHELIA_OIDC_KEY);
+}
+
+/**
  * Make Authelia's OIDC provider serve exactly `clients`. Restarts Authelia
  * only when the section actually changes. With no clients the section is
- * removed.
+ * removed. Fails when the issuer key has not been provisioned.
  */
 export async function updateOidcProvider(
   domain: string,
   clients: readonly AutheliaOidcClient[],
   exec: ExecFn,
+  options: OidcProviderOptions = {},
 ): Promise<{ changed: boolean; clients: number }> {
   const current = await readCurrentOidcSection();
 
@@ -811,9 +940,15 @@ export async function updateOidcProvider(
     return { changed: true, clients: 0 };
   }
 
+  if (!(await isOidcIssuerKeyProvisioned())) {
+    throw new Error(
+      `${AUTHELIA_OIDC_KEY} is missing — the OIDC issuer key is provisioned by create-lamaste; ` +
+        'run the installer again (npx @lamalibre/create-lamaste, redeploy) to create it',
+    );
+  }
+
   const hmacSecret = await ensureOidcHmacSecret();
-  const { keyPem } = await ensureOidcIssuerKey();
-  const desired = buildOidcProviderSection(domain, hmacSecret, keyPem, clients);
+  const desired = buildOidcProviderSection(domain, hmacSecret, clients, options);
   if (current !== null && JSON.stringify(current) === JSON.stringify(desired)) {
     return { changed: false, clients: clients.length };
   }

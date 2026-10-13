@@ -8,6 +8,7 @@ import {
   getPluginCapabilities,
 } from '../../lib/plugins.js';
 import { setPluginCapabilities, loadAgentRegistry } from '../../lib/mtls.js';
+import { listPluginOidcClients, rotatePluginOidcClientSecret } from '../../lib/plugin-oidc.js';
 import {
   readPushInstallConfig,
   readPushInstallSessions,
@@ -29,6 +30,14 @@ const PluginNameParamSchema = z.object({
     .min(1)
     .max(100)
     .regex(/^[a-z0-9-]+$/, 'Plugin name must contain only lowercase letters, numbers, and hyphens'),
+});
+
+const OidcClientIdParamSchema = z.object({
+  clientId: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
 });
 
 const InstallBodySchema = z.object({
@@ -188,10 +197,12 @@ export default async function pluginRoutes(fastify, _opts) {
       const body = InstallBodySchema.parse(request.body);
 
       try {
-        const plugin = await installPlugin(body.packageName, request.log);
+        // `oidcClients` carries the secrets of confidential OIDC clients this
+        // install created — shown once, never stored in the registry row.
+        const { oidcClients, ...plugin } = await installPlugin(body.packageName, request.log);
         // Refresh in-memory capability list so new plugin caps are valid immediately
         setPluginCapabilities(await getPluginCapabilities());
-        return { ok: true, plugin };
+        return { ok: true, plugin, oidcClients };
       } catch (err) {
         const statusCode = err.statusCode || 500;
         return reply.code(statusCode).send({
@@ -268,6 +279,58 @@ export default async function pluginRoutes(fastify, _opts) {
         const statusCode = err.statusCode || 500;
         return reply.code(statusCode).send({
           error: err.message || 'Plugin uninstall failed',
+        });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /plugins/:name/oidc-clients — the OIDC clients a plugin declares
+  //
+  // Metadata only: a confidential client's secret is shown by the install
+  // or enable response that created it, and by rotate-secret — never here.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/oidc-clients',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const registry = await readPlugins();
+      if (!registry.plugins.some((p) => p.name === params.name)) {
+        return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      }
+      return { clients: await listPluginOidcClients(params.name) };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /plugins/:name/oidc-clients/:clientId/rotate-secret
+  //
+  // Replaces a confidential client's secret in the store and in Authelia.
+  // The new secret is in the response and nowhere else.
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/plugins/:name/oidc-clients/:clientId/rotate-secret',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const { clientId } = OidcClientIdParamSchema.parse(request.params);
+      const registry = await readPlugins();
+      if (!registry.plugins.some((p) => p.name === params.name)) {
+        return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      }
+      try {
+        const rotated = await rotatePluginOidcClientSecret(params.name, clientId, request.log);
+        return { ok: true, ...rotated };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send({
+          error: err.message || 'Failed to rotate the client secret',
         });
       }
     },

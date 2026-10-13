@@ -4,9 +4,13 @@
  * for agents.
  *
  *   registry-credential show
+ *   registry-credential set --url <registry> --oidc
+ *       The panel authenticates as its own `lamaste-server` OIDC client on
+ *       the relay's Authelia (client-credentials grant, Feria login). Nothing
+ *       to paste; Feria's auth.json must trust the relay as a rules issuer.
  *   registry-credential set --url <registry> [--token-stdin]
- *       The token is read from LAMASTE_REGISTRY_TOKEN, or from stdin with
- *       --token-stdin. It is never accepted as a command-line argument.
+ *       A long-lived Feria token, read from LAMASTE_REGISTRY_TOKEN or from
+ *       stdin with --token-stdin. Never accepted as a command-line argument.
  *   registry-credential clear
  */
 
@@ -29,7 +33,7 @@ export async function runRegistryCredential(args, { json }) {
       return clear({ json });
     default:
       process.stderr.write(
-        `Usage: lamaste-server registry-credential <show | set --url <registry> [--token-stdin] | clear>\n`,
+        `Usage: lamaste-server registry-credential <show | set --url <registry> (--oidc | --token-stdin) | clear>\n`,
       );
       process.exit(1);
   }
@@ -47,6 +51,13 @@ async function show({ json }) {
   }
   console.log(`${chalk.bold('Registry:')}   ${result.registryUrl}`);
   console.log(`${chalk.bold('Scope:')}      ${result.scope}`);
+  console.log(
+    `${chalk.bold('Auth:')}       ${
+      result.auth === 'oidc'
+        ? `Authelia OIDC client ${result.clientId} (client credentials)`
+        : 'long-lived registry token'
+    }`,
+  );
   console.log(`${chalk.bold('Owner:')}      ${result.owner ?? chalk.dim('(unknown)')}`);
   console.log(`${chalk.bold('Configured:')} ${result.configuredAt}`);
 }
@@ -54,6 +65,7 @@ async function show({ json }) {
 async function set(args, { json }) {
   let url;
   let tokenFromStdin = false;
+  let oidc = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === '--url') {
@@ -62,6 +74,8 @@ async function set(args, { json }) {
       url = arg.slice('--url='.length);
     } else if (arg === '--token-stdin') {
       tokenFromStdin = true;
+    } else if (arg === '--oidc') {
+      oidc = true;
     } else if (arg === '--token' || arg.startsWith('--token=')) {
       throw new Error(
         'The token is never accepted on the command line — set LAMASTE_REGISTRY_TOKEN or use --token-stdin',
@@ -71,18 +85,27 @@ async function set(args, { json }) {
     }
   }
   if (!url) throw new Error('registry-credential set: --url <registry> is required');
-
-  let token = tokenFromStdin ? (await readStdin()).trim() : process.env.LAMASTE_REGISTRY_TOKEN;
-  if (!token) {
-    throw new Error(
-      'No token: set LAMASTE_REGISTRY_TOKEN, or pipe it in with --token-stdin (e.g. from `feria-server token bootstrap`)',
-    );
+  if (oidc && tokenFromStdin) {
+    throw new Error('registry-credential set: choose --oidc or --token-stdin, not both');
   }
-  token = token.trim();
+
+  let auth;
+  if (oidc) {
+    auth = { kind: 'oidc' };
+  } else {
+    let token = tokenFromStdin ? (await readStdin()).trim() : process.env.LAMASTE_REGISTRY_TOKEN;
+    if (!token) {
+      throw new Error(
+        'No token: use --oidc, set LAMASTE_REGISTRY_TOKEN, or pipe a token in with --token-stdin (e.g. from `feria-server token bootstrap`)',
+      );
+    }
+    token = token.trim();
+    auth = { kind: 'token', token };
+  }
 
   const result = await panelRequest('PUT', '/api/registry-credential', {
     registryUrl: url,
-    token,
+    auth,
   });
   if (result.error) throw new Error(result.error);
   if (json) {
@@ -90,7 +113,8 @@ async function set(args, { json }) {
     return;
   }
   console.log(
-    `${chalk.green('✓')} Registry credential configured for ${result.registryUrl} as ${result.owner ?? '(unknown)'}`,
+    `${chalk.green('✓')} Registry credential configured for ${result.registryUrl} as ${result.owner ?? '(unknown)'}` +
+      (result.auth === 'oidc' ? ` (Authelia client ${result.clientId})` : ''),
   );
 }
 

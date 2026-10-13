@@ -28,6 +28,7 @@ import userAccessSessionMiddleware from './middleware/user-access-session.js';
 import { getPluginCapabilities } from './lib/plugins.js';
 import { setPluginCapabilities } from './lib/mtls.js';
 import { startChiselReconciler } from './lib/chisel-reconcile.js';
+import { syncOidcClients } from './lib/plugin-oidc.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -75,6 +76,16 @@ async function start() {
   // closed — chisel is stopped when this cannot be done — and retries until
   // it can.
   startChiselReconciler(server.log);
+
+  // Bring Authelia's OIDC clients (plugin manifests, the panel's own
+  // registry client) and the client-secret store in line with persisted
+  // state. Best effort: a failure is logged and the next lifecycle change
+  // retries. Only once onboarding has written Authelia's configuration.
+  if (config.onboarding.status === 'COMPLETED') {
+    syncOidcClients(server.log).catch((err) => {
+      server.log.warn({ err: err.message }, 'Startup OIDC client sync failed');
+    });
+  }
 
   // --- Plugins ---
   const ipOrigin = `https://${config.ip}:9292`;

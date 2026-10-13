@@ -58,7 +58,7 @@ ${b('COMMANDS')}
   ${c('status')}          Server health, uptime, services, certificate status
   ${c('logs')}            View server log output (journalctl wrapper)
   ${c('restart')}         Restart panel server and optionally gatekeeper
-  ${c('plugins')}         Manage server-side plugins (list, install, enable, disable, uninstall)
+  ${c('plugins')}         Manage server-side plugins (list, install, enable, disable, uninstall, oidc-clients, rotate-secret)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
@@ -93,6 +93,9 @@ ${b('EXAMPLES')}
 
   ${d('# Install a plugin')}
   ${c('lamaste-server plugins install @lamalibre/herd-server')}
+
+  ${d("# Broker agent install tokens from the registry as the panel's own Authelia client")}
+  ${c('lamaste-server registry-credential set --url https://feria.example.com --oidc')}
 
   ${d('# List tunnels')}
   ${c('lamaste-server tunnels list')}

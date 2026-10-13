@@ -46,6 +46,17 @@ const MAX_VHOST_BYTES = 256 * 1024;
 const AUTHELIA_BIN = '/usr/local/bin/authelia';
 const AUTHELIA_CONFIG = '/etc/authelia/configuration.yml';
 const AUTHELIA_USER = 'lamaste-authelia';
+/**
+ * Environment of every `authelia` CLI run. The configuration is a Go
+ * template (it reads the OIDC issuer key with `{{ secret "…" }}`), so the
+ * CLI needs the same filter the service unit sets, or it fails to parse
+ * the file once an OIDC provider is configured.
+ */
+const AUTHELIA_CLI_ENV = Object.freeze({
+  PATH: '/usr/bin:/bin',
+  HOME: '/nonexistent',
+  X_AUTHELIA_CONFIG_FILTERS: 'template',
+});
 
 const SYSTEMD_RUN = '/usr/bin/systemd-run';
 const NPX = '/usr/bin/npx';
@@ -604,7 +615,7 @@ function autheliaTotp(username) {
       uid,
       gid,
       cwd: '/',
-      env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent' },
+      env: { ...AUTHELIA_CLI_ENV },
       encoding: 'utf8',
       timeout: 60_000,
     },
@@ -689,5 +700,13 @@ if (require.main === module) {
     process.exit(err instanceof UsageError ? 2 : 1);
   }
 } else {
-  module.exports = { validateVhost, tokenize, parse, assertSiteName, PANEL_SITE_RE, UsageError };
+  module.exports = {
+    validateVhost,
+    tokenize,
+    parse,
+    assertSiteName,
+    PANEL_SITE_RE,
+    UsageError,
+    AUTHELIA_CLI_ENV,
+  };
 }

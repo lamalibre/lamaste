@@ -1,45 +1,122 @@
 /**
  * Registry credential (Feria) — daemon shim over `@lamalibre/lamaste/server`.
  *
- * Binds the core module to this daemon's state directory and adds the one
- * piece of policy that belongs here: when a user loses a `feria-*` group or
- * is deleted, their registry tokens are revoked (best effort, never blocks
- * the user operation).
+ * Binds the core module to this daemon's state directory and holds the
+ * per-process state the core keeps pure:
+ *
+ * - the panel's own registry token (`RegistryServiceTokenCache`): a pasted
+ *   token as is, or — with `auth.kind: 'oidc'` — a Feria token obtained
+ *   through Authelia's client-credentials grant and reused until five
+ *   minutes before it expires;
+ * - one brokered token per agent (`AgentTokenBroker`), reused for every
+ *   install within the hour and limited to ten new tokens per agent per
+ *   hour.
+ *
+ * Also the one piece of policy that belongs here: when a user loses a
+ * `feria-*` group or is deleted, their registry tokens are revoked (best
+ * effort, never blocks the user operation).
  */
 
 import {
   readRegistryCredentialConfig as readCore,
   writeRegistryCredentialConfig as writeCore,
   clearRegistryCredentialConfig as clearCore,
+  verifyRegistryCredential as verifyCore,
   brokerAgentRegistryToken,
   revokeRegistryTokensForOwner,
   lostFeriaGroups,
+  readOidcClientSecret,
+  RegistryServiceTokenCache,
+  AgentTokenBroker,
+  RegistryCredentialError,
+  LAMASTE_SERVER_OIDC_CLIENT_ID,
 } from '@lamalibre/lamaste/server';
 
+import { getConfig } from './config.js';
+
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
+
+const serviceTokens = new RegistryServiceTokenCache();
+const agentTokens = new AgentTokenBroker();
 
 export function readRegistryCredentialConfig() {
   return readCore(STATE_DIR);
 }
 
-export function writeRegistryCredentialConfig(config) {
-  return writeCore(STATE_DIR, config);
+/** Store a credential and forget every token obtained with the previous one. */
+export async function writeRegistryCredentialConfig(config) {
+  await writeCore(STATE_DIR, config);
+  resetRegistryTokenState();
 }
 
-export function clearRegistryCredentialConfig() {
-  return clearCore(STATE_DIR);
+export async function clearRegistryCredentialConfig() {
+  const removed = await clearCore(STATE_DIR);
+  resetRegistryTokenState();
+  return removed;
+}
+
+/** Drop the cached service token and every agent's cached token and issuance record. */
+export function resetRegistryTokenState() {
+  serviceTokens.invalidate();
+  agentTokens.reset();
 }
 
 /**
- * Broker a one-hour read token for an agent. Throws RegistryCredentialError
- * (with `statusCode`) when no credential is configured or the registry
- * refuses.
- * @param {string} agentLabel
+ * What the core needs to run the OIDC chain for a credential: the relay
+ * domain and the `lamaste-server` client secret. Pasted-token credentials
+ * need nothing.
+ * @param {{ auth: { kind: string } }} config
  */
-export async function brokerAgentToken(agentLabel) {
+async function oidcDeps(config) {
+  if (config.auth.kind !== 'oidc') return {};
+  const domain = getConfig().domain;
+  if (!domain) {
+    throw new RegistryCredentialError(
+      'the panel has no domain yet — complete onboarding first',
+      503,
+    );
+  }
+  const clientSecret = await readOidcClientSecret(STATE_DIR, LAMASTE_SERVER_OIDC_CLIENT_ID);
+  if (!clientSecret) {
+    throw new RegistryCredentialError(
+      `the ${LAMASTE_SERVER_OIDC_CLIENT_ID} OIDC client has no secret yet — set the registry credential again`,
+      500,
+    );
+  }
+  return { oidc: { domain, clientSecret } };
+}
+
+/**
+ * Verify a candidate credential end to end (for `oidc`: Authelia token
+ * endpoint → Feria login → whoami with the admin scope). The
+ * `lamaste-server` client must already be in Authelia — the route syncs it
+ * first.
+ * @param {{ registryUrl: string, auth: { kind: 'token', token: string } | { kind: 'oidc', clientId: string } }} candidate
+ */
+export async function verifyRegistryCredential(candidate) {
+  return verifyCore(candidate, await oidcDeps(candidate));
+}
+
+/** The panel's registry token for the stored credential (cached per process). */
+async function serviceToken(config) {
+  return (await serviceTokens.resolve(config, await oidcDeps(config))).token;
+}
+
+/**
+ * The calling agent's registry token: the cached one when it is still good
+ * for an install, otherwise a freshly brokered one-hour token — unless the
+ * agent already had ten new tokens this hour. `null` when no credential is
+ * configured. Throws RegistryCredentialError (with `statusCode`) when the
+ * registry refuses.
+ * @param {string} agentLabel
+ * @returns {Promise<import('@lamalibre/lamaste/server').AgentTokenAcquisition | null>}
+ */
+export async function acquireAgentToken(agentLabel) {
   const config = await readRegistryCredentialConfig();
   if (!config) return null;
-  return brokerAgentRegistryToken(config, agentLabel);
+  return agentTokens.acquire(agentLabel, async () =>
+    brokerAgentRegistryToken(config, agentLabel, { serviceToken: await serviceToken(config) }),
+  );
 }
 
 /**
@@ -60,7 +137,9 @@ export async function revokeUserRegistryTokens(username, change, log) {
   if (lost.length === 0) return null;
 
   const owner = `user:${username}`;
-  const revoked = await revokeRegistryTokensForOwner(config, owner);
+  const revoked = await revokeRegistryTokensForOwner(config, owner, {
+    serviceToken: await serviceToken(config),
+  });
   log.info({ username, lost, revoked }, 'Revoked registry tokens after group change');
   return revoked;
 }
