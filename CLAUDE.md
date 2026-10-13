@@ -206,6 +206,13 @@ npm run dev:client             # lamaste-server-ui frontend (proxies /api to :31
 
 Build before considering a task complete. Avoid commands that hang (e.g., `npm start`).
 
+## Registry Credential and Plugin OIDC Clients
+
+Two generic mechanisms other plugins can use, first consumed by Feria (`feria/docs/design/networked-registry-and-login.md`):
+
+- **Registry credential broker.** The panel stores one service credential for the Lamalibre npm registry at `<stateDir>/registry-credential.json` (0600; core `server/registry-credential.ts`). Admins set it with `PUT /api/registry-credential` or `lamaste-server registry-credential set --url <registry> --token-stdin` (the token is verified against the registry and must carry the `admin` scope; it is never echoed back). Agents call `GET /api/agents/me/registry-credential` (identity from the mTLS cert) right before `npm install` and receive a one-hour, read-only token owned by `agent:<label>`; `installPlugin` / `updatePlugin` in `core/lib/src/agent/plugins.ts` write it to a throw-away 0600 userconfig passed through `npm_config_userconfig`. Losing a `feria-*` group, or being deleted, revokes the user's registry tokens (best effort, `warnings` on the response).
+- **Plugin OIDC clients.** A manifest may declare public OIDC clients (`oidcClients`, ids namespaced to the plugin route). After every plugin lifecycle change `lib/plugin-oidc.js` re-reads the installed manifests and `updateOidcProvider` (core `server/authelia.ts`) writes `identity_providers.oidc`: HMAC secret in `.secrets.json`, an RSA-4096 issuer key generated once at `/etc/authelia/oidc-issuer.pem`, and one public client per declaration with RS256 JWT access tokens. The section is removed when no enabled plugin declares a client; Authelia restarts only when it changed. The access-control and OIDC updaters share `rewriteAutheliaConfig` (read → mutate → restore secrets → backup → write → restart → rollback).
+
 ## Feria Dev Registry
 
 Feria has been extracted out of the lamaste monorepo and now lives in its own repository
