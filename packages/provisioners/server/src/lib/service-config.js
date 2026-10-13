@@ -24,6 +24,12 @@ WorkingDirectory=${ctx.installDir}/serverd
 ExecStart=/usr/bin/node src/index.js
 Environment=NODE_ENV=production
 Environment=CONFIG_FILE=${ctx.configDir}/panel.json
+# The service account has no home directory (useradd --no-create-home) and
+# ProtectHome hides /home anyway. npm, which the panel runs to install
+# plugins, needs a writable cache and HOME: both live in the state directory,
+# the same convention as lamaste-server plugins (runAsLamaste).
+Environment=HOME=${ctx.configDir}
+Environment=npm_config_cache=${ctx.configDir}/.npm
 Restart=always
 RestartSec=5
 StandardOutput=journal
