@@ -210,6 +210,11 @@ export {
   reloadAuthelia,
   isAutheliaRunning,
   updateAccessControl as updateAutheliaAccessControl,
+  updateOidcProvider as updateAutheliaOidcProvider,
+  ensureOidcIssuerKey as ensureAutheliaOidcIssuerKey,
+  renderOidcClient,
+  buildOidcProviderSection,
+  AUTHELIA_OIDC_KEY,
   createUserFromInvitation,
   base32Encode,
   base32Decode,
@@ -224,6 +229,7 @@ export type {
   ProtectedSiteRule,
   BcryptHashFn,
   ExecFn as AutheliaExecFn,
+  AutheliaOidcClient,
 } from './authelia.js';
 
 // --- Storage (S3-compatible server registry + credential encryption) ---

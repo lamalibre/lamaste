@@ -81,9 +81,11 @@ export {
   ManifestSchema,
   LamaPackageNameSchema,
   validateManifest,
+  OidcClientSchema,
+  OIDC_GRANT_TYPES,
 } from './schemas.js';
 
-export type { ParsedManifest } from './schemas.js';
+export type { ParsedManifest, OidcClientDeclaration } from './schemas.js';
 
 // File helpers
 export {

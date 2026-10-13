@@ -75,6 +75,52 @@ export const PanelPageSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// OIDC clients a plugin registers on the relay's Authelia
+// ---------------------------------------------------------------------------
+
+/** OAuth 2.0 grant types a plugin client may use. */
+export const OIDC_GRANT_TYPES = [
+  'urn:ietf:params:oauth:grant-type:device_code',
+  'authorization_code',
+  'refresh_token',
+] as const;
+
+/**
+ * A public OIDC client declared by a plugin manifest — e.g. a CLI that logs
+ * in through the relay's Authelia with the device-code flow. Lamaste writes
+ * it into `identity_providers.oidc.clients` when the plugin is enabled and
+ * removes it when the plugin is disabled or uninstalled.
+ *
+ * Only public clients (no secret) are accepted from manifests; a
+ * confidential client would need a secret Lamaste has no safe way to hand
+ * back to the plugin.
+ */
+export const OidcClientSchema = z.object({
+  /** Must be the plugin's route or `<route>-<suffix>` — enforced at the manifest level. */
+  id: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
+  name: z.string().min(1).max(100).optional(),
+  grantTypes: z.array(z.enum(OIDC_GRANT_TYPES)).min(1).max(3),
+  scopes: z
+    .array(z.string().regex(/^[a-z_]+$/, 'Scope names are lowercase letters and underscores'))
+    .min(1)
+    .max(20)
+    .default(['openid']),
+  /** Audiences the client may request; `{domain}` is replaced with the relay domain. */
+  audience: z.array(z.string().min(1).max(300)).max(10).default([]),
+  redirectUris: z.array(z.string().url()).max(10).default([]),
+  /** `RS256` makes access tokens JWTs (RFC 9068) a resource server can verify offline. */
+  accessTokenSignedResponseAlg: z.enum(['none', 'RS256']).default('RS256'),
+  authorizationPolicy: z.enum(['one_factor', 'two_factor']).default('two_factor'),
+  requirePkce: z.boolean().default(false),
+});
+
+export type OidcClientDeclaration = z.infer<typeof OidcClientSchema>;
+
+// ---------------------------------------------------------------------------
 // Plugin manifest
 // ---------------------------------------------------------------------------
 
@@ -175,8 +221,32 @@ export const ManifestSchema = z
       .min(1)
       .optional()
       .default(['server', 'agent']),
+    oidcClients: z.array(OidcClientSchema).max(10).optional().default([]),
   })
   .superRefine((manifest, ctx) => {
+    // A plugin may only register OIDC clients in its own namespace: the
+    // client id is its route or `<route>-<suffix>`. Stops one plugin from
+    // claiming `feria-cli`.
+    const pluginRoute = derivePluginRoute(manifest.name);
+    const seen = new Set<string>();
+    manifest.oidcClients.forEach((client, idx) => {
+      if (client.id !== pluginRoute && !client.id.startsWith(`${pluginRoute}-`)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['oidcClients', idx, 'id'],
+          message: `OIDC client id "${client.id}" must be "${pluginRoute}" or start with "${pluginRoute}-"`,
+        });
+      }
+      if (seen.has(client.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['oidcClients', idx, 'id'],
+          message: `OIDC client id "${client.id}" is declared twice`,
+        });
+      }
+      seen.add(client.id);
+    });
+
     // Each declared capability's `<short-name>` segment must match the route
     // derived from the manifest's `name` field. Stops a manifest like
     // `@lamalibre/herd-server` (route "herd") from claiming

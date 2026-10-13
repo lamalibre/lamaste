@@ -210,6 +210,21 @@ function assertSafeLamalibrePackage(packageName) {
   }
 }
 
+/**
+ * After a lifecycle change, bring Authelia's OIDC clients in line with the
+ * enabled plugins. Best effort — logged, never thrown — so a plugin
+ * operation does not fail because Authelia could not be restarted.
+ * @param {import('pino').Logger} logger
+ */
+async function syncOidcClientsBestEffort(logger) {
+  try {
+    const { syncPluginOidcClients } = await import('./plugin-oidc.js');
+    await syncPluginOidcClients(logger);
+  } catch (err) {
+    logger.warn({ err: err.message }, 'Failed to sync plugin OIDC clients to Authelia');
+  }
+}
+
 export function installPlugin(packageName, logger) {
   return withPluginLock(async () => {
     // Validate package scope
@@ -367,6 +382,7 @@ export function installPlugin(packageName, logger) {
     }
 
     logger.info({ name: manifest.name, packageName }, 'Plugin installed');
+    await syncOidcClientsBestEffort(logger);
     return entry;
   });
 }
@@ -436,6 +452,7 @@ export function uninstallPlugin(name, logger) {
     }
 
     logger.info({ name }, 'Plugin uninstalled');
+    await syncOidcClientsBestEffort(logger);
     return { ok: true, name };
   });
 }
@@ -470,6 +487,7 @@ export function enablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin enabled');
+    await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'enabled' };
   });
 }
@@ -504,6 +522,7 @@ export function disablePlugin(name, logger) {
     }
 
     logger?.info({ name }, 'Plugin disabled');
+    await syncOidcClientsBestEffort(logger);
     return { ok: true, name, status: 'disabled' };
   });
 }
