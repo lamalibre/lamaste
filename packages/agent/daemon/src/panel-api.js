@@ -337,6 +337,56 @@ export function createPanelApiClient(label) {
     },
 
     /**
+     * Ask the panel for a short-lived npm registry credential for one
+     * plugin install. Returns `null` when the panel has none configured
+     * (HTTP 404) — the install then uses the public registry.
+     * @param {object} config
+     * @returns {Promise<{ registryUrl: string, scope: string, token: string, expiresAt: string, tokenId: string } | null>}
+     */
+    async fetchRegistryCredential(config) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/registry-credential`;
+      let stdout;
+      try {
+        ({ stdout } = await curlAuthenticated(baseDir, config, ['-w', '\n%{http_code}', url]));
+      } catch (err) {
+        throw new Error(
+          `Failed to fetch registry credential from panel. Details: ${err.stderr || err.message}`,
+        );
+      }
+      const newline = stdout.lastIndexOf('\n');
+      const status = Number.parseInt(stdout.slice(newline + 1), 10);
+      const body = stdout.slice(0, newline);
+      if (status === 404) return null;
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        throw new Error(`Panel returned a malformed registry credential (HTTP ${status})`);
+      }
+      if (status !== 200) {
+        throw new Error(
+          `Panel refused to broker a registry credential (HTTP ${status}): ${parsed?.error ?? body}`,
+        );
+      }
+      if (
+        !parsed ||
+        typeof parsed.registryUrl !== 'string' ||
+        typeof parsed.token !== 'string' ||
+        typeof parsed.expiresAt !== 'string'
+      ) {
+        throw new Error('Panel returned malformed registry credential payload');
+      }
+      return {
+        registryUrl: parsed.registryUrl,
+        scope: typeof parsed.scope === 'string' ? parsed.scope : '@lamalibre',
+        token: parsed.token,
+        expiresAt: parsed.expiresAt,
+        tokenId: typeof parsed.tokenId === 'string' ? parsed.tokenId : '',
+      };
+    },
+
+    /**
      * Replace this agent's chisel credential on the panel and return the new one.
      * @param {object} config
      * @returns {Promise<{ user: string, password: string, createdAt: string | null }>}

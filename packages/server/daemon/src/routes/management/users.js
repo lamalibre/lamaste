@@ -9,6 +9,7 @@ import {
   writeTotpToDatabase,
 } from '../../lib/authelia.js';
 import { removeGrantsForUser } from '../../lib/user-access.js';
+import { revokeUserRegistryTokens } from '../../lib/registry-credential.js';
 import { bumpUserEpoch } from '../../lib/config.js';
 import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
 
@@ -156,6 +157,7 @@ export default async function usersRoutes(fastify, _opts) {
       }
 
       const user = usersData.users[username];
+      const groupsBefore = Array.isArray(user.groups) ? [...user.groups] : [];
 
       if (body.displayname !== undefined) {
         user.displayname = body.displayname;
@@ -188,6 +190,23 @@ export default async function usersRoutes(fastify, _opts) {
         request.log.warn(err, 'Failed to reload Authelia after user update');
       }
 
+      // Registry scopes are granted at login from feria-* groups; losing a
+      // group must not leave a valid token behind. Best effort — the user
+      // update itself is already done.
+      const warnings = [];
+      if (body.groups !== undefined) {
+        try {
+          await revokeUserRegistryTokens(
+            username,
+            { before: groupsBefore, after: user.groups || [] },
+            request.log,
+          );
+        } catch (err) {
+          request.log.warn({ username, err: err.message }, 'Failed to revoke registry tokens');
+          warnings.push(`registry tokens were not revoked: ${err.message}`);
+        }
+      }
+
       return {
         ok: true,
         user: {
@@ -196,6 +215,7 @@ export default async function usersRoutes(fastify, _opts) {
           email: user.email,
           groups: user.groups || [],
         },
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     },
   );
@@ -251,6 +271,17 @@ export default async function usersRoutes(fastify, _opts) {
       // the admin sees a partial-success response and can investigate.
       // ---------------------------------------------------------------
       const warnings = [];
+
+      // 0. Registry (Feria) tokens the user holds — their groups are gone.
+      try {
+        await revokeUserRegistryTokens(username, { deleted: true }, request.log);
+      } catch (err) {
+        request.log.warn(
+          { username, err: err.message },
+          'Cascade: registry token revocation failed',
+        );
+        warnings.push(`registry tokens were not revoked: ${err.message}`);
+      }
 
       // 1. Legacy user-plugin-access.json grants (pre-gatekeeper migration)
       try {

@@ -14,6 +14,8 @@ import {
 } from '../../lib/mtls.js';
 import { z } from 'zod';
 import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import { RegistryCredentialError } from '@lamalibre/lamaste/server';
+import { brokerAgentToken } from '../../lib/registry-credential.js';
 
 /**
  * An agent may rotate its own chisel credential at most this often. Every
@@ -109,6 +111,56 @@ export default async function agentsRoutes(fastify, _opts) {
         return reply.code(status).send({
           error: err.message || 'Failed to rotate chisel credential',
         });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /agents/me/registry-credential
+  //
+  // Brokers a one-hour, read-only npm registry token for the calling agent
+  // so it can `npm install` a plugin from the Lamalibre registry (Feria)
+  // without ever holding a long-lived credential. Identity comes strictly
+  // from the mTLS cert; the token is owned by `agent:<label>` on the
+  // registry, so its audit log says which agent installed what.
+  //
+  // 404 when the panel has no registry credential configured — the agent
+  // then installs from the public registry as before.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/agents/me/registry-credential',
+    {
+      preHandler: fastify.requireRole(['agent']),
+      // One token per install is the expected rate; this only stops a loop.
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const label = request.certLabel;
+      if (!label) {
+        return reply.code(400).send({
+          error: 'Agent label could not be determined from client certificate',
+        });
+      }
+      if (!AGENT_LABEL_REGEX.test(label)) {
+        return reply.code(400).send({ error: 'Plugin-agents do not install plugins' });
+      }
+      try {
+        const credential = await brokerAgentToken(label);
+        if (!credential) {
+          return reply.code(404).send({
+            error: 'No registry credential is configured on this panel',
+            hint: 'lamaste-server registry-credential set --url <registry>',
+          });
+        }
+        request.log.info(
+          { label, tokenId: credential.tokenId, expiresAt: credential.expiresAt },
+          'Brokered registry token for agent',
+        );
+        return credential;
+      } catch (err) {
+        const status = err instanceof RegistryCredentialError ? err.statusCode : 502;
+        request.log.warn({ label, err: err.message }, 'Failed to broker registry token');
+        return reply.code(status).send({ error: err.message || 'Failed to broker registry token' });
       }
     },
   );
