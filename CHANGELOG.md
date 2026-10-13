@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-13
+
+All lockstep packages move to 4.1.0; internal `@lamalibre/*` ranges become `^4.1.0`.
+
+### Upgrade notes
+
+- **Upgrade the server with `create-lamaste` (redeploy), not only the npm packages.** The redeploy generates the OpenID Connect issuer key `/etc/authelia/oidc-issuer.pem`, enables Authelia's `template` configuration filter, and rewrites the panel unit with the `HOME` and npm cache that panel-side plugin installs need. A panel updated without the redeploy cannot serve plugin OIDC clients.
+- Agents and server can be upgraded in either order. A 4.1 agent treats a 4.0 server's missing `/api/agents/me/registry-credential` as "no brokered credential"; a 4.0 agent never calls it and installs plugins as before.
+
 ### Added
 
 - **Authelia is the relay's OpenID Connect provider.** A plugin manifest may declare OIDC clients (`oidcClients`): public clients for the device-code and authorization-code flows, and confidential clients (`confidential: true`) for the client-credentials grant. The panel writes them into `identity_providers.oidc` when the plugin is enabled and removes them when it is disabled or uninstalled; Authelia restarts only when the section changed. Access tokens are RS256 JWTs (RFC 9068) a resource server verifies against `https://auth.<domain>/jwks.json`; `accessTokenClaims` (`groups`, `preferred_username`, `name`, `email`, each requiring its scope) renders a per-client claims policy so those claims are in the token, not only in UserInfo. First consumer: Feria's `feria-cli`, so `feria login` authenticates through the relay and Feria maps the `groups` claim to registry scopes.
@@ -35,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop app started from Finder or the Dock could not run `node`, `npm` or any globally installed CLI: it inherited the session's minimal PATH instead of the user's shell PATH, so token validation, server creation and agent installs failed when Node.js came from Homebrew or a version manager. The app now adopts the login shell's PATH at startup.
 - Creating a server failed at the droplet step with `422 … invalid key identifiers` (`lamaste-cloud`). The provisioning SSH key's numeric ID was sent as a string, which DigitalOcean reads as a fingerprint; it is now sent as a number, and the request is retried briefly when a key uploaded a moment earlier is not yet visible to the Droplet service.
 - The Create Server wizard reported every token-validation failure as "Token rejected" with a list of scopes to select, hiding the actual error. It now shows the error and reserves the scope hint for tokens whose scopes are wrong.
+- `@lamalibre/lamaste-serverd` published its tests and its development `panel.json`; the package now ships `src` only.
 
 ## [4.0.0] - 2026-09-30
 
