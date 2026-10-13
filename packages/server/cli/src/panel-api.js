@@ -14,14 +14,89 @@ import { PKI_DIR } from './config.js';
 const PANEL_URL = 'https://127.0.0.1:9292';
 
 /**
+ * The curl argument vector for one panel request. Pure, exported for tests.
+ *
+ * The JSON content type and the body travel together: a `Content-Type:
+ * application/json` header on a body-less DELETE made Fastify answer 400
+ * ("Body cannot be empty when content-type is set"), so `registry-credential
+ * clear`, `tunnels delete` and `sites delete` never reached their routes.
+ *
+ * @param {{ method: string, path: string, body?: Record<string, unknown> | null, p12Path: string, configPath: string }} request
+ * @returns {string[]}
+ */
+export function buildPanelCurlArgs({ method, path, body = null, p12Path, configPath }) {
+  const args = [
+    '-K',
+    configPath,
+    '--cert-type',
+    'P12',
+    '--cert',
+    p12Path,
+    '-k', // Server uses self-signed cert on localhost
+    '-s', // Silent
+    '-S', // Show errors
+    '-X',
+    method,
+    '-H',
+    'Accept: application/json',
+  ];
+  if (body !== null && body !== undefined) {
+    args.push('-H', 'Content-Type: application/json', '-d', JSON.stringify(body));
+  }
+  // Append the HTTP status on its own line so an error response is not
+  // mistaken for a result — the panel answers errors with a JSON body.
+  args.push('-w', '\n%{http_code}', `${PANEL_URL}${path}`);
+  return args;
+}
+
+/**
+ * Split curl's output (`<payload>\n<status>`) and turn a non-2xx status
+ * into an error carrying the panel's `error` (and `details`). Pure,
+ * exported for tests.
+ *
+ * @param {string} stdout
+ * @param {string} method
+ * @param {string} path
+ * @returns {Record<string, unknown>}
+ */
+export function parsePanelResponse(stdout, method, path) {
+  const split = stdout.lastIndexOf('\n');
+  const payload = stdout.slice(0, split).trim();
+  const status = Number(stdout.slice(split + 1).trim());
+  let parsed = {};
+  if (payload) {
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      parsed = { error: payload };
+    }
+  }
+
+  // Anything but a 2xx is an error: 4xx/5xx from the panel, a 3xx curl did
+  // not follow, or 0 when curl reported no status at all.
+  if (!Number.isInteger(status) || status < 200 || status >= 300) {
+    const reason = [parsed.error, parsed.details].filter(Boolean).join(': ');
+    const err = new Error(
+      `${method} ${path} failed (HTTP ${status})${reason ? `: ${reason}` : ''}`,
+    );
+    err.statusCode = status;
+    throw err;
+  }
+
+  return parsed;
+}
+
+/**
  * Make an authenticated API request to the local panel server.
  *
  * Uses curl with the admin client certificate (mTLS) and a temporary
- * config file for the P12 password (never in process args).
+ * config file for the P12 password (never in process args). Resolves with
+ * the JSON body; rejects with an Error (`statusCode`, the panel's `error`
+ * in the message) for any non-2xx answer.
  *
  * @param {string} method
  * @param {string} path  e.g. '/api/tunnels'
- * @param {Record<string, unknown> | null} [body]
+ * @param {Record<string, unknown> | null} [body]  sent as JSON when given
  * @returns {Promise<Record<string, unknown>>}
  */
 export async function panelRequest(method, path, body = null) {
@@ -42,43 +117,13 @@ export async function panelRequest(method, path, body = null) {
   try {
     await writeFile(tmpConfigPath, `--pass "${p12Password}"\n`, { mode: 0o600 });
 
-    const curlArgs = [
-      '-K',
-      tmpConfigPath,
-      '--cert-type',
-      'P12',
-      '--cert',
-      p12Path,
-      '-k', // Server uses self-signed cert on localhost
-      '-s', // Silent
-      '-S', // Show errors
-      '-X',
-      method,
-      '-H',
-      'Content-Type: application/json',
-    ];
+    const { stdout } = await execa(
+      'curl',
+      buildPanelCurlArgs({ method, path, body, p12Path, configPath: tmpConfigPath }),
+      { timeout: 30000 },
+    );
 
-    if (body) {
-      curlArgs.push('-d', JSON.stringify(body));
-    }
-
-    // Append the HTTP status on its own line so an error response is not
-    // mistaken for a result — the panel answers errors with a JSON body.
-    curlArgs.push('-w', '\n%{http_code}', `${PANEL_URL}${path}`);
-
-    const { stdout } = await execa('curl', curlArgs, { timeout: 30000 });
-
-    const split = stdout.lastIndexOf('\n');
-    const payload = stdout.slice(0, split).trim();
-    const status = Number(stdout.slice(split + 1).trim());
-    const parsed = payload ? JSON.parse(payload) : {};
-
-    if (!Number.isInteger(status) || status >= 400) {
-      const reason = [parsed.error, parsed.details].filter(Boolean).join(': ');
-      throw new Error(`${method} ${path} failed (HTTP ${status})${reason ? `: ${reason}` : ''}`);
-    }
-
-    return parsed;
+    return parsePanelResponse(stdout, method, path);
   } finally {
     await unlink(tmpConfigPath).catch(() => {});
   }

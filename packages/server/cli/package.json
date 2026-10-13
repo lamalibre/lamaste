@@ -13,7 +13,8 @@
     "src"
   ],
   "scripts": {
-    "lint": "echo 'No lint configured'"
+    "lint": "echo 'No lint configured'",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@lamalibre/lamaste": "^4.0.0",
