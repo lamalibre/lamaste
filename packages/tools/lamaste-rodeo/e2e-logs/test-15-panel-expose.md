@@ -1,75 +1,81 @@
 # Lamaste E2E: 15 — Panel Expose (Three-VM)
 
-> Started at `2026-04-30 09:01:47 UTC`
+> Started at `2026-10-13 11:48:59 UTC`
 
 
 ## Pre-flight: re-extract admin PEM from P12
 
-✅ `09:01:50` Admin cert reset and PEM re-extracted from P12  
-✅ `09:01:50` Panel is healthy  
+✅ `11:49:02` Admin cert reset and PEM re-extracted from P12  
+✅ `11:49:03` Panel is healthy  
 
 ## Pre-flight: verify onboarding is complete
 
 
-## Create agent cert with panel:expose capability
+## Grant test-agent panel:expose
 
-✅ `09:01:51` Agent cert with panel:expose created  
-✅ `09:01:51` Agent cert has a p12 password  
-ℹ️ `09:01:51` Created agent cert: panel-expose-e2e  
-✅ `09:01:52` Extracted PEM cert and key from .p12 on host  
+ℹ️ `11:49:03` test-agent capabilities before the test: ["tunnels:read","tunnels:write","services:read","services:write","system:read","identity:read","identity:query"]  
+✅ `11:49:03` test-agent granted panel:expose  
+
+## Extract test-agent's certificate on the agent VM
+
+✅ `11:49:04` Extracted certificate is test-agent's (CN=agent:test-agent)  
 
 ## Check panel status before expose
 
-✅ `09:01:52` Panel not exposed initially  
+✅ `11:49:04` Panel not exposed initially  
 
-## Expose agent panel via API
+## Expose agent panel via API (agent's own certificate)
 
-✅ `09:01:54` Expose panel returned ok: true  
-✅ `09:01:54` Tunnel type is 'panel'  
-✅ `09:01:54` Panel subdomain matches agent-<label>  
-✅ `09:01:54` Panel tunnel has an FQDN  
-ℹ️ `09:01:54` Exposed panel tunnel: agent-panel-expose-e2e.test.lamaste.local (ID: 2ed0f96b-3817-4697-b96b-7bbfc051a848)  
+✅ `11:49:05` Expose panel returned ok: true  
+✅ `11:49:05` Tunnel type is 'panel'  
+✅ `11:49:05` Panel subdomain matches agent-<label>  
+✅ `11:49:05` Panel tunnel is carried by test-agent  
+✅ `11:49:05` Panel tunnel FQDN is agent-test-agent.test.lamaste.local  
+ℹ️ `11:49:05` Exposed panel tunnel: agent-test-agent.test.lamaste.local (ID: 2884232a-897b-4c1b-8119-d817140cf967)  
 
 ## Verify mTLS nginx vhost on host
 
-✅ `09:01:54` mTLS panel vhost exists in sites-enabled  
-✅ `09:01:54` No Authelia app vhost created for panel tunnel  
-✅ `09:01:55` nginx -t passes after panel expose  
+✅ `11:49:05` mTLS panel vhost exists in sites-enabled  
+✅ `11:49:05` No Authelia app vhost created for panel tunnel  
+✅ `11:49:05` nginx -t passes after panel expose  
 
 ## Verify agent-panel-status after expose
 
-✅ `09:01:55` Panel shows as enabled  
-✅ `09:01:55` Status FQDN matches  
+✅ `11:49:05` Panel shows as enabled  
+✅ `11:49:05` Status FQDN matches  
 
-## Start panel HTTP server on agent and establish tunnel
+## Start panel HTTP server on agent — the sync timer carries it
 
-✅ `09:01:55` Added agent-panel-expose-e2e.test.lamaste.local to agent /etc/hosts  
-✅ `09:01:57` Panel HTTP server running on agent at port 9393  
-ℹ️ `09:02:04` Waiting for Chisel tunnel to establish for panel...  
-✅ `09:02:05` Chisel tunnel established for panel (port 9393 accessible on host)  
+✅ `11:49:05` Added agent-test-agent.test.lamaste.local to agent /etc/hosts  
+✅ `11:49:08` Panel HTTP server running on agent at port 9393  
+ℹ️ `11:49:08` Waiting for the sync timer to carry the panel tunnel...  
+✅ `11:49:21` Panel tunnel carried within 60 seconds with no lamaste-agent update  
 
 ## Verify panel content through chisel tunnel (direct)
 
-✅ `09:02:05` Direct tunnel traffic returns panel content  
+✅ `11:49:21` Direct tunnel traffic returns panel content  
 
 ## Verify mTLS vhost serves panel via FQDN (no Authelia needed)
 
-✅ `09:02:05` mTLS vhost serves panel content via FQDN (HTTP 200)  
-✅ `09:02:05` Panel FQDN rejects access without mTLS cert (HTTP 400)  
+✅ `11:49:22` mTLS vhost serves panel content via FQDN  
+✅ `11:49:22` Panel content served through the mTLS vhost  
+✅ `11:49:22` Panel FQDN rejects access without mTLS cert (HTTP 400)  
 
 ## Retract panel tunnel
 
-✅ `09:02:07` Retract panel returned ok: true  
+✅ `11:49:22` Retract panel returned ok: true  
 
 ## Verify vhost removed after retract
 
-✅ `09:02:09` mTLS panel vhost removed after retract  
-✅ `09:02:09` nginx -t passes after panel retract  
+✅ `11:49:24` mTLS panel vhost removed after retract  
+✅ `11:49:24` nginx -t passes after panel retract  
 
 ## Verify status after retract
 
-✅ `09:02:10` Panel shows as disabled after retract  
-✅ `09:02:10` Panel content not accessible via FQDN after retract (different server block)  
+✅ `11:49:24` Panel shows as disabled after retract  
+✅ `11:49:24` Panel content not accessible via FQDN after retract  
+✅ `11:49:53` Agent's chisel client no longer carries the retracted panel's remote (sync timer)  
+✅ `11:49:53` Panel port closed on the host after retract  
 
 ---
 
@@ -77,9 +83,9 @@
 
 | Metric | Count |
 |--------|-------|
-| **Passed** | `26` |
+| **Passed** | `29` |
 | **Failed** | `0` |
 | **Skipped** | `0` |
-| **Total** | `26` |
+| **Total** | `29` |
 
-ℹ️ `09:02:13` Cleaning up test resources...  
+ℹ️ `11:49:53` Cleaning up test resources...  

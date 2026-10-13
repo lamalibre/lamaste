@@ -1,0 +1,1260 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 10,
+    "name": "Agent Plugin Install through the Registry Broker",
+    "suite": "e2e-three-vm",
+    "description": "10 — Agent Plugin Install through the Registry Broker (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "AGENT_IP": {
+      "description": "AGENT_IP"
+    }
+  },
+  "constants": {
+    "AGENT_PANEL_PORT": {
+      "value": "9393"
+    },
+    "AGENT_LABEL": {
+      "value": "e2e-agent"
+    },
+    "AGENT_CONFIG": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/config.json",
+      "expression": true
+    },
+    "HOST_IP": {
+      "value": "${HOST_IP:-10.13.37.1}",
+      "expression": true
+    },
+    "AGENT_IP": {
+      "value": "${AGENT_IP:-10.13.37.2}",
+      "expression": true
+    },
+    "STUB_PORT": {
+      "value": "4874"
+    },
+    "STUB_URL": {
+      "value": "http://${HOST_IP}:${STUB_PORT}",
+      "expression": true
+    },
+    "STUB_ADMIN_TOKEN": {
+      "value": "feria_e2eadmin_threevm_000000000000000"
+    },
+    "PLUGIN_PACKAGE": {
+      "value": "@lamalibre/e2e-oidc-server"
+    },
+    "PLUGIN_NAME": {
+      "value": "e2e-oidc"
+    },
+    "REMOTE_DIR": {
+      "value": "/tmp/e2e-10-broker"
+    },
+    "AGENT_DATA_DIR": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LABEL}",
+      "expression": true
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Set HOST_AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"agentLabel\""
+          },
+          "capture": [
+            {
+              "variable": "HOST_AGENT_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "Agent VM local registry name: ${AGENT_LABEL}; label enrolled on the host: ${HOST_AGENT_LABEL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent VM local registry name: ${AGENT_LABEL}; label enrolled on the host: ${HOST_AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_ENROLLED",
+              "from": {
+                "kind": "jq",
+                "expression": "[.agents[]? | select(.label == \""
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Agent ${HOST_AGENT_LABEL} is enrolled on the host",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent ${HOST_AGENT_LABEL} is enrolled on the host"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "AGENT_ENROLLED",
+        "value": "0"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(host_api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\n\nHOST_AGENT_LABEL=$(agent_config_field \"agentLabel\")\nHOST_AGENT_LABEL=\"${HOST_AGENT_LABEL:-test-agent}\"\nlog_info \"Agent VM local registry name: ${AGENT_LABEL}; label enrolled on the host: ${HOST_AGENT_LABEL}\"\n\nAGENT_ENROLLED=$(host_api_get \"certs/agent\" | jq -r '[.agents[]? | select(.label == \"'\"${HOST_AGENT_LABEL}\"'\" and (.revoked // false) == false)] | length' 2>/dev/null || echo \"0\")\nif [ \"$AGENT_ENROLLED\" = \"0\" ]; then\n  log_skip \"Agent ${HOST_AGENT_LABEL} is not enrolled on the host — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Agent ${HOST_AGENT_LABEL} is enrolled on the host\"\n\n# ===========================================================================\n# 1. Stand-in registry on the host VM, serving the fixture plugin\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-registry-on-the-host-vm",
+      "label": "Stand-in registry on the host VM",
+      "steps": [
+        {
+          "id": "step-8",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-10-broker-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "ls ${REMOTE_DIR}/fixture | wc -l | tr -d ' '"
+          },
+          "capture": [
+            {
+              "variable": "SHIPPED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Fixture plugin shipped to the host VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SHIPPED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "3"
+              },
+              "message": "Fixture plugin shipped to the host VM"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[s]tub-registry.mjs' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "ufw status 2>/dev/null | grep -q '^Status: active' && ufw allow from ${AGENT_IP} to any port ${STUB_PORT} proto tcp > /dev/null || true"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --host 0.0.0.0 --base-url ${STUB_URL} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Stand-in registry is up on the host VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STUB_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Stand-in registry is up on the host VM"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "",
+            "statusOnly": true,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "AGENT_REACHES_STUB",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Agent VM reaches the registry at ${STUB_URL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_REACHES_STUB"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Agent VM reaches the registry at ${STUB_URL}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Stand-in registry on the host VM\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-10-broker-XXXXXXXX)\nwrite_stub_registry \"${LOCAL_TMP}/stub-registry.mjs\"\nwrite_oidc_fixture_plugin \"${LOCAL_TMP}/fixture\"\nhost_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/stub-registry.mjs\" \"lamaste-host:${REMOTE_DIR}/stub-registry.mjs\"\nmultipass transfer \"${LOCAL_TMP}/fixture/package.json\" \"lamaste-host:${REMOTE_DIR}/fixture/package.json\"\nmultipass transfer \"${LOCAL_TMP}/fixture/index.js\" \"lamaste-host:${REMOTE_DIR}/fixture/index.js\"\nmultipass transfer \"${LOCAL_TMP}/fixture/lamaste-plugin.json\" \"lamaste-host:${REMOTE_DIR}/fixture/lamaste-plugin.json\"\nSHIPPED=$(host_exec \"ls ${REMOTE_DIR}/fixture | wc -l | tr -d ' '\")\nassert_eq \"$SHIPPED\" \"3\" \"Fixture plugin shipped to the host VM\" || true\n\nhost_exec \"pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\"\n# The agent VM reaches the registry on the host's static address; the host\n# firewall denies incoming by default.\nhost_exec \"ufw status 2>/dev/null | grep -q '^Status: active' && ufw allow from ${AGENT_IP} to any port ${STUB_PORT} proto tcp > /dev/null || true\"\nhost_exec \"nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --host 0.0.0.0 --base-url ${STUB_URL} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit\"\n\nSTUB_UP=\"no\"\nfor _ in $(seq 1 30); do\n  if host_exec \"curl -sf --max-time 3 http://127.0.0.1:${STUB_PORT}/-/ping > /dev/null 2>&1\"; then\n    STUB_UP=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$STUB_UP\" \"yes\" \"Stand-in registry is up on the host VM\" || true\n\nAGENT_REACHES_STUB=$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 10 ${STUB_URL}/-/ping 2>/dev/null\" || echo \"000\")\nassert_eq \"$AGENT_REACHES_STUB\" \"200\" \"Agent VM reaches the registry at ${STUB_URL}\" || true\n\n# ===========================================================================\n# 2. The panel authenticates to the registry as its own OIDC client\n# ==========================================================================="
+    },
+    {
+      "id": "registry-credential-set-oidc-on-the-host",
+      "label": "registry-credential set --oidc on the host",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "Set SET_OUTPUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "timed_exec 120 multipass exec lamaste-host -- sudo bash -c \"lamaste-server registry-credential set --url ${STUB_URL} --oidc --json 2>&1\""
+          },
+          "capture": [
+            {
+              "variable": "SET_OUTPUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Set SET_JSON",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$SET_OUTPUT\" | grep -E '^\\{' | tail -1 || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "SET_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Credential configured through the OIDC chain ($(echo \"$SET_OUTPUT\" | tail -c 300))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SET_JSON"
+              },
+              "path": ".configured",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Credential configured through the OIDC chain ($(echo \"$SET_OUTPUT\" | tail -c 300))"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Auth kind is oidc",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SET_JSON"
+              },
+              "path": ".auth",
+              "expected": {
+                "kind": "literal",
+                "value": "oidc"
+              },
+              "message": "Auth kind is oidc"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "The registry identified the panel as ci:auth.${DOMAIN}/lamaste-server",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SET_JSON"
+              },
+              "path": ".owner",
+              "expected": {
+                "kind": "expr",
+                "template": "ci:auth.${DOMAIN}/lamaste-server"
+              },
+              "message": "The registry identified the panel as ci:auth.${DOMAIN}/lamaste-server"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"registry-credential set --oidc on the host\"\n\nSET_OUTPUT=$(timed_exec 120 multipass exec lamaste-host -- sudo bash -c \"lamaste-server registry-credential set --url ${STUB_URL} --oidc --json 2>&1\")\nSET_JSON=$(echo \"$SET_OUTPUT\" | grep -E '^\\{' | tail -1 || echo \"{}\")\nassert_json_field \"$SET_JSON\" '.configured' 'true' \"Credential configured through the OIDC chain ($(echo \"$SET_OUTPUT\" | tail -c 300))\" || true\nassert_json_field \"$SET_JSON\" '.auth' 'oidc' \"Auth kind is oidc\" || true\nassert_json_field \"$SET_JSON\" '.owner' \"ci:auth.${DOMAIN}/lamaste-server\" \"The registry identified the panel as ci:auth.${DOMAIN}/lamaste-server\" || true\n\n# ===========================================================================\n# 3. The agent VM installs the fixture plugin through its agent panel\n# ==========================================================================="
+    },
+    {
+      "id": "agent-plugin-install-through-the-broker",
+      "label": "Agent plugin install through the broker",
+      "steps": [
+        {
+          "id": "step-35",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENT_PANEL_PORT}/api/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "PANEL_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENTD_PRESENT",
+            "value": "yes"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "lamaste-agentd is installed on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENTD_PRESENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "lamaste-agentd is installed on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent panel --enable --local-only --port ${AGENT_PANEL_PORT} 2>/dev/null"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-41",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENT_PANEL_PORT}/api/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "PANEL_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Could not start the agent panel on the agent VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Could not start the agent panel on the agent VM"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Agent panel is running on the agent VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent panel is running on the agent VM"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat /root/.npmrc 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "NPMRC_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Set INSTALL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "timed_exec 220 multipass exec lamaste-agent -- sudo bash -c \"curl -s --max-time 200 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins/install\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Agent installed ${PLUGIN_PACKAGE} from the registry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INSTALL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Agent installed ${PLUGIN_PACKAGE} from the registry"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set INSTALLED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_panel_get \"plugins\" | jq -r '.plugins[] | select(.packageName == \"'\"${PLUGIN_PACKAGE}\"'\") | .name' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALLED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Agent plugin registry lists the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INSTALLED"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "Agent plugin registry lists the plugin"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Agent plugin install through the broker\"\n\nPANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\nif ! echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n  # The agent VM is set up with @lamalibre/lamaste-agent only; the panel\n  # service is lamaste-agentd, installed here on demand from the registry\n  # /root/.npmrc points @lamalibre at.\n  AGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\n  if [ \"$AGENTD_PRESENT\" != \"yes\" ]; then\n    timed_exec 180 multipass exec lamaste-agent -- sudo bash -c \"npm install -g @lamalibre/lamaste-agentd > /tmp/e2e-agentd-install.log 2>&1\"\n    AGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\n  fi\n  assert_eq \"$AGENTD_PRESENT\" \"yes\" \"lamaste-agentd is installed on the agent VM\" || true\n  agent_exec \"lamaste-agent panel --enable --local-only --port ${AGENT_PANEL_PORT} 2>/dev/null\" || true\n  if wait_panel_healthy; then\n    PANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n  fi\nfi\nif ! echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n  log_fail \"Could not start the agent panel on the agent VM\"\n  end_test\n  exit $?\nfi\nlog_pass \"Agent panel is running on the agent VM\"\n\nNPMRC_BEFORE=$(agent_exec \"cat /root/.npmrc 2>/dev/null || true\")\n\nINSTALL_STATUS=$(timed_exec 220 multipass exec lamaste-agent -- sudo bash -c \"curl -s --max-time 200 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins/install\")\nassert_eq \"$INSTALL_STATUS\" \"200\" \"Agent installed ${PLUGIN_PACKAGE} from the registry\" || true\nINSTALLED=$(agent_panel_get \"plugins\" | jq -r '.plugins[] | select(.packageName == \"'\"${PLUGIN_PACKAGE}\"'\") | .name' 2>/dev/null || echo \"\")\nassert_eq \"$INSTALLED\" \"${PLUGIN_NAME}\" \"Agent plugin registry lists the plugin\" || true\n\n# ===========================================================================\n# 4. The registry saw the agent's brokered token\n# ==========================================================================="
+    },
+    {
+      "id": "registry-saw-the-brokered-token",
+      "label": "Registry saw the brokered token",
+      "steps": [
+        {
+          "id": "step-49",
+          "label": "Set OWNED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\""
+          },
+          "capture": [
+            {
+              "variable": "OWNED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "The registry holds one token for agent:${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNED"
+              },
+              "path": ".tokens | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The registry holds one token for agent:${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Token kind is agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNED"
+              },
+              "path": ".tokens[0].kind",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "Token kind is agent"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Token scope is read only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNED"
+              },
+              "path": ".tokens[0].scopes | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "read"
+              },
+              "message": "Token scope is read only"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Brokered by the panel's OIDC identity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OWNED"
+              },
+              "path": ".tokens[0].createdBy",
+              "expected": {
+                "kind": "expr",
+                "template": "ci:auth.${DOMAIN}/lamaste-server"
+              },
+              "message": "Brokered by the panel's OIDC identity"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Extract TOKEN_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TOKEN_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OWNED"
+              },
+              "expression": ".tokens[0].id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set PACKAGE_REQUESTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/e2e/requests\" | jq '[.requests[] | select(.path | startswith(\"/@lamalibre/e2e-oidc-server\"))]'"
+          },
+          "capture": [
+            {
+              "variable": "PACKAGE_REQUESTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "The packument was fetched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PACKAGE_REQUESTS"
+              },
+              "path": "[.[] | select(.path == \"/@lamalibre/e2e-oidc-server\")] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The packument was fetched"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "The tarball was fetched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PACKAGE_REQUESTS"
+              },
+              "path": "[.[] | select(.path | endswith(\".tgz\"))] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The tarball was fetched"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Every package request carried a token owned by agent:${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PACKAGE_REQUESTS"
+              },
+              "path": "[.[] | .owner] | unique | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "agent:${HOST_AGENT_LABEL}"
+              },
+              "message": "Every package request carried a token owned by agent:${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Every package request used a Bearer registry token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PACKAGE_REQUESTS"
+              },
+              "path": "[.[] | .authorization | startswith(\"Bearer feria_\")] | all",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Every package request used a Bearer registry token"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Registry saw the brokered token\"\n\nOWNED=$(stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\")\nassert_json_field \"$OWNED\" '.tokens | length' '1' \"The registry holds one token for agent:${HOST_AGENT_LABEL}\" || true\nassert_json_field \"$OWNED\" '.tokens[0].kind' 'agent' \"Token kind is agent\" || true\nassert_json_field \"$OWNED\" '.tokens[0].scopes | join(\",\")' 'read' \"Token scope is read only\" || true\nassert_json_field \"$OWNED\" '.tokens[0].createdBy' \"ci:auth.${DOMAIN}/lamaste-server\" \"Brokered by the panel's OIDC identity\" || true\nTOKEN_ID=$(echo \"$OWNED\" | jq -r '.tokens[0].id // empty')\n\nPACKAGE_REQUESTS=$(stub_get \"-/e2e/requests\" | jq '[.requests[] | select(.path | startswith(\"/@lamalibre/e2e-oidc-server\"))]')\nassert_json_field \"$PACKAGE_REQUESTS\" '[.[] | select(.path == \"/@lamalibre/e2e-oidc-server\")] | length > 0' 'true' \"The packument was fetched\" || true\nassert_json_field \"$PACKAGE_REQUESTS\" '[.[] | select(.path | endswith(\".tgz\"))] | length > 0' 'true' \"The tarball was fetched\" || true\nassert_json_field \"$PACKAGE_REQUESTS\" '[.[] | .owner] | unique | join(\",\")' \"agent:${HOST_AGENT_LABEL}\" \"Every package request carried a token owned by agent:${HOST_AGENT_LABEL}\" || true\nassert_json_field \"$PACKAGE_REQUESTS\" '[.[] | .authorization | startswith(\"Bearer feria_\")] | all' 'true' \"Every package request used a Bearer registry token\" || true\n\n# ===========================================================================\n# 5. Nothing long-lived left on the agent\n# ==========================================================================="
+    },
+    {
+      "id": "agent-left-clean",
+      "label": "Agent left clean",
+      "steps": [
+        {
+          "id": "step-60",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat /root/.npmrc 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "NPMRC_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "The agent user's ~/.npmrc is unchanged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NPMRC_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "NPMRC_BEFORE"
+              },
+              "message": "The agent user's ~/.npmrc is unchanged"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "No registry token landed in ~/.npmrc",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "NPMRC_AFTER"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "${STUB_PORT}/:_authToken"
+              },
+              "message": "No registry token landed in ~/.npmrc"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "ls -a ${AGENT_DATA_DIR} 2>/dev/null | grep -c 'npmrc-install' || true"
+          },
+          "capture": [
+            {
+              "variable": "LEFTOVER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "No .npmrc-install-* file remains in the agent's data directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LEFTOVER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No .npmrc-install-* file remains in the agent's data directory"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Agent left clean\"\n\nNPMRC_AFTER=$(agent_exec \"cat /root/.npmrc 2>/dev/null || true\")\nassert_eq \"$NPMRC_AFTER\" \"$NPMRC_BEFORE\" \"The agent user's ~/.npmrc is unchanged\" || true\nassert_not_contains \"$NPMRC_AFTER\" \"${STUB_PORT}/:_authToken\" \"No registry token landed in ~/.npmrc\" || true\nLEFTOVER=$(agent_exec \"ls -a ${AGENT_DATA_DIR} 2>/dev/null | grep -c 'npmrc-install' || true\")\nassert_eq \"$LEFTOVER\" \"0\" \"No .npmrc-install-* file remains in the agent's data directory\" || true\n\n# ===========================================================================\n# 6. The panel's audit log records the brokered token\n# ==========================================================================="
+    },
+    {
+      "id": "panel-audit-log",
+      "label": "Panel audit log",
+      "steps": [
+        {
+          "id": "step-65",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "journalctl -u lamalibre-lamaste-serverd --no-pager --since '-30 min' 2>/dev/null | grep 'Brokered registry token for agent' | grep -c '\\"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "The panel logged the brokering for ${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUDIT_LINES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The panel logged the brokering for ${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "journalctl -u lamalibre-lamaste-serverd --no-pager --since '-30 min' 2>/dev/null | grep -c '\\"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_TOKEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "TOKEN_ID"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "The audit line carries the registry's tokenId ${TOKEN_ID}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "AUDIT_TOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The audit line carries the registry's tokenId ${TOKEN_ID}"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "TOKEN_ID"
+          }
+        }
+      ],
+      "bash": "log_section \"Panel audit log\"\n\nAUDIT_LINES=$(host_exec \"journalctl -u lamalibre-lamaste-serverd --no-pager --since '-30 min' 2>/dev/null | grep 'Brokered registry token for agent' | grep -c '\\\"label\\\":\\\"${HOST_AGENT_LABEL}\\\"' || true\")\nassert_not_eq \"$AUDIT_LINES\" \"0\" \"The panel logged the brokering for ${HOST_AGENT_LABEL}\" || true\nif [ -n \"$TOKEN_ID\" ]; then\n  AUDIT_TOKEN=$(host_exec \"journalctl -u lamalibre-lamaste-serverd --no-pager --since '-30 min' 2>/dev/null | grep -c '\\\"tokenId\\\":\\\"${TOKEN_ID}\\\"' || true\")\n  assert_not_eq \"$AUDIT_TOKEN\" \"0\" \"The audit line carries the registry's tokenId ${TOKEN_ID}\" || true\nfi\n\n# ===========================================================================\n# 7. Uninstall on the agent\n# ==========================================================================="
+    },
+    {
+      "id": "uninstall-on-the-agent",
+      "label": "Uninstall on the agent",
+      "steps": [
+        {
+          "id": "step-69",
+          "label": "Set DISABLE_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_panel_post_status \"plugins/${PLUGIN_NAME}/disable\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Plugin disable answered before the panel restarted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DISABLE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Plugin disable answered before the panel restarted"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "Agent panel is back after the plugin disable",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent panel is back after the plugin disable"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Agent panel did not come back after the plugin disable",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent panel did not come back after the plugin disable"
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set UNINSTALL_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_panel_delete_status \"plugins/${PLUGIN_NAME}\""
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Agent plugin uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNINSTALL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Agent plugin uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Set REMAINING",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_panel_get \"plugins\" | jq -r '[.plugins[]? | select(.packageName == \"'\"${PLUGIN_PACKAGE}\"'\")] | length' 2>/dev/null || echo \"?\""
+          },
+          "capture": [
+            {
+              "variable": "REMAINING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "Agent plugin registry no longer lists the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REMAINING"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Agent plugin registry no longer lists the plugin"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Uninstall on the agent\"\n\n# Disabling answers first and then restarts the daemon through the service\n# manager, so the status is asserted and the daemon is polled back to\n# health before the uninstall. The cleanup trap repeats both so they run\n# even if this fails.\nDISABLE_STATUS=$(agent_panel_post_status \"plugins/${PLUGIN_NAME}/disable\" '{}')\nassert_eq \"$DISABLE_STATUS\" \"200\" \"Plugin disable answered before the panel restarted\" || true\nif wait_panel_healthy; then\n  log_pass \"Agent panel is back after the plugin disable\"\nelse\n  log_fail \"Agent panel did not come back after the plugin disable\"\nfi\nUNINSTALL_STATUS=$(agent_panel_delete_status \"plugins/${PLUGIN_NAME}\")\nassert_eq \"$UNINSTALL_STATUS\" \"200\" \"Agent plugin uninstalled\" || true\nwait_panel_healthy || true\nREMAINING=$(agent_panel_get \"plugins\" | jq -r '[.plugins[]? | select(.packageName == \"'\"${PLUGIN_PACKAGE}\"'\")] | length' 2>/dev/null || echo \"?\")\nassert_eq \"$REMAINING\" \"0\" \"Agent plugin registry no longer lists the plugin\" || true"
+    }
+  ],
+  "apiHelpers": ["host_api_get"],
+  "headerRaw": "# ============================================================================\n# 10 — Agent Plugin Install through the Registry Broker (Three-VM)\n# ============================================================================\n# The agent-side half of the registry credential broker, on the real agent\n# VM. A stand-in Feria runs on the host VM and serves the fixture plugin\n# `@lamalibre/e2e-oidc-server` (written out by helpers.sh, shipped with\n# `multipass transfer`); the host's panel authenticates to it as its own\n# `lamaste-server` OIDC client (`registry-credential set --oidc`).\n#\n# 1. The agent VM installs the fixture plugin through its agent panel\n#    (lamaste-agentd, installed on demand — setup-agent.sh installs only\n#    the CLI — started with `panel --enable --local-only`, the 9393 service\n#    without exposing it through the host, and driven as its owner with the\n#    Bearer token of agentd.token, as the desktop app does): the agent\n#    daemon asks the panel for a brokered token and runs npm with an\n#    isolated userconfig.\n# 2. The registry saw the packument and the tarball fetched with\n#    `Bearer <token>` owned by agent:e2e-agent, brokered by the panel's\n#    OIDC identity.\n# 3. The agent user's ~/.npmrc is unchanged and no `.npmrc-install-*` file\n#    remains in the agent's data directory.\n# 4. The panel's audit log (journal) records the brokered tokenId.\n#\n# Every agent-panel helper tolerates a dropped connection (the daemon\n# restarts itself on plugin enable/disable) and the cleanup trap repeats the\n# uninstall, stops the stand-in registry, removes the firewall rule, clears\n# the registry credential and stops the panel, so nothing leaks into the\n# next spec whatever happens here.\n#\n# Numbered 10 on purpose: it needs the agent VM's real certificate to be\n# enrolled on the host, and test 14 (json-installer) rebuilds the host PKI,\n# after which only header-authenticated agent-daemon specs can run.\n#\n# Two labels: `e2e-agent` is the agent VM's LOCAL registry name (data dir,\n# service names, the label its daemon on 9393 answers to), while the host\n# knows the agent by the label its enrollment token carried (`agentLabel`\n# in the agent's config.json, `test-agent` from setup-host.sh) — that is\n# the certificate CN, the token owner and what the panel logs.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent panel API helpers (port 9393 on the agent VM). Plugin routes admit\n# only the daemon's owner: the Bearer token in /root/.lamalibre/lamaste/agentd.token\n# (0600), read on the agent VM inside the same command so it never leaves the\n# VM — the way the desktop app drives the panel. An agent certificate, even\n# the owner's, is refused there.\n# AGENT_LABEL is the agent VM's local registry name; HOST_AGENT_LABEL (the\n# label enrolled on the host, read from config.json below) is used for\n# everything on the panel side.\nAGENT_PANEL_PORT=9393\nAGENT_LABEL=\"e2e-agent\"\nAGENT_CONFIG=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/config.json\"\n\nagent_panel_get() {\n  agent_exec \"curl -sf --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -H 'Accept: application/json' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"\"\n}\n\nagent_panel_post_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_panel_delete_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X DELETE http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# wait_panel_healthy — the agent daemon restarts itself after a plugin\n# enable or disable (unloadPanelService/loadPanelService), so a call made\n# right after one may get an empty reply; poll /api/health for up to 20 s\nwait_panel_healthy() {\n  local health=\"\"\n  for _ in $(seq 1 20); do\n    health=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n    if echo \"$health\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# stub_get path — the stand-in registry on the host VM, as its admin\nstub_get() {\n  host_exec \"curl -s --max-time 15 -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' http://127.0.0.1:${STUB_PORT}/$1\"\n}\n\nHOST_IP=\"${HOST_IP:-10.13.37.1}\"\nAGENT_IP=\"${AGENT_IP:-10.13.37.2}\"\nSTUB_PORT=4874\nSTUB_URL=\"http://${HOST_IP}:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_threevm_000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-oidc-server\"\nPLUGIN_NAME=\"e2e-oidc\"\nREMOTE_DIR=\"/tmp/e2e-10-broker\"\nAGENT_DATA_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}\"\nLOCAL_TMP=\"\"\nHOST_AGENT_LABEL=\"\"\n\nbegin_test \"10 — Agent Plugin Install through the Registry Broker\"\n\ncleanup() {\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"curl -s -o /dev/null --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins/${PLUGIN_NAME}/disable; curl -s -o /dev/null --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X DELETE http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins/${PLUGIN_NAME}\" > /dev/null 2>&1\n  timed_exec 90 multipass exec lamaste-host -- sudo bash -c \"lamaste-server registry-credential clear > /dev/null 2>&1; pkill -f '[s]tub-registry.mjs' 2>/dev/null; ufw delete allow from ${AGENT_IP} to any port ${STUB_PORT} proto tcp > /dev/null 2>&1; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  # Stop the panel service started below (local-only: no host call).\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --disable --local-only 2>/dev/null; true\" > /dev/null 2>&1\n  if [ -n \"$LOCAL_TMP\" ]; then rm -rf \"$LOCAL_TMP\"; fi\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

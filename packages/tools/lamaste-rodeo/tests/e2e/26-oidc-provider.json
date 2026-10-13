@@ -1,0 +1,2193 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 26,
+    "name": "Authelia OIDC provider",
+    "suite": "e2e",
+    "description": "26 — Authelia OIDC provider from a plugin manifest",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "npm"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "POST plugins/${PLUGIN_NAME}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN_NAME}/disable"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN_NAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN_NAME}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Domain: ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Domain: ${DOMAIN}"
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping OIDC provider tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-oidc\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_oidc_000000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-oidc-server\"\nPLUGIN_NAME=\"e2e-oidc\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\n\ncleanup() {\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Stand-in registry serving the fixture plugin\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-registry-serving-the-fixture-plugin",
+      "label": "Stand-in registry serving the fixture plugin",
+      "steps": [
+        {
+          "id": "step-18",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Panel npm configured for the stand-in registry",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel npm configured for the stand-in registry"
+          }
+        }
+      ],
+      "bash": "log_section \"Stand-in registry serving the fixture plugin\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_oidc_fixture_plugin \"${WORK_DIR}/fixture\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixture\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\n# The panel installs server plugins with npm from its state directory; the\n# project-level .npmrc there points @lamalibre at the stand-in registry.\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: the confidential client's secret is handed out once\n# ==========================================================================="
+    },
+    {
+      "id": "install-the-fixture-plugin",
+      "label": "Install the fixture plugin",
+      "steps": [
+        {
+          "id": "step-23",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Fixture plugin installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Fixture plugin installed"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Plugin name is ${PLUGIN_NAME}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.name",
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "Plugin name is ${PLUGIN_NAME}"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "One confidential client secret created by the install",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".oidcClients | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "One confidential client secret created by the install"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Secret belongs to e2e-oidc-service",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".oidcClients[0].id",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-oidc-service"
+              },
+              "message": "Secret belongs to e2e-oidc-service"
+            }
+          }
+        },
+        {
+          "id": "step-28",
+          "label": "Extract SERVICE_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SERVICE_SECRET",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "expression": ".oidcClients[0].secret // empty"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Install response carries the secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVICE_SECRET"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Install response carries the secret"
+            }
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "The registry row carries no secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$INSTALL_RESPONSE\" | jq -c '.plugin')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "secret"
+              },
+              "message": "The registry row carries no secret"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Set SECRET_STORE_MODE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a %U' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_STORE_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "oidc-clients.json is 0600 lamaste",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_STORE_MODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600 lamaste"
+              },
+              "message": "oidc-clients.json is 0600 lamaste"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set STORED_PLUGIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -r '.clients[\"e2e-oidc-service\"].plugin // empty' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "STORED_PLUGIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Secret store attributes the client to the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STORED_PLUGIN"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "Secret store attributes the client to the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Set SECTION_BEFORE_ENABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'client_id: e2e-oidc-cli' /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "SECTION_BEFORE_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-36",
+          "label": "A disabled plugin's clients are not served",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECTION_BEFORE_ENABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "A disabled plugin's clients are not served"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install the fixture plugin\"\n\nINSTALL_RESPONSE=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.ok' 'true' \"Fixture plugin installed\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.name' \"${PLUGIN_NAME}\" \"Plugin name is ${PLUGIN_NAME}\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.oidcClients | length' '1' \"One confidential client secret created by the install\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.oidcClients[0].id' 'e2e-oidc-service' \"Secret belongs to e2e-oidc-service\" || true\nSERVICE_SECRET=$(echo \"$INSTALL_RESPONSE\" | jq -r '.oidcClients[0].secret // empty')\nassert_not_eq \"$SERVICE_SECRET\" \"\" \"Install response carries the secret\" || true\nassert_not_contains \"$(echo \"$INSTALL_RESPONSE\" | jq -c '.plugin')\" \"secret\" \"The registry row carries no secret\" || true\n\nSECRET_STORE_MODE=$(stat -c '%a %U' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"missing\")\nassert_eq \"$SECRET_STORE_MODE\" \"600 lamaste\" \"oidc-clients.json is 0600 lamaste\" || true\nSTORED_PLUGIN=$(jq -r '.clients[\"e2e-oidc-service\"].plugin // empty' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"\")\nassert_eq \"$STORED_PLUGIN\" \"${PLUGIN_NAME}\" \"Secret store attributes the client to the plugin\" || true\n\nSECTION_BEFORE_ENABLE=$(grep -c 'client_id: e2e-oidc-cli' /etc/authelia/configuration.yml || true)\nassert_eq \"$SECTION_BEFORE_ENABLE\" \"0\" \"A disabled plugin's clients are not served\" || true\n\n# ===========================================================================\n# 3. Enable: Authelia carries the clients\n# ==========================================================================="
+    },
+    {
+      "id": "enable-the-plugin-authelia-configuration",
+      "label": "Enable the plugin — Authelia configuration",
+      "steps": [
+        {
+          "id": "step-37",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/enable"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-38",
+          "label": "Plugin enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Plugin enabled"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Enable creates no new secret (install already did)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".oidcClients | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Enable creates no new secret (install already did)"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "Authelia is active after the restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the restart"
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Authelia is not active after the OIDC update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the OIDC update"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Set CONFIG_YML",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/authelia/configuration.yml"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG_YML",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Public device-code client rendered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_id: e2e-oidc-cli"
+              },
+              "message": "Public device-code client rendered"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Confidential client rendered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_id: e2e-oidc-service"
+              },
+              "message": "Confidential client rendered"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Public client references its claims policy",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "claims_policy: e2e-oidc-cli"
+              },
+              "message": "Public client references its claims policy"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Claims policies section present",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "claims_policies:"
+              },
+              "message": "Claims policies section present"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Claims policy copies preferred_username into access tokens",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "- preferred_username"
+              },
+              "message": "Claims policy copies preferred_username into access tokens"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Confidential client uses client_secret_basic",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "token_endpoint_auth_method: client_secret_basic"
+              },
+              "message": "Confidential client uses client_secret_basic"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Confidential client secret is a pbkdf2-sha512 digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "client_secret: $pbkdf2-sha512$310000$"
+              },
+              "message": "Confidential client secret is a pbkdf2-sha512 digest"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "The plaintext secret is not in Authelia's configuration",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SERVICE_SECRET"
+              },
+              "message": "The plaintext secret is not in Authelia's configuration"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Issuer key referenced through the template expression",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "key: {{ secret \"/etc/authelia/oidc-issuer.pem\" | mindent 10 \"|\" | msquote }}"
+              },
+              "message": "Issuer key referenced through the template expression"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "No private key inlined in the configuration",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "BEGIN PRIVATE KEY"
+              },
+              "message": "No private key inlined in the configuration"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "Audience whitelisted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "audience:"
+              },
+              "message": "Audience whitelisted"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Audience {domain} expanded to the relay domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "- https://e2e-oidc.${DOMAIN}"
+              },
+              "message": "Audience {domain} expanded to the relay domain"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set KEY_STAT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a %U' /etc/authelia/oidc-issuer.pem 2>/dev/null || echo \"missing\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_STAT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "Issuer key is 0600 lamaste-authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "KEY_STAT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600 lamaste-authelia"
+              },
+              "message": "Issuer key is 0600 lamaste-authelia"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Set KEY_READABLE_BY_PANEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sudo -u lamaste cat /etc/authelia/oidc-issuer.pem > /dev/null 2>&1 && echo \"yes\" || echo \"no\""
+          },
+          "capture": [
+            {
+              "variable": "KEY_READABLE_BY_PANEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "The panel user cannot read the issuer key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "KEY_READABLE_BY_PANEL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "The panel user cannot read the issuer key"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Set UNIT_FILTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'X_AUTHELIA_CONFIG_FILTERS=template' /etc/systemd/system/authelia.service || true"
+          },
+          "capture": [
+            {
+              "variable": "UNIT_FILTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-61",
+          "label": "Authelia unit enables the template configuration filter",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNIT_FILTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Authelia unit enables the template configuration filter"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Enable the plugin — Authelia configuration\"\n\nENABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\nassert_json_field \"$ENABLE_RESPONSE\" '.oidcClients | length' '0' \"Enable creates no new secret (install already did)\" || true\n\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the restart\"\nelse\n  log_fail \"Authelia is not active after the OIDC update\"\nfi\nsleep 3\n\nCONFIG_YML=$(cat /etc/authelia/configuration.yml)\nassert_contains \"$CONFIG_YML\" \"client_id: e2e-oidc-cli\" \"Public device-code client rendered\" || true\nassert_contains \"$CONFIG_YML\" \"client_id: e2e-oidc-service\" \"Confidential client rendered\" || true\nassert_contains \"$CONFIG_YML\" \"claims_policy: e2e-oidc-cli\" \"Public client references its claims policy\" || true\nassert_contains \"$CONFIG_YML\" \"claims_policies:\" \"Claims policies section present\" || true\nassert_contains \"$CONFIG_YML\" \"- preferred_username\" \"Claims policy copies preferred_username into access tokens\" || true\nassert_contains \"$CONFIG_YML\" \"token_endpoint_auth_method: client_secret_basic\" \"Confidential client uses client_secret_basic\" || true\nassert_contains \"$CONFIG_YML\" 'client_secret: $pbkdf2-sha512$310000$' \"Confidential client secret is a pbkdf2-sha512 digest\" || true\nassert_not_contains \"$CONFIG_YML\" \"$SERVICE_SECRET\" \"The plaintext secret is not in Authelia's configuration\" || true\nassert_contains \"$CONFIG_YML\" 'key: {{ secret \"/etc/authelia/oidc-issuer.pem\" | mindent 10 \"|\" | msquote }}' \"Issuer key referenced through the template expression\" || true\nassert_not_contains \"$CONFIG_YML\" \"BEGIN PRIVATE KEY\" \"No private key inlined in the configuration\" || true\nassert_contains \"$CONFIG_YML\" \"audience:\" \"Audience whitelisted\" || true\nassert_contains \"$CONFIG_YML\" \"- https://e2e-oidc.${DOMAIN}\" \"Audience {domain} expanded to the relay domain\" || true\n\nKEY_STAT=$(stat -c '%a %U' /etc/authelia/oidc-issuer.pem 2>/dev/null || echo \"missing\")\nassert_eq \"$KEY_STAT\" \"600 lamaste-authelia\" \"Issuer key is 0600 lamaste-authelia\" || true\nKEY_READABLE_BY_PANEL=$(sudo -u lamaste cat /etc/authelia/oidc-issuer.pem > /dev/null 2>&1 && echo \"yes\" || echo \"no\")\nassert_eq \"$KEY_READABLE_BY_PANEL\" \"no\" \"The panel user cannot read the issuer key\" || true\n\nUNIT_FILTER=$(grep -c 'X_AUTHELIA_CONFIG_FILTERS=template' /etc/systemd/system/authelia.service || true)\nassert_eq \"$UNIT_FILTER\" \"1\" \"Authelia unit enables the template configuration filter\" || true\n\n# ===========================================================================\n# 4. Discovery document and JWKS\n# ==========================================================================="
+    },
+    {
+      "id": "discovery-document-and-jwks",
+      "label": "Discovery document and JWKS",
+      "steps": [
+        {
+          "id": "step-62",
+          "label": "Set DISCOVERY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "DISCOVERY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "Issuer is https://auth.${DOMAIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".issuer",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}"
+              },
+              "message": "Issuer is https://auth.${DOMAIN}"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Device authorization endpoint advertised",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".device_authorization_endpoint",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/api/oidc/device-authorization"
+              },
+              "message": "Device authorization endpoint advertised"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Token endpoint advertised",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".token_endpoint",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/api/oidc/token"
+              },
+              "message": "Token endpoint advertised"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "JWKS URI advertised",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".jwks_uri",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/jwks.json"
+              },
+              "message": "JWKS URI advertised"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "client_credentials grant supported",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$DISCOVERY\" | jq -c '.grant_types_supported')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "client_credentials"
+              },
+              "message": "client_credentials grant supported"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "device_code grant supported",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$DISCOVERY\" | jq -c '.grant_types_supported')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "urn:ietf:params:oauth:grant-type:device_code"
+              },
+              "message": "device_code grant supported"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Set JWKS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/jwks.json\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "JWKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Set RS256_KEYS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JWKS\" | jq '[.keys[] | select(.alg == \"RS256\" and .kty == \"RSA\")] | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "RS256_KEYS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "JWKS carries one RS256 RSA key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RS256_KEYS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "JWKS carries one RS256 RSA key"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "Key id is lamaste-oidc",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "JWKS"
+              },
+              "path": ".keys[0].kid",
+              "expected": {
+                "kind": "literal",
+                "value": "lamaste-oidc"
+              },
+              "message": "Key id is lamaste-oidc"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Key use is sig",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "JWKS"
+              },
+              "path": ".keys[0].use",
+              "expected": {
+                "kind": "literal",
+                "value": "sig"
+              },
+              "message": "Key use is sig"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Discovery document and JWKS\"\n\nDISCOVERY=$(curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$DISCOVERY\" '.issuer' \"https://auth.${DOMAIN}\" \"Issuer is https://auth.${DOMAIN}\" || true\nassert_json_field \"$DISCOVERY\" '.device_authorization_endpoint' \"https://auth.${DOMAIN}/api/oidc/device-authorization\" \"Device authorization endpoint advertised\" || true\nassert_json_field \"$DISCOVERY\" '.token_endpoint' \"https://auth.${DOMAIN}/api/oidc/token\" \"Token endpoint advertised\" || true\nassert_json_field \"$DISCOVERY\" '.jwks_uri' \"https://auth.${DOMAIN}/jwks.json\" \"JWKS URI advertised\" || true\nassert_contains \"$(echo \"$DISCOVERY\" | jq -c '.grant_types_supported')\" \"client_credentials\" \"client_credentials grant supported\" || true\nassert_contains \"$(echo \"$DISCOVERY\" | jq -c '.grant_types_supported')\" \"urn:ietf:params:oauth:grant-type:device_code\" \"device_code grant supported\" || true\n\nJWKS=$(curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/jwks.json\" 2>/dev/null || echo \"{}\")\nRS256_KEYS=$(echo \"$JWKS\" | jq '[.keys[] | select(.alg == \"RS256\" and .kty == \"RSA\")] | length' 2>/dev/null || echo \"0\")\nassert_eq \"$RS256_KEYS\" \"1\" \"JWKS carries one RS256 RSA key\" || true\nassert_json_field \"$JWKS\" '.keys[0].kid' 'lamaste-oidc' \"Key id is lamaste-oidc\" || true\nassert_json_field \"$JWKS\" '.keys[0].use' 'sig' \"Key use is sig\" || true\n\n# ===========================================================================\n# 5. Client credentials: a JWT from Authelia\n# ==========================================================================="
+    },
+    {
+      "id": "client-credentials-token-request",
+      "label": "Client-credentials token request",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "Set TOKEN_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} -u \"e2e-oidc-service:${SERVICE_SECRET}\" -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Extract ACCESS_TOKEN",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ACCESS_TOKEN",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "expression": ".access_token // empty"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Token endpoint issued an access token ($(echo \"$TOKEN_RESPONSE\" | jq -c 'del(.access_token)'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ACCESS_TOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Token endpoint issued an access token ($(echo \"$TOKEN_RESPONSE\" | jq -c 'del(.access_token)'))"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Token type is bearer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKEN_RESPONSE"
+              },
+              "path": ".token_type | ascii_downcase",
+              "expected": {
+                "kind": "literal",
+                "value": "bearer"
+              },
+              "message": "Token type is bearer"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "Set CLAIMS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "decode_jwt_payload \"$ACCESS_TOKEN\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "CLAIMS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "JWT iss is https://auth.${DOMAIN}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": ".iss",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}"
+              },
+              "message": "JWT iss is https://auth.${DOMAIN}"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "JWT client_id is the client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": ".client_id",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-oidc-service"
+              },
+              "message": "JWT client_id is the client"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "JWT sub falls back to the client id (no end-user)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": ".sub",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e-oidc-service"
+              },
+              "message": "JWT sub falls back to the client id (no end-user)"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "\") != null",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": "[.aud] | flatten | index(\"https://e2e-oidc.",
+              "expected": {
+                "kind": "var",
+                "name": "DOMAIN"
+              },
+              "message": "\") != null"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "JWT scp carries registry_read",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLAIMS"
+              },
+              "path": "[.scp[]?] | index(\"registry_read\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "JWT scp carries registry_read"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "ACCESS_TOKEN"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set WRONG_SECRET_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:not-the-secret\" -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "WRONG_SECRET_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "A wrong secret is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WRONG_SECRET_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "A wrong secret is refused"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Client-credentials token request\"\n\nTOKEN_RESPONSE=$(curl -sk --max-time 15 ${AUTH_RESOLVE} -u \"e2e-oidc-service:${SERVICE_SECRET}\" \\\n  -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \\\n  \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"{}\")\nACCESS_TOKEN=$(echo \"$TOKEN_RESPONSE\" | jq -r '.access_token // empty')\nassert_not_eq \"$ACCESS_TOKEN\" \"\" \"Token endpoint issued an access token ($(echo \"$TOKEN_RESPONSE\" | jq -c 'del(.access_token)'))\" || true\nassert_json_field \"$TOKEN_RESPONSE\" '.token_type | ascii_downcase' 'bearer' \"Token type is bearer\" || true\n\nif [ -n \"$ACCESS_TOKEN\" ]; then\n  CLAIMS=$(decode_jwt_payload \"$ACCESS_TOKEN\" 2>/dev/null || echo \"{}\")\n  assert_json_field \"$CLAIMS\" '.iss' \"https://auth.${DOMAIN}\" \"JWT iss is https://auth.${DOMAIN}\" || true\n  assert_json_field \"$CLAIMS\" '.client_id' 'e2e-oidc-service' \"JWT client_id is the client\" || true\n  assert_json_field \"$CLAIMS\" '.sub' 'e2e-oidc-service' \"JWT sub falls back to the client id (no end-user)\" || true\n  assert_json_field \"$CLAIMS\" '[.aud] | flatten | index(\"https://e2e-oidc.'\"${DOMAIN}\"'\") != null' 'true' \"JWT aud is the requested audience\" || true\n  # Authelia's JWT profile access tokens carry the granted scopes in the\n  # `scp` array (oauth2-provider strategy_jwt_profile.go); `scope` is only\n  # in the token endpoint's response body.\n  assert_json_field \"$CLAIMS\" '[.scp[]?] | index(\"registry_read\") != null' 'true' \"JWT scp carries registry_read\" || true\nfi\n\nWRONG_SECRET_STATUS=$(curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:not-the-secret\" \\\n  -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \\\n  \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\")\nassert_eq \"$WRONG_SECRET_STATUS\" \"401\" \"A wrong secret is refused\" || true\n\n# ===========================================================================\n# 6. Client metadata and secret rotation\n# ==========================================================================="
+    },
+    {
+      "id": "client-metadata-and-secret-rotation",
+      "label": "Client metadata and secret rotation",
+      "steps": [
+        {
+          "id": "step-86",
+          "label": "GET /api/plugins/${PLUGIN_NAME}/oidc-clients",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN_NAME}/oidc-clients"
+          },
+          "capture": [
+            {
+              "variable": "CLIENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "Two clients listed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "path": ".clients | length",
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "Two clients listed"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "e2e-oidc-cli is public",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "path": ".clients[] | select(.id == \"e2e-oidc-cli\") | .confidential",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "e2e-oidc-cli is public"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "e2e-oidc-cli asks for groups and preferred_username in access tokens",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "path": ".clients[] | select(.id == \"e2e-oidc-cli\") | .accessTokenClaims | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "groups,preferred_username"
+              },
+              "message": "e2e-oidc-cli asks for groups and preferred_username in access tokens"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "e2e-oidc-service is confidential",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "path": ".clients[] | select(.id == \"e2e-oidc-service\") | .confidential",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "e2e-oidc-service is confidential"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Not rotated yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "path": ".clients[] | select(.id == \"e2e-oidc-service\") | .secretRotatedAt",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "Not rotated yet"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Listing never shows the secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLIENTS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SERVICE_SECRET"
+              },
+              "message": "Listing never shows the secret"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-service/rotate-secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-service/rotate-secret"
+          },
+          "capture": [
+            {
+              "variable": "ROTATE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-94",
+          "label": "Secret rotated",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Secret rotated"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Extract NEW_SECRET",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_SECRET",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE_RESPONSE"
+              },
+              "expression": ".secret // empty"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Rotation returns the new secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_SECRET"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Rotation returns the new secret"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "The new secret differs from the old one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_SECRET"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "SERVICE_SECRET"
+              },
+              "message": "The new secret differs from the old one"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-cli/rotate-secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-cli/rotate-secret",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PUBLIC_ROTATE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "A public client has no secret to rotate",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PUBLIC_ROTATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A public client has no secret to rotate"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-nope/rotate-secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-nope/rotate-secret",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "UNKNOWN_ROTATE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "An undeclared client is 404",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNKNOWN_ROTATE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "An undeclared client is 404"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Authelia is active after the rotation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the rotation"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "Authelia is not active after the rotation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the rotation"
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set OLD_SECRET_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:${SERVICE_SECRET}\" -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "OLD_SECRET_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "The old secret no longer works",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "OLD_SECRET_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "The old secret no longer works"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set NEW_SECRET_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:${NEW_SECRET}\" -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "NEW_SECRET_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "The new secret works",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_SECRET_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "The new secret works"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "GET /api/plugins/${PLUGIN_NAME}/oidc-clients",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN_NAME}/oidc-clients"
+          },
+          "capture": [
+            {
+              "variable": "ROTATED_AT",
+              "from": {
+                "kind": "jq",
+                "expression": ".clients[] | select(.id == \"e2e-oidc-service\") | .secretRotatedAt // empty"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "Listing records the rotation time",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "ROTATED_AT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Listing records the rotation time"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Client metadata and secret rotation\"\n\nCLIENTS=$(api_get \"plugins/${PLUGIN_NAME}/oidc-clients\")\nassert_json_field \"$CLIENTS\" '.clients | length' '2' \"Two clients listed\" || true\nassert_json_field \"$CLIENTS\" '.clients[] | select(.id == \"e2e-oidc-cli\") | .confidential' 'false' \"e2e-oidc-cli is public\" || true\nassert_json_field \"$CLIENTS\" '.clients[] | select(.id == \"e2e-oidc-cli\") | .accessTokenClaims | join(\",\")' 'groups,preferred_username' \"e2e-oidc-cli asks for groups and preferred_username in access tokens\" || true\nassert_json_field \"$CLIENTS\" '.clients[] | select(.id == \"e2e-oidc-service\") | .confidential' 'true' \"e2e-oidc-service is confidential\" || true\nassert_json_field \"$CLIENTS\" '.clients[] | select(.id == \"e2e-oidc-service\") | .secretRotatedAt' 'null' \"Not rotated yet\" || true\nassert_not_contains \"$CLIENTS\" \"$SERVICE_SECRET\" \"Listing never shows the secret\" || true\n\nROTATE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-service/rotate-secret\")\nassert_json_field \"$ROTATE_RESPONSE\" '.ok' 'true' \"Secret rotated\" || true\nNEW_SECRET=$(echo \"$ROTATE_RESPONSE\" | jq -r '.secret // empty')\nassert_not_eq \"$NEW_SECRET\" \"\" \"Rotation returns the new secret\" || true\nassert_not_eq \"$NEW_SECRET\" \"$SERVICE_SECRET\" \"The new secret differs from the old one\" || true\n\nPUBLIC_ROTATE_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-cli/rotate-secret\")\nassert_eq \"$PUBLIC_ROTATE_STATUS\" \"400\" \"A public client has no secret to rotate\" || true\nUNKNOWN_ROTATE_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/oidc-clients/e2e-oidc-nope/rotate-secret\")\nassert_eq \"$UNKNOWN_ROTATE_STATUS\" \"404\" \"An undeclared client is 404\" || true\n\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the rotation\"\nelse\n  log_fail \"Authelia is not active after the rotation\"\nfi\nsleep 3\n\nOLD_SECRET_STATUS=$(curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:${SERVICE_SECRET}\" \\\n  -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \\\n  \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\")\nassert_eq \"$OLD_SECRET_STATUS\" \"401\" \"The old secret no longer works\" || true\nNEW_SECRET_STATUS=$(curl -sk --max-time 15 ${AUTH_RESOLVE} -o /dev/null -w '%{http_code}' -u \"e2e-oidc-service:${NEW_SECRET}\" \\\n  -d grant_type=client_credentials -d scope=registry_read -d \"audience=https://e2e-oidc.${DOMAIN}\" \\\n  \"https://auth.${DOMAIN}/api/oidc/token\" 2>/dev/null || echo \"000\")\nassert_eq \"$NEW_SECRET_STATUS\" \"200\" \"The new secret works\" || true\n\nROTATED_AT=$(api_get \"plugins/${PLUGIN_NAME}/oidc-clients\" | jq -r '.clients[] | select(.id == \"e2e-oidc-service\") | .secretRotatedAt // empty')\nassert_not_eq \"$ROTATED_AT\" \"\" \"Listing records the rotation time\" || true\n\n# ===========================================================================\n# 7. Disable and uninstall\n# ==========================================================================="
+    },
+    {
+      "id": "disable-and-uninstall",
+      "label": "Disable and uninstall",
+      "steps": [
+        {
+          "id": "step-111",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/disable"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-112",
+          "label": "Plugin disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "Plugin disabled"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Authelia is active after the removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the removal"
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "Authelia is not active after the removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the removal"
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "Set CLI_AFTER_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'client_id: e2e-oidc-cli' /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_AFTER_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "Set SERVICE_AFTER_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c 'client_id: e2e-oidc-service' /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "SERVICE_AFTER_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-117",
+          "label": "Public client removed from Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_AFTER_DISABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Public client removed from Authelia"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Confidential client removed from Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SERVICE_AFTER_DISABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Confidential client removed from Authelia"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "Set SECRET_AFTER_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -r '.clients | has(\"e2e-oidc-service\")' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"false\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_AFTER_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-120",
+          "label": "Disabling keeps the secret (the plugin is still installed)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_AFTER_DISABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Disabling keeps the secret (the plugin is still installed)"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "DELETE /api/plugins/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-122",
+          "label": "Plugin uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "Set SECRET_AFTER_UNINSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -r '.clients | has(\"e2e-oidc-service\")' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"false\""
+          },
+          "capture": [
+            {
+              "variable": "SECRET_AFTER_UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "Uninstalling deletes the secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_AFTER_UNINSTALL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Uninstalling deletes the secret"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Disable and uninstall\"\n\nDISABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE_RESPONSE\" '.status' 'disabled' \"Plugin disabled\" || true\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the removal\"\nelse\n  log_fail \"Authelia is not active after the removal\"\nfi\nCLI_AFTER_DISABLE=$(grep -c 'client_id: e2e-oidc-cli' /etc/authelia/configuration.yml || true)\nSERVICE_AFTER_DISABLE=$(grep -c 'client_id: e2e-oidc-service' /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_AFTER_DISABLE\" \"0\" \"Public client removed from Authelia\" || true\nassert_eq \"$SERVICE_AFTER_DISABLE\" \"0\" \"Confidential client removed from Authelia\" || true\nSECRET_AFTER_DISABLE=$(jq -r '.clients | has(\"e2e-oidc-service\")' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"false\")\nassert_eq \"$SECRET_AFTER_DISABLE\" \"true\" \"Disabling keeps the secret (the plugin is still installed)\" || true\n\nUNINSTALL_RESPONSE=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL_RESPONSE\" '.ok' 'true' \"Plugin uninstalled\" || true\nSECRET_AFTER_UNINSTALL=$(jq -r '.clients | has(\"e2e-oidc-service\")' \"${STATE_DIR}/oidc-clients.json\" 2>/dev/null || echo \"false\")\nassert_eq \"$SECRET_AFTER_UNINSTALL\" \"false\" \"Uninstalling deletes the secret\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 26 — Authelia OIDC provider from a plugin manifest\n# ============================================================================\n# Installs a fixture plugin (served by a stand-in registry on the VM) whose\n# manifest declares a public device-code client with access-token claims and\n# a confidential client-credentials client, and verifies:\n# - the install response hands out the confidential client's secret once\n# - enabling the plugin writes identity_providers.oidc: the claims policy,\n#   the pbkdf2 secret digest, the issuer key as a template expression\n# - the issuer key is 0600 lamaste-authelia (never readable by the panel)\n# - Authelia's discovery document lists the device-authorization and token\n#   endpoints and its JWKS carries an RS256 key\n# - a client-credentials token request yields a JWT with the right iss, aud,\n#   client_id and sub; a rotated secret replaces the old one\n# - GET /plugins/:name/oidc-clients lists metadata, never the secret\n# - disabling the plugin removes the section; uninstalling deletes the secret\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm\n\nbegin_test \"26 — Authelia OIDC provider\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

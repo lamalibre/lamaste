@@ -15,6 +15,10 @@
     },
     "AGENT_LABEL": {
       "value": "e2e-agent"
+    },
+    "AGENT_CONFIG": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/config.json",
+      "expression": true
     }
   },
   "cleanup": [],
@@ -52,17 +56,15 @@
       "steps": [
         {
           "id": "step-4",
-          "label": "HTTP request on agent",
-          "target": "agent",
+          "label": "Set HOST_AGENT_LABEL",
+          "target": "local",
           "op": {
-            "type": "http",
-            "method": "GET",
-            "url": "http://127.0.0.1:${AGENT_PANEL_PORT}/api/health",
-            "timeout": 5
+            "type": "exec",
+            "command": "agent_config_field \"agentLabel\""
           },
           "capture": [
             {
-              "variable": "PANEL_HEALTH",
+              "variable": "HOST_AGENT_LABEL",
               "from": {
                 "kind": "body"
               }
@@ -70,32 +72,37 @@
           ]
         },
         {
-          "id": "step-5",
-          "label": "Agent panel already running on port ${AGENT_PANEL_PORT}",
-          "target": "local",
-          "op": {
-            "type": "log",
-            "level": "pass",
-            "message": "Agent panel already running on port ${AGENT_PANEL_PORT}"
-          }
-        },
-        {
           "id": "step-6",
-          "label": "Exec on agent",
-          "target": "agent",
+          "label": "GET /api/certs/agent",
+          "target": "host",
           "op": {
-            "type": "exec",
-            "command": "lamaste-agent panel --enable --port ${AGENT_PANEL_PORT} 2>/dev/null"
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
           },
-          "continueOnError": true
+          "capture": [
+            {
+              "variable": "AGENT_ENROLLED",
+              "from": {
+                "kind": "jq",
+                "expression": "[.agents[]? | select(.label == \""
+              }
+            }
+          ]
         },
         {
           "id": "step-7",
-          "label": "Sleep 5s",
+          "label": "${HOST_AGENT_LABEL} is not an enrolled, non-revoked agent on the host",
           "target": "local",
           "op": {
-            "type": "sleep",
-            "seconds": 5
+            "type": "log",
+            "level": "fail",
+            "message": "${HOST_AGENT_LABEL} is not an enrolled, non-revoked agent on the host"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "AGENT_ENROLLED",
+            "value": "0"
           }
         },
         {
@@ -116,16 +123,115 @@
               }
             }
           ]
+        },
+        {
+          "id": "step-9",
+          "label": "Agent panel already running on port ${AGENT_PANEL_PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent panel already running on port ${AGENT_PANEL_PORT}"
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENTD_PRESENT",
+            "value": "yes"
+          }
+        },
+        {
+          "id": "step-13",
+          "label": "lamaste-agentd is installed on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENTD_PRESENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "lamaste-agentd is installed on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent panel --enable --local-only --port ${AGENT_PANEL_PORT} 2>/dev/null"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-15",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENT_PANEL_PORT}/api/health",
+            "timeout": 5
+          },
+          "capture": [
+            {
+              "variable": "PANEL_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Start agent panel service\"\n# ---------------------------------------------------------------------------\n\n# Check if agent panel is already running\nPANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\nif echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n  log_pass \"Agent panel already running on port ${AGENT_PANEL_PORT}\"\nelse\n  # Start the panel service\n  agent_exec \"lamaste-agent panel --enable --port ${AGENT_PANEL_PORT} 2>/dev/null\" || true\n  sleep 5\n  PANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n  if echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n    log_pass \"Agent panel started on port ${AGENT_PANEL_PORT}\"\n  else\n    log_skip \"Could not start agent panel service — skipping\"\n    end_test\n    exit $?\n  fi\nfi\n\n# ===========================================================================\n# 1. GET /plugins — empty list initially\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Start agent panel service\"\n# ---------------------------------------------------------------------------\n\nHOST_AGENT_LABEL=$(agent_config_field \"agentLabel\")\nHOST_AGENT_LABEL=\"${HOST_AGENT_LABEL:-test-agent}\"\nAGENT_ENROLLED=$(host_api_get \"certs/agent\" | jq -r '[.agents[]? | select(.label == \"'\"${HOST_AGENT_LABEL}\"'\" and (.revoked // false) == false)] | length' 2>/dev/null || echo \"0\")\nif [ \"$AGENT_ENROLLED\" = \"0\" ]; then\n  log_fail \"${HOST_AGENT_LABEL} is not an enrolled, non-revoked agent on the host\"\n  end_test\n  exit 1\nfi\n\n# Check if agent panel is already running\nPANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\nif echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n  log_pass \"Agent panel already running on port ${AGENT_PANEL_PORT}\"\nelse\n  # The agent VM is set up with @lamalibre/lamaste-agent only; the panel\n  # service is lamaste-agentd, installed here on demand from the registry\n  # /root/.npmrc points @lamalibre at.\n  AGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\n  if [ \"$AGENTD_PRESENT\" != \"yes\" ]; then\n    timed_exec 180 multipass exec lamaste-agent -- sudo bash -c \"npm install -g @lamalibre/lamaste-agentd > /tmp/e2e-agentd-install.log 2>&1\"\n    AGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\n  fi\n  assert_eq \"$AGENTD_PRESENT\" \"yes\" \"lamaste-agentd is installed on the agent VM\" || true\n  # Start the panel service\n  agent_exec \"lamaste-agent panel --enable --local-only --port ${AGENT_PANEL_PORT} 2>/dev/null\" || true\n  if wait_panel_healthy; then\n    PANEL_HEALTH=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n  fi\n  if echo \"$PANEL_HEALTH\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n    log_pass \"Agent panel started on port ${AGENT_PANEL_PORT}\"\n  else\n    log_skip \"Could not start agent panel service — skipping\"\n    end_test\n    exit $?\n  fi\nfi\n\n# ===========================================================================\n# 1. GET /plugins — empty list initially\n# ==========================================================================="
     },
     {
       "id": "get-plugins-empty-list",
       "label": "GET /plugins — empty list",
       "steps": [
         {
-          "id": "step-9",
+          "id": "step-16",
           "label": "Set PLUGINS_RESPONSE",
           "target": "local",
           "op": {
@@ -142,7 +248,7 @@
           ]
         },
         {
-          "id": "step-10",
+          "id": "step-17",
           "label": "Set PLUGIN_COUNT",
           "target": "local",
           "op": {
@@ -159,7 +265,7 @@
           ]
         },
         {
-          "id": "step-11",
+          "id": "step-18",
           "label": "Plugin list is initially empty",
           "target": "local",
           "continueOnError": true,
@@ -187,7 +293,7 @@
       "label": "Install validation — missing body",
       "steps": [
         {
-          "id": "step-12",
+          "id": "step-19",
           "label": "Set INSTALL_NO_BODY",
           "target": "local",
           "op": {
@@ -204,7 +310,7 @@
           ]
         },
         {
-          "id": "step-13",
+          "id": "step-20",
           "label": "Install without packageName returns 400",
           "target": "local",
           "continueOnError": true,
@@ -232,7 +338,7 @@
       "label": "Install validation — non-lamalibre scope",
       "steps": [
         {
-          "id": "step-14",
+          "id": "step-21",
           "label": "Set INSTALL_BAD_SCOPE",
           "target": "local",
           "op": {
@@ -249,7 +355,7 @@
           ]
         },
         {
-          "id": "step-15",
+          "id": "step-22",
           "label": "Install with non-@lamalibre/ scope returns 400",
           "target": "local",
           "continueOnError": true,
@@ -277,7 +383,7 @@
       "label": "Plugin name validation — reserved names",
       "steps": [
         {
-          "id": "step-16",
+          "id": "step-23",
           "label": "Set ENABLE_PLUGINS",
           "target": "local",
           "op": {
@@ -294,7 +400,7 @@
           ]
         },
         {
-          "id": "step-17",
+          "id": "step-24",
           "label": "Reserved name 'plugins' rejected",
           "target": "local",
           "continueOnError": true,
@@ -315,7 +421,7 @@
           }
         },
         {
-          "id": "step-18",
+          "id": "step-25",
           "label": "Set ENABLE_AGENTS",
           "target": "local",
           "op": {
@@ -332,7 +438,7 @@
           ]
         },
         {
-          "id": "step-19",
+          "id": "step-26",
           "label": "Reserved name 'agents' rejected",
           "target": "local",
           "continueOnError": true,
@@ -360,7 +466,7 @@
       "label": "Plugin name validation — invalid characters",
       "steps": [
         {
-          "id": "step-20",
+          "id": "step-27",
           "label": "Set ENABLE_DOTS",
           "target": "local",
           "op": {
@@ -377,7 +483,7 @@
           ]
         },
         {
-          "id": "step-21",
+          "id": "step-28",
           "label": "Name with dots rejected",
           "target": "local",
           "continueOnError": true,
@@ -398,7 +504,7 @@
           }
         },
         {
-          "id": "step-22",
+          "id": "step-29",
           "label": "Set ENABLE_SLASH",
           "target": "local",
           "op": {
@@ -415,7 +521,7 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-30",
           "label": "Name with slashes rejected",
           "target": "local",
           "continueOnError": true,
@@ -436,7 +542,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-31",
           "label": "Set ENABLE_UPPER",
           "target": "local",
           "op": {
@@ -453,7 +559,7 @@
           ]
         },
         {
-          "id": "step-25",
+          "id": "step-32",
           "label": "Uppercase name rejected",
           "target": "local",
           "continueOnError": true,
@@ -481,7 +587,7 @@
       "label": "Operations on nonexistent plugin",
       "steps": [
         {
-          "id": "step-26",
+          "id": "step-33",
           "label": "Set ENABLE_MISSING",
           "target": "local",
           "op": {
@@ -498,7 +604,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-34",
           "label": "Enable nonexistent plugin returns 400",
           "target": "local",
           "continueOnError": true,
@@ -519,7 +625,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-35",
           "label": "Set DISABLE_MISSING",
           "target": "local",
           "op": {
@@ -536,7 +642,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-36",
           "label": "Disable nonexistent plugin returns 400",
           "target": "local",
           "continueOnError": true,
@@ -557,7 +663,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-38",
           "label": "Set DELETE_MISSING",
           "target": "local",
           "op": {
@@ -574,7 +680,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-39",
           "label": "Delete nonexistent plugin returns 400",
           "target": "local",
           "continueOnError": true,
@@ -595,14 +701,14 @@
           }
         }
       ],
-      "bash": "log_section \"Operations on nonexistent plugin\"\n\nENABLE_MISSING=$(agent_panel_post_status \"plugins/nonexistent/enable\" '{}')\nassert_eq \"$ENABLE_MISSING\" \"400\" \"Enable nonexistent plugin returns 400\" || true\n\nDISABLE_MISSING=$(agent_panel_post_status \"plugins/nonexistent/disable\" '{}')\nassert_eq \"$DISABLE_MISSING\" \"400\" \"Disable nonexistent plugin returns 400\" || true\n\nDELETE_MISSING=$(agent_panel_delete_status \"plugins/nonexistent\")\nassert_eq \"$DELETE_MISSING\" \"400\" \"Delete nonexistent plugin returns 400\" || true\n\n# ===========================================================================\n# 6. Check-update and bundle for nonexistent plugin\n# ==========================================================================="
+      "bash": "log_section \"Operations on nonexistent plugin\"\n\nENABLE_MISSING=$(agent_panel_post_status \"plugins/nonexistent/enable\" '{}')\nassert_eq \"$ENABLE_MISSING\" \"400\" \"Enable nonexistent plugin returns 400\" || true\n\nDISABLE_MISSING=$(agent_panel_post_status \"plugins/nonexistent/disable\" '{}')\nassert_eq \"$DISABLE_MISSING\" \"400\" \"Disable nonexistent plugin returns 400\" || true\n# Enable/disable restart the daemon when they succeed; none of the above\n# should, but poll back to health before the next section regardless.\nwait_panel_healthy || true\n\nDELETE_MISSING=$(agent_panel_delete_status \"plugins/nonexistent\")\nassert_eq \"$DELETE_MISSING\" \"400\" \"Delete nonexistent plugin returns 400\" || true\n\n# ===========================================================================\n# 6. Check-update and bundle for nonexistent plugin\n# ==========================================================================="
     },
     {
       "id": "check-update-and-bundle-for-nonexistent-plugin",
       "label": "Check-update and bundle for nonexistent plugin",
       "steps": [
         {
-          "id": "step-32",
+          "id": "step-40",
           "label": "Set CHECK_UPDATE_MISSING",
           "target": "local",
           "op": {
@@ -619,7 +725,7 @@
           ]
         },
         {
-          "id": "step-33",
+          "id": "step-41",
           "label": "Check-update nonexistent returns 400",
           "target": "local",
           "continueOnError": true,
@@ -640,7 +746,7 @@
           }
         },
         {
-          "id": "step-34",
+          "id": "step-42",
           "label": "Set BUNDLE_MISSING",
           "target": "local",
           "op": {
@@ -657,7 +763,7 @@
           ]
         },
         {
-          "id": "step-35",
+          "id": "step-43",
           "label": "Bundle nonexistent returns 404",
           "target": "local",
           "continueOnError": true,
@@ -681,11 +787,11 @@
       "bash": "log_section \"Check-update and bundle for nonexistent plugin\"\n\nCHECK_UPDATE_MISSING=$(agent_panel_get_status \"plugins/nonexistent/check-update\")\nassert_eq \"$CHECK_UPDATE_MISSING\" \"400\" \"Check-update nonexistent returns 400\" || true\n\nBUNDLE_MISSING=$(agent_panel_get_status \"plugins/nonexistent/bundle\")\nassert_eq \"$BUNDLE_MISSING\" \"404\" \"Bundle nonexistent returns 404\" || true\n\n# ===========================================================================\n# 7. Auth validation — no mTLS headers\n# ==========================================================================="
     },
     {
-      "id": "auth-validation-requests-without-mtls-headers",
-      "label": "Auth validation — requests without mTLS headers",
+      "id": "auth-validation-requests-without-credentials",
+      "label": "Auth validation — requests without credentials",
       "steps": [
         {
-          "id": "step-36",
+          "id": "step-44",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -705,8 +811,8 @@
           ]
         },
         {
-          "id": "step-37",
-          "label": "Request without mTLS headers returns 403",
+          "id": "step-45",
+          "label": "Request without credentials returns 401",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -719,14 +825,14 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "401"
               },
-              "message": "Request without mTLS headers returns 403"
+              "message": "Request without credentials returns 401"
             }
           }
         },
         {
-          "id": "step-38",
+          "id": "step-46",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -745,7 +851,7 @@
           ]
         },
         {
-          "id": "step-39",
+          "id": "step-47",
           "label": "Health endpoint accessible without auth",
           "target": "local",
           "continueOnError": true,
@@ -766,14 +872,14 @@
           }
         }
       ],
-      "bash": "log_section \"Auth validation — requests without mTLS headers\"\n\nNO_AUTH_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$NO_AUTH_STATUS\" \"403\" \"Request without mTLS headers returns 403\" || true\n\n# Health endpoint should still be accessible without auth\nHEALTH_NO_AUTH=$(agent_exec \"curl -sf --max-time 10 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\")\nassert_eq \"$HEALTH_NO_AUTH\" \"ok\" \"Health endpoint accessible without auth\" || true\n\n# ===========================================================================\n# 8. Auth validation — wrong agent label\n# ==========================================================================="
+      "bash": "log_section \"Auth validation — requests without credentials\"\n\nNO_AUTH_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$NO_AUTH_STATUS\" \"401\" \"Request without credentials returns 401\" || true\n\n# Health endpoint should still be accessible without auth\nHEALTH_NO_AUTH=$(agent_exec \"curl -sf --max-time 10 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\")\nassert_eq \"$HEALTH_NO_AUTH\" \"ok\" \"Health endpoint accessible without auth\" || true\n\n# ===========================================================================\n# 8. Auth validation — wrong agent label\n# ==========================================================================="
     },
     {
       "id": "auth-validation-wrong-agent-label",
       "label": "Auth validation — wrong agent label",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-48",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -797,7 +903,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-49",
           "label": "Request with wrong agent label returns 403",
           "target": "local",
           "continueOnError": true,
@@ -818,7 +924,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-50",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -842,7 +948,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-51",
           "label": "Admin cert is allowed to access agent panel",
           "target": "local",
           "continueOnError": true,
@@ -866,9 +972,9 @@
       "bash": "log_section \"Auth validation — wrong agent label\"\n\nWRONG_LABEL_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:wrong-label' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$WRONG_LABEL_STATUS\" \"403\" \"Request with wrong agent label returns 403\" || true\n\n# Admin cert should be allowed\nADMIN_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$ADMIN_STATUS\" \"200\" \"Admin cert is allowed to access agent panel\" || true"
     }
   ],
-  "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 19 — Agent Plugin CRUD (Three-VM)\n# ============================================================================\n# Tests the agent panel plugin management API (port 9393):\n#\n# 1. Agent panel health check\n# 2. GET /plugins — empty list\n# 3. POST /plugins/install — validation (missing body, invalid name)\n# 4. POST /plugins/:name/enable — nonexistent plugin returns 400\n# 5. POST /plugins/:name/disable — nonexistent plugin returns 400\n# 6. DELETE /plugins/:name — nonexistent plugin returns 400\n# 7. GET /plugins/:name/check-update — nonexistent plugin returns 400\n# 8. GET /plugins/:name/bundle — nonexistent plugin returns 404\n# 9. Plugin name validation — reserved names, invalid chars\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\n# Agent panel API helpers (port 9393, no mTLS — uses header-based auth)\nAGENT_PANEL_PORT=9393\nAGENT_LABEL=\"e2e-agent\"\n\nagent_panel_get() {\n  agent_exec \"curl -sf --max-time 30 -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:${AGENT_LABEL}' -H 'Accept: application/json' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\"\n}\n\nagent_panel_get_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:${AGENT_LABEL}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\"\n}\n\nagent_panel_post() {\n  agent_exec \"curl -sf --max-time 30 -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:${AGENT_LABEL}' -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\"\n}\n\nagent_panel_post_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:${AGENT_LABEL}' -X POST -H 'Content-Type: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\"\n}\n\nagent_panel_delete_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:${AGENT_LABEL}' -X DELETE http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\"\n}\n\nbegin_test \"19 — Agent Plugin CRUD\"\n",
+  "apiHelpers": ["host_api_get"],
+  "headerRaw": "# ============================================================================\n# 19 — Agent Plugin CRUD (Three-VM)\n# ============================================================================\n# Tests the agent panel plugin management API (port 9393):\n#\n# 1. Agent panel health check (lamaste-agentd is installed on demand —\n#    setup-agent.sh installs only the CLI — started with\n#    `panel --enable --local-only`: the 9393 service without exposing it\n#    through the host, stopped again on exit; plugin routes are driven as\n#    the daemon's owner with the Bearer token of agentd.token, as the\n#    desktop app does)\n# 2. GET /plugins — empty list\n# 3. POST /plugins/install — validation (missing body, invalid name)\n# 4. POST /plugins/:name/enable — nonexistent plugin returns 400\n# 5. POST /plugins/:name/disable — nonexistent plugin returns 400\n# 6. DELETE /plugins/:name — nonexistent plugin returns 400\n# 7. GET /plugins/:name/check-update — nonexistent plugin returns 400\n# 8. GET /plugins/:name/bundle — nonexistent plugin returns 404\n# 9. Plugin name validation — reserved names, invalid chars\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent panel API helpers (port 9393 on the agent VM). Plugin routes admit\n# only the daemon's owner: the Bearer token in /root/.lamalibre/lamaste/agentd.token\n# (0600), read on the agent VM inside the same command so it never leaves the\n# VM — the way the desktop app drives the panel. An agent certificate, even\n# the owner's, is refused there.\n# AGENT_LABEL is the agent VM's local registry name; the host knows the agent\n# by the label its enrollment token carried (agentLabel in config.json).\nAGENT_PANEL_PORT=9393\nAGENT_LABEL=\"e2e-agent\"\nAGENT_CONFIG=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/config.json\"\nHOST_AGENT_LABEL=\"\"\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# wait_panel_healthy — the agent daemon restarts itself after a plugin\n# enable or disable (unloadPanelService/loadPanelService), so a call made\n# right after one may get an empty reply; poll /api/health for up to 20 s\nwait_panel_healthy() {\n  local health=\"\"\n  for _ in $(seq 1 20); do\n    health=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n    if echo \"$health\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\ncleanup() {\n  # Stop the panel service started below (local-only: no host call).\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --disable --local-only 2>/dev/null; true\" > /dev/null 2>&1\n}\ntrap cleanup EXIT\n\nagent_panel_get() {\n  agent_exec \"curl -sf --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -H 'Accept: application/json' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"\"\n}\n\nagent_panel_get_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_panel_post() {\n  agent_exec \"curl -sf --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"\"\n}\n\nagent_panel_post_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_panel_delete_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X DELETE http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nbegin_test \"19 — Agent Plugin CRUD\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
