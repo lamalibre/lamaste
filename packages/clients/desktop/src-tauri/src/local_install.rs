@@ -486,6 +486,8 @@ pub async fn start_local_install(
             p12_path: Some(p12_dest),
             p12_password: None,
             admin_auth: None,
+            active_mode: None,
+            extra: Default::default(),
         };
 
         servers.push(entry.clone());
@@ -582,6 +584,8 @@ pub async fn import_existing_local_install(
             p12_path: Some(p12_dest),
             p12_password: None,
             admin_auth: None,
+            active_mode: None,
+            extra: Default::default(),
         };
 
         servers.push(entry.clone());

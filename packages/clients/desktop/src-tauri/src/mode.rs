@@ -1,59 +1,26 @@
+use crate::cloud;
 use crate::config;
 use crate::credentials;
 
-pub(crate) const AGENTD_PORT: u16 = 9393;
+// Mode and the admin certificate are properties of a registry entry, so —
+// like the rest of the servers registry — they are read and written in the
+// file itself, not through the agent daemon.
 
-/// Curl the local agentd service (plain HTTP on 127.0.0.1:9393).
-///
-/// Authenticates with the per-user Bearer token at `~/.lamalibre/lamaste/agentd.token`
-/// (mode 0600) — only the agent's owning OS user can read it.
-pub(crate) fn curl_agentd(
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-) -> Result<String, String> {
-    let url = format!("http://127.0.0.1:{}{}", AGENTD_PORT, path);
-    let token = crate::api::agentd_token()?;
-
-    let mut args = vec![
-        "-s".to_string(),
-        "-H".to_string(),
-        format!("Authorization: Bearer {}", token),
-        "-X".to_string(),
-        method.to_string(),
-    ];
-
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Request failed: {}", stderr));
-    }
-
-    let body = String::from_utf8_lossy(&output.stdout).to_string();
-
-    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
-            return Err(error.to_string());
-        }
-    }
-
-    Ok(body)
+/// Apply `change` to one registry entry and save the registry.
+fn update_server_entry(
+    server_id: &str,
+    change: impl FnOnce(&mut cloud::ServerEntry),
+) -> Result<(), String> {
+    let mut servers = cloud::load_servers_registry()?;
+    let server = servers
+        .iter_mut()
+        .find(|s| s.id == server_id)
+        .ok_or_else(|| "Server not found".to_string())?;
+    change(server);
+    cloud::save_servers_registry(&config::servers_registry_path(), &servers)
 }
 
-/// Set the active mode for a server ("agent" or "admin").
+/// Set the active server's mode ("agent" or "admin").
 #[tauri::command]
 pub async fn set_server_mode(_server_id: String, mode: String) -> Result<(), String> {
     if mode != "agent" && mode != "admin" {
@@ -61,42 +28,43 @@ pub async fn set_server_mode(_server_id: String, mode: String) -> Result<(), Str
     }
 
     tokio::task::spawn_blocking(move || {
-        let payload = serde_json::json!({ "mode": mode });
-        curl_agentd("PATCH", "/api/mode", Some(&payload.to_string()))?;
-        Ok(())
+        let active_id = cloud::load_servers_registry()?
+            .into_iter()
+            .find(|s| s.active)
+            .map(|s| s.id)
+            .ok_or_else(|| "No active server".to_string())?;
+        update_server_entry(&active_id, |server| server.active_mode = Some(mode))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Get the active server's mode.
+/// Get the active server's mode. "agent" when there is no active server.
 #[tauri::command]
 pub async fn get_server_mode() -> Result<String, String> {
     tokio::task::spawn_blocking(|| {
-        let body = curl_agentd("GET", "/api/mode", None)?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse mode response: {}", e))?;
-        parsed
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| "Missing 'mode' in response".to_string())
+        let servers = cloud::load_servers_registry()?;
+        let is_admin = servers
+            .iter()
+            .find(|s| s.active)
+            .is_some_and(|s| s.active_mode.as_deref() == Some("admin"));
+        Ok(if is_admin { "admin" } else { "agent" }.to_string())
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Check if the active server has an admin certificate.
+/// Check if the active server has an admin certificate: an imported one, or
+/// the primary certificate of a cloud-provisioned server (which is its admin
+/// certificate).
 #[tauri::command]
 pub async fn has_admin_cert() -> Result<bool, String> {
     tokio::task::spawn_blocking(|| {
-        let body = curl_agentd("GET", "/api/admin-cert", None)?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse admin-cert response: {}", e))?;
-        parsed
-            .get("hasAdminCert")
-            .and_then(|v| v.as_bool())
-            .ok_or_else(|| "Missing 'hasAdminCert' in response".to_string())
+        let servers = cloud::load_servers_registry()?;
+        Ok(servers
+            .iter()
+            .find(|s| s.active)
+            .is_some_and(|s| s.admin_auth.is_some() || s.provider.is_some()))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -144,15 +112,14 @@ pub async fn import_admin_cert(
         // Store password in credential store (must stay in Rust — OS keychain)
         credentials::store_admin_credential(&server_id, &p12_password)?;
 
-        // Update servers.json via agentd REST API
-        let payload = serde_json::json!({
-            "adminAuth": {
-                "method": "p12",
-                "p12Path": dest.to_string_lossy()
-            }
-        });
-        let path = format!("/api/servers/{}", server_id);
-        curl_agentd("PATCH", &path, Some(&payload.to_string()))?;
+        let p12_path = dest.to_string_lossy().to_string();
+        update_server_entry(&server_id, |server| {
+            server.admin_auth = Some(config::AdminAuth {
+                method: "p12".to_string(),
+                p12_path: Some(p12_path),
+                keychain_identity: None,
+            });
+        })?;
 
         Ok(())
     })
@@ -179,14 +146,10 @@ pub async fn remove_admin_cert(server_id: String) -> Result<(), String> {
         // Delete credential (must stay in Rust — OS keychain)
         let _ = credentials::delete_admin_credential(&server_id);
 
-        // Remove adminAuth and reset mode via agentd REST API
-        // Use null to remove the adminAuth field, and reset mode to agent
-        let payload = serde_json::json!({
-            "adminAuth": null,
-            "activeMode": "agent"
-        });
-        let path = format!("/api/servers/{}", server_id);
-        curl_agentd("PATCH", &path, Some(&payload.to_string()))?;
+        update_server_entry(&server_id, |server| {
+            server.admin_auth = None;
+            server.active_mode = Some("agent".to_string());
+        })?;
 
         Ok(())
     })

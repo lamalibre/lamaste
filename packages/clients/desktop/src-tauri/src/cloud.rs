@@ -5,7 +5,6 @@
 /// and passed to Node.js via environment variables (never CLI args).
 use crate::config;
 use crate::credentials;
-use crate::mode::curl_agentd;
 
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -84,6 +83,13 @@ pub struct ServerEntry {
     pub p12_password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub admin_auth: Option<config::AdminAuth>,
+    /// "agent" or "admin" — which panel the desktop shows for this server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_mode: Option<String>,
+    /// Fields this build does not know. The registry is shared with the
+    /// agent CLI and daemon; rewriting it must not drop what they wrote.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -147,13 +153,6 @@ struct StorageCredentials {
     access_key: String,
     secret_key: String,
 }
-
-// ---------------------------------------------------------------------------
-// Agentd REST helpers
-// ---------------------------------------------------------------------------
-
-// curl_agentd is imported from crate::mode — single definition for all
-// modules that call the local agentd REST API on 127.0.0.1:9393.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -696,6 +695,8 @@ pub async fn register_discovered_server(
             p12_path: None,
             p12_password: None,
             admin_auth: None,
+            active_mode: None,
+            extra: Default::default(),
         };
 
         servers.push(entry.clone());
@@ -1071,6 +1072,8 @@ pub fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
                 p12_path: cfg.p12_path,
                 p12_password: cfg.p12_password,
                 admin_auth: None,
+                active_mode: None,
+                extra: Default::default(),
             };
 
             let mut entries = vec![entry];
@@ -1093,17 +1096,33 @@ pub fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
     Ok(servers)
 }
 
+/// Reject a server id that could not be one of ours before it is used in a path.
+fn validate_server_id(server_id: &str) -> Result<(), String> {
+    let ok = !server_id.is_empty()
+        && server_id.len() <= 64
+        && server_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err("Invalid server ID".to_string())
+    }
+}
+
+// The servers registry is this OS user's list of panels — it exists whether
+// or not an agent is enrolled on this machine, so these commands work on the
+// file itself instead of asking the agent daemon, which only runs for an
+// enrolled agent.
+
 #[tauri::command]
 pub async fn get_servers() -> Result<Vec<ServerEntry>, String> {
     tokio::task::spawn_blocking(|| {
-        let body = curl_agentd("GET", "/api/servers", None)?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse servers response: {}", e))?;
-        let servers_val = parsed
-            .get("servers")
-            .ok_or_else(|| "Missing 'servers' in response".to_string())?;
-        serde_json::from_value::<Vec<ServerEntry>>(servers_val.clone())
-            .map_err(|e| format!("Failed to deserialize servers: {}", e))
+        let mut servers = load_servers_registry()?;
+        for server in servers.iter_mut() {
+            server.p12_password = None;
+        }
+        Ok(servers)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -1112,9 +1131,14 @@ pub async fn get_servers() -> Result<Vec<ServerEntry>, String> {
 #[tauri::command]
 pub async fn set_active_server(server_id: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        let payload = serde_json::json!({ "id": server_id });
-        curl_agentd("PATCH", "/api/servers/active", Some(&payload.to_string()))?;
-        Ok(())
+        let mut servers = load_servers_registry()?;
+        if !servers.iter().any(|s| s.id == server_id) {
+            return Err("Server not found".to_string());
+        }
+        for server in servers.iter_mut() {
+            server.active = server.id == server_id;
+        }
+        save_servers_registry(&config::servers_registry_path(), &servers)
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -1175,6 +1199,8 @@ pub async fn add_managed_server(
         p12_path: None,
         p12_password: None,
         admin_auth: None,
+        active_mode: None,
+        extra: Default::default(),
     };
 
     // Add to registry (blocking I/O wrapped in spawn_blocking)
@@ -1211,12 +1237,30 @@ pub async fn add_managed_server(
 #[tauri::command]
 pub async fn remove_server(server_id: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        // Remove from registry via agentd REST API
-        // (handles registry update + server directory cleanup)
-        let path = format!("/api/servers/{}", server_id);
-        curl_agentd("DELETE", &path, None)?;
+        validate_server_id(&server_id)?;
 
-        // Clean up credentials from OS keychain (must stay in Rust)
+        let servers = load_servers_registry()?;
+        let original_len = servers.len();
+        let remaining: Vec<ServerEntry> =
+            servers.into_iter().filter(|s| s.id != server_id).collect();
+        if remaining.len() == original_len {
+            return Err("Server not found".to_string());
+        }
+        save_servers_registry(&config::servers_registry_path(), &remaining)?;
+
+        // The server's own directory (certificates). Only ever a directory
+        // that resolves to a child of the servers root — a symlink planted
+        // there must not turn this into a delete elsewhere.
+        let servers_root = config::agent_dir().join("servers");
+        if let (Ok(root), Ok(dir)) = (
+            servers_root.canonicalize(),
+            servers_root.join(&server_id).canonicalize(),
+        ) {
+            if dir.parent() == Some(root.as_path()) {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
+
         let _ = credentials::delete_server_credential(&server_id);
         let _ = credentials::delete_admin_credential(&server_id);
         Ok(())
@@ -1476,14 +1520,14 @@ pub async fn provision_storage_server(
 #[tauri::command]
 pub async fn get_storage_servers() -> Result<Vec<StorageServerEntry>, String> {
     tokio::task::spawn_blocking(|| {
-        let body = curl_agentd("GET", "/api/storage-servers", None)?;
-        let parsed: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse storage-servers response: {}", e))?;
-        let servers_val = parsed
-            .get("servers")
-            .ok_or_else(|| "Missing 'servers' in response".to_string())?;
-        serde_json::from_value::<Vec<StorageServerEntry>>(servers_val.clone())
-            .map_err(|e| format!("Failed to deserialize storage servers: {}", e))
+        let path = config::storage_servers_registry_path();
+        if !path.exists() {
+            return Ok(vec![]);
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read storage-servers.json: {}", e))?;
+        serde_json::from_str::<Vec<StorageServerEntry>>(&content)
+            .map_err(|e| format!("Failed to parse storage-servers.json: {}", e))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -2093,4 +2137,45 @@ pub async fn cleanup_recovery_ssh_key(dir: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The registry is shared with the agent CLI and daemon: a load/save
+    /// through this struct must keep the fields it has no name for.
+    #[test]
+    fn server_entry_round_trip_keeps_unknown_fields() {
+        let raw = serde_json::json!({
+            "id": "8006aabc-9f35-4fd6-b2ba-ed49588fa788",
+            "label": "relay",
+            "panelUrl": "https://203.0.113.42:9292",
+            "ip": "203.0.113.42",
+            "domain": "example.com",
+            "provider": "digitalocean",
+            "providerId": "1",
+            "region": "fra1",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "active": true,
+            "authMethod": "p12",
+            "p12Path": "/tmp/client.p12",
+            "activeMode": "admin",
+            "somethingNewer": { "kept": true }
+        });
+        let entry: ServerEntry = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(entry.active_mode.as_deref(), Some("admin"));
+        let back = serde_json::to_value(&entry).unwrap();
+        assert_eq!(back["activeMode"], "admin");
+        assert_eq!(back["somethingNewer"]["kept"], true);
+        assert_eq!(back["panelUrl"], raw["panelUrl"]);
+    }
+
+    #[test]
+    fn server_id_validation_rejects_path_material() {
+        assert!(validate_server_id("8006aabc-9f35-4fd6-b2ba-ed49588fa788").is_ok());
+        for bad in ["", "..", "a/b", "a\\b", "a.b", "a b"] {
+            assert!(validate_server_id(bad).is_err(), "{bad:?} must be rejected");
+        }
+    }
 }

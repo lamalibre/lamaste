@@ -144,6 +144,14 @@ export default function Servers({ onManage }) {
         </div>
       </div>
 
+      {serversQuery.isError && (
+        <div className="mb-4 rounded border border-red-500/30 bg-red-500/5 p-3">
+          <p className="text-xs text-red-400">
+            Could not load the server list: {String(serversQuery.error)}
+          </p>
+        </div>
+      )}
+
       {servers.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16">
           <Server size={48} className="text-zinc-700 mb-4" />
