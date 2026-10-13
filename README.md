@@ -6,6 +6,9 @@ One-command setup for secure reverse tunnels with a management dashboard.
 [![npm version](https://img.shields.io/npm/v/@lamalibre/lamaste-agent)](https://www.npmjs.com/package/@lamalibre/lamaste-agent)
 [![License: Polyform Noncommercial](https://img.shields.io/badge/License-Polyform%20Noncommercial-blue.svg)](LICENSE.md)
 
+> [!WARNING]
+> **`develop` is not a release.** It is the integration branch: it carries work that has not been through a release's full E2E run, and it can change configuration files, systemd units, sudoers rules and on-disk state in ways a later commit revises again. A server installed or redeployed from a `develop` checkout may be left in a state no published version knows how to upgrade or roll back. Deploy from the published npm packages (`npx @lamalibre/create-lamaste`, `npx @lamalibre/create-lamaste-agent`) or from a release tag (`v4.1.0` and later); see [CHANGELOG.md](CHANGELOG.md) for what each release changed and its upgrade notes.
+
 ## Quick Start
 
 ### Desktop App (Recommended)
