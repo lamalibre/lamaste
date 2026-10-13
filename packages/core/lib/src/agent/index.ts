@@ -102,6 +102,8 @@ export {
   loadPanelService,
   unloadPanelService,
   restartPanelService,
+  panelRestartCommand,
+  DETACHED_SPAWN_OPTIONS,
   listLoadedAgents,
   listLoadedAgentsCached,
   clearLoadedAgentsCache,

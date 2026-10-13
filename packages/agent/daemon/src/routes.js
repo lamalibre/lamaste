@@ -29,8 +29,7 @@ import {
   updatePlugin,
   checkPluginUpdate,
   readPluginBundle,
-  unloadPanelService,
-  loadPanelService,
+  restartPanelService,
   // Multi-agent registry
   listAgents,
   getAgent,
@@ -571,6 +570,48 @@ export default async function routes(fastify, opts) {
     }
   });
 
+  /**
+   * Restart this daemon's own service once the response has left the
+   * process. Enabling or disabling a plugin changes the registry the panel
+   * is started with, so the panel restarts — through the service manager,
+   * in a detached child, because the old path (unload, then load, from
+   * inside the daemon) stopped the daemon before it could load itself again
+   * and the panel stayed down. Clients see the response, then must re-poll
+   * /api/health. If the restart cannot even be scheduled, the registry
+   * change is rolled back with `rollback` so the running panel matches it.
+   *
+   * @param {import('fastify').FastifyReply} reply
+   * @param {import('fastify').FastifyBaseLogger} log
+   * @param {string} plugin
+   * @param {() => Promise<unknown>} rollback
+   */
+  function restartAfterResponse(reply, log, plugin, rollback) {
+    reply.raw.once('finish', () => {
+      setImmediate(async () => {
+        try {
+          const command = await restartPanelService(label);
+          log.info(
+            { plugin, command: command.file, args: command.args },
+            'Panel service restart scheduled',
+          );
+        } catch (restartErr) {
+          log.error(
+            { err: restartErr.message, plugin },
+            'Panel service restart could not be scheduled — rolling back the plugin change',
+          );
+          try {
+            await rollback();
+          } catch (rollbackErr) {
+            log.error(
+              { err: rollbackErr.message, plugin },
+              'Plugin rollback failed — registry state may be inconsistent; reconcile via lamaste-agent',
+            );
+          }
+        }
+      });
+    });
+  }
+
   fastify.post('/plugins/:name/enable', { preHandler: requireOwner }, async (request, reply) => {
     const { name } = request.params;
     if (!PLUGIN_NAME_RE.test(name)) {
@@ -581,34 +622,13 @@ export default async function routes(fastify, opts) {
     } catch (err) {
       return reply.code(400).send({ error: err.message });
     }
-    try {
-      await unloadPanelService(label);
-      await loadPanelService(label);
-    } catch (restartErr) {
-      request.log.error(
-        { err: restartErr.message, plugin: name },
-        'Panel service restart failed after enable — rolling back',
-      );
-      try {
-        await disablePlugin(pluginCfg, name);
-      } catch (rollbackErr) {
-        request.log.error(
-          { err: rollbackErr.message, plugin: name },
-          'Plugin rollback failed — registry state may be inconsistent',
-        );
-        return reply.code(500).send({
-          error: 'panel_rollback_failed',
-          message: `Panel restart failed (${restartErr.message}) and rollback also failed (${rollbackErr.message}). Reconcile manually via lamaste-agent.`,
-          recoverable: false,
-        });
-      }
-      return reply.code(500).send({
-        error: 'panel_restart_failed',
-        message: restartErr.message,
-        recoverable: true,
-      });
-    }
-    return { ok: true, name, status: 'enabled' };
+    // The registry changed; the daemon must restart to apply it. The
+    // response goes out first, then the restart is handed to the service
+    // manager in a detached child (see restartAfterResponse) — this very
+    // process is stopped by it, so clients re-poll /api/health before the
+    // next call. If scheduling the restart fails the change is rolled back.
+    restartAfterResponse(reply, request.log, name, () => disablePlugin(pluginCfg, name));
+    return reply.send({ ok: true, name, status: 'enabled', restarting: true });
   });
 
   fastify.post('/plugins/:name/disable', { preHandler: requireOwner }, async (request, reply) => {
@@ -621,34 +641,13 @@ export default async function routes(fastify, opts) {
     } catch (err) {
       return reply.code(400).send({ error: err.message });
     }
-    try {
-      await unloadPanelService(label);
-      await loadPanelService(label);
-    } catch (restartErr) {
-      request.log.error(
-        { err: restartErr.message, plugin: name },
-        'Panel service restart failed after disable — rolling back',
-      );
-      try {
-        await enablePlugin(pluginCfg, name);
-      } catch (rollbackErr) {
-        request.log.error(
-          { err: rollbackErr.message, plugin: name },
-          'Plugin rollback failed — registry state may be inconsistent',
-        );
-        return reply.code(500).send({
-          error: 'panel_rollback_failed',
-          message: `Panel restart failed (${restartErr.message}) and rollback also failed (${rollbackErr.message}). Reconcile manually via lamaste-agent.`,
-          recoverable: false,
-        });
-      }
-      return reply.code(500).send({
-        error: 'panel_restart_failed',
-        message: restartErr.message,
-        recoverable: true,
-      });
-    }
-    return { ok: true, name, status: 'disabled' };
+    // The registry changed; the daemon must restart to apply it. The
+    // response goes out first, then the restart is handed to the service
+    // manager in a detached child (see restartAfterResponse) — this very
+    // process is stopped by it, so clients re-poll /api/health before the
+    // next call. If scheduling the restart fails the change is rolled back.
+    restartAfterResponse(reply, request.log, name, () => enablePlugin(pluginCfg, name));
+    return reply.send({ ok: true, name, status: 'disabled', restarting: true });
   });
 
   fastify.delete('/plugins/:name', { preHandler: requireOwner }, async (request, reply) => {

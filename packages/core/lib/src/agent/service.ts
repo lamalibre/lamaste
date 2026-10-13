@@ -16,7 +16,7 @@ import {
   plistLabel,
   systemdUnitName,
 } from './platform.js';
-import { runUserSystemctl } from './user-systemd-env.js';
+import { runUserSystemctl, userSystemdEnv } from './user-systemd-env.js';
 
 /** Snapshot of a loaded service's runtime state. */
 export interface LoadedAgentState {
@@ -169,18 +169,131 @@ export async function unloadPanelService(label: string): Promise<void> {
   }
 }
 
+/** One detached command: `file` with array `args`; `env` only where the runner needs it. */
+export interface PanelRestartCommand {
+  readonly file: string;
+  readonly args: readonly string[];
+}
+
+export interface PanelRestartTarget {
+  readonly platform: 'darwin' | 'linux';
+  /** The user launchd domain the panel job lives in (`gui/<uid>/…`). */
+  readonly uid: number;
+  /** Whether this launchctl has `kickstart` (macOS 10.10+); ignored on Linux. */
+  readonly kickstartAvailable: boolean;
+}
+
 /**
- * Restart the agent panel service (unload + load).
+ * The command that restarts the panel service. Pure.
  *
- * Same shape as restartAgent: launchctl requires unload+load to pick up
- * plist changes; systemd's `restart` would suffice on Linux, but the
- * disable/enable pair inside loadPanelService/unloadPanelService also
- * toggles the boot-time-enable bit, which matches the desired semantics
- * for an agent operator restarting the panel after editing its unit.
+ * - Linux: `systemctl --user restart <unit>`.
+ * - macOS: `launchctl kickstart -k gui/<uid>/<label>` — launchd stops and
+ *   starts the job itself; falls back to `unload` + `load` of the plist
+ *   (fixed script, the path as `$0`) on a launchctl without `kickstart`.
+ *
+ * Unloading the job from inside it (what `unloadPanelService` +
+ * `loadPanelService` did) stops the caller before it can load again, and
+ * neither KeepAlive nor Restart= resurrect a job that was unloaded or
+ * disabled on purpose — the panel stayed down after every plugin enable
+ * or disable.
  */
-export async function restartPanelService(label: string): Promise<void> {
-  await unloadPanelService(label);
-  await loadPanelService(label);
+export function panelRestartCommand(
+  label: string,
+  target: PanelRestartTarget,
+): PanelRestartCommand {
+  if (target.platform === 'linux') {
+    return { file: 'systemctl', args: ['--user', 'restart', panelSystemdUnitName(label)] };
+  }
+  if (target.kickstartAvailable) {
+    return {
+      file: 'launchctl',
+      args: ['kickstart', '-k', `gui/${target.uid}/${panelPlistLabel(label)}`],
+    };
+  }
+  return {
+    file: 'sh',
+    args: ['-c', 'launchctl unload "$0"; exec launchctl load "$0"', panelPlistPath(label)],
+  };
+}
+
+/** Options every detached spawn gets: the restart must outlive the caller. */
+export const DETACHED_SPAWN_OPTIONS = Object.freeze({
+  detached: true,
+  stdio: 'ignore',
+  cleanup: false,
+  reject: false,
+} as const);
+
+export interface DetachedSpawn {
+  (
+    file: string,
+    args: readonly string[],
+    options: typeof DETACHED_SPAWN_OPTIONS & { env?: NodeJS.ProcessEnv },
+  ): { unref(): void };
+}
+
+async function defaultDetachedSpawn(
+  file: string,
+  args: readonly string[],
+  options: typeof DETACHED_SPAWN_OPTIONS & { env?: NodeJS.ProcessEnv },
+): Promise<{ unref(): void }> {
+  const { execa } = await import('execa');
+  const child = execa(file, [...args], options);
+  // The promise would reject only with `reject: true`; swallow the settled
+  // result either way — nobody is waiting for a process that outlives us.
+  child.catch(() => undefined);
+  // Not the thenable itself: returning it from an async function would
+  // await the process instead of handing back the handle.
+  return { unref: () => child.unref() };
+}
+
+/** True when this launchctl understands the modern `gui/<uid>/…` targets (and `kickstart`). */
+async function launchctlHasKickstart(uid: number): Promise<boolean> {
+  try {
+    const { execa } = await import('execa');
+    const result = await execa('launchctl', ['print', `gui/${uid}`], { reject: false });
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Restart the agent panel service — safe to call from inside the panel
+ * daemon itself. The restart is handed to the service manager in a
+ * detached child (`detached`, `stdio: 'ignore'`, no cleanup, unref'd), so
+ * the caller being stopped by that very restart does not cancel it.
+ * Returns as soon as the child is spawned; the caller must expect to be
+ * stopped shortly after, and its clients must re-poll `/api/health`.
+ *
+ * The CLI's enable/disable keep using `loadPanelService` /
+ * `unloadPanelService`, which also toggle the boot-time enable bit.
+ */
+export async function restartPanelService(
+  label: string,
+  spawn:
+    | DetachedSpawn
+    | ((...a: Parameters<DetachedSpawn>) => Promise<{ unref(): void }>) = defaultDetachedSpawn,
+): Promise<PanelRestartCommand> {
+  let command: PanelRestartCommand;
+  let env: NodeJS.ProcessEnv | undefined;
+  if (isDarwin()) {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+    command = panelRestartCommand(label, {
+      platform: 'darwin',
+      uid,
+      kickstartAvailable: await launchctlHasKickstart(uid),
+    });
+  } else {
+    command = panelRestartCommand(label, { platform: 'linux', uid: 0, kickstartAvailable: false });
+    env = userSystemdEnv();
+  }
+  const child = await spawn(command.file, command.args, {
+    ...DETACHED_SPAWN_OPTIONS,
+    ...(env ? { env } : {}),
+  });
+  child.unref();
+  return command;
 }
 
 // ---------------------------------------------------------------------------
