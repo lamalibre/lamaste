@@ -64,6 +64,7 @@ ${b('COMMANDS')}
   ${c('certs')}           Certificate status, renewal, and agent cert listing
   ${c('reset-admin')}     Emergency admin reset (reverts to P12, clears 2FA)
   ${c('chisel')}          Manage chisel tunnel-server credentials (rotate-credential)
+  ${c('registry-credential')} Registry (Feria) service credential used to broker agent install tokens
   ${c('uninstall')}       Full server teardown (requires confirmation)
 
 ${b('GLOBAL FLAGS')}
@@ -172,6 +173,11 @@ async function main() {
         }
       }
       await runResetAdmin({ json, passwordFile });
+      break;
+    }
+    case 'registry-credential': {
+      const { runRegistryCredential } = await import('../src/commands/registry-credential.js');
+      await runRegistryCredential(args.slice(1), { json });
       break;
     }
     case 'chisel': {

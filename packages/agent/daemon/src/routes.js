@@ -139,6 +139,39 @@ export default async function routes(fastify, opts) {
   const pluginCfg = agentPluginConfig(label);
 
   /**
+   * Registry credential for one plugin install, brokered by the panel.
+   * `undefined` when the panel has none configured or cannot be reached —
+   * the install then proceeds against the public registry, which is the
+   * pre-credential behaviour.
+   * @param {import('fastify').FastifyBaseLogger} log
+   */
+  async function installNpmrc(log) {
+    let config;
+    try {
+      config = await loadAgentConfig(label);
+    } catch {
+      return undefined;
+    }
+    if (!config) return undefined;
+    try {
+      const credential = await panelApi.fetchRegistryCredential(config);
+      if (!credential) return undefined;
+      log.info(
+        { tokenId: credential.tokenId, registryUrl: credential.registryUrl },
+        'Using panel-brokered registry credential for this install',
+      );
+      return {
+        registryUrl: credential.registryUrl,
+        token: credential.token,
+        scope: credential.scope,
+      };
+    } catch (err) {
+      log.warn({ err: err.message }, 'No registry credential from panel — installing without one');
+      return undefined;
+    }
+  }
+
+  /**
    * Converge an agent's tunnel client with its panel — the same path as
    * `lamaste-agent sync` (see convergeChiselService).
    * @param {string} targetLabel
@@ -530,7 +563,8 @@ export default async function routes(fastify, opts) {
         .send({ error: 'Invalid packageName: must be @lamalibre/ scoped, no aliases' });
     }
     try {
-      const entry = await installPlugin(pluginCfg, packageName);
+      const npmrc = await installNpmrc(request.log);
+      const entry = await installPlugin(pluginCfg, packageName, { npmrc });
       return { ok: true, plugin: entry };
     } catch (err) {
       return reply.code(400).send({ error: err.message });
@@ -636,7 +670,8 @@ export default async function routes(fastify, opts) {
       return reply.code(400).send({ error: 'Invalid plugin name' });
     }
     try {
-      const plugin = await updatePlugin(pluginCfg, name);
+      const npmrc = await installNpmrc(request.log);
+      const plugin = await updatePlugin(pluginCfg, name, { npmrc });
       return { ok: true, plugin };
     } catch (err) {
       return reply.code(400).send({ error: err.message });

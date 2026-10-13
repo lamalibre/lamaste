@@ -18,6 +18,7 @@ import {
   reloadAuthelia as reloadAutheliaCore,
   isAutheliaRunning as isAutheliaRunningCore,
   updateAutheliaAccessControl,
+  updateAutheliaOidcProvider,
   createUserFromInvitation as createUserFromInvitationCore,
   base32Encode,
   base32Decode,
@@ -71,6 +72,15 @@ export function isAutheliaRunning() {
 
 export function updateAccessControl(sites) {
   return updateAutheliaAccessControl(sites, execa);
+}
+
+/**
+ * Make Authelia's OIDC provider serve exactly these plugin clients.
+ * @param {string} domain
+ * @param {import('@lamalibre/lamaste/server').AutheliaOidcClient[]} clients
+ */
+export function updateOidcProvider(domain, clients) {
+  return updateAutheliaOidcProvider(domain, clients, execa);
 }
 
 export function createUserFromInvitation(username, email, groups, hashedPassword) {

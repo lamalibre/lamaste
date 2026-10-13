@@ -22,6 +22,8 @@ import { access, chmod, constants, copyFile, open, readFile, rename, rm } from '
 import path from 'node:path';
 import yaml from 'js-yaml';
 
+import type { OidcClientDeclaration } from '../schemas.js';
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -449,8 +451,15 @@ export async function isAutheliaRunning(exec: ExecFn): Promise<boolean> {
  * per-site rules, writes the config atomically, and restarts Authelia.
  * Rolls back to the previous config on restart failure.
  */
-export async function updateAccessControl(
-  sites: readonly ProtectedSiteRule[],
+/**
+ * Read `configuration.yml`, apply `mutate`, restore the secrets the panel
+ * owns, write the result atomically with a backup, and restart Authelia —
+ * rolling the file back if the restart fails. Every configuration update
+ * (access control, OIDC provider) goes through here so the migration and
+ * safety logic exists once.
+ */
+async function rewriteAutheliaConfig(
+  mutate: (config: Record<string, unknown>) => void | Promise<void>,
   exec: ExecFn,
 ): Promise<void> {
   // Read current config
@@ -531,49 +540,14 @@ export async function updateAccessControl(
     delete currentConfig.jwt_secret;
   }
 
-  // Build access_control rules from protected sites.
-  const rules: Array<Record<string, unknown>> = [];
-
-  for (const site of sites) {
-    if (!site.autheliaProtected) continue;
-    const allowedUsers = site.allowedUsers ?? [];
-    const hasUserList = allowedUsers.length > 0;
-    if (!hasUserList && !site.restrictAccess) continue;
-
-    if (hasUserList) {
-      rules.push({
-        domain: site.fqdn,
-        policy: 'two_factor',
-        subject: allowedUsers.map((u) => ['user:' + u]),
-      });
-    }
-
-    rules.push({
-      domain: site.fqdn,
-      policy: 'two_factor',
-      subject: [['group:admins']],
-    });
-
-    rules.push({
-      domain: site.fqdn,
-      policy: 'deny',
-    });
-  }
-
-  const accessControl: { default_policy: string; rules?: Array<Record<string, unknown>> } = {
-    default_policy: 'two_factor',
-  };
-
-  if (rules.length > 0) {
-    accessControl.rules = rules;
-  }
-
-  currentConfig.access_control = accessControl;
+  await mutate(currentConfig);
 
   // Restore secrets from the authoritative .secrets.json file.
   try {
     const secretsJson = await readFile(AUTHELIA_SECRETS, 'utf-8');
-    const secrets = JSON.parse(secretsJson) as Partial<AutheliaSecrets>;
+    const secrets = JSON.parse(secretsJson) as Partial<AutheliaSecrets> & {
+      oidcHmacSecret?: string;
+    };
     const storage = currentConfig.storage as
       | { local?: unknown; encryption_key?: string }
       | undefined;
@@ -582,6 +556,12 @@ export async function updateAccessControl(
     }
     if (secrets.sessionSecret && session) {
       session.secret = secrets.sessionSecret;
+    }
+    const oidc = (
+      currentConfig.identity_providers as { oidc?: { hmac_secret?: string } } | undefined
+    )?.oidc;
+    if (secrets.oidcHmacSecret && oidc) {
+      oidc.hmac_secret = secrets.oidcHmacSecret;
     }
     if (secrets.jwtSecret) {
       const iv = currentConfig.identity_validation as
@@ -633,6 +613,217 @@ export async function updateAccessControl(
     }
     throw restartErr;
   }
+}
+
+/**
+ * Update the Authelia access_control configuration based on protected sites.
+ *
+ * Replaces the access_control section with per-site rules and restarts
+ * Authelia (see {@link rewriteAutheliaConfig}).
+ */
+export async function updateAccessControl(
+  sites: readonly ProtectedSiteRule[],
+  exec: ExecFn,
+): Promise<void> {
+  await rewriteAutheliaConfig((currentConfig) => {
+    // Build access_control rules from protected sites.
+    const rules: Array<Record<string, unknown>> = [];
+
+    for (const site of sites) {
+      if (!site.autheliaProtected) continue;
+      const allowedUsers = site.allowedUsers ?? [];
+      const hasUserList = allowedUsers.length > 0;
+      if (!hasUserList && !site.restrictAccess) continue;
+
+      if (hasUserList) {
+        rules.push({
+          domain: site.fqdn,
+          policy: 'two_factor',
+          subject: allowedUsers.map((u) => ['user:' + u]),
+        });
+      }
+
+      rules.push({
+        domain: site.fqdn,
+        policy: 'two_factor',
+        subject: [['group:admins']],
+      });
+
+      rules.push({
+        domain: site.fqdn,
+        policy: 'deny',
+      });
+    }
+
+    const accessControl: { default_policy: string; rules?: Array<Record<string, unknown>> } = {
+      default_policy: 'two_factor',
+    };
+
+    if (rules.length > 0) {
+      accessControl.rules = rules;
+    }
+
+    currentConfig.access_control = accessControl;
+  }, exec);
+}
+
+// ---------------------------------------------------------------------------
+// OpenID Connect provider
+// ---------------------------------------------------------------------------
+
+/**
+ * Authelia is the relay's identity provider for plugin clients too — a CLI
+ * logging in with the device-code flow (Feria's `feria login`), later
+ * service principals. Plugins declare public clients in their manifest
+ * (`oidcClients`); Lamaste renders them into
+ * `identity_providers.oidc.clients`, signing tokens with an RSA key it
+ * generates once at `/etc/authelia/oidc-issuer.pem`.
+ *
+ * The block is removed entirely when no enabled plugin declares a client:
+ * Authelia refuses an `oidc` section without clients.
+ */
+
+/** RSA private key Authelia signs ID and JWT access tokens with. */
+export const AUTHELIA_OIDC_KEY = path.join(AUTHELIA_CONFIG_DIR, 'oidc-issuer.pem');
+
+/** A manifest client with the plugin that declared it. */
+export interface AutheliaOidcClient extends OidcClientDeclaration {
+  plugin: string;
+}
+
+/** `{domain}` in an audience or redirect URI becomes the relay domain. */
+function expandDomain(value: string, domain: string): string {
+  return value.replaceAll('{domain}', domain);
+}
+
+/** The `clients[]` entry Authelia expects for one manifest client. Pure. */
+export function renderOidcClient(
+  domain: string,
+  client: AutheliaOidcClient,
+): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    client_id: client.id,
+    client_name: client.name ?? `${client.plugin} (${client.id})`,
+    public: true,
+    authorization_policy: client.authorizationPolicy,
+    // Every consent is asked for explicitly — a device-flow approval screen
+    // must say what is being granted.
+    consent_mode: 'explicit',
+    scopes: [...client.scopes],
+    grant_types: [...client.grantTypes],
+    token_endpoint_auth_method: 'none',
+    access_token_signed_response_alg: client.accessTokenSignedResponseAlg,
+    requested_audience_mode: 'explicit',
+  };
+  if (client.audience.length > 0) {
+    entry.audience = client.audience.map((a) => expandDomain(a, domain));
+  }
+  if (client.redirectUris.length > 0) {
+    entry.redirect_uris = client.redirectUris.map((u) => expandDomain(u, domain));
+  }
+  if (client.requirePkce) entry.require_pkce = true;
+  return entry;
+}
+
+/** The whole `identity_providers.oidc` section. Pure. */
+export function buildOidcProviderSection(
+  domain: string,
+  hmacSecret: string,
+  issuerKeyPem: string,
+  clients: readonly AutheliaOidcClient[],
+): Record<string, unknown> {
+  return {
+    hmac_secret: hmacSecret,
+    jwks: [{ key_id: 'lamaste-oidc', algorithm: 'RS256', use: 'sig', key: issuerKeyPem }],
+    lifespans: { device_code: '10 minutes' },
+    clients: clients.map((c) => renderOidcClient(domain, c)),
+  };
+}
+
+/**
+ * Generate the issuer key on first use (RSA 4096, readable by Authelia's
+ * group only). Returns the PEM.
+ */
+export async function ensureOidcIssuerKey(): Promise<{ generated: boolean; keyPem: string }> {
+  try {
+    const existing = await readFile(AUTHELIA_OIDC_KEY, 'utf-8');
+    if (existing.includes('PRIVATE KEY')) return { generated: false, keyPem: existing };
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 4096 });
+  const keyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  await writeAutheliaFile(AUTHELIA_OIDC_KEY, keyPem, 0o640);
+  return { generated: true, keyPem };
+}
+
+/** The OIDC HMAC secret lives with the other panel-owned secrets in `.secrets.json`. */
+async function ensureOidcHmacSecret(): Promise<string> {
+  let secrets: Record<string, unknown> = {};
+  try {
+    secrets = JSON.parse(await readFile(AUTHELIA_SECRETS, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    // Older installation without the file — created below.
+  }
+  const existing = secrets.oidcHmacSecret;
+  if (typeof existing === 'string' && existing.length >= 32) return existing;
+  const fresh = crypto.randomBytes(32).toString('hex');
+  secrets.oidcHmacSecret = fresh;
+  await writeAutheliaFile(AUTHELIA_SECRETS, JSON.stringify(secrets, null, 2) + '\n', 0o600);
+  return fresh;
+}
+
+/** Current `identity_providers.oidc` section, or `null`. */
+async function readCurrentOidcSection(): Promise<Record<string, unknown> | null> {
+  try {
+    const loaded = yaml.load(await readFile(AUTHELIA_CONFIG, 'utf-8')) as Record<
+      string,
+      unknown
+    > | null;
+    const ip = loaded?.identity_providers as { oidc?: Record<string, unknown> } | undefined;
+    return ip?.oidc ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make Authelia's OIDC provider serve exactly `clients`. Restarts Authelia
+ * only when the section actually changes. With no clients the section is
+ * removed.
+ */
+export async function updateOidcProvider(
+  domain: string,
+  clients: readonly AutheliaOidcClient[],
+  exec: ExecFn,
+): Promise<{ changed: boolean; clients: number }> {
+  const current = await readCurrentOidcSection();
+
+  if (clients.length === 0) {
+    if (current === null) return { changed: false, clients: 0 };
+    await rewriteAutheliaConfig((config) => {
+      const ip = config.identity_providers as Record<string, unknown> | undefined;
+      if (ip) {
+        delete ip.oidc;
+        if (Object.keys(ip).length === 0) delete config.identity_providers;
+      }
+    }, exec);
+    return { changed: true, clients: 0 };
+  }
+
+  const hmacSecret = await ensureOidcHmacSecret();
+  const { keyPem } = await ensureOidcIssuerKey();
+  const desired = buildOidcProviderSection(domain, hmacSecret, keyPem, clients);
+  if (current !== null && JSON.stringify(current) === JSON.stringify(desired)) {
+    return { changed: false, clients: clients.length };
+  }
+
+  await rewriteAutheliaConfig((config) => {
+    const ip = (config.identity_providers as Record<string, unknown> | undefined) ?? {};
+    ip.oidc = desired;
+    config.identity_providers = ip;
+  }, exec);
+  return { changed: true, clients: clients.length };
 }
 
 // ---------------------------------------------------------------------------

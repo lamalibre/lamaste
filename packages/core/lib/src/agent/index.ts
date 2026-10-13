@@ -197,12 +197,17 @@ export {
   readPluginBundle,
   agentPluginConfig,
   localPluginConfig,
+  withInstallNpmrc,
+  renderInstallNpmrc,
+  npmNerfDart,
 } from './plugins.js';
 export type {
   PluginRegistryEntry,
   PluginRegistry,
   PluginUpdateInfo,
   PluginLifecycleConfig,
+  InstallNpmrc,
+  PluginInstallOptions,
 } from './plugins.js';
 
 // Local plugin host service

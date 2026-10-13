@@ -210,6 +210,11 @@ export {
   reloadAuthelia,
   isAutheliaRunning,
   updateAccessControl as updateAutheliaAccessControl,
+  updateOidcProvider as updateAutheliaOidcProvider,
+  ensureOidcIssuerKey as ensureAutheliaOidcIssuerKey,
+  renderOidcClient,
+  buildOidcProviderSection,
+  AUTHELIA_OIDC_KEY,
   createUserFromInvitation,
   base32Encode,
   base32Decode,
@@ -224,6 +229,7 @@ export type {
   ProtectedSiteRule,
   BcryptHashFn,
   ExecFn as AutheliaExecFn,
+  AutheliaOidcClient,
 } from './authelia.js';
 
 // --- Storage (S3-compatible server registry + credential encryption) ---
@@ -345,3 +351,26 @@ export type {
   HealthCheckDeps,
   ProvisionServerOptions,
 } from './provisioning.js';
+
+// Registry credential brokering (Feria) — see registry-credential.ts
+export {
+  REGISTRY_CREDENTIAL_FILENAME,
+  FERIA_GROUP_PREFIX,
+  AGENT_REGISTRY_TOKEN_LIFETIME,
+  RegistryCredentialConfigSchema,
+  RegistryCredentialError,
+  registryCredentialPath,
+  readRegistryCredentialConfig,
+  writeRegistryCredentialConfig,
+  clearRegistryCredentialConfig,
+  summariseRegistryCredential,
+  verifyRegistryCredential,
+  brokerAgentRegistryToken,
+  revokeRegistryTokensForOwner,
+  lostFeriaGroups,
+} from './registry-credential.js';
+export type {
+  RegistryCredentialConfig,
+  RegistryCredentialSummary,
+  AgentRegistryCredential,
+} from './registry-credential.js';
