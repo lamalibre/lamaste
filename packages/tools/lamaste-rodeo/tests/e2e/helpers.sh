@@ -898,6 +898,67 @@ FIXTURE_EOF
 FIXTURE_EOF
 }
 
+# write_agent_hosted_fixture_plugins dir
+# Writes two agent-hosted ("hosting": "agent") plugin packages for spec 28:
+#   <dir>/agent-hosted        @lamalibre/e2e-agent-hosted-server — declares a
+#                             public device-code client and a capability; its
+#                             main module throws the moment anything imports it
+#   <dir>/agent-hosted-paged  @lamalibre/e2e-agent-hosted-paged-server — the
+#                             same, plus panel pages, which the manifest schema
+#                             refuses for an agent-hosted plugin
+write_agent_hosted_fixture_plugins() {
+  local dir="$1"
+  local variant pkg name panel
+  for variant in agent-hosted agent-hosted-paged; do
+    pkg="@lamalibre/e2e-${variant}-server"
+    name="e2e-${variant}"
+    panel='{}'
+    if [ "$variant" = "agent-hosted-paged" ]; then
+      panel='{ "pages": [{ "path": "/builds", "title": "Builds" }] }'
+    fi
+    mkdir -p "${dir}/${variant}"
+    cat > "${dir}/${variant}/package.json" <<FIXTURE_EOF
+{
+  "name": "${pkg}",
+  "version": "0.1.0",
+  "description": "Lamaste e2e fixture: an agent-hosted plugin the panel must never import",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+    cat > "${dir}/${variant}/index.js" <<FIXTURE_EOF
+// The application this stands for runs on its own agent. Lamaste must read
+// lamaste-plugin.json and never load this module.
+throw new Error('${name}: agent-hosted plugin code was imported');
+FIXTURE_EOF
+    cat > "${dir}/${variant}/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E Agent-Hosted Fixture",
+  "version": "0.1.0",
+  "description": "Identity only: an OIDC client and a capability, no code on the relay",
+  "hosting": "agent",
+  "modes": ["server"],
+  "packages": { "server": "${pkg}" },
+  "capabilities": ["plugin:${name}:publish"],
+  "panel": ${panel},
+  "oidcClients": [
+    {
+      "id": "${name}-cli",
+      "name": "E2E agent-hosted CLI",
+      "grantTypes": ["urn:ietf:params:oauth:grant-type:device_code"],
+      "scopes": ["openid", "profile", "groups"],
+      "audience": ["https://${name}.{domain}"],
+      "accessTokenClaims": ["groups", "preferred_username"]
+    }
+  ]
+}
+FIXTURE_EOF
+  done
+}
+
 # decode_jwt_payload token
 # Print the JSON payload of a JWT (needs node, which every VM has).
 decode_jwt_payload() {

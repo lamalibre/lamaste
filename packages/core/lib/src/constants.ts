@@ -289,6 +289,35 @@ export type PluginMode = (typeof PLUGIN_MODES)[number];
 export const DEFAULT_PLUGIN_MODES: readonly PluginMode[] = ['server', 'agent'];
 
 // ---------------------------------------------------------------------------
+// Plugin hosting
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a plugin's code runs (manifest `hosting`).
+ *
+ * - `'server'` — the plugin host imports its server package and mounts its
+ *   routes (every plugin before 4.2).
+ * - `'agent'`  — the application runs on an agent of its own, behind a
+ *   Lamaste tunnel. Lamaste never imports or mounts its code, wherever the
+ *   package is installed; it registers only what the manifest declares
+ *   (OIDC clients, capabilities).
+ */
+export const PLUGIN_HOSTINGS = ['server', 'agent'] as const;
+
+export type PluginHosting = (typeof PLUGIN_HOSTINGS)[number];
+
+/** Hosting of a manifest that omits the field. */
+export const DEFAULT_PLUGIN_HOSTING: PluginHosting = 'server';
+
+/**
+ * Whether a manifest or registry entry is agent-hosted. A registry entry
+ * written before 4.2 has no `hosting` and is a server plugin.
+ */
+export function isAgentHostedPlugin(plugin: { readonly hosting?: string | undefined }): boolean {
+  return plugin.hosting === 'agent';
+}
+
+// ---------------------------------------------------------------------------
 // Curated plugins
 // ---------------------------------------------------------------------------
 

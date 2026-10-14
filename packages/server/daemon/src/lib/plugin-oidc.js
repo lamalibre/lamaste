@@ -3,9 +3,11 @@
  *
  * Two sources declare clients on the relay's Authelia:
  *
- * - every installed server plugin may declare them in its manifest
- *   (`oidcClients`, see the core `ManifestSchema`); only the clients of
- *   enabled plugins are served;
+ * - every installed plugin may declare them in its manifest (`oidcClients`,
+ *   see the core `ManifestSchema`); only the clients of enabled plugins are
+ *   served. Hosting does not matter: an agent-hosted plugin (`hosting:
+ *   "agent"`, never imported by the panel) registers its clients exactly as
+ *   a server plugin does — the manifest is all this reads;
  * - the panel itself declares the confidential `lamaste-server` client
  *   when the registry credential uses `auth.kind: 'oidc'`.
  *
@@ -95,6 +97,30 @@ async function collectAllClients(overrides = {}) {
 }
 
 /**
+ * What Authelia should serve and which secrets the store should hold, from
+ * the stored state: every installed plugin's clients (an installed plugin
+ * keeps its confidential-client secret while disabled), the clients of
+ * enabled plugins served, and the panel's own scopes when its client is.
+ * Pure with respect to Authelia — nothing is written.
+ *
+ * @param {{ registryAuth?: { registryUrl: string } | null }} [overrides] see collectAllClients
+ * @returns {Promise<{
+ *   confidential: Array<{ id: string, plugin: string }>,
+ *   served: Array<import('@lamalibre/lamaste/server').AutheliaOidcClient>,
+ *   scopes: Record<string, { claims: readonly string[] }>,
+ * }>}
+ */
+export async function planOidcClients(overrides = {}) {
+  const all = await collectAllClients(overrides);
+  const served = all.filter((c) => c.enabled).map(({ enabled: _enabled, ...client }) => client);
+  return {
+    confidential: all.filter((c) => c.confidential).map((c) => ({ id: c.id, plugin: c.plugin })),
+    served,
+    scopes: served.some((c) => c.plugin === 'lamaste') ? LAMASTE_REGISTRY_OIDC_SCOPES : {},
+  };
+}
+
+/**
  * Sync Authelia's OIDC clients and the secret store with the plugins and
  * the registry credential. Returns what was done, or `null` when the panel
  * has no domain yet (onboarding).
@@ -115,11 +141,8 @@ export async function syncOidcClients(logger, overrides = {}) {
     return null;
   }
 
-  const all = await collectAllClients(overrides);
-  const reconciled = await reconcileOidcClientSecrets(
-    STATE_DIR,
-    all.filter((c) => c.confidential).map((c) => ({ id: c.id, plugin: c.plugin })),
-  );
+  const { confidential, served, scopes } = await planOidcClients(overrides);
+  const reconciled = await reconcileOidcClientSecrets(STATE_DIR, confidential);
   if (reconciled.created.length > 0 || reconciled.removed.length > 0) {
     logger.info(
       { created: reconciled.created.map((c) => c.id), removed: reconciled.removed },
@@ -127,8 +150,6 @@ export async function syncOidcClients(logger, overrides = {}) {
     );
   }
 
-  const served = all.filter((c) => c.enabled).map(({ enabled: _enabled, ...client }) => client);
-  const scopes = served.some((c) => c.plugin === 'lamaste') ? LAMASTE_REGISTRY_OIDC_SCOPES : {};
   const result = await updateOidcProvider(domain, served, {
     secretDigests: reconciled.digests,
     scopes,
@@ -199,12 +220,8 @@ export async function rotatePluginOidcClientSecret(pluginName, clientId, logger)
   const digests = await readOidcClientSecretDigests(STATE_DIR);
   if (client.enabled) {
     const domain = getConfig().domain;
-    const all = await collectAllClients();
-    const served = all.filter((c) => c.enabled).map(({ enabled: _enabled, ...c }) => c);
-    await updateOidcProvider(domain, served, {
-      secretDigests: digests,
-      scopes: served.some((c) => c.plugin === 'lamaste') ? LAMASTE_REGISTRY_OIDC_SCOPES : {},
-    });
+    const { served, scopes } = await planOidcClients();
+    await updateOidcProvider(domain, served, { secretDigests: digests, scopes });
   }
   logger.info({ plugin: pluginName, clientId }, 'OIDC client secret rotated');
   return {

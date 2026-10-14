@@ -10,7 +10,9 @@
 import { z } from 'zod';
 import {
   CORE_CAPABILITY_NAMESPACES,
+  DEFAULT_PLUGIN_HOSTING,
   PLUGIN_CAPABILITY_NAMESPACE,
+  PLUGIN_HOSTINGS,
   PLUGIN_CAPABILITY_REGEX,
   derivePluginRoute,
   pluginCapabilityRegexFor,
@@ -266,13 +268,11 @@ export const ManifestSchema = z
       })
       .optional()
       .default({}),
+    // The multi-page shape comes first: a union returns its first match and
+    // a non-strict object strips unknown keys, so with the flat shape first
+    // `{ pages: [...] }` parsed as `{}` and a plugin's pages were lost.
     panel: z
       .union([
-        z.object({
-          label: z.string().min(1).max(100).optional(),
-          icon: z.string().max(50).optional(),
-          route: z.string().max(200).optional(),
-        }),
         z.object({
           pages: z
             .array(PanelPageSchema)
@@ -287,6 +287,11 @@ export const ManifestSchema = z
             .max(200)
             .regex(/^\/api\/[a-z0-9-]+$/)
             .optional(),
+        }),
+        z.object({
+          label: z.string().min(1).max(100).optional(),
+          icon: z.string().max(50).optional(),
+          route: z.string().max(200).optional(),
         }),
       ])
       .optional()
@@ -330,8 +335,27 @@ export const ManifestSchema = z
       .optional()
       .default(['server', 'agent']),
     oidcClients: z.array(OidcClientSchema).max(10).optional().default([]),
+    /**
+     * Where the plugin's code runs — see `PLUGIN_HOSTINGS`. An agent-hosted
+     * plugin is never imported by Lamaste; only its declarations
+     * (`oidcClients`, `capabilities`) take effect.
+     */
+    hosting: z.enum(PLUGIN_HOSTINGS).optional().default(DEFAULT_PLUGIN_HOSTING),
   })
   .superRefine((manifest, ctx) => {
+    // An agent-hosted plugin has no code in the panel, so nothing could
+    // serve a page or a panel bundle for it. Its pages arrive with the
+    // agent forwarder; until then a panel declaration is a manifest error,
+    // not something to drop silently.
+    if (manifest.hosting === 'agent' && Object.keys(manifest.panel).length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['panel'],
+        message:
+          'An agent-hosted plugin ("hosting": "agent") cannot declare a panel — Lamaste does not load its code',
+      });
+    }
+
     // A plugin may only register OIDC clients in its own namespace: the
     // client id is its route or `<route>-<suffix>`. Stops one plugin from
     // claiming `feria-cli`.

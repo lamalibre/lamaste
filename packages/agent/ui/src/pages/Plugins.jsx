@@ -16,7 +16,7 @@ import {
   ChevronsUp,
   X,
 } from 'lucide-react';
-import { Cpu, Terminal, Folder, Shield } from 'lucide-react';
+import { Cpu, Terminal, Folder, Shield, Network } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAgentClient } from '../context/AgentClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
@@ -425,6 +425,9 @@ function PluginCard({
   const updateType = updateInfo?.hasUpdate
     ? getUpdateType(updateInfo.currentVersion, updateInfo.latestVersion)
     : null;
+  // An agent-hosted plugin runs as its own application; this agent's plugin
+  // host never loads it, so it has no panel to open.
+  const agentHosted = plugin.hosting === 'agent';
 
   return (
     <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-5">
@@ -444,7 +447,18 @@ function PluginCard({
             </button>
           )}
         </div>
-        <StatusBadge status={plugin.status} />
+        <div className="flex items-center gap-2">
+          {agentHosted && (
+            <span
+              className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400"
+              title="The application runs as its own service. The plugin host never loads its code."
+            >
+              <Network size={11} />
+              Agent-hosted
+            </span>
+          )}
+          <StatusBadge status={plugin.status} />
+        </div>
       </div>
 
       {plugin.displayName && <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>}
@@ -530,7 +544,7 @@ function PluginCard({
               <PowerOff size={12} />
               Disable
             </button>
-            {plugin.packages?.server && (
+            {plugin.packages?.server && !agentHosted && (
               <button
                 type="button"
                 onClick={() => onOpen(plugin.name)}

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { execa } from 'execa';
 import {
+  DEFAULT_PLUGIN_HOSTING,
   RESERVED_API_PREFIXES,
   RESERVED_NAV_LABELS,
   derivePluginRoute,
@@ -60,8 +61,8 @@ async function getStmts() {
     insert: db.prepare(`
       INSERT INTO plugins
         (name, display_name, package_name, version, description, capabilities,
-         packages, panel, config, modes, status, installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         packages, panel, config, modes, hosting, status, installed_at, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     deleteAll: db.prepare('DELETE FROM plugins'),
@@ -86,7 +87,10 @@ async function getStmts() {
 // JSON-encoded TEXT in storage. They round-trip through JSON.parse/stringify
 // so callers see the same shape the JSON-backed module returned — including
 // `undefined` for optional fields (mirroring the JSON object layout where
-// missing keys are absent rather than null).
+// missing keys are absent rather than null). `hosting` is plain TEXT
+// ('server' | 'agent'; rows from before 4.2 default to 'server'): an
+// agent-hosted plugin is installed (npm, manifest) like any other, but the
+// plugin host never imports it — see `pluginHostPlugin`.
 
 function rowToPlugin(row) {
   const entry = {
@@ -94,6 +98,7 @@ function rowToPlugin(row) {
     packageName: row.package_name,
     version: row.version,
     capabilities: row.capabilities ? JSON.parse(row.capabilities) : [],
+    hosting: row.hosting,
     status: row.status,
     installedAt: row.installed_at,
   };
@@ -155,6 +160,7 @@ export async function writePlugins(data) {
         nullableJson(p.panel),
         nullableJson(p.config),
         nullableJson(p.modes),
+        p.hosting ?? DEFAULT_PLUGIN_HOSTING,
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -359,6 +365,7 @@ export function installPlugin(packageName, logger) {
       panel: manifest.panel,
       config: manifest.config,
       modes: manifest.modes,
+      hosting: manifest.hosting,
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -376,6 +383,7 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.panel),
         nullableJson(entry.config),
         nullableJson(entry.modes),
+        entry.hosting,
         entry.status,
         entry.installedAt,
         null,

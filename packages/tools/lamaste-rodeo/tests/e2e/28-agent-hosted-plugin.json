@@ -1,0 +1,1261 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 28,
+    "name": "Agent-hosted plugin (identity only)",
+    "suite": "e2e",
+    "description": "28 — Agent-hosted plugin (identity only)",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "npm"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "POST plugins/${PLUGIN_NAME}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN_NAME}/disable"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN_NAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN_NAME}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Domain: ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Domain: ${DOMAIN}"
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent-hosted plugin tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-agent-hosted\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_agenthosted_00000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-agent-hosted-server\"\nPLUGIN_NAME=\"e2e-agent-hosted\"\nPAGED_PACKAGE=\"@lamalibre/e2e-agent-hosted-paged-server\"\nAUTH_RESOLVE=\"--resolve auth.${DOMAIN}:443:127.0.0.1\"\nIMPORT_MARKER=\"agent-hosted plugin code was imported\"\n\ncleanup() {\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# ===========================================================================\n# 1. Stand-in registry serving the fixture plugins\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-registry-serving-the-fixture-plugins",
+      "label": "Stand-in registry serving the fixture plugins",
+      "steps": [
+        {
+          "id": "step-20",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Panel npm configured for the stand-in registry",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel npm configured for the stand-in registry"
+          }
+        }
+      ],
+      "bash": "log_section \"Stand-in registry serving the fixture plugins\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_agent_hosted_fixture_plugins \"${WORK_DIR}/fixtures\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixtures/agent-hosted\" --package \"${WORK_DIR}/fixtures/agent-hosted-paged\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\n\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\nlog_pass \"Panel npm configured for the stand-in registry\"\n\n# ===========================================================================\n# 2. Install: hosting recorded, a panel declaration refused\n# ==========================================================================="
+    },
+    {
+      "id": "install-the-agent-hosted-fixture",
+      "label": "Install the agent-hosted fixture",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PAGED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "An agent-hosted manifest declaring panel pages is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PAGED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "An agent-hosted manifest declaring panel pages is refused"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "PAGED_LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "The refused plugin is not in the registry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PAGED_LISTED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The refused plugin is not in the registry"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Set PAGED_ON_DISK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "test -e \"${STATE_DIR}/node_modules/@lamalibre/e2e-agent-hosted-paged-server\" && echo \"yes\" || echo \"no\""
+          },
+          "capture": [
+            {
+              "variable": "PAGED_ON_DISK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "The refused package was uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PAGED_ON_DISK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "no"
+              },
+              "message": "The refused package was uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Agent-hosted fixture installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent-hosted fixture installed"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Plugin name is ${PLUGIN_NAME}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.name",
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "Plugin name is ${PLUGIN_NAME}"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Install records hosting agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.hosting",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "Install records hosting agent"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "A public client needs no secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".oidcClients | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "A public client needs no secret"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "LISTED_HOSTING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "GET /api/plugins reports hosting agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LISTED_HOSTING"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "GET /api/plugins reports hosting agent"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set SECTION_BEFORE_ENABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "SECTION_BEFORE_ENABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "A disabled plugin's client is not served",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECTION_BEFORE_ENABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "A disabled plugin's client is not served"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install the agent-hosted fixture\"\n\nPAGED_STATUS=$(api_post_status \"plugins/install\" \"{\\\"packageName\\\":\\\"${PAGED_PACKAGE}\\\"}\")\nassert_eq \"$PAGED_STATUS\" \"400\" \"An agent-hosted manifest declaring panel pages is refused\" || true\nPAGED_LISTED=$(api_get \"plugins\" | jq '[.plugins[] | select(.name == \"e2e-agent-hosted-paged\")] | length' 2>/dev/null || echo \"-1\")\nassert_eq \"$PAGED_LISTED\" \"0\" \"The refused plugin is not in the registry\" || true\nPAGED_ON_DISK=$(test -e \"${STATE_DIR}/node_modules/@lamalibre/e2e-agent-hosted-paged-server\" && echo \"yes\" || echo \"no\")\nassert_eq \"$PAGED_ON_DISK\" \"no\" \"The refused package was uninstalled\" || true\n\nINSTALL_RESPONSE=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.ok' 'true' \"Agent-hosted fixture installed\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.name' \"${PLUGIN_NAME}\" \"Plugin name is ${PLUGIN_NAME}\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.hosting' 'agent' \"Install records hosting agent\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.oidcClients | length' '0' \"A public client needs no secret\" || true\n\nLISTED_HOSTING=$(api_get \"plugins\" | jq -r \".plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\") | .hosting\" 2>/dev/null || echo \"\")\nassert_eq \"$LISTED_HOSTING\" \"agent\" \"GET /api/plugins reports hosting agent\" || true\n\nSECTION_BEFORE_ENABLE=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$SECTION_BEFORE_ENABLE\" \"0\" \"A disabled plugin's client is not served\" || true\n\n# ===========================================================================\n# 3. Enable: Authelia carries the client\n# ==========================================================================="
+    },
+    {
+      "id": "enable-the-oidc-client-reaches-authelia",
+      "label": "Enable — the OIDC client reaches Authelia",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/enable"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Plugin enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Plugin enabled"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Authelia is active after the OIDC update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the OIDC update"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Authelia is not active after the OIDC update",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the OIDC update"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Set CONFIG_YML",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cat /etc/authelia/configuration.yml"
+          },
+          "capture": [
+            {
+              "variable": "CONFIG_YML",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Device-code client rendered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "client_id: ${PLUGIN_NAME}-cli"
+              },
+              "message": "Device-code client rendered"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Client references its claims policy",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "claims_policy: ${PLUGIN_NAME}-cli"
+              },
+              "message": "Client references its claims policy"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Audience {domain} expanded to the relay domain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CONFIG_YML"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "- https://${PLUGIN_NAME}.${DOMAIN}"
+              },
+              "message": "Audience {domain} expanded to the relay domain"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Set DISCOVERY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "DISCOVERY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "Discovery document answers with the relay's issuer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".issuer",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}"
+              },
+              "message": "Discovery document answers with the relay's issuer"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Device authorization endpoint advertised",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISCOVERY"
+              },
+              "path": ".device_authorization_endpoint",
+              "expected": {
+                "kind": "expr",
+                "template": "https://auth.${DOMAIN}/api/oidc/device-authorization"
+              },
+              "message": "Device authorization endpoint advertised"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "Set JWKS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/jwks.json\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "JWKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Set RS256_KEYS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$JWKS\" | jq '[.keys[] | select(.alg == \"RS256\" and .kty == \"RSA\")] | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "RS256_KEYS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "JWKS carries one RS256 key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "RS256_KEYS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "JWKS carries one RS256 key"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set DEVICE_RESPONSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -sk --max-time 15 ${AUTH_RESOLVE} -d \"client_id=${PLUGIN_NAME}-cli\" -d \"scope=openid profile groups\" -d \"audience=https://${PLUGIN_NAME}.${DOMAIN}\" \"https://auth.${DOMAIN}/api/oidc/device-authorization\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "DEVICE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Extract DEVICE_CODE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DEVICE_CODE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "DEVICE_RESPONSE"
+              },
+              "expression": ".device_code // empty"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Authelia starts a device-code login for the client ($(echo \"$DEVICE_RESPONSE\" | jq -c 'del(.device_code)'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "DEVICE_CODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "Authelia starts a device-code login for the client ($(echo \"$DEVICE_RESPONSE\" | jq -c 'del(.device_code)'))"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Enable — the OIDC client reaches Authelia\"\n\nENABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\n\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the OIDC update\"\nelse\n  log_fail \"Authelia is not active after the OIDC update\"\nfi\nsleep 3\n\nCONFIG_YML=$(cat /etc/authelia/configuration.yml)\nassert_contains \"$CONFIG_YML\" \"client_id: ${PLUGIN_NAME}-cli\" \"Device-code client rendered\" || true\nassert_contains \"$CONFIG_YML\" \"claims_policy: ${PLUGIN_NAME}-cli\" \"Client references its claims policy\" || true\nassert_contains \"$CONFIG_YML\" \"- https://${PLUGIN_NAME}.${DOMAIN}\" \"Audience {domain} expanded to the relay domain\" || true\n\nDISCOVERY=$(curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/.well-known/openid-configuration\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$DISCOVERY\" '.issuer' \"https://auth.${DOMAIN}\" \"Discovery document answers with the relay's issuer\" || true\nassert_json_field \"$DISCOVERY\" '.device_authorization_endpoint' \"https://auth.${DOMAIN}/api/oidc/device-authorization\" \"Device authorization endpoint advertised\" || true\nJWKS=$(curl -sk --max-time 15 ${AUTH_RESOLVE} \"https://auth.${DOMAIN}/jwks.json\" 2>/dev/null || echo \"{}\")\nRS256_KEYS=$(echo \"$JWKS\" | jq '[.keys[] | select(.alg == \"RS256\" and .kty == \"RSA\")] | length' 2>/dev/null || echo \"0\")\nassert_eq \"$RS256_KEYS\" \"1\" \"JWKS carries one RS256 key\" || true\n\nDEVICE_RESPONSE=$(curl -sk --max-time 15 ${AUTH_RESOLVE} -d \"client_id=${PLUGIN_NAME}-cli\" -d \"scope=openid profile groups\" -d \"audience=https://${PLUGIN_NAME}.${DOMAIN}\" \\\n  \"https://auth.${DOMAIN}/api/oidc/device-authorization\" 2>/dev/null || echo \"{}\")\nDEVICE_CODE=$(echo \"$DEVICE_RESPONSE\" | jq -r '.device_code // empty')\nassert_not_eq \"$DEVICE_CODE\" \"\" \"Authelia starts a device-code login for the client ($(echo \"$DEVICE_RESPONSE\" | jq -c 'del(.device_code)'))\" || true\n\n# ===========================================================================\n# 4. The plugin host never loads it\n# ==========================================================================="
+    },
+    {
+      "id": "panel-restart-the-plugin-host-skips-the-agent-hosted-plugin",
+      "label": "Panel restart — the plugin host skips the agent-hosted plugin",
+      "steps": [
+        {
+          "id": "step-58",
+          "label": "Set RESTARTED_AT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date '+%Y-%m-%d %H:%M:%S'"
+          },
+          "capture": [
+            {
+              "variable": "RESTARTED_AT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Panel healthy after the restart with the plugin enabled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Panel healthy after the restart with the plugin enabled"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Panel not healthy within 60 seconds of restart",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Panel not healthy within 60 seconds of restart"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PANEL_BACK",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Set PANEL_JOURNAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "journalctl -u lamalibre-lamaste-serverd --since \"$RESTARTED_AT\" --no-pager -o cat 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "PANEL_JOURNAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Plugin host logged that it skipped the agent-hosted plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_JOURNAL"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "no routes mounted"
+              },
+              "message": "Plugin host logged that it skipped the agent-hosted plugin"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "The plugin's code was never imported",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "PANEL_JOURNAL"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "IMPORT_MARKER"
+              },
+              "message": "The plugin's code was never imported"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ROUTE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Nothing is mounted under /api/${PLUGIN_NAME}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ROUTE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Nothing is mounted under /api/${PLUGIN_NAME}"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "GET /api/${PLUGIN_NAME}/panel.js",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/panel.js",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BUNDLE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "No panel bundle is served",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BUNDLE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "No panel bundle is served"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set STILL_SERVED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "STILL_SERVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "The client is still served after the restart",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STILL_SERVED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The client is still served after the restart"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "POST /api/storage/bindings",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "storage/bindings",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STORAGE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Storage cannot be bound to an agent-hosted plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STORAGE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Storage cannot be bound to an agent-hosted plugin"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Panel restart — the plugin host skips the agent-hosted plugin\"\n\nRESTARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')\nsudo systemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=false\nfor _ in $(seq 1 30); do\n  if [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; then\n    PANEL_BACK=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$PANEL_BACK\" = \"true\" ]; then\n  log_pass \"Panel healthy after the restart with the plugin enabled\"\nelse\n  log_fail \"Panel not healthy within 60 seconds of restart\"\nfi\n\nPANEL_JOURNAL=$(journalctl -u lamalibre-lamaste-serverd --since \"$RESTARTED_AT\" --no-pager -o cat 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_JOURNAL\" \"no routes mounted\" \"Plugin host logged that it skipped the agent-hosted plugin\" || true\nassert_not_contains \"$PANEL_JOURNAL\" \"$IMPORT_MARKER\" \"The plugin's code was never imported\" || true\n\nROUTE_STATUS=$(api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$ROUTE_STATUS\" \"404\" \"Nothing is mounted under /api/${PLUGIN_NAME}\" || true\nBUNDLE_STATUS=$(api_get_status \"${PLUGIN_NAME}/panel.js\")\nassert_eq \"$BUNDLE_STATUS\" \"404\" \"No panel bundle is served\" || true\n\nSTILL_SERVED=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$STILL_SERVED\" \"1\" \"The client is still served after the restart\" || true\n\nSTORAGE_STATUS=$(api_post_status \"storage/bindings\" \"{\\\"pluginName\\\":\\\"${PLUGIN_NAME}\\\",\\\"storageServerId\\\":\\\"00000000-0000-4000-8000-000000000000\\\"}\")\nassert_eq \"$STORAGE_STATUS\" \"400\" \"Storage cannot be bound to an agent-hosted plugin\" || true\n\n# ===========================================================================\n# 5. Disable and uninstall\n# ==========================================================================="
+    },
+    {
+      "id": "disable-and-uninstall",
+      "label": "Disable and uninstall",
+      "steps": [
+        {
+          "id": "step-79",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/disable"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "Plugin disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "Plugin disabled"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "Authelia is active after the removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the removal"
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "Authelia is not active after the removal",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the removal"
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Set CLI_AFTER_DISABLE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_AFTER_DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-84",
+          "label": "Disabling removes the client from Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_AFTER_DISABLE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Disabling removes the client from Authelia"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "DELETE /api/plugins/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "Plugin uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "REMAINING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "The plugin is gone from the registry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "REMAINING"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The plugin is gone from the registry"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Disable and uninstall\"\n\nDISABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE_RESPONSE\" '.status' 'disabled' \"Plugin disabled\" || true\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the removal\"\nelse\n  log_fail \"Authelia is not active after the removal\"\nfi\nCLI_AFTER_DISABLE=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_AFTER_DISABLE\" \"0\" \"Disabling removes the client from Authelia\" || true\n\nUNINSTALL_RESPONSE=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL_RESPONSE\" '.ok' 'true' \"Plugin uninstalled\" || true\nREMAINING=$(api_get \"plugins\" | jq \"[.plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$REMAINING\" \"0\" \"The plugin is gone from the registry\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 28 — Agent-hosted plugin (identity only)\n# ============================================================================\n# Installs a fixture plugin whose manifest says \"hosting\": \"agent\" and whose\n# main module throws the moment it is imported (served by a stand-in registry\n# on the VM), and verifies:\n# - the install records hosting \"agent\"; a variant declaring panel pages is\n#   refused (400) and leaves nothing installed\n# - enabling writes its OIDC client to Authelia, and the discovery document\n#   and JWKS answer\n# - after a panel restart the plugin host skips it — never imported, nothing\n#   mounted: its route 404s, no panel bundle, the panel stays healthy\n# - storage cannot be bound to it\n# - disabling removes the client; uninstalling removes the plugin\n# Spec 26 keeps covering server-hosted plugins.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm\n\nbegin_test \"28 — Agent-hosted plugin (identity only)\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

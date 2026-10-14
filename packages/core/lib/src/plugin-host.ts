@@ -19,6 +19,7 @@ import {
   DISABLED_PLUGIN_CACHE_TTL_MS,
   PANEL_BUNDLE_CACHE_SECONDS,
   RESERVED_API_PREFIXES,
+  isAgentHostedPlugin,
 } from './constants.js';
 import type { PluginRegistry, PluginRegistryEntry } from './types.js';
 
@@ -140,7 +141,8 @@ export function invalidatePluginHostCache(): void {
 
 /**
  * Unified Fastify plugin that mounts enabled plugin routes, serves panel
- * bundles, and returns 503 for disabled plugins.
+ * bundles, and returns 503 for disabled plugins. Agent-hosted plugins
+ * (`hosting: "agent"`) are never loaded.
  *
  * Register on the appropriate Fastify scope — it respects encapsulation.
  */
@@ -169,6 +171,14 @@ export async function pluginHostPlugin(
 
   for (const plugin of registry.plugins) {
     if (plugin.status !== 'enabled') continue;
+
+    // An agent-hosted plugin's code runs on its own agent. Its package is
+    // installed only so its manifest can be read: never import it, mount
+    // nothing under its route (requests there 404) and serve no bundle.
+    if (isAgentHostedPlugin(plugin)) {
+      fastify.log.info({ plugin: plugin.name }, 'Agent-hosted plugin — no routes mounted');
+      continue;
+    }
 
     const pluginName = plugin.name;
     const serverPkg = plugin.packages?.server;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isAgentHostedPlugin } from '@lamalibre/lamaste';
 import {
   registerStorageServer,
   removeStorageServer,
@@ -118,10 +119,17 @@ export default async function storageRoutes(fastify, _opts) {
 
       // Validate plugin exists in registry
       const registry = await readPlugins();
-      const pluginExists = registry.plugins.some((p) => p.name === body.pluginName);
-      if (!pluginExists) {
+      const plugin = registry.plugins.find((p) => p.name === body.pluginName);
+      if (!plugin) {
         return reply.code(404).send({
           error: `Plugin "${body.pluginName}" not found in registry`,
+        });
+      }
+      // A binding is handed to the plugin's server code when the panel
+      // mounts it; an agent-hosted plugin has none to receive it.
+      if (isAgentHostedPlugin(plugin)) {
+        return reply.code(400).send({
+          error: `Plugin "${body.pluginName}" is agent-hosted — storage binds to server-hosted plugins only`,
         });
       }
 

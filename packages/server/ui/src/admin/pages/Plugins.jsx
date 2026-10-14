@@ -11,6 +11,7 @@ import {
   Pencil,
   X,
   Loader2,
+  Network,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -27,7 +28,20 @@ function StatusBadge({ status }) {
   );
 }
 
+function HostingBadge() {
+  return (
+    <span
+      className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400"
+      title="The application runs on its own agent. Lamaste never loads its code."
+    >
+      <Network size={11} />
+      Agent-hosted
+    </span>
+  );
+}
+
 function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
+  const agentHosted = plugin.hosting === 'agent';
   const [confirmUninstall, setConfirmUninstall] = useState(false);
 
   const handleUninstall = () => {
@@ -47,12 +61,22 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
           <span className="text-white font-semibold">{plugin.displayName || plugin.name}</span>
           <span className="text-zinc-500 text-xs">v{plugin.version}</span>
         </div>
-        <StatusBadge status={plugin.status} />
+        <div className="flex items-center gap-2">
+          {agentHosted && <HostingBadge />}
+          <StatusBadge status={plugin.status} />
+        </div>
       </div>
 
       {plugin.displayName && <p className="text-zinc-500 text-xs font-mono mb-1">{plugin.name}</p>}
 
       {plugin.description && <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>}
+
+      {agentHosted && (
+        <p className="text-zinc-500 text-xs mb-2">
+          Runs on its own agent. Lamaste registers its OIDC clients and capabilities; it mounts no
+          routes and serves no pages for it.
+        </p>
+      )}
 
       <p className="text-zinc-500 text-xs mb-4">
         {plugin.packageName}
@@ -460,8 +484,13 @@ export default function Plugins() {
   const enableMutation = useMutation({
     mutationFn: (name) => client.enablePlugin(name),
     onSuccess: (data) => {
+      const plugin = pluginsQuery.data?.plugins?.find((p) => p.name === data.name);
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
-      addToast(`Plugin "${data.name}" enabled (restart panel to mount routes)`);
+      addToast(
+        plugin?.hosting === 'agent'
+          ? `Plugin "${data.name}" enabled (agent-hosted — nothing to mount)`
+          : `Plugin "${data.name}" enabled (restart panel to mount routes)`,
+      );
     },
     onError: (err) => addToast(errorMessage(err), 'error'),
   });

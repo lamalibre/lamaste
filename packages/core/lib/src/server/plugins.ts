@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { z } from 'zod';
 import { RESERVED_API_PREFIXES, RESERVED_NAV_LABELS, derivePluginRoute } from '../constants.js';
+import type { PluginHosting } from '../constants.js';
 import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import { ManifestSchema as SharedManifestSchema } from '../schemas.js';
@@ -52,6 +53,7 @@ export interface PluginManifest {
     }
   >;
   readonly modes: ReadonlyArray<'server' | 'agent' | 'local'>;
+  readonly hosting: PluginHosting;
 }
 
 /** A single plugin entry in the registry. */

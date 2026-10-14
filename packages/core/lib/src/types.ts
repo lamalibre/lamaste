@@ -5,7 +5,7 @@
  * desktop, and backend packages alike.
  */
 
-import type { PluginMode } from './constants.js';
+import type { PluginHosting, PluginMode } from './constants.js';
 
 // ---------------------------------------------------------------------------
 // Plugin manifest
@@ -53,6 +53,7 @@ export interface PluginManifest {
   readonly panel: PluginPanel;
   readonly config: Readonly<Record<string, PluginConfigEntry>>;
   readonly modes: readonly PluginMode[];
+  readonly hosting: PluginHosting;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,8 @@ export interface PluginRegistryEntry {
   readonly panel: PluginPanel;
   readonly config: Readonly<Record<string, PluginConfigEntry>>;
   readonly modes: readonly PluginMode[];
+  /** Absent in entries written before 4.2 — those are server plugins. */
+  readonly hosting?: PluginHosting;
   status: PluginStatus;
   readonly installedAt: string;
   enabledAt?: string;

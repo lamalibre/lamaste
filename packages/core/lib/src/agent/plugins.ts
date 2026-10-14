@@ -14,8 +14,14 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { RESERVED_API_PREFIXES, MAX_PLUGINS_PER_REGISTRY } from '../constants.js';
-import type { PluginMode } from '../constants.js';
+import {
+  RESERVED_API_PREFIXES,
+  MAX_PLUGINS_PER_REGISTRY,
+  DEFAULT_PLUGIN_HOSTING,
+  PLUGIN_HOSTINGS,
+  isAgentHostedPlugin,
+} from '../constants.js';
+import type { PluginHosting, PluginMode } from '../constants.js';
 import { KeyedPromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
 import {
@@ -42,6 +48,8 @@ export interface PluginRegistryEntry {
   panel: Record<string, unknown>;
   modes: PluginMode[];
   config: Record<string, unknown>;
+  /** Absent in entries written before 4.2 — those are server plugins. */
+  hosting?: PluginHosting | undefined;
   status: 'enabled' | 'disabled';
   installedAt: string;
   enabledAt?: string | undefined;
@@ -149,6 +157,7 @@ interface PluginManifest {
   panel?: Record<string, unknown>;
   modes?: PluginMode[];
   config?: Record<string, unknown>;
+  hosting?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +210,30 @@ export class PluginManifestValidationError extends Error {
     super(`Invalid plugin manifest for "${packageName}": ${detail}`);
     this.name = 'PluginManifestValidationError';
   }
+}
+
+/**
+ * The hosting a manifest declares, checked the way the panel's manifest
+ * schema checks it: one of `PLUGIN_HOSTINGS` (default `'server'`), and an
+ * agent-hosted plugin declares no panel — nothing on this machine runs its
+ * code, so nothing could serve one.
+ */
+function manifestHosting(packageName: string, manifest: PluginManifest): PluginHosting {
+  const hosting = manifest.hosting ?? DEFAULT_PLUGIN_HOSTING;
+  if (!(PLUGIN_HOSTINGS as readonly unknown[]).includes(hosting)) {
+    throw new PluginManifestValidationError(
+      packageName,
+      `invalid hosting: ${JSON.stringify(hosting)} (expected ${PLUGIN_HOSTINGS.join(' or ')})`,
+    );
+  }
+  const checked = hosting as PluginHosting;
+  if (checked === 'agent' && manifest.panel && Object.keys(manifest.panel).length > 0) {
+    throw new PluginManifestValidationError(
+      packageName,
+      'an agent-hosted plugin ("hosting": "agent") cannot declare a panel',
+    );
+  }
+  return checked;
 }
 
 /**
@@ -386,6 +419,8 @@ export function installPlugin(
         );
       }
 
+      const hosting = manifestHosting(packageName, manifest);
+
       // Validate required mode support
       const modes = (manifest.modes ?? ['server', 'agent']) as PluginMode[];
       if (!modes.includes(cfg.requiredMode)) {
@@ -410,6 +445,7 @@ export function installPlugin(
         panel: manifest.panel ?? {},
         modes,
         config: manifest.config ?? {},
+        hosting,
         status: 'disabled',
         installedAt: new Date().toISOString(),
       };
@@ -535,6 +571,7 @@ export function updatePlugin(
       const manifestPath = require.resolve(`${plugin.packageName}/lamaste-plugin.json`);
       const manifestRaw = await readFile(manifestPath, 'utf-8');
       const manifest = JSON.parse(manifestRaw) as PluginManifest;
+      plugin.hosting = manifestHosting(plugin.packageName, manifest);
       plugin.version = manifest.version ?? plugin.version;
       if (manifest.capabilities) plugin.capabilities = normalizeCapabilities(manifest.capabilities);
       if (manifest.panel) plugin.panel = manifest.panel;
@@ -593,6 +630,10 @@ export async function readPluginBundle(cfg: PluginLifecycleConfig, name: string)
   const plugin = registry.plugins.find((p) => p.name === name);
   if (!plugin) {
     throw new Error(`Plugin "${name}" not found`);
+  }
+
+  if (isAgentHostedPlugin(plugin)) {
+    throw new Error(`Plugin "${name}" is agent-hosted and has no panel bundle`);
   }
 
   const serverPkg = plugin.packages['server'];

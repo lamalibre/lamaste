@@ -26,6 +26,7 @@ This directory contains end-to-end tests that verify the complete Lamaste system
 | 17  | `17-panel-2fa.sh`                  | Built-in TOTP 2FA: setup, verify, session cookies, IP vhost toggle, reset                                                                                                                         |      No       |
 | 26  | `26-oidc-provider.sh`              | Authelia OIDC provider from a plugin manifest: discovery, JWKS, claims policy, confidential client secret, issuer key ownership, client-credentials JWT                                           |      No       |
 | 27  | `27-registry-credential-broker.sh` | Registry credential broker against a stub Feria with a throwaway enrolled agent: `--oidc` and `--token-stdin`, agent tokens, cache, per-agent limit (agent-daemon install path: three-VM spec 10) |      No       |
+| 28  | `28-agent-hosted-plugin.sh`        | Agent-hosted plugin (`hosting: "agent"`): never imported, route 404s, panel declaration refused, OIDC client served while enabled, removed on disable                                             |      No       |
 
 ## Prerequisites
 

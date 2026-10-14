@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- serverd adds the `plugins.hosting` column on start (migration `0005_plugin_hosting.sql`); every plugin installed before is a server plugin and behaves as before.
+
+### Added
+
+- **Agent-hosted plugins, identity only.** A plugin manifest may say `"hosting": "agent"` (default `"server"`): the application runs on its own agent behind a Lamaste tunnel, and the relay needs only what the manifest declares. It installs like any plugin (`POST /api/plugins/install`, `npm install --ignore-scripts`, manifest from `<package>/lamaste-plugin.json`), but Lamaste never imports its package — neither the panel's plugin host nor an agent's — mounts nothing under its route (requests there answer 404), serves no panel bundle and binds no storage to it (400). Its `oidcClients` are written to Authelia on enable and removed on disable or uninstall, and its `capabilities` are registered, exactly as for a server plugin. A `panel` declaration on an agent-hosted plugin is a manifest error. The panel's and the agent's plugin lists show the hosting. First consumer: Feria (`@lamalibre/feria-server`), whose `feria-cli` client the relay serves without running any Feria code.
+- `@lamalibre/lamaste`: `PLUGIN_HOSTINGS`, `DEFAULT_PLUGIN_HOSTING`, `isAgentHostedPlugin`, type `PluginHosting`; `hosting` on `ManifestSchema`, `PluginManifest` and `PluginRegistryEntry`.
+- E2E (single VM): `28-agent-hosted-plugin` — a fixture whose main module throws if imported is installed and enabled, its client reaches Authelia, discovery and JWKS answer, its route 404s after a panel restart, the panel stays healthy, a variant declaring panel pages is refused, and disabling removes the client.
+
+### Fixed
+
+- A multi-page plugin manifest (`panel.pages`) lost its pages on the panel: the manifest schema tried the single-page panel shape first, which matched and stripped `pages`, so the panel's sidebar never showed them and `apiPrefix` was never checked. The multi-page shape is now tried first.
+
 ## [4.1.0] - 2026-10-13
 
 All lockstep packages move to 4.1.0; internal `@lamalibre/*` ranges become `^4.1.0`.
