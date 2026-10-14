@@ -11,7 +11,8 @@
 #   and JWKS answer
 # - after a panel restart the plugin host skips it — never imported, nothing
 #   mounted: its route 404s, no panel bundle, the panel stays healthy
-# - storage cannot be bound to it
+# - storage cannot be bound to it; lamaste-server plugins list shows it as
+#   agent-hosted
 # - disabling removes the client; uninstalling removes the plugin
 # Spec 26 keeps covering server-hosted plugins.
 # ============================================================================
@@ -183,6 +184,9 @@ assert_eq "$STILL_SERVED" "1" "The client is still served after the restart" || 
 STORAGE_STATUS=$(api_post_status "storage/bindings" "{\"pluginName\":\"${PLUGIN_NAME}\",\"storageServerId\":\"00000000-0000-4000-8000-000000000000\"}")
 assert_eq "$STORAGE_STATUS" "400" "Storage cannot be bound to an agent-hosted plugin" || true
 
+CLI_LIST=$(lamaste-server plugins list 2>&1 || true)
+assert_contains "$CLI_LIST" "agent-hosted" "lamaste-server plugins list shows the hosting" || true
+
 # ===========================================================================
 # 5. Disable and uninstall
 # ===========================================================================
@@ -203,5 +207,43 @@ UNINSTALL_RESPONSE=$(api_delete "plugins/${PLUGIN_NAME}")
 assert_json_field "$UNINSTALL_RESPONSE" '.ok' 'true' "Plugin uninstalled" || true
 REMAINING=$(api_get "plugins" | jq "[.plugins[] | select(.name == \"${PLUGIN_NAME}\")] | length" 2>/dev/null || echo "-1")
 assert_eq "$REMAINING" "0" "The plugin is gone from the registry" || true
+
+# ===========================================================================
+# 6. The same lifecycle through lamaste-server plugins
+#
+# The CLI goes through the panel, so what it installs is what the panel
+# serves and its OIDC clients reach Authelia. (Before 4.2 it wrote a
+# plugins.json the panel had not read since 2.0.)
+# ===========================================================================
+
+log_section "Lifecycle through lamaste-server plugins"
+
+# A server upgraded from before 2.0 may still carry a plugins.json; the CLI
+# must leave it as it is, so compare rather than expect it absent.
+LEGACY_BEFORE=$(sha256sum "${STATE_DIR}/plugins.json" 2>/dev/null | cut -d' ' -f1 || true)
+
+CLI_INSTALL=$(lamaste-server plugins install "${PLUGIN_PACKAGE}" --json 2>/dev/null | tail -1 || echo '{}')
+assert_json_field "$CLI_INSTALL" '.plugin.hosting' 'agent' "CLI install answers with the panel's registry entry" || true
+CLI_LISTED=$(api_get "plugins" | jq -r ".plugins[] | select(.name == \"${PLUGIN_NAME}\") | .status" 2>/dev/null || echo "")
+assert_eq "$CLI_LISTED" "disabled" "The panel serves the plugin the CLI installed" || true
+
+lamaste-server plugins enable "${PLUGIN_NAME}" --json >/dev/null 2>&1 || true
+if wait_for_service authelia 60; then
+  log_pass "Authelia is active after the CLI enable"
+else
+  log_fail "Authelia is not active after the CLI enable"
+fi
+CLI_CLIENT=$(grep -c "client_id: ${PLUGIN_NAME}-cli" /etc/authelia/configuration.yml || true)
+assert_eq "$CLI_CLIENT" "1" "CLI enable writes the plugin's client to Authelia" || true
+
+lamaste-server plugins disable "${PLUGIN_NAME}" --json >/dev/null 2>&1 || true
+CLI_CLIENT_GONE=$(grep -c "client_id: ${PLUGIN_NAME}-cli" /etc/authelia/configuration.yml || true)
+assert_eq "$CLI_CLIENT_GONE" "0" "CLI disable removes the client" || true
+
+lamaste-server plugins uninstall "${PLUGIN_NAME}" --json >/dev/null 2>&1 || true
+CLI_REMAINING=$(api_get "plugins" | jq "[.plugins[] | select(.name == \"${PLUGIN_NAME}\")] | length" 2>/dev/null || echo "-1")
+assert_eq "$CLI_REMAINING" "0" "CLI uninstall removes it from the panel's registry" || true
+LEGACY_AFTER=$(sha256sum "${STATE_DIR}/plugins.json" 2>/dev/null | cut -d' ' -f1 || true)
+assert_eq "$LEGACY_AFTER" "$LEGACY_BEFORE" "The CLI leaves plugins.json untouched" || true
 
 end_test

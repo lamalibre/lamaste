@@ -2,7 +2,7 @@
  * lamaste-server plugins — Manage server-side plugins.
  *
  * Subcommands:
- *   list                 List installed plugins with status
+ *   list                 List installed plugins with status and hosting
  *   install <package>    Install a plugin by npm package name
  *   enable <name>        Enable a plugin
  *   disable <name>       Disable a plugin
@@ -11,24 +11,23 @@
  *   rotate-secret <name> <clientId>
  *                        New secret for a confidential OIDC client (shown once)
  *
- * The OIDC subcommands go through the running panel: writing a client to
- * Authelia is the panel's job.
+ * Every subcommand goes through the running panel (`/api/plugins/*`, admin
+ * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
+ * npm as the `lamaste` account, and writes the plugins' OIDC clients to
+ * Authelia. The CLI keeps no plugin state of its own, so a plugin it installs
+ * is the plugin the panel serves. The panel must be running — a plugin that
+ * fails to load is logged and skipped by the plugin host, so the panel stays
+ * reachable to disable it.
  */
 
 import chalk from 'chalk';
 import { execa } from 'execa';
-import {
-  readPlugins,
-  installPlugin,
-  enablePlugin,
-  disablePlugin,
-  uninstallPlugin,
-} from '@lamalibre/lamaste/server';
-import { STATE_DIR, PANEL_SERVICE } from '../config.js';
-import { exec } from '../exec.js';
+import { PANEL_SERVICE } from '../config.js';
 import { panelRequest } from '../panel-api.js';
-import { createLogger } from '../logger.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
+
+/** npm runs inside the panel for install and uninstall (its own limit is 120 s). */
+const NPM_CALL_TIMEOUT_MS = 180_000;
 
 /**
  * @param {string[]} args  Subcommand args: ['list'] | ['install', '<pkg>'] | ...
@@ -36,12 +35,6 @@ import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
  */
 export async function runPlugins(args, { json }) {
   const sub = args[0];
-
-  if (MUTATING.has(sub) && process.getuid?.() === 0) {
-    await runAsLamaste(args, { json });
-    await restartPanel(json);
-    return;
-  }
 
   switch (sub) {
     case 'list':
@@ -71,7 +64,7 @@ function printPluginUsage() {
 ${b('Usage:')} lamaste-server plugins <subcommand>
 
 ${b('Subcommands:')}
-  ${c('list')}                 List installed plugins with status
+  ${c('list')}                 Installed plugins: status, hosting (server or agent)
   ${c('install <package>')}    Install a plugin (e.g. @lamalibre/herd-server)
   ${c('enable <name>')}        Enable a plugin
   ${c('disable <name>')}       Disable a plugin
@@ -83,11 +76,13 @@ ${b('Subcommands:')}
 }
 
 /**
+ * The plugins the running panel serves, from the panel itself: its registry
+ * (SQLite `state.db`) is the one the plugin host and the OIDC sync read.
+ *
  * @param {{ json: boolean }} options
  */
 async function listPlugins({ json }) {
-  const registry = await readPlugins(STATE_DIR);
-  const plugins = registry.plugins;
+  const { plugins = [] } = await panelRequest('GET', '/api/plugins');
 
   if (json) {
     emit({ plugins });
@@ -111,9 +106,41 @@ async function listPlugins({ json }) {
 
   for (const p of plugins) {
     const status = p.status === 'enabled' ? g('enabled') : r('disabled');
-    console.log(`  ${c(p.name)}  ${d(p.version)}  ${status}  ${d(p.packageName)}`);
+    const hosting = p.hosting === 'agent' ? chalk.yellow('agent-hosted') : d('server-hosted');
+    console.log(`  ${c(p.name)}  ${d(p.version)}  ${status}  ${hosting}  ${d(p.packageName)}`);
   }
   console.log('');
+}
+
+/**
+ * Print the secrets of confidential OIDC clients an install or enable created.
+ * They are shown once — the panel stores only their digests.
+ *
+ * @param {Array<{ id: string, secret: string }> | undefined} clients
+ */
+function printCreatedSecrets(clients) {
+  if (!clients || clients.length === 0) return;
+  console.log(`  ${chalk.bold('Confidential OIDC client secrets (shown once):')}`);
+  for (const c of clients) console.log(`    ${chalk.cyan(c.id)}  ${c.secret}`);
+  console.log('');
+}
+
+/**
+ * Exit with a usage or panel error, as text or NDJSON.
+ *
+ * @param {string} message
+ * @param {boolean} json
+ * @param {string} [step]  NDJSON step that failed
+ * @returns {never}
+ */
+function fail(message, json, step) {
+  if (json) {
+    if (step) emitStep(step, 'failed', message);
+    emitError(message);
+  } else {
+    console.error(`\n  ${chalk.red(message)}\n`);
+  }
+  process.exit(1);
 }
 
 /**
@@ -121,53 +148,53 @@ async function listPlugins({ json }) {
  * @param {{ json: boolean }} options
  */
 async function installPluginCmd(packageName, { json }) {
-  if (!packageName) {
-    const msg = 'Usage: lamaste-server plugins install <package>';
-    if (json) emitError(msg);
-    else console.error(`\n  ${msg}\n`);
-    process.exit(1);
-  }
-
-  const logger = createLogger({ json });
+  if (!packageName) fail('Usage: lamaste-server plugins install <package>', json);
 
   if (json) {
     emitStep('install', 'running', `Installing ${packageName}`);
-    emitLog('info', `Fetching ${packageName} from the npm registry — this may take a moment.`);
+    emitLog('info', `The panel is fetching ${packageName} from the npm registry.`);
   } else {
     process.stderr.write(`  Installing ${chalk.cyan(packageName)}...`);
   }
 
+  let result;
   try {
-    const entry = await installPlugin({
-      packageName,
-      stateDir: STATE_DIR,
-      exec,
-      logger,
-    });
-
-    if (json) {
-      emitStep('install', 'complete');
-      emitComplete({ plugin: entry });
-    } else {
-      console.log(` ${chalk.green('ok')}`);
-      console.log(`  Plugin ${chalk.cyan(entry.name)} installed (${chalk.dim('disabled')})`);
-      console.log(
-        `  Run ${chalk.cyan(`lamaste-server plugins enable ${entry.name}`)} to activate.`,
-      );
-      console.log('');
-    }
-
-    await restartPanel(json);
+    result = await panelRequest(
+      'POST',
+      '/api/plugins/install',
+      { packageName },
+      { timeoutMs: NPM_CALL_TIMEOUT_MS },
+    );
   } catch (err) {
-    if (json) {
-      emitStep('install', 'failed', err.message);
-      emitError(err.message);
-    } else {
-      console.log(` ${chalk.red('failed')}`);
-      console.error(`  ${chalk.red(err.message)}`);
-    }
-    process.exit(1);
+    if (!json) console.log(` ${chalk.red('failed')}`);
+    fail(err.message, json, 'install');
   }
+
+  const { plugin, oidcClients } = result;
+  if (json) {
+    emitStep('install', 'complete');
+    emitComplete({ plugin, oidcClients });
+    return;
+  }
+  const hosting = plugin.hosting === 'agent' ? ', agent-hosted' : '';
+  console.log(` ${chalk.green('ok')}`);
+  console.log(`  Plugin ${chalk.cyan(plugin.name)} installed (${chalk.dim(`disabled${hosting}`)})`);
+  console.log(`  Run ${chalk.cyan(`lamaste-server plugins enable ${plugin.name}`)} to activate.`);
+  console.log('');
+  printCreatedSecrets(oidcClients);
+}
+
+/**
+ * The panel mounts a server-hosted plugin's routes at startup, so enabling or
+ * disabling one takes effect after a restart; an agent-hosted plugin has
+ * nothing mounted and its OIDC clients are already applied.
+ *
+ * @param {string} name
+ * @returns {Promise<boolean>}
+ */
+async function needsRestart(name) {
+  const { plugin } = await panelRequest('GET', `/api/plugins/${encodeURIComponent(name)}`);
+  return plugin.hosting !== 'agent';
 }
 
 /**
@@ -175,28 +202,21 @@ async function installPluginCmd(packageName, { json }) {
  * @param {{ json: boolean }} options
  */
 async function enablePluginCmd(name, { json }) {
-  if (!name) {
-    const msg = 'Usage: lamaste-server plugins enable <name>';
-    if (json) emitError(msg);
-    else console.error(`\n  ${msg}\n`);
-    process.exit(1);
-  }
+  if (!name) fail('Usage: lamaste-server plugins enable <name>', json);
 
-  const logger = createLogger({ json });
-
+  let result;
   try {
-    await enablePlugin({ name, stateDir: STATE_DIR, logger });
-    if (json) {
-      emitComplete({ name, status: 'enabled' });
-    } else {
-      console.log(`\n  Plugin ${chalk.cyan(name)} ${chalk.green('enabled')}.`);
-    }
-    await restartPanel(json);
+    result = await panelRequest('POST', `/api/plugins/${encodeURIComponent(name)}/enable`);
   } catch (err) {
-    if (json) emitError(err.message);
-    else console.error(`\n  ${chalk.red(err.message)}\n`);
-    process.exit(1);
+    fail(err.message, json);
   }
+
+  if (json) emitComplete({ name, status: 'enabled', oidcClients: result.oidcClients });
+  else {
+    console.log(`\n  Plugin ${chalk.cyan(name)} ${chalk.green('enabled')}.`);
+    printCreatedSecrets(result.oidcClients);
+  }
+  if (await needsRestart(name)) await restartPanel(json);
 }
 
 /**
@@ -204,28 +224,17 @@ async function enablePluginCmd(name, { json }) {
  * @param {{ json: boolean }} options
  */
 async function disablePluginCmd(name, { json }) {
-  if (!name) {
-    const msg = 'Usage: lamaste-server plugins disable <name>';
-    if (json) emitError(msg);
-    else console.error(`\n  ${msg}\n`);
-    process.exit(1);
-  }
-
-  const logger = createLogger({ json });
+  if (!name) fail('Usage: lamaste-server plugins disable <name>', json);
 
   try {
-    await disablePlugin({ name, stateDir: STATE_DIR, logger });
-    if (json) {
-      emitComplete({ name, status: 'disabled' });
-    } else {
-      console.log(`\n  Plugin ${chalk.cyan(name)} ${chalk.red('disabled')}.`);
-    }
-    await restartPanel(json);
+    await panelRequest('POST', `/api/plugins/${encodeURIComponent(name)}/disable`);
   } catch (err) {
-    if (json) emitError(err.message);
-    else console.error(`\n  ${chalk.red(err.message)}\n`);
-    process.exit(1);
+    fail(err.message, json);
   }
+
+  if (json) emitComplete({ name, status: 'disabled' });
+  else console.log(`\n  Plugin ${chalk.cyan(name)} ${chalk.red('disabled')}.`);
+  if (await needsRestart(name)) await restartPanel(json);
 }
 
 /**
@@ -233,36 +242,27 @@ async function disablePluginCmd(name, { json }) {
  * @param {{ json: boolean }} options
  */
 async function uninstallPluginCmd(name, { json }) {
-  if (!name) {
-    const msg = 'Usage: lamaste-server plugins uninstall <name>';
-    if (json) emitError(msg);
-    else console.error(`\n  ${msg}\n`);
-    process.exit(1);
-  }
-
-  const logger = createLogger({ json });
+  if (!name) fail('Usage: lamaste-server plugins uninstall <name>', json);
 
   if (json) emitStep('uninstall', 'running', `Uninstalling ${name}`);
   else process.stderr.write(`  Uninstalling ${chalk.cyan(name)}...`);
 
   try {
-    await uninstallPlugin({ name, stateDir: STATE_DIR, exec, logger });
-    if (json) {
-      emitStep('uninstall', 'complete');
-      emitComplete({ name, removed: true });
-    } else {
-      console.log(` ${chalk.green('ok')}`);
-    }
-    await restartPanel(json);
+    // The panel refuses an enabled plugin (409): nothing of it is mounted
+    // once it is disabled, so no restart follows.
+    await panelRequest('DELETE', `/api/plugins/${encodeURIComponent(name)}`, null, {
+      timeoutMs: NPM_CALL_TIMEOUT_MS,
+    });
   } catch (err) {
-    if (json) {
-      emitStep('uninstall', 'failed', err.message);
-      emitError(err.message);
-    } else {
-      console.log(` ${chalk.red('failed')}`);
-      console.error(`  ${chalk.red(err.message)}`);
-    }
-    process.exit(1);
+    if (!json) console.log(` ${chalk.red('failed')}`);
+    fail(err.message, json, 'uninstall');
+  }
+
+  if (json) {
+    emitStep('uninstall', 'complete');
+    emitComplete({ name, removed: true });
+  } else {
+    console.log(` ${chalk.green('ok')}`);
   }
 }
 
@@ -339,58 +339,13 @@ async function rotateSecretCmd(name, clientId, { json }) {
   console.log(`  ${chalk.bold('New secret (shown once):')} ${result.secret}\n`);
 }
 
-const MUTATING = new Set(['install', 'enable', 'disable', 'uninstall']);
-
-/** Set on the child run as lamaste: the root parent restarts the panel. */
-const CHILD_ENV = 'LAMALIBRE_LAMASTE_CLI_PLUGINS_CHILD';
-
 /**
- * Run a plugin subcommand as the lamaste user and wait for it.
- *
- * Plugin state (the npm tree, plugins.json, plugin data) lives in the
- * lamaste-owned state directory. Running npm or writing files there as root
- * would let whatever the panel left in that directory — a `.npmrc`, a
- * symlink — steer root. As lamaste, it can only reach what the panel could
- * already reach. Stays usable while the panel is down (disabling a plugin
- * that keeps it from starting).
- *
- * @param {string[]} args
- * @param {{ json: boolean }} options
- */
-async function runAsLamaste(args, { json }) {
-  const uid = Number.parseInt((await execa('id', ['-u', 'lamaste'])).stdout.trim(), 10);
-  const gid = Number.parseInt((await execa('id', ['-g', 'lamaste'])).stdout.trim(), 10);
-  const { exitCode } = await execa(
-    process.execPath,
-    [process.argv[1], 'plugins', ...args, ...(json ? ['--json'] : [])],
-    {
-      uid,
-      gid,
-      cwd: STATE_DIR,
-      stdio: 'inherit',
-      reject: false,
-      env: {
-        ...process.env,
-        [CHILD_ENV]: '1',
-        HOME: STATE_DIR,
-        USER: 'lamaste',
-        LOGNAME: 'lamaste',
-        npm_config_cache: `${STATE_DIR}/.npm`,
-      },
-      extendEnv: false,
-    },
-  );
-  if (exitCode !== 0) process.exit(exitCode ?? 1);
-}
-
-/**
- * Restart the panel service after plugin changes.
- * Plugin enable/disable/install/uninstall requires a panel restart to take effect.
+ * Restart the panel so it mounts (or unmounts) a server-hosted plugin's
+ * routes. Needs root, like every `lamaste-server` command that reads the
+ * admin certificate.
  * @param {boolean} json
  */
 async function restartPanel(json) {
-  // The child run as lamaste cannot; its root parent does.
-  if (process.env[CHILD_ENV] === '1') return;
   try {
     await execa('systemctl', ['restart', PANEL_SERVICE]);
     if (!json) {

@@ -97,9 +97,11 @@ export function parsePanelResponse(stdout, method, path) {
  * @param {string} method
  * @param {string} path  e.g. '/api/tunnels'
  * @param {Record<string, unknown> | null} [body]  sent as JSON when given
+ * @param {{ timeoutMs?: number }} [options]  `timeoutMs` for calls the panel
+ *   needs longer to answer (a plugin install runs npm); default 30 s
  * @returns {Promise<Record<string, unknown>>}
  */
-export async function panelRequest(method, path, body = null) {
+export async function panelRequest(method, path, body = null, { timeoutMs = 30000 } = {}) {
   const p12Path = `${PKI_DIR}/client.p12`;
 
   // Read p12 password from the stored file
@@ -120,7 +122,7 @@ export async function panelRequest(method, path, body = null) {
     const { stdout } = await execa(
       'curl',
       buildPanelCurlArgs({ method, path, body, p12Path, configPath: tmpConfigPath }),
-      { timeout: 30000 },
+      { timeout: timeoutMs },
     );
 
     return parsePanelResponse(stdout, method, path);

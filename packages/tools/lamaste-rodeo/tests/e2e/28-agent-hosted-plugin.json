@@ -1064,16 +1064,54 @@
               "message": "Storage cannot be bound to an agent-hosted plugin"
             }
           }
+        },
+        {
+          "id": "step-79",
+          "label": "Set CLI_LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins list 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "lamaste-server plugins list shows the hosting",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_LIST"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "agent-hosted"
+              },
+              "message": "lamaste-server plugins list shows the hosting"
+            }
+          }
         }
       ],
-      "bash": "log_section \"Panel restart — the plugin host skips the agent-hosted plugin\"\n\nRESTARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')\nsudo systemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=false\nfor _ in $(seq 1 30); do\n  if [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; then\n    PANEL_BACK=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$PANEL_BACK\" = \"true\" ]; then\n  log_pass \"Panel healthy after the restart with the plugin enabled\"\nelse\n  log_fail \"Panel not healthy within 60 seconds of restart\"\nfi\n\nPANEL_JOURNAL=$(journalctl -u lamalibre-lamaste-serverd --since \"$RESTARTED_AT\" --no-pager -o cat 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_JOURNAL\" \"no routes mounted\" \"Plugin host logged that it skipped the agent-hosted plugin\" || true\nassert_not_contains \"$PANEL_JOURNAL\" \"$IMPORT_MARKER\" \"The plugin's code was never imported\" || true\n\nROUTE_STATUS=$(api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$ROUTE_STATUS\" \"404\" \"Nothing is mounted under /api/${PLUGIN_NAME}\" || true\nBUNDLE_STATUS=$(api_get_status \"${PLUGIN_NAME}/panel.js\")\nassert_eq \"$BUNDLE_STATUS\" \"404\" \"No panel bundle is served\" || true\n\nSTILL_SERVED=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$STILL_SERVED\" \"1\" \"The client is still served after the restart\" || true\n\nSTORAGE_STATUS=$(api_post_status \"storage/bindings\" \"{\\\"pluginName\\\":\\\"${PLUGIN_NAME}\\\",\\\"storageServerId\\\":\\\"00000000-0000-4000-8000-000000000000\\\"}\")\nassert_eq \"$STORAGE_STATUS\" \"400\" \"Storage cannot be bound to an agent-hosted plugin\" || true\n\n# ===========================================================================\n# 5. Disable and uninstall\n# ==========================================================================="
+      "bash": "log_section \"Panel restart — the plugin host skips the agent-hosted plugin\"\n\nRESTARTED_AT=$(date '+%Y-%m-%d %H:%M:%S')\nsudo systemctl restart lamalibre-lamaste-serverd\nPANEL_BACK=false\nfor _ in $(seq 1 30); do\n  if [ \"$(api_get \"health\" 2>/dev/null | jq -r '.status' 2>/dev/null || echo \"\")\" = \"ok\" ]; then\n    PANEL_BACK=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$PANEL_BACK\" = \"true\" ]; then\n  log_pass \"Panel healthy after the restart with the plugin enabled\"\nelse\n  log_fail \"Panel not healthy within 60 seconds of restart\"\nfi\n\nPANEL_JOURNAL=$(journalctl -u lamalibre-lamaste-serverd --since \"$RESTARTED_AT\" --no-pager -o cat 2>/dev/null || echo \"\")\nassert_contains \"$PANEL_JOURNAL\" \"no routes mounted\" \"Plugin host logged that it skipped the agent-hosted plugin\" || true\nassert_not_contains \"$PANEL_JOURNAL\" \"$IMPORT_MARKER\" \"The plugin's code was never imported\" || true\n\nROUTE_STATUS=$(api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$ROUTE_STATUS\" \"404\" \"Nothing is mounted under /api/${PLUGIN_NAME}\" || true\nBUNDLE_STATUS=$(api_get_status \"${PLUGIN_NAME}/panel.js\")\nassert_eq \"$BUNDLE_STATUS\" \"404\" \"No panel bundle is served\" || true\n\nSTILL_SERVED=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$STILL_SERVED\" \"1\" \"The client is still served after the restart\" || true\n\nSTORAGE_STATUS=$(api_post_status \"storage/bindings\" \"{\\\"pluginName\\\":\\\"${PLUGIN_NAME}\\\",\\\"storageServerId\\\":\\\"00000000-0000-4000-8000-000000000000\\\"}\")\nassert_eq \"$STORAGE_STATUS\" \"400\" \"Storage cannot be bound to an agent-hosted plugin\" || true\n\nCLI_LIST=$(lamaste-server plugins list 2>&1 || true)\nassert_contains \"$CLI_LIST\" \"agent-hosted\" \"lamaste-server plugins list shows the hosting\" || true\n\n# ===========================================================================\n# 5. Disable and uninstall\n# ==========================================================================="
     },
     {
       "id": "disable-and-uninstall",
       "label": "Disable and uninstall",
       "steps": [
         {
-          "id": "step-79",
+          "id": "step-81",
           "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
           "target": "host",
           "op": {
@@ -1091,7 +1129,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-82",
           "label": "Plugin disabled",
           "target": "local",
           "continueOnError": true,
@@ -1113,7 +1151,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-83",
           "label": "Authelia is active after the removal",
           "target": "local",
           "op": {
@@ -1123,7 +1161,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-84",
           "label": "Authelia is not active after the removal",
           "target": "local",
           "op": {
@@ -1133,7 +1171,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-85",
           "label": "Set CLI_AFTER_DISABLE",
           "target": "local",
           "op": {
@@ -1150,7 +1188,7 @@
           ]
         },
         {
-          "id": "step-84",
+          "id": "step-86",
           "label": "Disabling removes the client from Authelia",
           "target": "local",
           "continueOnError": true,
@@ -1171,7 +1209,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-87",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -1189,7 +1227,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-88",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -1211,7 +1249,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-89",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -1229,7 +1267,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-90",
           "label": "The plugin is gone from the registry",
           "target": "local",
           "continueOnError": true,
@@ -1250,11 +1288,286 @@
           }
         }
       ],
-      "bash": "log_section \"Disable and uninstall\"\n\nDISABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE_RESPONSE\" '.status' 'disabled' \"Plugin disabled\" || true\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the removal\"\nelse\n  log_fail \"Authelia is not active after the removal\"\nfi\nCLI_AFTER_DISABLE=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_AFTER_DISABLE\" \"0\" \"Disabling removes the client from Authelia\" || true\n\nUNINSTALL_RESPONSE=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL_RESPONSE\" '.ok' 'true' \"Plugin uninstalled\" || true\nREMAINING=$(api_get \"plugins\" | jq \"[.plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$REMAINING\" \"0\" \"The plugin is gone from the registry\" || true"
+      "bash": "log_section \"Disable and uninstall\"\n\nDISABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE_RESPONSE\" '.status' 'disabled' \"Plugin disabled\" || true\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the removal\"\nelse\n  log_fail \"Authelia is not active after the removal\"\nfi\nCLI_AFTER_DISABLE=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_AFTER_DISABLE\" \"0\" \"Disabling removes the client from Authelia\" || true\n\nUNINSTALL_RESPONSE=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL_RESPONSE\" '.ok' 'true' \"Plugin uninstalled\" || true\nREMAINING=$(api_get \"plugins\" | jq \"[.plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$REMAINING\" \"0\" \"The plugin is gone from the registry\" || true\n\n# ===========================================================================\n# 6. The same lifecycle through lamaste-server plugins\n#\n# The CLI goes through the panel, so what it installs is what the panel\n# serves and its OIDC clients reach Authelia. (Before 4.2 it wrote a\n# plugins.json the panel had not read since 2.0.)\n# ==========================================================================="
+    },
+    {
+      "id": "lifecycle-through-lamaste-server-plugins",
+      "label": "Lifecycle through lamaste-server plugins",
+      "steps": [
+        {
+          "id": "step-91",
+          "label": "Set LEGACY_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sha256sum \"${STATE_DIR}/plugins.json\" 2>/dev/null | cut -d' ' -f1 || true"
+          },
+          "capture": [
+            {
+              "variable": "LEGACY_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "Set CLI_INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins install \"${PLUGIN_PACKAGE}\" --json 2>/dev/null | tail -1 || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "CLI_INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "CLI install answers with the panel's registry entry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLI_INSTALL"
+              },
+              "path": ".plugin.hosting",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "CLI install answers with the panel's registry entry"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "CLI_LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-95",
+          "label": "The panel serves the plugin the CLI installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_LISTED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "The panel serves the plugin the CLI installed"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Authelia is active after the CLI enable",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Authelia is active after the CLI enable"
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Authelia is not active after the CLI enable",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Authelia is not active after the CLI enable"
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "Set CLI_CLIENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_CLIENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "CLI enable writes the plugin's client to Authelia",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_CLIENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "CLI enable writes the plugin's client to Authelia"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Set CLI_CLIENT_GONE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_CLIENT_GONE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-103",
+          "label": "CLI disable removes the client",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_CLIENT_GONE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "CLI disable removes the client"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "CLI_REMAINING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "CLI uninstall removes it from the panel's registry",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_REMAINING"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "CLI uninstall removes it from the panel's registry"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set LEGACY_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sha256sum \"${STATE_DIR}/plugins.json\" 2>/dev/null | cut -d' ' -f1 || true"
+          },
+          "capture": [
+            {
+              "variable": "LEGACY_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "The CLI leaves plugins.json untouched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LEGACY_AFTER"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "LEGACY_BEFORE"
+              },
+              "message": "The CLI leaves plugins.json untouched"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Lifecycle through lamaste-server plugins\"\n\n# A server upgraded from before 2.0 may still carry a plugins.json; the CLI\n# must leave it as it is, so compare rather than expect it absent.\nLEGACY_BEFORE=$(sha256sum \"${STATE_DIR}/plugins.json\" 2>/dev/null | cut -d' ' -f1 || true)\n\nCLI_INSTALL=$(lamaste-server plugins install \"${PLUGIN_PACKAGE}\" --json 2>/dev/null | tail -1 || echo '{}')\nassert_json_field \"$CLI_INSTALL\" '.plugin.hosting' 'agent' \"CLI install answers with the panel's registry entry\" || true\nCLI_LISTED=$(api_get \"plugins\" | jq -r \".plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\") | .status\" 2>/dev/null || echo \"\")\nassert_eq \"$CLI_LISTED\" \"disabled\" \"The panel serves the plugin the CLI installed\" || true\n\nlamaste-server plugins enable \"${PLUGIN_NAME}\" --json >/dev/null 2>&1 || true\nif wait_for_service authelia 60; then\n  log_pass \"Authelia is active after the CLI enable\"\nelse\n  log_fail \"Authelia is not active after the CLI enable\"\nfi\nCLI_CLIENT=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_CLIENT\" \"1\" \"CLI enable writes the plugin's client to Authelia\" || true\n\nlamaste-server plugins disable \"${PLUGIN_NAME}\" --json >/dev/null 2>&1 || true\nCLI_CLIENT_GONE=$(grep -c \"client_id: ${PLUGIN_NAME}-cli\" /etc/authelia/configuration.yml || true)\nassert_eq \"$CLI_CLIENT_GONE\" \"0\" \"CLI disable removes the client\" || true\n\nlamaste-server plugins uninstall \"${PLUGIN_NAME}\" --json >/dev/null 2>&1 || true\nCLI_REMAINING=$(api_get \"plugins\" | jq \"[.plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$CLI_REMAINING\" \"0\" \"CLI uninstall removes it from the panel's registry\" || true\nLEGACY_AFTER=$(sha256sum \"${STATE_DIR}/plugins.json\" 2>/dev/null | cut -d' ' -f1 || true)\nassert_eq \"$LEGACY_AFTER\" \"$LEGACY_BEFORE\" \"The CLI leaves plugins.json untouched\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 28 — Agent-hosted plugin (identity only)\n# ============================================================================\n# Installs a fixture plugin whose manifest says \"hosting\": \"agent\" and whose\n# main module throws the moment it is imported (served by a stand-in registry\n# on the VM), and verifies:\n# - the install records hosting \"agent\"; a variant declaring panel pages is\n#   refused (400) and leaves nothing installed\n# - enabling writes its OIDC client to Authelia, and the discovery document\n#   and JWKS answer\n# - after a panel restart the plugin host skips it — never imported, nothing\n#   mounted: its route 404s, no panel bundle, the panel stays healthy\n# - storage cannot be bound to it\n# - disabling removes the client; uninstalling removes the plugin\n# Spec 26 keeps covering server-hosted plugins.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 28 — Agent-hosted plugin (identity only)\n# ============================================================================\n# Installs a fixture plugin whose manifest says \"hosting\": \"agent\" and whose\n# main module throws the moment it is imported (served by a stand-in registry\n# on the VM), and verifies:\n# - the install records hosting \"agent\"; a variant declaring panel pages is\n#   refused (400) and leaves nothing installed\n# - enabling writes its OIDC client to Authelia, and the discovery document\n#   and JWKS answer\n# - after a panel restart the plugin host skips it — never imported, nothing\n#   mounted: its route 404s, no panel bundle, the panel stays healthy\n# - storage cannot be bound to it; lamaste-server plugins list shows it as\n#   agent-hosted\n# - disabling removes the client; uninstalling removes the plugin\n# Spec 26 keeps covering server-hosted plugins.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm\n\nbegin_test \"28 — Agent-hosted plugin (identity only)\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

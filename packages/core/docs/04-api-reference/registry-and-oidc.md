@@ -127,7 +127,7 @@ Admin only, 10 per minute. Replaces a confidential client's secret in the store 
 
 `400` for a public client, `404` for a client the plugin does not declare.
 
-CLI: `lamaste-server plugins oidc-clients <name>` and `lamaste-server plugins rotate-secret <name> <clientId>` (both through the running panel).
+CLI: `lamaste-server plugins oidc-clients <name>` and `lamaste-server plugins rotate-secret <name> <clientId>`. Every `lamaste-server plugins` subcommand goes through the running panel — `install`, `enable`, `disable` and `uninstall` call the routes above, so a plugin the CLI installs is the one the panel serves and its clients reach Authelia — and `lamaste-server plugins list` shows each plugin's hosting.
 
 ## Registry credential endpoints
 

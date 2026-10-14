@@ -467,7 +467,7 @@ Anything else is refused — including directives nginx would accept, backslashe
 
 #### Root code never writes through the panel's paths
 
-`create-lamaste` (including a self-update the panel triggers) and `sudo lamaste-server` run as root on directories `lamaste` can write to, which a compromised panel could have seeded with symlinks. So root never writes through an existing path there: new files are created `O_EXCL | O_NOFOLLOW` under a random name, `fchown`ed and renamed into place; temporary directories are `mkdtemp`; `lamaste-server reset-admin` runs `openssl`, `cp` and `chmod` as `lamaste`; `lamaste-server plugins install|enable|disable|uninstall` re-runs itself as `lamaste` (npm and state writes) and only restarts the panel as root.
+`create-lamaste` (including a self-update the panel triggers) and `sudo lamaste-server` run as root on directories `lamaste` can write to, which a compromised panel could have seeded with symlinks. So root never writes through an existing path there: new files are created `O_EXCL | O_NOFOLLOW` under a random name, `fchown`ed and renamed into place; temporary directories are `mkdtemp`; `lamaste-server reset-admin` runs `openssl`, `cp` and `chmod` as `lamaste`; `lamaste-server plugins install|enable|disable|uninstall` change nothing on disk themselves: they call the panel's plugin routes with the admin certificate (the panel runs npm and writes its registry as `lamaste`), and root only restarts the panel.
 
 ### Secret generation
 
