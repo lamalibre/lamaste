@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-14
+
+All lockstep packages move to 4.2.0; internal `@lamalibre/*` ranges become `^4.2.0`.
+
 ### Upgrade notes
 
+- Update the server with Panel Update (or a `create-lamaste` redeploy), as for 4.1. Agents may stay on 4.1 for everything the relay does; a 4.2 agent also refuses to load an agent-hosted plugin installed on it locally, which a 4.1 agent would import.
 - serverd adds the `plugins.hosting` column on start (migration `0005_plugin_hosting.sql`); every plugin installed before is a server plugin and behaves as before.
+- **Install an agent-hosted plugin only on a 4.2 server.** Earlier servers drop the unknown `hosting` field and would import the package on enable — for `@lamalibre/feria-server` 0.3.1 that is the Feria CLI.
+- `lamaste-server plugins` needs the panel to be running (it now goes through the panel's API).
 
 ### Added
 
@@ -24,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The npm pages of `@lamalibre/lamaste-agent-ui` linked to the repository's pre-transfer address; `lamaste-agent-ui` and `lamaste-server-ui` now name `github.com/lamalibre/lamaste`.
 - `lamaste-server plugins install|enable|disable|uninstall` changed nothing the panel serves: they wrote `plugins.json` through the core library, while the panel has read its plugin registry from SQLite (`state.db`) since 2.0, and they never synced OIDC clients to Authelia. A plugin installed with the CLI was invisible to the panel and its clients never reached Authelia. E2E spec 28 now runs the whole lifecycle through the CLI as well.
 - A multi-page plugin manifest (`panel.pages`) lost its pages on the panel: the manifest schema tried the single-page panel shape first, which matched and stripped `pages`, so the panel's sidebar never showed them and `apiPrefix` was never checked. The multi-page shape is now tried first.
 
