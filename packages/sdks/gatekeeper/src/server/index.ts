@@ -133,7 +133,11 @@ function watchFile(
 export async function createServer(): Promise<ReturnType<typeof Fastify>> {
   const server = Fastify({
     logger: true,
-    trustProxy: 1,
+    // Forwarding headers are honoured only from loopback: the gatekeeper
+    // listens on 127.0.0.1 and its callers (nginx, the panel proxy) are
+    // local. Trust by address, not hop count — a hop count cannot tell a
+    // proxy from a direct client spoofing X-Forwarded-*.
+    trustProxy: '127.0.0.1',
   });
 
   // Global rate limit. The gatekeeper binds to 127.0.0.1 and is reached
