@@ -29,7 +29,7 @@ jobs:
 
       - name: Install website dependencies
         working-directory: website
-        run: npm install
+        run: npm ci --no-audit --no-fund
 
       - name: Build docs site
         working-directory: website

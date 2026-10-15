@@ -6,3 +6,9 @@ package-lock.json
 target/
 e2e-logs/
 *.tgz
+
+# Generated, ignored by nested .gitignore files that Prettier does not read
+website/src/
+website/.vitepress/dist/
+website/.vitepress/cache/
+packages/clients/desktop/src-tauri/gen/schemas/
