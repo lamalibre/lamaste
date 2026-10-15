@@ -356,6 +356,30 @@ test('relay hooks and an agent half: one approval digest; the runner holds the r
   assert.deepEqual(staged.pendingUpdate, waiting.pendingUpdate);
 });
 
+test('an invalid manifest is a 400 at install and at update, whichever zod copy validated it', async () => {
+  // core validates with its own zod; serverd must not depend on that being the
+  // same copy as its own (a workspace holds two) — it checks core's error class.
+  const bad = { ...fxManifest('1.0.0'), name: 'iv', hosting: 'nowhere' };
+  await npm.publish('@lamalibre/iv-server', '1.0.0', {
+    'lamaste-plugin.json': JSON.stringify(bad),
+  });
+  await assert.rejects(lib.installPlugin('@lamalibre/iv-server', logger), (err) => {
+    assert.equal(err.statusCode, 400);
+    assert.match(err.message, /^Invalid plugin manifest: /);
+    return true;
+  });
+  assert.equal(await lib.findPlugin('iv'), null);
+
+  await npm.publish(PKG, '1.9.0', {
+    'lamaste-plugin.json': JSON.stringify({ ...fxManifest('1.9.0'), hosting: 'nowhere' }),
+  });
+  await assert.rejects(lib.updatePlugin('fx', '1.9.0', actor), (err) => {
+    assert.equal(err.statusCode, 400);
+    assert.match(err.message, /^Invalid plugin manifest in 1\.9\.0: /);
+    return true;
+  });
+});
+
 test('routes are unique: a plugin whose route another installed plugin holds is refused', async () => {
   // A server plugin named "fx-server" would take route "fx" — fx's.
   await npm.publish('@lamalibre/fxs-server', '1.0.0', {
@@ -466,4 +490,76 @@ test('auto-approve covers a new version of the same agent half, not new system p
   assert.equal(status.approval.approvedBy, 'auto-approve');
   assert.equal(status.approval.approvedVersion, '1.2.1');
   await lib.setAutoApprove('fx', false, actor);
+});
+
+test('an update that adds a confidential OIDC client shows its secret once, on the finished operation', async () => {
+  // ox: agent-hosted, its agent half installed by hand — nothing to approve,
+  // so an update applies at once. Authelia is not here: the sync is replaced.
+  const OX_PKG = '@lamalibre/ox-server';
+  const oxManifest = (version, oidcClients = []) => ({
+    name: 'ox',
+    version,
+    hosting: 'agent',
+    agent: {},
+    oidcClients,
+  });
+  await npm.publish(OX_PKG, '1.0.0', {
+    'lamaste-plugin.json': JSON.stringify(oxManifest('1.0.0')),
+  });
+  await lib.installPlugin(OX_PKG, logger);
+  const created = [{ id: 'ox-service', plugin: 'ox', secret: 's3cr3t'.repeat(8) }];
+  const syncs = [];
+  lib.setOidcSyncForTests(async () => {
+    syncs.push((await lib.findPlugin('ox')).version);
+    return { changed: true, clients: ['ox-service'], createdSecrets: created };
+  });
+  try {
+    const service = {
+      id: 'ox-service',
+      confidential: true,
+      grantTypes: ['client_credentials'],
+      scopes: ['ox_read'],
+    };
+    await npm.publish(OX_PKG, '1.1.0', {
+      'lamaste-plugin.json': JSON.stringify(oxManifest('1.1.0', [service])),
+    });
+    const { operation } = await lib.updatePlugin('ox', '1.1.0', actor);
+    const done = await lib.waitForPluginOperation('ox');
+    assert.equal(done.status, 'succeeded', JSON.stringify(done));
+    assert.deepEqual(syncs, ['1.1.0'], 'synced once the new version is in place');
+    // Never in the stored operation.
+    assert.equal(JSON.stringify(done).includes(created[0].secret), false);
+
+    // The operation read that follows it to its end carries the secret, once.
+    const { default: Fastify } = await import('fastify');
+    const { default: errors } = await import('../src/middleware/errors.js');
+    const { default: pluginRoutes } = await import('../src/routes/management/plugins.js');
+    const app = Fastify({ logger: false });
+    await app.register(errors);
+    app.decorateRequest('certRole', null);
+    app.addHook('onRequest', async (request) => {
+      request.certRole = 'admin';
+    });
+    app.decorate('requireRole', () => async () => {});
+    await app.register(pluginRoutes, { prefix: '/api' });
+    await app.ready();
+    try {
+      const list = await app.inject({ method: 'GET', url: '/api/plugins/ox/operations' });
+      assert.equal(list.statusCode, 200);
+      assert.equal(list.body.includes(created[0].secret), false, 'never in the list');
+      const url = `/api/plugins/ox/operations/${operation.id}`;
+      const first = await app.inject({ method: 'GET', url });
+      assert.equal(first.statusCode, 200);
+      assert.deepEqual(first.json().operation.oidcClients, [
+        { id: 'ox-service', secret: created[0].secret },
+      ]);
+      const second = await app.inject({ method: 'GET', url });
+      assert.equal(second.json().operation.oidcClients, undefined, 'shown once');
+      assert.equal(second.json().operation.status, 'succeeded');
+    } finally {
+      await app.close();
+    }
+  } finally {
+    lib.setOidcSyncForTests(null);
+  }
 });

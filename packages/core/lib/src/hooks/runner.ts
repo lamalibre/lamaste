@@ -225,29 +225,33 @@ function failure(
   return encodeFrame(response);
 }
 
-/** Turn a hook's decision into a response frame; a `replace` body travels as the frame body. */
+/**
+ * Turn a hook's decision into a response frame; a `replace` body travels as
+ * the frame body. A decision that cannot be encoded (a BigInt, a cycle) is
+ * `invalid` whatever its action — the hook returned, it did not throw.
+ */
 function success(decision: unknown): Buffer {
   if (!isRecord(decision)) {
     return failure('invalid', { name: 'TypeError', message: 'A hook must return an object' });
   }
-  if (decision['action'] === 'replace') {
-    const body = decision['body'];
-    const { body: _body, ...rest } = decision;
-    if (typeof body === 'string') {
-      return encodeFrame(
-        { v: HOOK_PROTOCOL_VERSION, ok: true, decision: rest, bodyIsText: true },
-        Buffer.from(body, 'utf-8'),
-      );
-    }
-    if (body instanceof Uint8Array) {
-      return encodeFrame({ v: HOOK_PROTOCOL_VERSION, ok: true, decision: rest }, body);
-    }
-    return failure('invalid', {
-      name: 'TypeError',
-      message: 'A replace decision needs a string or Uint8Array body',
-    });
-  }
   try {
+    if (decision['action'] === 'replace') {
+      const body = decision['body'];
+      const { body: _body, ...rest } = decision;
+      if (typeof body === 'string') {
+        return encodeFrame(
+          { v: HOOK_PROTOCOL_VERSION, ok: true, decision: rest, bodyIsText: true },
+          Buffer.from(body, 'utf-8'),
+        );
+      }
+      if (body instanceof Uint8Array) {
+        return encodeFrame({ v: HOOK_PROTOCOL_VERSION, ok: true, decision: rest }, body);
+      }
+      return failure('invalid', {
+        name: 'TypeError',
+        message: 'A replace decision needs a string or Uint8Array body',
+      });
+    }
     return encodeFrame({ v: HOOK_PROTOCOL_VERSION, ok: true, decision });
   } catch (err: unknown) {
     return failure('invalid', describeError(err));

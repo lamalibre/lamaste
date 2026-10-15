@@ -341,13 +341,17 @@ test('approvalDigest: refuses what cannot be approved', () => {
 // Host facts and eligibility
 // ---------------------------------------------------------------------------
 
+/** The key this relay signs app jobs with, and the one the agent pinned. */
+const RELAY_KID = 'ab'.repeat(16);
+const RELAY = { relayKid: RELAY_KID };
+
 const ubuntu = {
   os: 'linux',
   arch: 'x64',
   distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
   node: '22.13.1',
   systemd: true,
-  apphost: { version: 1, node: '22.13.1' },
+  apphost: { version: 1, node: '22.13.1', relayKid: RELAY_KID },
 };
 
 const mac = {
@@ -368,10 +372,17 @@ test('HostFactsSchema: what an agent reports, strictly', () => {
   assert.ok(bad({ node: 'v22.13.1' }));
   assert.ok(bad({ node: '22' }));
   assert.ok(bad({ systemd: 'yes' }));
-  assert.ok(bad({ apphost: { version: 0, node: '22.13.1' } }));
-  assert.ok(bad({ apphost: { version: 1.5, node: '22.13.1' } }));
-  assert.ok(bad({ apphost: { version: 1 } }), "the helper's Node.js is part of it");
-  assert.ok(bad({ apphost: { version: 1, node: 'v22' } }));
+  assert.ok(bad({ apphost: { version: 0, node: '22.13.1', relayKid: null } }));
+  assert.ok(bad({ apphost: { version: 1.5, node: '22.13.1', relayKid: null } }));
+  assert.ok(bad({ apphost: { version: 1, relayKid: null } }), "the helper's Node.js is part of it");
+  assert.ok(bad({ apphost: { version: 1, node: 'v22', relayKid: null } }));
+  assert.ok(
+    bad({ apphost: { version: 1, node: '22.13.1' } }),
+    'the pinned relay key is part of it',
+  );
+  assert.ok(bad({ apphost: { version: 1, node: '22.13.1', relayKid: 'AB'.repeat(16) } }));
+  assert.ok(bad({ apphost: { version: 1, node: '22.13.1', relayKid: 'ab' } }));
+  assert.ok(!bad({ apphost: { version: 1, node: '22.13.1', relayKid: null } }));
   assert.ok(bad({ distro: { id: 'Ubuntu', idLike: [], versionId: '24.04' } }));
   assert.ok(bad({ distro: { id: 'ubuntu', idLike: Array(11).fill('debian'), versionId: '' } }));
   assert.ok(bad({ distro: { id: 'ubuntu', idLike: [], versionId: '24.04 LTS' } }));
@@ -379,35 +390,40 @@ test('HostFactsSchema: what an agent reports, strictly', () => {
   assert.ok(!bad({ distro: { id: 'debian', idLike: [], versionId: '' } }));
   // Only the top level is strict; nothing else is kept from a nested object.
   assert.deepEqual(
-    HostFactsSchema.parse({ ...ubuntu, apphost: { version: 1, node: '22.13.1', path: '/tmp/x' } })
-      .apphost,
-    { version: 1, node: '22.13.1' },
+    HostFactsSchema.parse({ ...ubuntu, apphost: { ...ubuntu.apphost, path: '/tmp/x' } }).apphost,
+    ubuntu.apphost,
   );
 });
 
 test('hostEligibility: an Ubuntu agent with the helper hosts; a hand-installed half needs only requires', () => {
   const requires = validateManifest(base).agent.requires;
   const declaration = agentHalfOf(validateManifest(base));
-  assert.deepEqual(hostEligibility(requires, declaration, ubuntu), { eligible: true, reasons: [] });
-  // Raspberry Pi OS: debian through ID_LIKE.
-  const raspbian = { ...ubuntu, distro: { id: 'raspbian', idLike: ['debian'], versionId: '12' } };
-  assert.equal(hostEligibility(requires, declaration, raspbian).eligible, true);
-  // Without an agent half Lamaste installs, macOS can host what does not require Linux.
-  assert.deepEqual(hostEligibility(undefined, null, mac), { eligible: true, reasons: [] });
-  assert.deepEqual(hostEligibility(null, null, { ...ubuntu, apphost: null, systemd: false }), {
+  assert.deepEqual(hostEligibility(requires, declaration, ubuntu, RELAY), {
     eligible: true,
     reasons: [],
   });
+  // Raspberry Pi OS: debian through ID_LIKE.
+  const raspbian = { ...ubuntu, distro: { id: 'raspbian', idLike: ['debian'], versionId: '12' } };
+  assert.equal(hostEligibility(requires, declaration, raspbian, RELAY).eligible, true);
+  // Without an agent half Lamaste installs, macOS can host what does not require Linux.
+  assert.deepEqual(hostEligibility(undefined, null, mac, RELAY), { eligible: true, reasons: [] });
+  assert.deepEqual(
+    hostEligibility(null, null, { ...ubuntu, apphost: null, systemd: false }, RELAY),
+    {
+      eligible: true,
+      reasons: [],
+    },
+  );
   // An agent half without system packages needs no Debian family.
   const noPackages = { ...declaration, systemPackages: [] };
   const fedora = { ...ubuntu, distro: { id: 'fedora', idLike: [], versionId: '40' } };
-  assert.equal(hostEligibility(undefined, noPackages, fedora).eligible, true);
+  assert.equal(hostEligibility(undefined, noPackages, fedora, RELAY).eligible, true);
 });
 
 test('hostEligibility: each reason', () => {
   const declaration = agentHalfOf(validateManifest(base));
-  const reasons = (requires, half, facts) => {
-    const out = hostEligibility(requires, half, facts);
+  const reasons = (requires, half, facts, relay = RELAY) => {
+    const out = hostEligibility(requires, half, facts, relay);
     assert.equal(out.eligible, out.reasons.length === 0);
     return out.reasons;
   };
@@ -435,9 +451,37 @@ test('hostEligibility: each reason', () => {
   assert.match(
     reasons(undefined, declaration, {
       ...ubuntu,
-      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '22.13.1' },
+      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '22.13.1', relayKid: RELAY_KID },
     }).join(),
     /speaks protocol 0; this relay needs 1/,
+  );
+  // The helper runs only what this relay signed: it must trust the key the relay signs with.
+  assert.deepEqual(
+    reasons(undefined, declaration, {
+      ...ubuntu,
+      apphost: { ...ubuntu.apphost, relayKid: 'cd'.repeat(16) },
+    }),
+    [
+      "The agent's app host helper trusts relay key cdcdcdcdcdcd, but this relay signs with " +
+        'abababababab; re-pin the relay key: sudo lamaste-agent apphost pin',
+    ],
+  );
+  assert.deepEqual(
+    reasons(undefined, declaration, { ...ubuntu, apphost: { ...ubuntu.apphost, relayKid: null } }),
+    [
+      "The agent's app host helper has no key of this relay pinned; re-pin the relay key: " +
+        'sudo lamaste-agent apphost pin',
+    ],
+  );
+  assert.match(
+    reasons(undefined, declaration, ubuntu, { relayKid: null }).join(),
+    /relay's signing key is unusable/,
+  );
+  // The relay key is about the agent half Lamaste installs: a hand-installed one never minds it.
+  assert.deepEqual(reasons(undefined, null, ubuntu, { relayKid: null }), []);
+  assert.deepEqual(
+    reasons(undefined, null, { ...ubuntu, apphost: { ...ubuntu.apphost, relayKid: null } }),
+    [],
   );
   assert.match(
     reasons(undefined, declaration, {
@@ -468,30 +512,34 @@ test('hostEligibility: each reason', () => {
       ...ubuntu,
       systemd: false,
       distro: null,
-      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '20.0.0' },
+      apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '20.0.0', relayKid: null },
     }).length,
-    4,
+    5,
   );
 });
 
 test('hostEligibility: requires.node is checked against the Node.js the agent half runs on', () => {
   const declaration = agentHalfOf(validateManifest(base));
   // The agent itself runs an older Node.js (nvm, say) than the helper's /usr/bin/node.
-  const split = { ...ubuntu, node: '20.11.0', apphost: { version: 1, node: '24.1.0' } };
+  const split = {
+    ...ubuntu,
+    node: '20.11.0',
+    apphost: { version: 1, node: '24.1.0', relayKid: RELAY_KID },
+  };
 
   // Lamaste installs the agent half: it runs on the helper's Node.js.
-  assert.deepEqual(hostEligibility({ node: '>=24' }, declaration, split), {
+  assert.deepEqual(hostEligibility({ node: '>=24' }, declaration, split, RELAY), {
     eligible: true,
     reasons: [],
   });
-  assert.deepEqual(hostEligibility({ node: '>=25' }, declaration, split).reasons, [
+  assert.deepEqual(hostEligibility({ node: '>=25' }, declaration, split, RELAY).reasons, [
     "The plugin needs Node.js >=25; the agent half would run on 24.1.0 (the Node.js of the agent's app host helper)",
   ]);
   // Installed by hand: it runs however the operator runs it — the agent's own is the measure.
-  assert.deepEqual(hostEligibility({ node: '>=24' }, null, split).reasons, [
+  assert.deepEqual(hostEligibility({ node: '>=24' }, null, split, RELAY).reasons, [
     'The plugin needs Node.js >=24; the agent has 20.11.0',
   ]);
-  assert.equal(hostEligibility({ node: '>=20' }, null, split).eligible, true);
+  assert.equal(hostEligibility({ node: '>=20' }, null, split, RELAY).eligible, true);
 });
 
 // ---------------------------------------------------------------------------

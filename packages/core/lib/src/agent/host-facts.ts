@@ -3,8 +3,9 @@
  * decide whether it can host a plugin (`hostEligibility`): the OS, the
  * distribution (`/etc/os-release`), the architecture, the Node.js version,
  * whether systemd is the system manager, and whether the app host helper is
- * enabled — its protocol and the Node.js it runs on, which is the one every
- * agent half it installs runs on.
+ * enabled — its protocol, the Node.js it runs on (the one every agent half
+ * it installs runs on), and the id of the relay key it verifies this
+ * agent's app jobs with (`apphost enable|pin`).
  *
  * The sync gathers them on every run and reports them
  * (`PUT /api/agents/me/host-facts`) when they changed or a day has passed;
@@ -17,7 +18,8 @@
  * Whether the helper answers is learnt by running it (`sudo -n … status`),
  * which sudo logs; the answer is therefore kept until the helper file
  * changes (`apphost enable` installs a new one) or a day has passed, not
- * asked every 30 seconds.
+ * asked every 30 seconds. The pinned relay key is a root-owned file anyone
+ * may read: it is read on every sync, so a re-pin is reported at once.
  */
 
 import crypto from 'node:crypto';
@@ -28,11 +30,17 @@ import path from 'node:path';
 import { atomicWriteJSON, readJSONFile } from '../file-helpers.js';
 import { HostFactsSchema } from '../schemas.js';
 import type { HostFacts } from '../schemas.js';
-import { appHostHelperKey, appHostStatus } from './apphost.js';
+import { appHostHelperKey, appHostStatus, pinnedRelayKid } from './apphost.js';
 import { agentDataDir } from './platform.js';
 
 /** Facts are reported again after this long even when nothing changed. */
 export const HOST_FACTS_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+/** What the helper itself answers (`status`): its protocol and Node.js; null — not enabled or silent. */
+export type AppHostProbe = { readonly version: number; readonly node: string } | null;
+
+/** A cached probe, validated as the reported `apphost` is, without the pinned key. */
+const AppHostProbeSchema = HostFactsSchema.shape.apphost.unwrap().omit({ relayKid: true });
 
 const DISTRO_ID_RE = /^[a-z0-9._-]{1,40}$/;
 const DISTRO_VERSION_RE = /^[A-Za-z0-9._-]{0,40}$/;
@@ -46,7 +54,10 @@ export interface HostFactsSources {
   readonly readFile?: ((filePath: string) => Promise<string>) | undefined;
   readonly isDirectory?: ((dirPath: string) => Promise<boolean>) | undefined;
   readonly readlink?: ((linkPath: string) => Promise<string>) | undefined;
-  /** The app host helper's protocol and Node.js; null when it is not enabled or does not answer. */
+  /**
+   * The app host helper's protocol, Node.js and the relay key pinned for
+   * the agent; null when it is not enabled or does not answer.
+   */
   readonly appHost?: (() => Promise<HostFacts['apphost']>) | undefined;
 }
 
@@ -91,15 +102,22 @@ async function defaultIsDirectory(dirPath: string): Promise<boolean> {
  * Ask the helper (`status`): its protocol and the Node.js it runs on, as
  * x.y.z; null when it is not enabled or does not answer.
  */
-export async function probeAppHost(): Promise<HostFacts['apphost']> {
+export async function probeAppHost(): Promise<AppHostProbe> {
   const availability = await appHostStatus();
   if (availability.state !== 'ready') return null;
   const node = /^(\d+\.\d+\.\d+)/.exec(availability.status.node)?.[1];
   return node === undefined ? null : { version: availability.status.protocol, node };
 }
 
-/** Gather this machine's host facts, validated against {@link HostFactsSchema}. */
-export async function gatherHostFacts(sources: HostFactsSources = {}): Promise<HostFacts> {
+/**
+ * Agent `label`'s host facts as this machine has them, validated against
+ * {@link HostFactsSchema}: the helper asked directly and the relay key
+ * pinned for `label`, unless `sources` replaces them.
+ */
+export async function gatherHostFacts(
+  label: string,
+  sources: HostFactsSources = {},
+): Promise<HostFacts> {
   const platform = sources.platform ?? process.platform;
   if (platform !== 'linux' && platform !== 'darwin') {
     throw new Error(`Host facts are not defined for platform ${platform}`);
@@ -126,7 +144,13 @@ export async function gatherHostFacts(sources: HostFactsSources = {}): Promise<H
       (await isDirectory('/run/systemd/system')) ||
       path.basename(await (sources.readlink ?? readlink)('/proc/1/exe').catch(() => '')) ===
         'systemd';
-    apphost = await (sources.appHost ?? probeAppHost)();
+    const appHost =
+      sources.appHost ??
+      (async () => {
+        const probe = await probeAppHost();
+        return probe === null ? null : { ...probe, relayKid: await pinnedRelayKid(label) };
+      });
+    apphost = await appHost();
   }
 
   return HostFactsSchema.parse({
@@ -151,7 +175,13 @@ export function hostFactsHash(facts: HostFacts): string {
     node: facts.node,
     systemd: facts.systemd,
     apphost:
-      facts.apphost === null ? null : { version: facts.apphost.version, node: facts.apphost.node },
+      facts.apphost === null
+        ? null
+        : {
+            version: facts.apphost.version,
+            node: facts.apphost.node,
+            relayKid: facts.apphost.relayKid,
+          },
   };
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
@@ -161,7 +191,7 @@ interface HostFactsState {
   /** The helper's last answer, for the helper file it came from. */
   readonly apphost: {
     readonly helper: string;
-    readonly facts: HostFacts['apphost'];
+    readonly facts: AppHostProbe;
     readonly at: string;
   } | null;
 }
@@ -176,9 +206,7 @@ async function readHostFactsState(label: string): Promise<HostFactsState> {
   const reported = r['reported'] as Record<string, unknown> | null | undefined;
   const apphost = r['apphost'] as Record<string, unknown> | null | undefined;
   const cached =
-    apphost && apphost['facts'] !== null
-      ? HostFactsSchema.shape.apphost.safeParse(apphost['facts'])
-      : null;
+    apphost && apphost['facts'] !== null ? AppHostProbeSchema.safeParse(apphost['facts']) : null;
   return {
     reported:
       reported && typeof reported['hash'] === 'string' && typeof reported['at'] === 'string'
@@ -204,9 +232,13 @@ export interface HostFactsSyncOptions {
   readonly now?: number | undefined;
   /** Replaces the machine as the source of the facts (tests). */
   readonly sources?: HostFactsSources | undefined;
-  /** Replaces the helper file's identity and the uncached probe (tests). */
+  /** Replaces the helper file's identity, the uncached probe and the pinned key's id (tests). */
   readonly appHost?:
-    | { helperKey(): Promise<string | null>; probe(): Promise<HostFacts['apphost']> }
+    | {
+        helperKey(): Promise<string | null>;
+        probe(): Promise<AppHostProbe>;
+        relayKid?(label: string): Promise<string | null>;
+      }
     | undefined;
 }
 
@@ -238,7 +270,8 @@ export async function syncHostFacts(
   // The helper's answer, asked again only when the helper file changed or
   // the cached answer is a day old.
   const appHost = options.appHost ?? { helperKey: appHostHelperKey, probe: probeAppHost };
-  const cachedAppHost = async (): Promise<HostFacts['apphost']> => {
+  const relayKid = appHost.relayKid ?? pinnedRelayKid;
+  const cachedProbe = async (): Promise<AppHostProbe> => {
     const helper = await appHost.helperKey();
     if (helper === null) {
       apphostCache = null;
@@ -256,9 +289,14 @@ export async function syncHostFacts(
     return answer;
   };
 
+  const cachedAppHost = async (): Promise<HostFacts['apphost']> => {
+    const probe = await cachedProbe();
+    return probe === null ? null : { ...probe, relayKid: await relayKid(label) };
+  };
+
   let facts: HostFacts;
   try {
-    facts = await gatherHostFacts({ appHost: cachedAppHost, ...options.sources });
+    facts = await gatherHostFacts(label, { appHost: cachedAppHost, ...options.sources });
   } catch (err: unknown) {
     warnings.push(
       `Host facts could not be gathered (${err instanceof Error ? err.message : String(err)}).`,

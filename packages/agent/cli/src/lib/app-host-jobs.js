@@ -10,8 +10,16 @@
  * `npm pack` (the panel-brokered registry token in a throw-away userconfig,
  * `--ignore-scripts`, into a 0700 temporary directory), checks its SHA-512
  * against the integrity the relay pinned before anything else, pipes the
- * service spec and the tarball to `lamaste-apphost install`, records the
- * route in apphost-state.json and hands the service its plugin config.
+ * relay's signature, the service spec and the tarball to `lamaste-apphost
+ * install`, records the route in apphost-state.json and hands the service
+ * its plugin config.
+ *
+ * The helper runs `install`, `activate` and `remove` only with the relay's
+ * signature over the job (first line of its stdin), verified against the
+ * key `apphost enable|pin` pinned for this agent. The sync hands on the
+ * signature the job came with — it cannot make one — so it never undoes an
+ * install by itself: a failure is reported, and the relay, which recovers
+ * from every install it dispatched, sends the signed removal or activation.
  *
  * A failure is reported as one line without secrets: npm's output is cut to
  * its error lines with credentials removed, the helper never echoes its
@@ -155,6 +163,30 @@ function failure(message) {
   return { ok: false, error: agentJobError(message) };
 }
 
+/**
+ * The first line of the helper's stdin for app job `job`: the relay's
+ * signature it came with. Null when it has none in the expected shape —
+ * the job is then not run (the sync's parser already refuses such a job).
+ *
+ * @param {{ signature?: unknown }} job
+ * @returns {string | null}
+ */
+function signatureLine(job) {
+  const sig = job.signature;
+  if (
+    !sig ||
+    typeof sig !== 'object' ||
+    typeof sig.envelope !== 'string' ||
+    typeof sig.sig !== 'string'
+  ) {
+    return null;
+  }
+  return `${JSON.stringify({ envelope: sig.envelope, sig: sig.sig })}\n`;
+}
+
+const UNSIGNED =
+  "the job carries no signature of the relay, and the agent's app host helper runs only signed jobs";
+
 /** Milliseconds left until `deadline`, at least one second (execa reads 0 as no timeout). */
 function left(deadline) {
   return Math.max(1_000, deadline - Date.now());
@@ -171,66 +203,43 @@ async function ownedElsewhere(deps, label, route) {
 }
 
 /**
- * The helper's answer about `route`, or why an install cannot go ahead: not
- * enabled, not answering, too old, or the route owned by another agent.
+ * Why an install cannot go ahead — the helper not enabled, not answering,
+ * too old, or the route owned by another agent — or null when it can.
  */
-async function helperFor(deps, label, route) {
+async function helperProblem(deps, label, route) {
   const availability = await deps.appHostStatus(route);
-  if (availability.state === 'absent') return { problem: HELPER_NOT_ENABLED };
+  if (availability.state === 'absent') return HELPER_NOT_ENABLED;
   if (availability.state === 'unusable') {
-    return { problem: `the app host helper did not answer: ${availability.reason}` };
+    return `the app host helper did not answer: ${availability.reason}`;
   }
   const { status } = availability;
   if (status.protocol < APPHOST_PROTOCOL_VERSION) {
-    return {
-      problem:
-        `the app host helper speaks protocol ${status.protocol}; this agent needs ` +
-        `${APPHOST_PROTOCOL_VERSION} (sudo lamaste-agent apphost enable)`,
-    };
+    return (
+      `the app host helper speaks protocol ${status.protocol}; this agent needs ` +
+      `${APPHOST_PROTOCOL_VERSION} (sudo lamaste-agent apphost enable)`
+    );
   }
-  const app = status.apps[route] ?? null;
-  if (app?.owner && app.owner.label !== label) {
-    return {
-      problem:
-        `the agent half of "${route}" on this machine belongs to agent "${app.owner.label}" ` +
-        `(${app.owner.package}), not "${label}"`,
-    };
+  const owner = status.apps[route]?.owner;
+  if (owner && owner.label !== label) {
+    return (
+      `the agent half of "${route}" on this machine belongs to agent "${owner.label}" ` +
+      `(${owner.package}), not "${label}"`
+    );
   }
-  return { problem: null, app };
-}
-
-/**
- * Take back an install whose config could not be delivered, so nothing
- * runs half set up: a first install is removed (data, account and owner
- * record stay, as after any removal), an update re-activates the version
- * that ran before. Returns what was done, for the job's error.
- */
-async function undoInstall(deps, label, route, before, deadline) {
-  const timeoutMs = Math.min(CONFIG_TIMEOUT_MS, left(deadline));
-  if (before === null) {
-    const run = await deps.runAppHost(['remove', label, route], { timeoutMs });
-    if (run.exitCode !== 0) return `undoing the install failed too: ${appHostFailure(run)}`;
-    await deps.underAgentLock(() => deps.forgetApp(route));
-    return 'the install was undone';
-  }
-  const run = await deps.runAppHost(['activate', label, route, before], { timeoutMs });
-  if (run.exitCode !== 0) {
-    return `re-activating ${before} failed too: ${appHostFailure(run)}`;
-  }
-  await deps.underAgentLock(() => deps.recordApp(route, before));
-  return `${before} runs again`;
+  return null;
 }
 
 async function installAgentHalf(label, job, deps) {
   const { route, spec } = job;
   const what = `${spec.package}@${spec.version}`;
   const deadline = Date.now() + job.timeoutMs - REPORT_MARGIN_MS;
+  const signed = signatureLine(job);
+  if (signed === null) return failure(UNSIGNED);
 
   const elsewhere = await ownedElsewhere(deps, label, route);
   if (elsewhere) return failure(elsewhere);
-  const helper = await helperFor(deps, label, route);
-  if (helper.problem) return failure(helper.problem);
-  const before = helper.app?.current ?? null;
+  const problem = await helperProblem(deps, label, route);
+  if (problem) return failure(problem);
   // The service cannot start without its config, and the relay lists the
   // job only once it issued one: it arrives with the next converge.
   if (!(await deps.loadPluginConfig(route))) {
@@ -274,7 +283,7 @@ async function installAgentHalf(label, job, deps) {
     systemPackages: spec.systemPackages,
   });
   const installed = await deps.runAppHost(['install', label, route, spec.version, spec.integrity], {
-    input: Buffer.concat([Buffer.from(`${specLine}\n`), tgz]),
+    input: Buffer.concat([Buffer.from(signed), Buffer.from(`${specLine}\n`), tgz]),
     timeoutMs: left(deadline),
   });
   if (installed.exitCode !== 0) {
@@ -296,22 +305,28 @@ async function installAgentHalf(label, job, deps) {
   });
   const outcome = configured?.exitCode === 0 ? parseAppHostOutcome(configured.stdout) : null;
   if (!outcome) {
+    // Installed, but without its config: reported as a failure, which the
+    // relay answers with a signed removal (or, for an update, by activating
+    // the version that ran before).
     const why =
       configured === null
         ? `the plugin config of "${route}" was removed before the service received it`
         : configured.exitCode !== 0
           ? `lamaste-apphost could not hand "${route}" its plugin config: ${appHostFailure(configured)}`
           : 'lamaste-apphost answered config with something unexpected';
-    return failure(`${why}; ${await undoInstall(deps, label, route, before, deadline)}`);
+    return failure(`${what} was installed, but ${why}`);
   }
   return { ok: true, app: outcome };
 }
 
 async function activateAgentHalf(label, job, deps) {
+  const signed = signatureLine(job);
+  if (signed === null) return failure(UNSIGNED);
   if (!(await deps.isAppHostEnabled())) return failure(HELPER_NOT_ENABLED);
   const elsewhere = await ownedElsewhere(deps, label, job.route);
   if (elsewhere) return failure(elsewhere);
   const run = await deps.runAppHost(['activate', label, job.route, job.version], {
+    input: signed,
     timeoutMs: left(Date.now() + job.timeoutMs - REPORT_MARGIN_MS),
   });
   if (run.exitCode !== 0) {
@@ -328,6 +343,8 @@ async function activateAgentHalf(label, job, deps) {
 }
 
 async function removeAgentHalf(label, job, deps) {
+  const signed = signatureLine(job);
+  if (signed === null) return failure(UNSIGNED);
   const elsewhere = await ownedElsewhere(deps, label, job.route);
   if (elsewhere) return failure(elsewhere);
   if (!(await deps.isAppHostEnabled())) {
@@ -342,7 +359,7 @@ async function removeAgentHalf(label, job, deps) {
   }
   const run = await deps.runAppHost(
     ['remove', label, job.route, ...(job.purge ? ['--purge'] : [])],
-    { timeoutMs: left(Date.now() + job.timeoutMs - REPORT_MARGIN_MS) },
+    { input: signed, timeoutMs: left(Date.now() + job.timeoutMs - REPORT_MARGIN_MS) },
   );
   if (run.exitCode !== 0) {
     return failure(`lamaste-apphost could not remove "${job.route}": ${appHostFailure(run)}`);

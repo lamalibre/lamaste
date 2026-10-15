@@ -13,7 +13,8 @@
 #   credential through its own OIDC client, which brokers the agent's
 #   read tokens;
 # - the operator's one-time `lamaste-agent apphost enable --user root` (the
-#   rodeo agent runs as root: the helper needs no sudoers rule);
+#   rodeo agent runs as root: the helper needs no sudoers rule), which also
+#   pins the relay's signing key — the helper runs only app jobs it signed;
 # - open_push_install: the push-install gates an agent-half push passes;
 # - agent_facts / relay_leftovers: the agent VM's and the relay's state of an
 #   agent half, each read in one call and never including a secret;
@@ -52,6 +53,9 @@ STUB_ADMIN_TOKEN="feria_e2eadmin_threevm_apphost_000000000"
 DOMAIN=""
 HOST_AGENT_LABEL=""
 APPHOST_STATUS_BEFORE=""
+# The id of the key the relay signs app jobs with (relay_kid_on_host); once
+# set, wait_for_app_host_facts also waits for the agent to report it pinned.
+RELAY_KID=""
 AUDIT_BASE=0
 # What the cleanup restores (set as the spec changes it)
 APPHOST_ENABLED_HERE=""
@@ -189,17 +193,33 @@ agent_host_facts() {
 }
 
 # wait_for_app_host_facts <seconds> [nudge] — until the relay's host facts of
-# the agent name an enabled app host helper
+# the agent name an enabled app host helper (and, once RELAY_KID is known,
+# the relay's key pinned for it)
 wait_for_app_host_facts() {
-  local deadline=$((SECONDS + $1)) nudge="${2:-}"
+  local deadline=$((SECONDS + $1)) nudge="${2:-}" facts
   while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$nudge" = "nudge" ]; then nudge_sync; fi
-    if [ "$(agent_host_facts | jq -r '.apphost.version // 0' 2>/dev/null || echo 0)" -ge 1 ] 2>/dev/null; then
+    facts=$(agent_host_facts)
+    if [ "$(echo "$facts" | jq -r '.apphost.version // 0' 2>/dev/null || echo 0)" -ge 1 ] 2>/dev/null &&
+      { [ -z "${RELAY_KID}" ] || [ "$(json_get "$facts" '.apphost.relayKid')" = "${RELAY_KID}" ]; }; then
       return 0
     fi
     sleep 3
   done
   return 1
+}
+
+# relay_kid_on_host — the id of the key the relay signs with (relayKeyId:
+# SHA-256 of its public key's DER SPKI, hex, 32 characters), from the
+# relay's own key file; only the id is printed
+relay_kid_on_host() {
+  host_exec "node -e \"const c = require('node:crypto'); const f = JSON.parse(require('node:fs').readFileSync('/etc/lamalibre/lamaste/relay-signing-key.json', 'utf8')); const der = c.createPublicKey(c.createPrivateKey(f.privateKey)).export({ type: 'spki', format: 'der' }); console.log(c.createHash('sha256').update(der).digest('hex').slice(0, 32));\"" 2>/dev/null || echo ""
+}
+
+# agent_relay_kid — the key GET /api/agents/me/relay-keys names first, as the
+# agent fetches it over its own pinned mTLS channel
+agent_relay_kid() {
+  agent_exec "lamaste-agent apphost relay-keys --label ${AGENT_LABEL} --json 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 | jq -r '.relays[0].keys[0].kid // ""' 2>/dev/null || echo ""
 }
 
 # agent_epoch — the agent VM's clock, for journal reads after it
@@ -269,16 +289,21 @@ app_host_helper_was_enabled() {
 }
 
 # ensure_app_host_helper — the operator's one-time step when it was not done
-# yet (the cleanup undoes it then), and the relay told by the agent's sync
+# yet (the cleanup undoes it then) — a helper enabled before has the relay's
+# key pinned again, in case the relay changed it since — and the relay told
+# by the agent's sync
 ensure_app_host_helper() {
+  RELAY_KID=$(relay_kid_on_host)
   if [ "$(app_host_helper_was_enabled)" != "true" ]; then
     agent_exec "lamaste-agent apphost enable --user root --json > /dev/null 2>&1" || true
     APPHOST_ENABLED_HERE=1
+  else
+    agent_exec "lamaste-agent apphost pin --json > /dev/null 2>&1" || true
   fi
   if wait_for_app_host_facts 90 nudge; then
-    log_pass "The app host helper is enabled and the relay knows it from the agent's host facts"
+    log_pass "The app host helper is enabled, the relay's key pinned, and the relay knows both from the agent's host facts"
   else
-    log_fail "The relay's host facts of ${HOST_AGENT_LABEL} name no app host helper: $(agent_host_facts)"
+    log_fail "The relay's host facts of ${HOST_AGENT_LABEL} name no app host helper with relay key ${RELAY_KID}: $(agent_host_facts)"
   fi
 }
 

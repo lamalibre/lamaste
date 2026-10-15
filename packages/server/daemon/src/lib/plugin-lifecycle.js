@@ -16,6 +16,7 @@
  */
 
 import {
+  ManifestValidationError,
   agentHalfPreview,
   derivePluginRoute,
   hasAgentHalf,
@@ -26,7 +27,6 @@ import {
   validateManifest,
 } from '@lamalibre/lamaste';
 import { pluginHostingPhase } from '@lamalibre/lamaste/server';
-import { z } from 'zod';
 import { httpError } from './app-error.js';
 import { setPluginCapabilities } from './mtls.js';
 import {
@@ -72,12 +72,29 @@ import { getConfig } from './config.js';
 import { recordAudit, recordAuditBestEffort } from './audit.js';
 import { notifyAdminsBestEffort } from './notifications.js';
 
+/** Replaces the OIDC client sync (tests: there is no Authelia to write to). */
+let oidcSyncOverride = null;
+
+/** @param {((logger: object) => Promise<{ createdSecrets?: Array<{ id: string, secret: string }> } | null>) | null} sync */
+export function setOidcSyncForTests(sync) {
+  oidcSyncOverride = sync;
+}
+
+/**
+ * Bring Authelia's OIDC clients in line with the installed plugins (best
+ * effort: logged, never thrown). Returns the secrets of the confidential
+ * clients the sync created (`[{ id, secret }]`) — shown to the admin once.
+ *
+ * @returns {Promise<Array<{ id: string, secret: string }>>}
+ */
 async function syncOidcBestEffort(logger) {
   try {
-    const { syncOidcClients } = await import('./plugin-oidc.js');
-    await syncOidcClients(logger);
+    const syncOidcClients = oidcSyncOverride ?? (await import('./plugin-oidc.js')).syncOidcClients;
+    const result = await syncOidcClients(logger);
+    return (result?.createdSecrets ?? []).map(({ id, secret }) => ({ id, secret }));
   } catch (err) {
     logger?.warn({ err: err.message }, 'Failed to sync plugin OIDC clients to Authelia');
+    return [];
   }
 }
 
@@ -198,9 +215,9 @@ async function stageVersion(plugin, requestedVersion, record) {
   try {
     manifest = validateManifest(staged.manifestRaw);
   } catch (err) {
-    if (err instanceof z.ZodError) {
+    if (err instanceof ManifestValidationError) {
       throw httpError(
-        `Invalid plugin manifest in ${staged.version}: ${err.errors.map((e) => e.message).join(', ')}`,
+        `Invalid plugin manifest in ${staged.version}: ${err.issues.map((i) => i.message).join(', ')}`,
         400,
       );
     }
@@ -490,6 +507,9 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
     );
   }
 
+  // Secrets of confidential OIDC clients the new version adds: shown once,
+  // and only when the update stays (a revert deletes them again).
+  let createdSecrets = [];
   const result = await runUpgradePipeline(op, ctx, {
     hosted,
     apply: async () => {
@@ -524,7 +544,7 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
         await recordApprovedSet(installedEntry, approval.digest, staged.version, approvedBy);
       } else await setPendingUpdate(name, null);
       setPluginCapabilities(await getPluginCapabilities());
-      await syncOidcBestEffort(logger);
+      createdSecrets = await syncOidcBestEffort(logger);
     },
     revert: async ({ applied }) => {
       if (applied) {
@@ -554,6 +574,8 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
       }
     },
   });
+
+  if (result.status === 'succeeded') op.revealOidcClientSecrets(createdSecrets);
 
   // Hooks the new version no longer has: the old runner goes once the new
   // version is in place.

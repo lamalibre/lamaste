@@ -11,10 +11,10 @@
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { z } from 'zod';
 import { execa } from 'execa';
 import {
   DEFAULT_PLUGIN_HOSTING,
+  ManifestValidationError,
   RESERVED_API_PREFIXES,
   RESERVED_NAV_LABELS,
   derivePluginRoute,
@@ -201,7 +201,7 @@ export async function writePlugins(data) {
  *
  * @param {object} raw - The raw manifest object
  * @returns {object} The validated and parsed manifest
- * @throws {z.ZodError} If validation fails
+ * @throws {ManifestValidationError} If validation fails
  */
 export function validateManifest(raw) {
   return coreValidateManifest(raw);
@@ -374,11 +374,8 @@ export function installPlugin(packageName, logger) {
       logger.warn({ packageName, err: err.message }, 'Invalid or missing manifest, uninstalling');
       await discardPackage();
 
-      if (err instanceof z.ZodError) {
-        throw Object.assign(
-          new Error(`Invalid plugin manifest: ${err.errors.map((e) => e.message).join(', ')}`),
-          { statusCode: 400 },
-        );
+      if (err instanceof ManifestValidationError) {
+        throw Object.assign(new Error(err.message), { statusCode: 400 });
       }
       throw Object.assign(new Error(`Plugin manifest not found in "${packageName}"`), {
         statusCode: 400,

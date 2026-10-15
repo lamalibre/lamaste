@@ -192,6 +192,7 @@ export type {
   AgentAppInstallJob,
   AgentAppActivateJob,
   AgentAppRemoveJob,
+  AgentRefusedAppJob,
   AgentAppJobHandlers,
   AgentAppJobOutcome,
   AgentJobDeferral,
@@ -211,6 +212,12 @@ export { appServiceAccountComment } from '../agent-half.js';
 export {
   APPHOST_EXIT_NOT_INSTALLED,
   APPHOST_EXIT_NOT_OWNER,
+  APPHOST_EXIT_UNSIGNED,
+  RELAY_PIN_VERSION,
+  relayPinJson,
+  parseRelayPin,
+  readRelayPin,
+  pinnedRelayKid,
   appHostInvocation,
   runAppHost,
   appHostFailure,
@@ -226,6 +233,9 @@ export type {
   AppHostStatus,
   AppHostOutcome,
   AppHostAvailability,
+  RelayPin,
+  RelayPinState,
+  ReadRelayPinOptions,
 } from './apphost.js';
 export {
   appHostStatePath,
@@ -247,6 +257,7 @@ export {
   syncHostFacts,
 } from './host-facts.js';
 export type {
+  AppHostProbe,
   HostFactsSources,
   HostFactsPanelCalls,
   HostFactsSyncOptions,

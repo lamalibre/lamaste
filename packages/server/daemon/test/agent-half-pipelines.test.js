@@ -1,7 +1,9 @@
 /**
  * Agent halves Lamaste installs (slice 3), the relay's pipelines and gates:
- * host facts reported by an agent and the eligibility listing; app jobs in
- * agent-config and their results checked per kind; the install pipeline
+ * host facts reported by an agent and the eligibility listing (an agent must
+ * have pinned the key the relay signs with); app jobs in agent-config —
+ * each signed by the relay for its agent — and their results checked per
+ * kind; the install pipeline
  * installing the agent half between reserving and the agent's pre stage,
  * and a rollback removing it again; the uninstall pipeline removing it
  * (purged on request) before the secret is revoked; an update installing
@@ -23,7 +25,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { pluginHostCapability } from '@lamalibre/lamaste';
+import {
+  parseRelayVerifyKey,
+  pluginHostCapability,
+  verifyAppJobSignature,
+} from '@lamalibre/lamaste';
 
 import { installFakeNpm } from './fake-npm.js';
 
@@ -33,14 +39,17 @@ const IP = '127.0.0.1';
 
 const integrity = (seed) => `sha512-${crypto.createHash('sha512').update(seed).digest('base64')}`;
 
+/** An Ubuntu agent with the helper; `relayKid` is set to the relay's key once it exists. */
 const LINUX = {
   os: 'linux',
   arch: 'x64',
   distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
   node: '22.13.1',
   systemd: true,
-  apphost: { version: 1, node: '22.13.1' },
+  apphost: { version: 1, node: '22.13.1', relayKid: null },
 };
+/** The relay's signing key (its public half, as agents verify with it). */
+let relayKey;
 const MACOS = {
   os: 'darwin',
   arch: 'arm64',
@@ -227,9 +236,13 @@ before(async () => {
     ...(await import('../src/lib/push-install.js')),
     ...(await import('../src/lib/audit.js')),
     ...(await import('../src/lib/retained-data.js')),
+    ...(await import('../src/lib/relay-signing.js')),
     core: await import('@lamalibre/lamaste/server'),
   };
   await lib.loadConfig();
+  const signing = await lib.relaySigner.current();
+  relayKey = parseRelayVerifyKey({ kid: signing.kid, publicKey: signing.publicKey });
+  LINUX.apphost.relayKid = signing.kid;
 
   half = http.createServer((req, res) => {
     let body = '';
@@ -328,14 +341,19 @@ test('host facts: only an agent certificate reports them; they land on its regis
 
   res = await put(
     { 'x-test-role': 'agent', 'x-test-label': 'vm2' },
-    { ...LINUX, apphost: { version: 1, node: '20.11.0' } },
+    { ...LINUX, apphost: { version: 1, node: '20.11.0' } }, // no relayKid: refused
+  );
+  assert.equal(res.statusCode, 400);
+  res = await put(
+    { 'x-test-role': 'agent', 'x-test-label': 'vm2' },
+    { ...LINUX, apphost: { ...LINUX.apphost, node: '20.11.0' } },
   );
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.json(), { ok: true });
 
   const listed = await lib.listAgentCerts();
   const vm2 = listed.find((a) => a.label === 'vm2');
-  assert.deepEqual(vm2.hostFacts, { ...LINUX, apphost: { version: 1, node: '20.11.0' } });
+  assert.deepEqual(vm2.hostFacts, { ...LINUX, apphost: { ...LINUX.apphost, node: '20.11.0' } });
   assert.ok(Date.parse(vm2.hostFactsAt) > 0);
   // Survives other writers of the registry, and the push-install window persists too.
   await lib.updateAgentCapabilities('vm2', ['tunnels:read']);
@@ -368,6 +386,27 @@ test('eligibility: listed per enrolled agent with reasons; a hand-installed half
     assert.deepEqual(a.reasons, []);
     assert.equal(a.eligible, true);
   }
+
+  // The helper runs only what this relay signed: an agent that pinned
+  // another key (the relay rotated) is told to pin again.
+  await enroll('vm4');
+  await lib.setAgentHostFacts('vm4', {
+    ...LINUX,
+    apphost: { ...LINUX.apphost, relayKid: 'cd'.repeat(16) },
+  });
+  const vm4 = (await lib.hostingEligibility('fx')).find((a) => a.label === 'vm4');
+  assert.equal(vm4.eligible, false);
+  assert.deepEqual(vm4.reasons, [
+    `The agent's app host helper trusts relay key cdcdcdcdcdcd, but this relay signs with ${LINUX.apphost.relayKid.slice(0, 12)}; re-pin the relay key: sudo lamaste-agent apphost pin`,
+  ]);
+  await assert.rejects(
+    lib.hostPlugin('fx', 'vm4', { ...actor, sourceIp: IP }),
+    (err) => err.statusCode === 409 && /re-pin the relay key/.test(err.message),
+  );
+  // Out of the way of the tests below.
+  const registry = await lib.loadAgentRegistry();
+  registry.agents.find((a) => a.label === 'vm4').revoked = true;
+  await lib.saveAgentRegistry(registry);
 });
 
 // ---------------------------------------------------------------------------
@@ -383,12 +422,14 @@ test('app jobs: agent-config lists them in the contract shape; results must fit 
       plugin: 'ux',
       kind: 'app-activate',
       version: '1.0.0',
+      package: spec.package,
     }),
     remove: await lib.createAppJob({
       agentLabel: 'vm9',
       plugin: 'ux',
       kind: 'app-remove',
       purge: false,
+      package: spec.package,
     }),
   };
   const listed = await lib.pendingAgentJobs('vm9');
@@ -399,6 +440,7 @@ test('app jobs: agent-config lists them in the contract shape; results must fit 
     'id',
     'kind',
     'route',
+    'signature',
     'spec',
     'timeoutMs',
   ]);
@@ -410,22 +452,70 @@ test('app jobs: agent-config lists them in the contract shape; results must fit 
     'deadlineAt',
     'id',
     'kind',
+    'package',
     'route',
+    'signature',
     'timeoutMs',
     'version',
   ]);
   assert.equal(by[ids.activate].timeoutMs, 120_000);
   assert.equal(by[ids.activate].version, '1.0.0');
+  assert.equal(by[ids.activate].package, spec.package);
   assert.deepEqual(keys(by[ids.remove]), [
     'deadlineAt',
     'id',
     'kind',
+    'package',
     'purge',
     'route',
+    'signature',
     'timeoutMs',
   ]);
   assert.equal(by[ids.remove].timeoutMs, 300_000);
   assert.equal(by[ids.remove].purge, false);
+  // Each is signed by the relay for its agent, route, id, kind, payload and deadline.
+  const payloads = {
+    install: { spec },
+    activate: { version: '1.0.0', package: spec.package },
+    remove: { purge: false, package: spec.package },
+  };
+  for (const [name, id] of Object.entries(ids)) {
+    const job = by[id];
+    const verified = verifyAppJobSignature(job.signature, { key: relayKey });
+    assert.equal(verified.ok, true, name);
+    assert.deepEqual(
+      {
+        agent: verified.envelope.agent,
+        route: verified.envelope.route,
+        jobId: verified.envelope.jobId,
+        kind: verified.envelope.kind,
+        payload: verified.envelope.payload,
+        expiresAt: verified.envelope.expiresAt,
+      },
+      {
+        agent: 'vm9',
+        route: 'ux',
+        jobId: id,
+        kind: job.kind,
+        payload: payloads[name],
+        expiresAt: job.deadlineAt,
+      },
+    );
+  }
+  // Hook jobs carry none: the helper never sees them.
+  const hookId = await lib.createAgentJob({
+    agentLabel: 'vm9',
+    plugin: 'ux',
+    stage: 'install:pre-tunnel',
+    input: {},
+    timeoutMs: 1000,
+  });
+  const listedHook = (await lib.pendingAgentJobs('vm9')).find((j) => j.id === hookId);
+  assert.equal(listedHook.signature, undefined);
+  assert.equal(
+    await lib.completeAgentJob('vm9', hookId, { ok: true, decision: { ok: true } }),
+    'recorded',
+  );
   // Deadline: the job's timeout plus delivery slack.
   assert.ok(
     Date.parse(by[ids.install].deadlineAt) - Date.now() >
@@ -442,8 +532,26 @@ test('app jobs: agent-config lists them in the contract shape; results must fit 
     }),
   );
   await assert.rejects(
-    lib.createAppJob({ agentLabel: 'vm9', plugin: 'ux', kind: 'app-remove' }),
+    lib.createAppJob({
+      agentLabel: 'vm9',
+      plugin: 'ux',
+      kind: 'app-remove',
+      package: spec.package,
+    }),
     /purge/,
+  );
+  // A removal or activation names the package, so the helper never acts on another's.
+  await assert.rejects(
+    lib.createAppJob({ agentLabel: 'vm9', plugin: 'ux', kind: 'app-remove', purge: true }),
+    /package/,
+  );
+  await assert.rejects(
+    lib.createAppJob({ agentLabel: 'vm9', plugin: 'ux', kind: 'app-activate', version: '1.0.0' }),
+    /package/,
+  );
+  await assert.rejects(
+    lib.createAppJob({ agentLabel: 'vm9', plugin: 'ux', kind: 'app-upgrade', version: '1.0.0' }),
+    /Unknown app job kind/,
   );
 
   // Results: a hook decision, a bad version, a multi-line error do not fit.
@@ -868,7 +976,7 @@ test('removal: a revoked agent cannot be pushed to — the agent half is left fo
   const done = await settle('ux');
   assert.equal(done.status, 'succeeded', JSON.stringify(done));
   assert.equal(done.steps.find((s) => s.name === 'remove the agent half').status, 'skipped');
-  assert.ok(done.warnings.some((w) => /lamaste-apphost remove ux/.test(w)));
+  assert.ok(done.warnings.some((w) => /sudo lamaste-agent apphost remove ux/.test(w)));
   assert.equal(await lib.getHostingView('ux'), null);
   assert.equal(
     agent.jobs.some((j) => j.kind === 'app-remove' && j.route === 'ux'),

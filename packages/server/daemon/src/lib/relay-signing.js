@@ -1,9 +1,10 @@
 /**
  * The relay's assertion signing key (`<stateDir>/relay-signing-key.json`,
  * 0600). The panel creates it at startup and signs agent-panel requests
- * with it; Gatekeeper reads the same file to sign for plugin tunnels.
- * Agents fetch the public half from `GET /api/agents/me/relay-keys`.
- * See `relay-assertion.ts` in the core library.
+ * with it, and every app job it gives an agent's root helper
+ * (`agent-jobs.js`); Gatekeeper reads the same file to sign for plugin
+ * tunnels. Agents fetch the public half from `GET /api/agents/me/relay-keys`.
+ * See `relay-assertion.ts` and `app-job-signature.ts` in the core library.
  */
 
 import path from 'node:path';

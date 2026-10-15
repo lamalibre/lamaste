@@ -405,6 +405,8 @@ async function followOperation(name, operation, { json }) {
           ? chalk.yellow('rolled back')
           : chalk.red(current.status);
     console.log(`\n  ${current.kind} ${word}${current.error ? `: ${current.error}` : ''}\n`);
+    // An update that added a confidential OIDC client: its secret, shown once.
+    printCreatedSecrets(current.oidcClients);
   }
   return current;
 }

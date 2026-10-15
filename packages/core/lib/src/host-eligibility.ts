@@ -17,6 +17,20 @@ export interface HostEligibility {
   readonly reasons: string[];
 }
 
+/** What the relay itself brings to the check. */
+export interface HostEligibilityRelay {
+  /**
+   * The id of the key the relay signs app jobs with; null when its signing
+   * key is unusable — then it can have no agent half installed anywhere.
+   */
+  readonly relayKid: string | null;
+}
+
+/** Enough of a key id to compare by eye. */
+function shortKid(kid: string): string {
+  return kid.slice(0, 12);
+}
+
 const OS_NAMES: Readonly<Record<HostFacts['os'], string>> = { linux: 'Linux', darwin: 'macOS' };
 
 /** Distributions apt-get installs system packages on. */
@@ -28,12 +42,16 @@ const DEBIAN_FAMILY = ['debian', 'ubuntu'];
  * `facts` is null while the agent has not reported any. `requires.node` is
  * checked against the Node.js the agent half will run on: the app host
  * helper's (`facts.apphost.node`) for one Lamaste installs, the agent's own
- * (`facts.node`) for one installed by hand.
+ * (`facts.node`) for one installed by hand. An agent half Lamaste installs
+ * also needs the helper to trust the key this relay signs app jobs with
+ * (`relay.relayKid`): the agent's pinned key (`facts.apphost.relayKid`)
+ * must be it.
  */
 export function hostEligibility(
   requires: AgentRequires | null | undefined,
   agentHalf: AgentHalfDeclaration | null,
   facts: HostFacts | null,
+  relay: HostEligibilityRelay,
 ): HostEligibility {
   if (!facts) {
     return {
@@ -85,11 +103,30 @@ export function hostEligibility(
         reasons.push(
           'The app host helper is not enabled on the agent (sudo lamaste-agent apphost enable)',
         );
-      } else if (facts.apphost.version < APPHOST_PROTOCOL_VERSION) {
-        reasons.push(
-          `The agent's app host helper speaks protocol ${facts.apphost.version}; this relay needs ` +
-            `${APPHOST_PROTOCOL_VERSION} (update lamaste-agent, then sudo lamaste-agent apphost enable)`,
-        );
+      } else {
+        if (facts.apphost.version < APPHOST_PROTOCOL_VERSION) {
+          reasons.push(
+            `The agent's app host helper speaks protocol ${facts.apphost.version}; this relay needs ` +
+              `${APPHOST_PROTOCOL_VERSION} (update lamaste-agent, then sudo lamaste-agent apphost enable)`,
+          );
+        }
+        if (relay.relayKid === null) {
+          reasons.push(
+            "The relay's signing key is unusable, so it cannot sign the jobs the agent's app host " +
+              "helper runs (see the panel's log)",
+          );
+        } else if (facts.apphost.relayKid === null) {
+          reasons.push(
+            "The agent's app host helper has no key of this relay pinned; re-pin the relay key: " +
+              'sudo lamaste-agent apphost pin',
+          );
+        } else if (facts.apphost.relayKid !== relay.relayKid) {
+          reasons.push(
+            `The agent's app host helper trusts relay key ${shortKid(facts.apphost.relayKid)}, ` +
+              `but this relay signs with ${shortKid(relay.relayKid)}; re-pin the relay key: ` +
+              'sudo lamaste-agent apphost pin',
+          );
+        }
       }
       if (agentHalf.systemPackages.length > 0) {
         const family = facts.distro ? [facts.distro.id, ...facts.distro.idLike] : [];

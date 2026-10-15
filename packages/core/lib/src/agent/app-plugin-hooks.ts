@@ -12,7 +12,13 @@
  *   refused) waits for the next sync, until the relay's deadline. The same
  *   channel carries the app jobs (`app-install`, `app-activate`,
  *   `app-remove`) that put the agent half itself in place; their handlers
- *   are the caller's ({@link AgentAppJobHandlers}).
+ *   are the caller's ({@link AgentAppJobHandlers}). The relay signs every
+ *   app job (`app-job-signature.ts`) and the agent's root helper runs only
+ *   what it signed: an app job that comes without a signature matching it
+ *   is reported failed, never handed to a handler. A result is kept until
+ *   the relay took it (`app-job-results.json`), because the helper runs a
+ *   signed job only once — a result that could not be reported is reported
+ *   again, the job not run again.
  * - **Tunnel state.** The agent cannot see its own chisel session; the relay
  *   can. `agent-config` carries the relay's view of each hosting's health,
  *   and the sync calls the agent half's `tunnel:down` / `tunnel:up` when that
@@ -28,12 +34,19 @@
 
 import path from 'node:path';
 
-import { APPHOST_ROUTE_RE, AgentHalfSpecSchema, AgentHalfVersionSchema } from '../agent-half.js';
+import {
+  APPHOST_ROUTE_RE,
+  AgentHalfPackageNameSchema,
+  AgentHalfSpecSchema,
+  AgentHalfVersionSchema,
+} from '../agent-half.js';
 import type { AgentHalfSpec } from '../agent-half.js';
 import { callAgentHalfHook } from '../agent-hook-call.js';
 import type { AgentHookCallResult } from '../agent-hook-call.js';
 import { AGENT_APP_JOB_TIMEOUTS, AgentAppJobResultSchema, agentJobError } from '../agent-jobs.js';
 import type { AgentAppJobResult, AgentJobResult } from '../agent-jobs.js';
+import { appJobEnvelopeMatches, decodeAppJobSignature } from '../app-job-signature.js';
+import type { AppJobKind, AppJobSignature } from '../app-job-signature.js';
 import { atomicWriteJSON, readJSONFile } from '../file-helpers.js';
 import {
   AGENT_HALF_HOOKS_PREFIX,
@@ -76,26 +89,47 @@ export interface AgentHookJob extends AgentJobBase {
   readonly input: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * An app job, with the relay's signature over it — what the app host helper
+ * verifies before it acts; it has been checked to describe this very job.
+ */
+interface AgentAppJobBase extends AgentJobBase {
+  readonly signature: AppJobSignature;
+}
+
 /** Install the agent half pinned by `spec` (and make it current). */
-export interface AgentAppInstallJob extends AgentJobBase {
+export interface AgentAppInstallJob extends AgentAppJobBase {
   readonly kind: 'app-install';
   readonly spec: AgentHalfSpec;
 }
 
-/** Point the agent half at an installed version and restart it. */
-export interface AgentAppActivateJob extends AgentJobBase {
+/** Point the agent half (of `package`) at an installed version and restart it. */
+export interface AgentAppActivateJob extends AgentAppJobBase {
   readonly kind: 'app-activate';
   readonly version: string;
+  readonly package: string;
 }
 
-/** Remove the agent half; `purge` also deletes its data and account. */
-export interface AgentAppRemoveJob extends AgentJobBase {
+/** Remove the agent half (of `package`); `purge` also deletes its data and account. */
+export interface AgentAppRemoveJob extends AgentAppJobBase {
   readonly kind: 'app-remove';
   readonly purge: boolean;
+  readonly package: string;
 }
 
 export type AgentAppJob = AgentAppInstallJob | AgentAppActivateJob | AgentAppRemoveJob;
-export type AgentJob = AgentHookJob | AgentAppJob;
+
+/**
+ * An app job that came without a signature matching it: never run, its
+ * failure reported (`reason`) so the relay does not wait for its deadline.
+ */
+export interface AgentRefusedAppJob extends AgentJobBase {
+  readonly kind: 'refused';
+  readonly jobKind: AppJobKind;
+  readonly reason: string;
+}
+
+export type AgentJob = AgentHookJob | AgentAppJob | AgentRefusedAppJob;
 
 export type { AgentJobResult };
 
@@ -197,24 +231,87 @@ function parseAgentJob(entry: unknown): AgentJob | null {
     case 'app-install': {
       const base = appJobBase(e, AGENT_APP_JOB_TIMEOUTS.install);
       const spec = AgentHalfSpecSchema.safeParse(e['spec']);
-      return base && spec.success ? { ...base, kind: 'app-install', spec: spec.data } : null;
+      if (!base || !spec.success) return null;
+      const payload = { spec: spec.data };
+      return signedAppJob(base, 'app-install', payload, e['signature'], (signature) => ({
+        ...base,
+        kind: 'app-install',
+        ...payload,
+        signature,
+      }));
     }
     case 'app-activate': {
       const base = appJobBase(e, AGENT_APP_JOB_TIMEOUTS.activate);
       const version = AgentHalfVersionSchema.safeParse(e['version']);
-      return base && version.success
-        ? { ...base, kind: 'app-activate', version: version.data }
-        : null;
+      const pkg = AgentHalfPackageNameSchema.safeParse(e['package']);
+      if (!base || !version.success || !pkg.success) return null;
+      const payload = { version: version.data, package: pkg.data };
+      return signedAppJob(base, 'app-activate', payload, e['signature'], (signature) => ({
+        ...base,
+        kind: 'app-activate',
+        ...payload,
+        signature,
+      }));
     }
     case 'app-remove': {
       const base = appJobBase(e, AGENT_APP_JOB_TIMEOUTS.remove);
-      return base && typeof e['purge'] === 'boolean'
-        ? { ...base, kind: 'app-remove', purge: e['purge'] }
-        : null;
+      const pkg = AgentHalfPackageNameSchema.safeParse(e['package']);
+      if (!base || typeof e['purge'] !== 'boolean' || !pkg.success) return null;
+      const payload = { purge: e['purge'], package: pkg.data };
+      return signedAppJob(base, 'app-remove', payload, e['signature'], (signature) => ({
+        ...base,
+        kind: 'app-remove',
+        ...payload,
+        signature,
+      }));
     }
     default:
       return null;
   }
+}
+
+/**
+ * An app job whose own fields are valid, with its signature: the job when
+ * the signature is well formed and describes exactly it (id, route, kind,
+ * deadline, payload), a refused job otherwise. Whether the relay made the
+ * signature is for the app host helper to verify, with the key pinned for
+ * this agent; this keeps a job and a signature that disagree from getting
+ * that far.
+ */
+function signedAppJob(
+  base: AgentJobBase,
+  kind: AppJobKind,
+  payload: unknown,
+  rawSignature: unknown,
+  job: (signature: AppJobSignature) => AgentAppJob,
+): AgentAppJob | AgentRefusedAppJob {
+  const refused = (reason: string): AgentRefusedAppJob => ({
+    ...base,
+    kind: 'refused',
+    jobKind: kind,
+    reason,
+  });
+  if (rawSignature === undefined) {
+    return refused(
+      `The panel did not sign this ${kind} job, and the agent's app host helper runs only jobs ` +
+        'its relay signed (update the relay)',
+    );
+  }
+  const decoded = decodeAppJobSignature(rawSignature);
+  if (!decoded) return refused(`The signature of this ${kind} job is malformed; it was not run`);
+  if (
+    !appJobEnvelopeMatches(decoded.envelope, {
+      jobId: base.id,
+      route: base.route,
+      kind,
+      payload,
+      expiresAt: base.deadlineAt,
+    })
+  ) {
+    return refused(`This ${kind} job does not match the relay's signature on it; it was not run`);
+  }
+  const { envelope, sig } = rawSignature as AppJobSignature;
+  return job({ envelope, sig });
 }
 
 /** Validate the relay's `agentJobs`; anything malformed is ignored with a warning. */
@@ -291,7 +388,7 @@ async function runAppJob(
   job: AgentAppJob,
   handlers: AgentAppJobHandlers | undefined,
   warnings: string[],
-): Promise<AgentJobResult | null> {
+): Promise<AgentAppJobResult | null> {
   if (!handlers) {
     warnings.push(
       `The panel asked this agent to run ${job.kind} for "${job.route}", which this sync ` +
@@ -327,10 +424,40 @@ async function runAppJob(
   return valid.data;
 }
 
+// ---------------------------------------------------------------------------
+// App job results the relay has not taken yet
+// ---------------------------------------------------------------------------
+
+/** jobId → a result the relay has not taken yet, kept until the job's deadline. */
+type AppJobResults = Record<
+  string,
+  { readonly result: AgentAppJobResult; readonly deadlineAt: string }
+>;
+
+function appJobResultsPath(label: string): string {
+  return path.join(agentDataDir(label), 'app-job-results.json');
+}
+
+async function readAppJobResults(label: string): Promise<AppJobResults> {
+  const raw = await readJSONFile<unknown>(appJobResultsPath(label), {}).catch(() => ({}));
+  const out: AppJobResults = {};
+  if (!isRecord(raw)) return out;
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!UUID_RE.test(id) || !isRecord(entry) || typeof entry['deadlineAt'] !== 'string') continue;
+    const result = AgentAppJobResultSchema.safeParse(entry['result']);
+    if (result.success) out[id] = { result: result.data, deadlineAt: entry['deadlineAt'] };
+  }
+  return out;
+}
+
 /**
  * Run the jobs the relay listed, one after another, and report each. Hook
  * jobs are run here; app jobs by `options.appJobs`, and without handlers
- * they stay pending.
+ * they stay pending; a refused app job (no signature matching it) is
+ * reported failed. An app job's result is kept (`app-job-results.json`,
+ * 0600) until the relay took it: a report that failed is made again on the
+ * next sync without running the job again — the app host helper runs a
+ * signed job once.
  */
 export async function runAgentJobs(
   label: string,
@@ -341,12 +468,47 @@ export async function runAgentJobs(
 ): Promise<AgentJobRunResult> {
   const ran: string[] = [];
   const deferred: string[] = [];
+  const stored = await readAppJobResults(label);
+  // Results of jobs past their deadline are of no use to the relay any more.
+  const unreported: AppJobResults = Object.fromEntries(
+    Object.entries(stored).filter(([, entry]) => Date.parse(entry.deadlineAt) > Date.now()),
+  );
+  let dirty = Object.keys(unreported).length !== Object.keys(stored).length;
+  const persist = async (): Promise<void> => {
+    if (!dirty) return;
+    try {
+      await atomicWriteJSON(appJobResultsPath(label), unreported, { mode: 0o600, mkdirp: true });
+      dirty = false;
+    } catch (err: unknown) {
+      warnings.push(
+        `The results of app jobs could not be kept (${err instanceof Error ? err.message : String(err)}).`,
+      );
+    }
+  };
+
   for (const job of jobs) {
     if (Date.parse(job.deadlineAt) <= Date.now()) continue; // the relay expires it
-    const result =
-      job.kind === 'hook'
-        ? await runHookJob(label, job)
-        : await runAppJob(job, options.appJobs, warnings);
+    let result: AgentJobResult | null;
+    if (job.kind === 'hook') {
+      result = await runHookJob(label, job);
+    } else if (job.kind === 'refused') {
+      warnings.push(`The ${job.jobKind} job of "${job.route}" was refused: ${job.reason}`);
+      result = { ok: false, error: agentJobError(job.reason) };
+    } else {
+      const kept = unreported[job.id];
+      if (kept) {
+        result = kept.result;
+      } else {
+        const outcome = await runAppJob(job, options.appJobs, warnings);
+        result = outcome;
+        if (outcome !== null) {
+          // Kept before it is reported: the helper will not run this job again.
+          unreported[job.id] = { result: outcome, deadlineAt: job.deadlineAt };
+          dirty = true;
+          await persist();
+        }
+      }
+    }
     if (result === null) {
       deferred.push(job.id);
       continue;
@@ -354,14 +516,22 @@ export async function runAgentJobs(
     try {
       await reporter.reportJobResult(job.id, result);
       ran.push(job.id);
+      if (unreported[job.id]) {
+        delete unreported[job.id];
+        dirty = true;
+      }
     } catch (err: unknown) {
-      const what = job.kind === 'hook' ? `the ${job.stage} hook` : `the ${job.kind} job`;
+      const what =
+        job.kind === 'hook'
+          ? `the ${job.stage} hook`
+          : `the ${job.kind === 'refused' ? job.jobKind : job.kind} job`;
       warnings.push(
         `The result of ${what} of "${job.route}" could not be reported ` +
           `(${err instanceof Error ? err.message : String(err)}).`,
       );
     }
   }
+  await persist();
   return { ran, deferred };
 }
 

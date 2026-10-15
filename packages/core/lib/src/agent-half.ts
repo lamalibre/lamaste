@@ -23,6 +23,7 @@ import crypto from 'node:crypto';
 import semver from 'semver';
 import { z } from 'zod';
 
+import { AGENT_LABEL_REGEX } from './constants.js';
 import type { ParsedManifest } from './schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -214,7 +215,23 @@ export const APPHOST_PATHS = Object.freeze({
    * it. Kept with the data on removal; deleted by a purge.
    */
   ownerFile: (route: string): string => `/var/lib/lamalibre/apps/.owners/${appRoute(route)}.json`,
+  /**
+   * The relay keys the helper verifies app jobs with (root 0755): one file
+   * per agent label on the machine, written by `sudo lamaste-agent apphost
+   * enable|pin` from the relay that agent is enrolled with.
+   */
+  relaysDir: '/etc/lamalibre/apphost/relays',
+  /** The relay key pinned for agent `label` (root 0644; public material). */
+  relayPinFile: (label: string): string =>
+    `/etc/lamalibre/apphost/relays/${agentLabel(label)}.json`,
+  /** The app jobs the helper ran (root 0700), so none runs twice; kept until they expire. */
+  jobsDir: '/var/lib/lamalibre/apps/.jobs',
 });
+
+function agentLabel(label: string): string {
+  if (!AGENT_LABEL_REGEX.test(label)) throw new Error(`Invalid agent label "${label}"`);
+  return label;
+}
 
 /** The protocol of `lamaste-apphost` this Lamaste speaks; an agent's helper must be at least this. */
 export const APPHOST_PROTOCOL_VERSION = 1;

@@ -12,17 +12,40 @@
  * runs as the agent half's own account under a hardened unit generated here.
  *
  *   install <label> <route> <version> <integrity>
- *                                  stdin: one line of JSON (the service spec),
- *                                  "\n", then the package .tgz
+ *                                  stdin: the relay's signature (one line of
+ *                                  JSON), "\n", the service spec (one line of
+ *                                  JSON), "\n", then the package .tgz
  *   config <label> <route>         stdin: the plugin config (port, secret)
  *   activate <label> <route> <version>
- *                                  point the agent half at a kept version
+ *                                  stdin: the relay's signature; point the
+ *                                  agent half at a kept version
  *   remove <label> <route> [--purge]
- *                                  remove it; --purge also its data, its
- *                                  account and its owner record
+ *                                  stdin: the relay's signature; remove it;
+ *                                  --purge also its data, its account and its
+ *                                  owner record
  *   status [<route>]               the protocol, the Node.js this helper (and so
  *                                  every agent half) runs on, and per agent
  *                                  half: versions, unit state, owner (JSON)
+ *
+ * **Only what the relay signed.** The agent's user can run this program as
+ * root, so `install`, `activate` and `remove` do nothing the agent's relay
+ * did not sign: the first line of stdin is `{"envelope","sig"}` — the
+ * relay's Ed25519 signature over the canonical JSON of
+ * `{ v, typ: "lamaste.apphost.job", kid, agent, route, jobId, kind,
+ * payload, issuedAt, expiresAt }` (`@lamalibre/lamaste`'s
+ * `app-job-signature.ts`). It is verified with the key pinned for `<label>`
+ * (/etc/lamalibre/apphost/relays/<label>.json, root 0644, written by
+ * `sudo lamaste-agent apphost enable|pin`), and must name that agent (as its
+ * relay knows it), the route, the command and exactly what the arguments
+ * and stdin ask — the spec, version and integrity for `install`; the
+ * version and package for `activate`; the purge flag and package for
+ * `remove`, whose package must own the route. It must be current, and a
+ * job runs once: the ids of the jobs run are kept (root, in
+ * /var/lib/lamalibre/apps/.jobs) until they expire. `config` and `status`
+ * are not signed: the agent's user holds the plugin config already, and
+ * status changes nothing. An operator running as root removes an agent
+ * half with `sudo lamaste-agent apphost remove|disable`, which call this
+ * program's functions directly, not through sudo.
  *
  * `<label>` is the agent's label on this machine. Several agents (of
  * different relays) may share a machine; a route belongs to the agent that
@@ -41,13 +64,17 @@
  * `{ "ok": true, "version", "unit" }`; errors go to stderr as one line
  * starting with "lamaste-apphost: ". Exit status: 0 done, 1 failed,
  * 2 refused (bad arguments or input), 3 that agent half is not installed
- * (`config`, `activate`), 4 the route belongs to another agent or package.
+ * (`config`, `activate`), 4 the route belongs to another agent or package,
+ * 5 refused: not a job the relay signed for this agent and command (no
+ * signature, no pinned key, another key, a bad, expired or reused one, or
+ * one for other arguments).
  *
  * The names, paths and patterns below must equal those of
- * `@lamalibre/lamaste` (`src/agent-half.ts`, `src/agent/registry.ts`); the
- * agent CLI's tests compare them. This file is installed root-owned (0755)
- * at /usr/local/sbin/lamaste-apphost and uses only Node.js built-ins, so it
- * reads nothing the agent's user can write. It is CommonJS on purpose: an
+ * `@lamalibre/lamaste` (`src/agent-half.ts`, `src/agent/registry.ts`,
+ * `src/app-job-signature.ts`); the agent CLI's tests compare them, and check
+ * that a job core signs is one this program accepts. This file is installed
+ * root-owned (0755) at /usr/local/sbin/lamaste-apphost and uses only Node.js
+ * built-ins, so it reads nothing the agent's user can write. It is CommonJS on purpose: an
  * extension-less script outside any package is loaded as CommonJS by every
  * supported Node.js version.
  */
@@ -89,6 +116,12 @@ const APPS_CONFIG = '/etc/lamalibre/apps';
 const OWNERS_DIR = `${APPS_DATA}/.owners`;
 /** Purged data waits here (root 0700) while it is deleted, out of its account's reach. */
 const TRASH_DIR = `${APPS_DATA}/.trash`;
+/** The relay keys, one per agent label (root 0755; files root 0644). */
+const APPHOST_ETC = '/etc/lamalibre/apphost';
+const RELAYS_DIR = `${APPHOST_ETC}/relays`;
+/** The ids of the signed jobs run (root 0700), each until its signature expires. */
+const JOBS_DIR = `${APPS_DATA}/.jobs`;
+const JOBS_FILE = `${JOBS_DIR}/used.json`;
 
 const PATHS = Object.freeze({
   helper: '/usr/local/sbin/lamaste-apphost',
@@ -98,7 +131,37 @@ const PATHS = Object.freeze({
   configDir: (route) => `${APPS_CONFIG}/${route}`,
   configFile: (route) => `${APPS_CONFIG}/${route}/plugin-config.json`,
   ownerFile: (route) => `${OWNERS_DIR}/${route}.json`,
+  relaysDir: RELAYS_DIR,
+  relayPinFile: (label) => `${RELAYS_DIR}/${label}.json`,
+  jobsDir: JOBS_DIR,
 });
+
+// ---------------------------------------------------------------------------
+// Signed jobs (identical to @lamalibre/lamaste's app-job-signature.ts)
+// ---------------------------------------------------------------------------
+
+const JOB_TYPE = 'lamaste.apphost.job';
+const JOB_VERSION = 1;
+const JOB_KINDS = Object.freeze({
+  install: 'app-install',
+  activate: 'app-activate',
+  remove: 'app-remove',
+});
+/** The longest a signed job may be valid. */
+const JOB_MAX_LIFETIME_MS = 60 * 60_000;
+/** Clock difference tolerated between the relay and this machine for `issuedAt`. */
+const JOB_CLOCK_SKEW_MS = 5_000;
+/** Longest `envelope`, in base64url characters. */
+const ENVELOPE_MAX = 32 * 1024;
+const SIGNATURE_LINE_MAX = ENVELOPE_MAX + 1024;
+const KID_RE = /^[a-f0-9]{32}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const SIG_RE = /^[A-Za-z0-9_-]{86}$/;
+const PIN_MAX = 16 * 1024;
+/** Signed jobs remembered at most (each for at most an hour). */
+const JOBS_MAX = 10_000;
 
 /**
  * The account (user and group) an agent half runs as: `lamaste-app-<route>`
@@ -168,6 +231,8 @@ const LOCK_YOUNG_MS = 10_000;
 class UsageError extends Error {}
 class NotInstalledError extends Error {}
 class NotOwnerError extends Error {}
+/** Not a job the relay signed for this agent and command. */
+class UnsignedError extends Error {}
 
 // ---------------------------------------------------------------------------
 // Argument validation
@@ -227,7 +292,7 @@ function hasExactly(object, keys) {
   return own.length === keys.length && [...keys].sort().every((k, i) => own[i] === k);
 }
 
-/** The service spec (first line of `install`'s stdin), checked field by field. */
+/** The service spec (the line after the signature on `install`'s stdin), checked field by field. */
 function parseSpecLine(text) {
   let raw;
   try {
@@ -235,6 +300,11 @@ function parseSpecLine(text) {
   } catch {
     throw new UsageError('the service spec is not JSON');
   }
+  return parseSpec(raw);
+}
+
+/** A service spec — package, service, system packages — checked; system packages sorted, once each. */
+function parseSpec(raw) {
   if (!isRecord(raw) || !hasExactly(raw, ['package', 'service', 'systemPackages'])) {
     throw new UsageError('the service spec has missing or unexpected fields');
   }
@@ -337,6 +407,372 @@ function parsePluginConfig(bytes, route) {
 }
 
 // ---------------------------------------------------------------------------
+// Signed jobs: the canonical form, the envelope, the signature
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical JSON: keys sorted at every level, no whitespace; only strings,
+ * finite numbers, booleans, null, arrays and plain objects.
+ */
+function canonicalJson(value) {
+  const canonical = (v) => {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return v;
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) throw new TypeError('canonical JSON has no non-finite numbers');
+      return v;
+    }
+    if (Array.isArray(v)) return v.map(canonical);
+    if (typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      // fromEntries defines each key as data — a "__proto__" key stays a key.
+      return Object.fromEntries(
+        Object.keys(v)
+          .sort()
+          .map((k) => [k, canonical(v[k])]),
+      );
+    }
+    throw new TypeError(`canonical JSON cannot hold a ${typeof v}`);
+  };
+  return JSON.stringify(canonical(value));
+}
+
+function isTimestamp(value) {
+  return (
+    typeof value === 'string' &&
+    ISO_RE.test(value) &&
+    Number.isFinite(Date.parse(value)) &&
+    new Date(Date.parse(value)).toISOString() === value
+  );
+}
+
+function isBase64Url(value) {
+  return (
+    typeof value === 'string' &&
+    BASE64URL_RE.test(value) &&
+    Buffer.from(value, 'base64url').toString('base64url') === value
+  );
+}
+
+/** A signed job's payload for `kind`, checked; null when it is not one. */
+function parseJobPayload(kind, payload) {
+  if (!isRecord(payload)) return null;
+  const isPackage = (p) => typeof p === 'string' && p.length <= PACKAGE_MAX && PACKAGE_RE.test(p);
+  switch (kind) {
+    case JOB_KINDS.install: {
+      if (!hasExactly(payload, ['spec'])) return null;
+      const spec = payload.spec;
+      if (
+        !isRecord(spec) ||
+        !hasExactly(spec, ['package', 'version', 'integrity', 'service', 'systemPackages']) ||
+        !isVersion(spec.version) ||
+        typeof spec.integrity !== 'string' ||
+        !INTEGRITY_RE.test(spec.integrity)
+      ) {
+        return null;
+      }
+      let service;
+      try {
+        service = parseSpec({
+          package: spec.package,
+          service: spec.service,
+          systemPackages: spec.systemPackages,
+        });
+      } catch {
+        return null;
+      }
+      return { spec: { ...service, version: spec.version, integrity: spec.integrity } };
+    }
+    case JOB_KINDS.activate:
+      return hasExactly(payload, ['version', 'package']) &&
+        isVersion(payload.version) &&
+        isPackage(payload.package)
+        ? { version: payload.version, package: payload.package }
+        : null;
+    case JOB_KINDS.remove:
+      return hasExactly(payload, ['purge', 'package']) &&
+        typeof payload.purge === 'boolean' &&
+        isPackage(payload.package)
+        ? { purge: payload.purge, package: payload.package }
+        : null;
+    default:
+      return null;
+  }
+}
+
+/** A decoded envelope, checked field by field; null when it is not one. */
+function parseEnvelope(raw) {
+  if (
+    !isRecord(raw) ||
+    !hasExactly(raw, [
+      'v',
+      'typ',
+      'kid',
+      'agent',
+      'route',
+      'jobId',
+      'kind',
+      'payload',
+      'issuedAt',
+      'expiresAt',
+    ])
+  ) {
+    return null;
+  }
+  const { v, typ, kid, agent, route, jobId, kind, issuedAt, expiresAt } = raw;
+  if (
+    v !== JOB_VERSION ||
+    typ !== JOB_TYPE ||
+    typeof kid !== 'string' ||
+    !KID_RE.test(kid) ||
+    typeof agent !== 'string' ||
+    !LABEL_RE.test(agent) ||
+    typeof route !== 'string' ||
+    !ROUTE_RE.test(route) ||
+    typeof jobId !== 'string' ||
+    !UUID_RE.test(jobId) ||
+    !Object.values(JOB_KINDS).includes(kind) ||
+    !isTimestamp(issuedAt) ||
+    !isTimestamp(expiresAt)
+  ) {
+    return null;
+  }
+  const lifetime = Date.parse(expiresAt) - Date.parse(issuedAt);
+  if (lifetime <= 0 || lifetime > JOB_MAX_LIFETIME_MS) return null;
+  const payload = parseJobPayload(kind, raw.payload);
+  if (payload === null) return null;
+  return { v, typ, kid, agent, route, jobId, kind, payload, issuedAt, expiresAt };
+}
+
+/**
+ * A signature line as it arrives — `{"envelope","sig"}`, both canonical
+ * base64url, the envelope canonical JSON and a valid envelope — decoded,
+ * not yet verified.
+ */
+function decodeSignature(line) {
+  let raw;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    throw new UnsignedError("the first line of stdin is not the relay's signature (not JSON)");
+  }
+  if (!isRecord(raw) || !hasExactly(raw, ['envelope', 'sig'])) {
+    throw new UnsignedError("the first line of stdin is not the relay's signature");
+  }
+  const { envelope, sig } = raw;
+  if (
+    !isBase64Url(envelope) ||
+    envelope.length > ENVELOPE_MAX ||
+    typeof sig !== 'string' ||
+    !SIG_RE.test(sig) ||
+    !isBase64Url(sig)
+  ) {
+    throw new UnsignedError("the relay's signature is malformed");
+  }
+  const bytes = Buffer.from(envelope, 'base64url');
+  const text = bytes.toString('utf8');
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    throw new UnsignedError('the signed job is not JSON');
+  }
+  const parsed = parseEnvelope(decoded);
+  let canonical = null;
+  try {
+    canonical = canonicalJson(decoded);
+  } catch {
+    canonical = null;
+  }
+  // Canonical bytes only: what was signed is exactly what is read.
+  if (parsed === null || canonical !== text) {
+    throw new UnsignedError('the signed job is not a valid app job');
+  }
+  return { envelope: parsed, bytes, sig: Buffer.from(sig, 'base64url') };
+}
+
+/**
+ * Verify the relay's signature `line` for agent `label`'s `kind` job on
+ * `route` with `pin` (the key pinned for that agent): the pinned key made
+ * it, it names the agent as its relay knows it, the route and the kind,
+ * and it is current. Returns the envelope; its payload is the caller's to
+ * compare with what it was asked, and its job id to record.
+ */
+function verifySignature(line, { pin, label, route, kind, now }) {
+  const { envelope, bytes, sig } = decodeSignature(line);
+  if (envelope.kid !== pin.kid) {
+    throw new UnsignedError(
+      `the job is signed with relay key ${envelope.kid.slice(0, 12)}, but agent "${label}" has ` +
+        `${pin.kid.slice(0, 12)} pinned; re-pin the relay key: sudo lamaste-agent apphost pin`,
+    );
+  }
+  let valid = false;
+  try {
+    valid = crypto.verify(null, bytes, pin.publicKey, sig);
+  } catch {
+    valid = false;
+  }
+  if (!valid) throw new UnsignedError("the relay's signature does not verify");
+  if (envelope.agent !== pin.agent) {
+    // The pin names the agent as its relay knows it, which the local label need not equal.
+    throw new UnsignedError(
+      `the job is for agent "${envelope.agent}", not "${pin.agent}" (agent "${label}" on its ` +
+        'relay); if it was enrolled again, re-pin the relay key: sudo lamaste-agent apphost pin',
+    );
+  }
+  if (envelope.route !== route) {
+    throw new UnsignedError(`the job is for ${envelope.route}, not ${route}`);
+  }
+  if (envelope.kind !== kind) {
+    throw new UnsignedError(`the job is an ${envelope.kind} job, not ${kind}`);
+  }
+  if (Date.parse(envelope.issuedAt) > now + JOB_CLOCK_SKEW_MS) {
+    throw new UnsignedError(
+      'the job was signed in the future; check the clocks of agent and relay',
+    );
+  }
+  if (Date.parse(envelope.expiresAt) <= now) throw new UnsignedError('the job has expired');
+  return envelope;
+}
+
+/** The pinned key's public key from its SPKI (base64), and its id; null when it is not Ed25519. */
+function pinnedKey(publicKeyB64) {
+  if (typeof publicKeyB64 !== 'string' || publicKeyB64.length > 1024) return null;
+  const der = Buffer.from(publicKeyB64, 'base64');
+  if (der.toString('base64') !== publicKeyB64) return null;
+  let publicKey;
+  try {
+    publicKey = crypto.createPublicKey({ key: der, format: 'der', type: 'spki' });
+  } catch {
+    return null;
+  }
+  if (publicKey.asymmetricKeyType !== 'ed25519') return null;
+  return { publicKey, kid: crypto.createHash('sha256').update(der).digest('hex').slice(0, 32) };
+}
+
+/**
+ * The relay key pinned for agent `label` — read only from root-owned
+ * directories and a root-owned file nobody else may write, so the agent's
+ * user cannot have put it there.
+ */
+function readRelayPin(ctx, label) {
+  const repin = `re-pin the relay key: sudo lamaste-agent apphost pin --label ${label}`;
+  for (const dir of ['/etc/lamalibre', APPHOST_ETC, RELAYS_DIR]) {
+    const st = lstatOrNull(at(ctx, dir));
+    if (st === null) {
+      throw new UnsignedError(`no relay key is pinned for agent "${label}"; ${repin}`);
+    }
+    if (!st.isDirectory() || st.uid !== ctx.rootUid || (st.mode & 0o022) !== 0) {
+      throw new UnsignedError(
+        `${dir} is not a root-owned directory; the pinned key is not trusted`,
+      );
+    }
+  }
+  let fd;
+  try {
+    fd = fs.openSync(
+      at(ctx, PATHS.relayPinFile(label)),
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new UnsignedError(`no relay key is pinned for agent "${label}"; ${repin}`);
+    }
+    if (err.code === 'ELOOP') {
+      throw new UnsignedError(`the relay key of agent "${label}" is a link; ${repin}`);
+    }
+    throw err;
+  }
+  let text;
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.uid !== ctx.rootUid || (st.mode & 0o022) !== 0 || st.size > PIN_MAX) {
+      throw new UnsignedError(
+        `the relay key of agent "${label}" is not a root-owned file; ${repin}`,
+      );
+    }
+    text = fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    raw = null;
+  }
+  const key =
+    isRecord(raw) &&
+    hasExactly(raw, ['v', 'label', 'agent', 'kid', 'publicKey', 'panelUrl', 'pinnedAt']) &&
+    raw.v === 1 &&
+    raw.label === label &&
+    typeof raw.agent === 'string' &&
+    LABEL_RE.test(raw.agent) &&
+    typeof raw.kid === 'string' &&
+    KID_RE.test(raw.kid)
+      ? pinnedKey(raw.publicKey)
+      : null;
+  if (key === null || key.kid !== raw.kid) {
+    throw new UnsignedError(`the relay key pinned for agent "${label}" is unreadable; ${repin}`);
+  }
+  return { kid: raw.kid, agent: raw.agent, publicKey: key.publicKey };
+}
+
+/**
+ * Remember that signed job `envelope` ran, refusing one that already did:
+ * a job runs once. Ids are kept until their signatures expire.
+ */
+function recordJob(ctx, envelope, now) {
+  ensureRootDirectory(ctx, at(ctx, '/var/lib/lamalibre'));
+  ensureRootDirectory(ctx, at(ctx, APPS_DATA));
+  ensureRootDirectory(ctx, at(ctx, JOBS_DIR), 0o700);
+  const file = at(ctx, JOBS_FILE);
+  const text = readOrNull(file);
+  let jobs = {};
+  if (text !== null) {
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      raw = null;
+    }
+    if (
+      !isRecord(raw) ||
+      raw.v !== 1 ||
+      !isRecord(raw.jobs) ||
+      !Object.entries(raw.jobs).every(([id, exp]) => UUID_RE.test(id) && Number.isFinite(exp))
+    ) {
+      throw new Error(
+        `${JOBS_FILE} is unreadable; delete it (it only holds the ids of jobs that expire within an hour)`,
+      );
+    }
+    jobs = raw.jobs;
+  }
+  // An expired job cannot be verified again: its id need not be kept.
+  const kept = Object.entries(jobs).filter(([, exp]) => exp > now);
+  if (kept.some(([id]) => id === envelope.jobId)) {
+    throw new UnsignedError(`job ${envelope.jobId} has run already; a signed job runs once`);
+  }
+  if (kept.length >= JOBS_MAX) throw new Error('too many signed jobs within the hour');
+  kept.push([envelope.jobId, Date.parse(envelope.expiresAt)]);
+  atomicWrite(ctx, file, `${JSON.stringify({ v: 1, jobs: Object.fromEntries(kept) })}\n`, 0o600);
+}
+
+/** The first line of `input` (the signature) and the rest; refused when there is none. */
+function splitSignature(input) {
+  const newline = input.indexOf(0x0a);
+  if (newline === -1 || newline > SIGNATURE_LINE_MAX) {
+    throw new UnsignedError("stdin starts with one line of JSON: the relay's signature");
+  }
+  return { line: input.subarray(0, newline).toString('utf8'), rest: input.subarray(newline + 1) };
+}
+
+/** The signature `activate` and `remove` take: stdin is that one line. */
+function readSignatureOnly(ctx) {
+  const { line, rest } = splitSignature(readInput(ctx, SIGNATURE_LINE_MAX + 1));
+  if (rest.length > 0) throw new UsageError("stdin holds only the relay's signature");
+  return line;
+}
+
+// ---------------------------------------------------------------------------
 // Context: the file system root and the commands (replaced by the tests)
 // ---------------------------------------------------------------------------
 
@@ -368,7 +804,10 @@ function freeBytes(p) {
  * runs a command (`spawnSync` semantics), `chown` sets an owner,
  * `rootUid`/`rootGid` own what belongs to root, `freeBytes` measures free
  * space, `stdin` replaces fd 0 (bytes, or a function returning them),
- * `lockWaitMs` shortens every wait for the lock.
+ * `lockWaitMs` shortens every wait for the lock, `now` replaces the clock.
+ * `operator` (only from a caller already running as root that loaded this
+ * file, never from the command line) removes without a relay signature —
+ * an operator's `lamaste-agent apphost remove|disable`.
  */
 function createContext(options = {}) {
   return {
@@ -380,6 +819,8 @@ function createContext(options = {}) {
     freeBytes: options.freeBytes ?? freeBytes,
     stdin: options.stdin,
     lockWaitMs: options.lockWaitMs,
+    now: options.now ?? Date.now,
+    operator: options.operator === true,
   };
 }
 
@@ -1019,8 +1460,8 @@ function writeOwner(ctx, route, owner) {
   );
 }
 
-function purgeCommand(label, route) {
-  return `sudo ${PATHS.helper} remove ${label} ${route} --purge`;
+function purgeCommand(route) {
+  return `sudo lamaste-agent apphost remove ${route} --purge`;
 }
 
 /**
@@ -1036,7 +1477,7 @@ function assertOwner(ctx, route, label, pkg) {
       `${route} belongs to ${owner.package} installed by agent "${owner.label}"` +
         (pkg !== undefined ? `, not ${pkg} from agent "${label}"` : `, not agent "${label}"`) +
         `; its data is kept for it — remove it with purge first (on that agent's panel, or ` +
-        `${purgeCommand(owner.label, route)})`,
+        `${purgeCommand(route)})`,
     );
   }
   return owner;
@@ -1430,13 +1871,31 @@ function install(ctx, args) {
   // a second tarball in memory.
   const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.install);
   try {
-    const input = readInput(ctx, SPEC_LINE_MAX + 1 + TARBALL_MAX);
-    const newline = input.indexOf(0x0a);
+    const input = readInput(ctx, SIGNATURE_LINE_MAX + 1 + SPEC_LINE_MAX + 1 + TARBALL_MAX);
+    const signed = splitSignature(input);
+    const now = ctx.now();
+    const envelope = verifySignature(signed.line, {
+      pin: readRelayPin(ctx, label),
+      label,
+      route,
+      kind: JOB_KINDS.install,
+      now,
+    });
+    const newline = signed.rest.indexOf(0x0a);
     if (newline === -1 || newline > SPEC_LINE_MAX) {
-      throw new UsageError('stdin starts with one line of JSON: the service spec');
+      throw new UsageError('the service spec follows the signature as one line of JSON');
     }
-    const spec = parseSpecLine(input.subarray(0, newline).toString('utf8'));
-    const tgz = input.subarray(newline + 1);
+    const spec = parseSpecLine(signed.rest.subarray(0, newline).toString('utf8'));
+    // Exactly what the relay signed: the version, the tarball, the service.
+    const approved = envelope.payload.spec;
+    if (approved.version !== version || approved.integrity !== integrity) {
+      throw new UnsignedError('the job signs another version or tarball integrity than requested');
+    }
+    const { version: _version, integrity: _integrity, ...approvedService } = approved;
+    if (canonicalJson(spec) !== canonicalJson(approvedService)) {
+      throw new UnsignedError('the service spec is not the one the relay signed');
+    }
+    const tgz = signed.rest.subarray(newline + 1);
     if (tgz.length === 0) {
       throw new UsageError('the package tarball follows the service spec on stdin');
     }
@@ -1450,6 +1909,8 @@ function install(ctx, args) {
         'systemd is not the system manager here; an agent half runs as a systemd service',
       );
     }
+    // Everything asked is checked: the job runs, once.
+    recordJob(ctx, envelope, now);
     try {
       return installLocked(ctx, { label, route, version, spec, tar, archive });
     } catch (err) {
@@ -1654,9 +2115,23 @@ function activate(ctx, args) {
 
   const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.activate);
   try {
+    const now = ctx.now();
+    const envelope = verifySignature(readSignatureOnly(ctx), {
+      pin: readRelayPin(ctx, label),
+      label,
+      route,
+      kind: JOB_KINDS.activate,
+      now,
+    });
+    if (envelope.payload.version !== version) {
+      throw new UnsignedError(`the job activates ${envelope.payload.version}, not ${version}`);
+    }
     const owner = assertOwner(ctx, route, label);
     if (owner === null || installedVersions(ctx, route).length === 0) {
       throw new NotInstalledError(`the agent half of ${route} is not installed`);
+    }
+    if (owner.package !== envelope.payload.package) {
+      throw new NotOwnerError(`${route} is ${owner.package}, not ${envelope.payload.package}`);
     }
     const spec = readVersionSpec(ctx, route, version);
     if (spec === null) throw new Error(`version ${version} of ${route} is not kept on this agent`);
@@ -1666,6 +2141,7 @@ function activate(ctx, args) {
     if (serviceAccount(ctx, route) === null) {
       throw new NotInstalledError(`the account of ${route} is missing; install it again`);
     }
+    recordJob(ctx, envelope, now);
     atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644);
     switchCurrent(ctx, route, version);
     pruneVersions(ctx, route);
@@ -1688,10 +2164,32 @@ function remove(ctx, args) {
 
   const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.remove);
   try {
-    // Whose it is, and — for a purge — that the account is its own, before
-    // anything is stopped or deleted.
-    assertOwner(ctx, route, label);
+    // The relay's job (an operator running as root needs none), whose it
+    // is, and — for a purge — that the account is its own, before anything
+    // is stopped or deleted.
+    const now = ctx.now();
+    const envelope = ctx.operator
+      ? null
+      : verifySignature(readSignatureOnly(ctx), {
+          pin: readRelayPin(ctx, label),
+          label,
+          route,
+          kind: JOB_KINDS.remove,
+          now,
+        });
+    if (envelope !== null && envelope.payload.purge !== purge) {
+      throw new UnsignedError(
+        `the job removes ${route} ${envelope.payload.purge ? 'with' : 'without'} --purge`,
+      );
+    }
+    const owner = assertOwner(ctx, route, label);
+    if (envelope !== null && owner !== null && owner.package !== envelope.payload.package) {
+      throw new NotOwnerError(
+        `${route} is ${owner.package}, not ${envelope.payload.package}; its data is kept for it`,
+      );
+    }
     if (purge) serviceAccount(ctx, route);
+    if (envelope !== null) recordJob(ctx, envelope, now);
 
     const unit = unitName(route);
     systemctl(ctx, ['disable', '--now', unit], { allowFailure: true });
@@ -1788,6 +2286,7 @@ function exitStatus(err) {
   if (err instanceof UsageError) return 2;
   if (err instanceof NotInstalledError) return 3;
   if (err instanceof NotOwnerError) return 4;
+  if (err instanceof UnsignedError) return 5;
   return 1;
 }
 
@@ -1820,9 +2319,16 @@ if (require.main === module) {
     ROUTES_MAX,
     PATHS,
     NODE_BIN,
+    JOB_TYPE,
+    JOB_VERSION,
+    JOB_KINDS,
+    JOB_MAX_LIFETIME_MS,
+    JOB_CLOCK_SKEW_MS,
+    ENVELOPE_MAX,
     UsageError,
     NotInstalledError,
     NotOwnerError,
+    UnsignedError,
     exitStatus,
     serviceUser,
     serviceAccountComment,
@@ -1830,6 +2336,10 @@ if (require.main === module) {
     isVersion,
     parseSpecLine,
     parsePluginConfig,
+    canonicalJson,
+    decodeSignature,
+    verifySignature,
+    readRelayPin,
     parsePax,
     acquireLock,
     createContext,

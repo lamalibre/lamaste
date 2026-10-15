@@ -34,7 +34,9 @@
  * Once an install job is dispatched the agent may act on it, whatever it
  * reports: a rollback then removes the agent half (data kept, and recorded
  * so it can be purged later — `retained-data.js`), and a failed upgrade
- * activates the version that ran before. Every hosting record names the
+ * activates the version that ran before. The agent's helper runs only app
+ * jobs the relay signed, so these recoveries are the relay's to start — the
+ * agent never undoes an install on its own. Every hosting record names the
  * plugin that owns it; a teardown acts only on the plugin's own.
  *
  * Hook outputs are passed forward in `outputs` (`relay:install:pre-tunnel`, …).
@@ -42,7 +44,6 @@
 
 import {
   AGENT_LABEL_REGEX,
-  APPHOST_PATHS,
   PLUGIN_AGENT_CN_PREFIX,
   agentHookSetOf,
   derivePluginRoute,
@@ -67,7 +68,13 @@ import {
   toggleTunnel,
 } from '@lamalibre/lamaste/server';
 import { StageFailure } from './plugin-operations.js';
-import { createAgentJob, createAppJob, cancelAgentJobs, waitForAgentJob } from './agent-jobs.js';
+import {
+  AppJobSigningError,
+  createAgentJob,
+  createAppJob,
+  cancelAgentJobs,
+  waitForAgentJob,
+} from './agent-jobs.js';
 import { installedAgentHalf, installedRelayHooks } from './plugin-hooks.js';
 import { forgetRetainedData, recordRetainedData } from './retained-data.js';
 import { runRelayHook } from './relay-hooks.js';
@@ -386,10 +393,17 @@ async function releaseHosting(ctx) {
 /**
  * Dispatch one app job for the plugin to its hosting agent and wait for its
  * result. `onDispatched` runs once the job exists — from then on the agent
- * may act on it, whatever it reports later.
+ * may act on it, whatever it reports later. A job the relay cannot sign
+ * (its signing key is unusable) is never created: the step fails.
  */
 async function runAppJob(ctx, kind, params, onDispatched) {
-  const id = await createAppJob({ agentLabel: ctx.agentLabel, plugin: ctx.route, kind, ...params });
+  let id;
+  try {
+    id = await createAppJob({ agentLabel: ctx.agentLabel, plugin: ctx.route, kind, ...params });
+  } catch (err) {
+    if (err instanceof AppJobSigningError) throw new StageFailure(err.message);
+    throw err;
+  }
   onDispatched?.();
   return waitForAgentJob(id);
 }
@@ -482,8 +496,15 @@ function assertRemoved(result, what) {
 async function removeAgentHalf(op, ctx, phase, purge) {
   const record = await ownHostingRecord(ctx);
   const pkg = record?.agentHalf?.package ?? ctx.agentHalf?.package ?? null;
+  if (pkg === null) {
+    // The signed job names the package, so the helper never removes or
+    // purges an agent half another package owns.
+    throw new StageFailure(
+      "The agent half's package is not known, so its removal cannot be signed",
+    );
+  }
   const helperFailed = ctx.appInstall === 'failed';
-  const result = await runAppJob(ctx, 'app-remove', { purge });
+  const result = await runAppJob(ctx, 'app-remove', { purge, package: pkg });
   assertRemoved(result, 'Removing the agent half');
   ctx.appInstall = null;
   await recordAgentHalf(ctx, null, null);
@@ -491,7 +512,7 @@ async function removeAgentHalf(op, ctx, phase, purge) {
     await forgetRetainedData(ctx.agentLabel, ctx.route);
   } else if (helperFailed) {
     // Nothing of this install's to keep a record of.
-  } else if (pkg !== null) {
+  } else {
     await recordRetainedData({
       agentLabel: ctx.agentLabel,
       route: ctx.route,
@@ -499,10 +520,6 @@ async function removeAgentHalf(op, ctx, phase, purge) {
       package: pkg,
       operation: op.id,
     });
-  } else {
-    op.warn(
-      `The agent half's data stays on agent "${ctx.agentLabel}", but its package is not known to keep a record of it`,
-    );
   }
   await recordAuditBestEffort(
     {
@@ -525,12 +542,12 @@ async function removeAgentHalf(op, ctx, phase, purge) {
 async function activatePreviousAgentHalf(op, ctx) {
   const previous = ctx.previousAgentHalfVersion;
   if (!previous) throw new StageFailure('No earlier version of the agent half is known');
-  const result = await runAppJob(ctx, 'app-activate', { version: previous });
+  const pkg = ctx.previousAgentHalfPackage ?? ctx.agentHalf.package;
+  const result = await runAppJob(ctx, 'app-activate', { version: previous, package: pkg });
   if (!result.ok) {
     throw new StageFailure(`Activating agent half ${previous} failed: ${result.error}`);
   }
   const { version, unit } = result.app;
-  const pkg = ctx.previousAgentHalfPackage ?? ctx.agentHalf.package;
   if (version !== null) await recordAgentHalf(ctx, pkg, version);
   if (version !== previous) {
     throw new StageFailure(
@@ -569,7 +586,7 @@ async function teardownAgentHalf(op, ctx, phase) {
   if (!(await isActiveAgent(ctx.agentLabel))) {
     op.skip('remove the agent half', 'the agent is no longer enrolled');
     op.warn(
-      `The agent half stays on agent "${ctx.agentLabel}" — remove it there: sudo ${APPHOST_PATHS.helper} remove ${ctx.route}${ctx.purge ? ' --purge' : ''}`,
+      `The agent half stays on agent "${ctx.agentLabel}" — remove it there: sudo lamaste-agent apphost remove ${ctx.route}${ctx.purge ? ' --purge' : ''}`,
     );
     return;
   }
@@ -589,7 +606,10 @@ async function teardownAgentHalf(op, ctx, phase) {
 export async function runPurgeRetainedData(op, { retained, logger }) {
   const ctx = { agentLabel: retained.agentLabel, route: retained.route };
   await op.step('purge the retained data', async () => {
-    const result = await runAppJob(ctx, 'app-remove', { purge: true });
+    const result = await runAppJob(ctx, 'app-remove', {
+      purge: true,
+      package: retained.package,
+    });
     assertRemoved(result, 'Purging the retained data');
     await forgetRetainedData(retained.agentLabel, retained.route);
   });

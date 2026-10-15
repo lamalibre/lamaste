@@ -555,6 +555,26 @@ export async function putHostFacts(config, facts) {
 }
 
 /**
+ * Fetch the public keys the relay signs with — relay assertions and the app
+ * jobs the app host helper runs — and the label it knows this agent by
+ * (`{ keys: [{ kid, publicKey }], agentLabel }`). The caller validates it
+ * (`parseRelayKeysResponse`).
+ *
+ * @param {object} config - Agent config
+ * @returns {Promise<unknown>}
+ */
+export async function fetchRelayKeys(config) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/relay-keys`;
+  try {
+    const { stdout } = await curlAuthenticated(config, [url]);
+    return JSON.parse(stdout);
+  } catch (err) {
+    throw new Error(`Failed to fetch the relay keys. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
  * Fetch the tunnel list from the panel.
  * @param {object} config - Agent config object
  * @returns {Promise<{ tunnels: Array<{ id: string, subdomain: string, port: number }> }>}

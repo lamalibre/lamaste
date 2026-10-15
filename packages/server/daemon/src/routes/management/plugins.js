@@ -29,7 +29,11 @@ import {
   readHookState,
 } from '../../lib/plugin-hooks.js';
 import { uninstallPluginWithHosting, updatePlugin } from '../../lib/plugin-lifecycle.js';
-import { getPluginOperation, listPluginOperations } from '../../lib/plugin-operations.js';
+import {
+  getPluginOperation,
+  listPluginOperations,
+  takeOperationReveal,
+} from '../../lib/plugin-operations.js';
 import { actorFromRequest, certSerialFromRequest } from '../../lib/actor.js';
 import { recordAudit } from '../../lib/audit.js';
 import {
@@ -499,7 +503,10 @@ export default async function pluginRoutes(fastify, _opts) {
   // ------------------------------------------------------------------
   // GET /plugins/:name/operations — the plugin's recent operations
   // (hosting, unhosting, update, uninstall), newest first
-  // GET /plugins/:name/operations/:id — one of them
+  // GET /plugins/:name/operations/:id — one of them. Once it finished, the
+  // first read also carries `oidcClients`: the secrets of confidential OIDC
+  // clients it created (an update adding one), shown this once — as
+  // POST /plugins/install returns them — and never stored.
   // ------------------------------------------------------------------
   fastify.get(
     '/plugins/:name/operations',
@@ -521,7 +528,8 @@ export default async function pluginRoutes(fastify, _opts) {
       const params = PluginNameParamSchema.merge(OperationParamSchema).parse(request.params);
       const operation = await getPluginOperation(params.name, params.id);
       if (!operation) return reply.code(404).send({ error: 'Operation not found' });
-      return { operation };
+      const reveal = operation.status === 'running' ? null : takeOperationReveal(operation.id);
+      return { operation: reveal ? { ...operation, oidcClients: reveal.oidcClients } : operation };
     },
   );
 

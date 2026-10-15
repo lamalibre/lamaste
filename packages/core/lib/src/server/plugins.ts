@@ -8,12 +8,11 @@
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { z } from 'zod';
 import { RESERVED_API_PREFIXES, RESERVED_NAV_LABELS, derivePluginRoute } from '../constants.js';
 import type { PluginHosting } from '../constants.js';
 import { PromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
-import { ManifestSchema as SharedManifestSchema } from '../schemas.js';
+import { ManifestValidationError, validateManifest as validateSharedManifest } from '../schemas.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
 export { ManifestSchema } from '../schemas.js';
 
@@ -199,10 +198,10 @@ export async function writePlugins(stateDir: string, data: PluginRegistry): Prom
 /**
  * Validate a raw plugin manifest against the canonical schema.
  *
- * @throws {z.ZodError} if validation fails
+ * @throws {ManifestValidationError} if validation fails
  */
 export function validateManifest(raw: unknown): PluginManifest {
-  return SharedManifestSchema.parse(raw) as PluginManifest;
+  return validateSharedManifest(raw) as PluginManifest;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,11 +311,8 @@ export function installPlugin(opts: InstallPluginOptions): Promise<PluginEntry> 
       try {
         manifest = validateManifest(parsedJson);
       } catch (err: unknown) {
-        if (err instanceof z.ZodError) {
-          throw new PluginError(
-            `Invalid plugin manifest: ${err.errors.map((e) => e.message).join(', ')}`,
-            'INVALID_MANIFEST',
-          );
+        if (err instanceof ManifestValidationError) {
+          throw new PluginError(err.message, 'INVALID_MANIFEST');
         }
         throw err;
       }

@@ -15,12 +15,7 @@
  * a failed fetch), whatever a caller sends.
  */
 
-import {
-  AGENT_LABEL_REGEX,
-  NonceStore,
-  parseRelayVerifyKey,
-  verifyRelayAssertion,
-} from '@lamalibre/lamaste';
+import { NonceStore, parseRelayKeysResponse, verifyRelayAssertion } from '@lamalibre/lamaste';
 
 export const REFETCH_AFTER_SUCCESS_MS = 30_000;
 export const REFETCH_AFTER_FAILURE_MS = 5_000;
@@ -52,18 +47,8 @@ export function createRelayVerifier({ port, fetchKeys, logger, now = Date.now })
 
   async function fetchNow() {
     try {
-      const response = /** @type {{ keys?: unknown, agentLabel?: unknown }} */ (await fetchKeys());
-      const list = response?.keys;
-      const agentLabel = response?.agentLabel;
-      if (!Array.isArray(list)) throw new Error('Panel returned malformed relay keys');
-      if (typeof agentLabel !== 'string' || !AGENT_LABEL_REGEX.test(agentLabel)) {
-        throw new Error('Panel did not name this agent');
-      }
-      const next = new Map();
-      for (const entry of list) {
-        const { kid, publicKey } = parseRelayVerifyKey(entry);
-        next.set(kid, publicKey);
-      }
+      const { agentLabel, keys: fetched } = parseRelayKeysResponse(await fetchKeys());
+      const next = new Map(fetched.map(({ kid, publicKey }) => [kid, publicKey]));
       keys = next;
       audience = agentLabel;
       lastFetchOk = true;

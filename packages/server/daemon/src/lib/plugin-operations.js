@@ -9,6 +9,11 @@
  * and outcome are kept in state.db (metadata only). An operation still
  * `running` when the panel starts was interrupted by a restart and is
  * marked so.
+ *
+ * What an operation creates that is shown exactly once — the secret of a
+ * confidential OIDC client an update added — is never written to state.db:
+ * it is held in memory for {@link REVEAL_TTL_MS} and handed out by the first
+ * read of the finished operation ({@link takeOperationReveal}).
  */
 
 import crypto from 'node:crypto';
@@ -20,8 +25,34 @@ import { getStateDb } from './state-db.js';
 /** Kept per plugin; older finished operations are pruned. */
 const OPERATIONS_KEPT_PER_PLUGIN = 20;
 
+/** How long a once-shown secret waits to be read before it is dropped. */
+export const REVEAL_TTL_MS = 60 * 60_000;
+
 /** plugin → { id, kind, done } */
 const running = new Map();
+
+/** operation id → { oidcClients: [{ id, secret }], expiresAt } — memory only. */
+const reveals = new Map();
+
+function pruneReveals(now = Date.now()) {
+  for (const [id, entry] of reveals) if (entry.expiresAt <= now) reveals.delete(id);
+}
+
+/**
+ * What finished operation `id` has to show once — `{ oidcClients }`, the
+ * secrets of the confidential OIDC clients it created — and forget it; null
+ * when there is nothing (or it was shown already, or waited too long).
+ *
+ * @param {string} id
+ * @returns {{ oidcClients: Array<{ id: string, secret: string }> } | null}
+ */
+export function takeOperationReveal(id) {
+  pruneReveals();
+  const entry = reveals.get(id);
+  if (!entry) return null;
+  reveals.delete(id);
+  return { oidcClients: entry.oidcClients };
+}
 
 function rowToOperation(row) {
   if (!row) return null;
@@ -118,6 +149,21 @@ export class OperationContext {
   warn(message) {
     this.warnings.push(String(message).slice(0, 500));
     this.#persist();
+  }
+
+  /**
+   * Secrets of confidential OIDC clients this operation created, for the
+   * admin to see once ({@link takeOperationReveal}) — never stored.
+   *
+   * @param {Array<{ id: string, secret: string }>} oidcClients
+   */
+  revealOidcClientSecrets(oidcClients) {
+    if (oidcClients.length === 0) return;
+    pruneReveals();
+    reveals.set(this.#id, {
+      oidcClients: oidcClients.map(({ id, secret }) => ({ id, secret })),
+      expiresAt: Date.now() + REVEAL_TTL_MS,
+    });
   }
 }
 

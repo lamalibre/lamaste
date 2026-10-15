@@ -13,10 +13,16 @@
  *   granted, `uninstall:post-teardown` after it is removed). The agent
  *   signs that call with the installation secret it already holds.
  * - `app-install` (`spec`: the pinned agent half), `app-activate`
- *   (`version`) and `app-remove` (`purge`) — install, switch or remove the
- *   agent half through the agent's root helper `lamaste-apphost`. The agent
- *   fetches the package itself and installs it only when its tarball
- *   matches the pinned integrity.
+ *   (`version`, `package`) and `app-remove` (`purge`, `package`) — install,
+ *   switch or remove the agent half through the agent's root helper
+ *   `lamaste-apphost`. The agent fetches the package itself and installs it
+ *   only when its tarball matches the pinned integrity.
+ *
+ * The helper runs as root and does only what the relay signed: every app
+ * job is signed with the relay's signing key when it is created (core
+ * `app-job-signature.ts`; the envelope names the agent, route, job id, kind
+ * and payload, and expires at the job's deadline) and listed with its
+ * signature. No app job is created while the key is unusable.
  *
  * A job carries no secret. It has a deadline (its timeout plus delivery
  * slack); an unfinished job past it expires. Waiting is event-driven within
@@ -28,10 +34,11 @@ import { EventEmitter } from 'node:events';
 import {
   AGENT_APP_JOB_TIMEOUTS,
   AgentAppJobResultSchema,
-  AgentHalfSpecSchema,
-  AgentHalfVersionSchema,
   AgentHookJobResultSchema,
+  appJobPayload,
+  signAppJob,
 } from '@lamalibre/lamaste';
+import { relaySigner } from './relay-signing.js';
 import { getStateDb } from './state-db.js';
 
 /** Two sync intervals and a margin: how long delivery may take on top of the hook's own timeout. */
@@ -50,6 +57,14 @@ export const AGENT_APP_JOB_KINDS = Object.freeze({
 const events = new EventEmitter();
 events.setMaxListeners(0);
 
+/** An app job could not be signed: the relay's signing key is missing or unusable. */
+export class AppJobSigningError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AppJobSigningError';
+  }
+}
+
 function rowToJob(row) {
   return {
     id: row.id,
@@ -59,6 +74,7 @@ function rowToJob(row) {
     stage: row.stage,
     input: row.input ? JSON.parse(row.input) : null,
     payload: row.payload ? JSON.parse(row.payload) : null,
+    signature: row.signature ? JSON.parse(row.signature) : null,
     timeoutMs: row.timeout_ms,
     status: row.status,
     result: row.result ? JSON.parse(row.result) : null,
@@ -69,19 +85,25 @@ function rowToJob(row) {
 }
 
 /**
- * Insert a pending job: `stage` and `input` for a hook job, `payload` for an
- * app job (null otherwise). Its deadline leaves delivery
- * {@link AGENT_JOB_DELIVERY_SLACK_MS} on top of `timeoutMs`.
+ * Insert a pending job: `stage` and `input` for a hook job, `payload` (and
+ * `sign`, which makes its signature) for an app job; null otherwise. Its
+ * deadline leaves delivery {@link AGENT_JOB_DELIVERY_SLACK_MS} on top of
+ * `timeoutMs`.
  *
+ * @param {object} job
+ * @param {((timing: { id: string, issuedAt: string, expiresAt: string }) => object) | null} [job.sign]
  * @returns {Promise<string>} the job id
  */
-async function insertJob({ agentLabel, plugin, kind, stage, input, payload, timeoutMs }) {
+async function insertJob({ agentLabel, plugin, kind, stage, input, payload, timeoutMs, sign }) {
   const db = await getStateDb();
   const id = crypto.randomUUID();
   const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const deadlineAt = new Date(now + timeoutMs + AGENT_JOB_DELIVERY_SLACK_MS).toISOString();
+  const signature = sign ? sign({ id, issuedAt: createdAt, expiresAt: deadlineAt }) : null;
   db.prepare(
-    `INSERT INTO agent_jobs (id, agent_label, plugin, kind, stage, input, payload, timeout_ms, status, created_at, deadline_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    `INSERT INTO agent_jobs (id, agent_label, plugin, kind, stage, input, payload, signature, timeout_ms, status, created_at, deadline_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   ).run(
     id,
     agentLabel,
@@ -90,9 +112,10 @@ async function insertJob({ agentLabel, plugin, kind, stage, input, payload, time
     stage,
     input,
     payload,
+    signature === null ? null : JSON.stringify(signature),
     timeoutMs,
-    new Date(now).toISOString(),
-    new Date(now + timeoutMs + AGENT_JOB_DELIVERY_SLACK_MS).toISOString(),
+    createdAt,
+    deadlineAt,
   );
   return id;
 }
@@ -112,37 +135,48 @@ export async function createAgentJob({ agentLabel, plugin, stage, input, timeout
     input: JSON.stringify(input),
     payload: null,
     timeoutMs,
+    sign: null,
   });
 }
 
 /**
- * The parameters of an app job, validated: `app-install` carries the pinned
- * agent half (`spec`), `app-activate` the version to point `current` at,
- * `app-remove` whether the data and the service account go too.
+ * The relay's signing key for an app job; throws {@link AppJobSigningError}
+ * when there is none to use — the agent's helper would refuse the job.
  */
-function appJobPayload(kind, params) {
-  switch (kind) {
-    case 'app-install':
-      return { spec: AgentHalfSpecSchema.parse(params.spec) };
-    case 'app-activate':
-      return { version: AgentHalfVersionSchema.parse(params.version) };
-    case 'app-remove':
-      if (typeof params.purge !== 'boolean') throw new TypeError('app-remove needs purge');
-      return { purge: params.purge };
-    default:
-      throw new TypeError(`Unknown app job kind "${kind}"`);
+async function appJobSigningKey() {
+  let key;
+  try {
+    key = await relaySigner.current();
+  } catch (err) {
+    throw new AppJobSigningError(
+      `The relay's signing key is unusable (${err instanceof Error ? err.message : String(err)}), ` +
+        "so it cannot sign the job the agent's app host helper would run",
+    );
   }
+  if (!key) {
+    throw new AppJobSigningError(
+      "The relay has no signing key, so it cannot sign the job the agent's app host helper would run",
+    );
+  }
+  return key;
 }
 
 /**
- * An app job: install (`spec`), activate (`version`) or remove (`purge`)
- * the plugin's agent half through the agent's root helper.
+ * An app job: install (`spec`), activate (`version`, `package`) or remove
+ * (`purge`, `package`) the plugin's agent half through the agent's root
+ * helper — signed with the relay's key for the agent and the job's
+ * deadline. Throws {@link AppJobSigningError} (nothing is created) when the
+ * key is unusable, a TypeError for parameters that are not the kind's.
  *
- * @param {{ agentLabel: string, plugin: string, kind: 'app-install' | 'app-activate' | 'app-remove', spec?: object, version?: string, purge?: boolean }} job
+ * @param {{ agentLabel: string, plugin: string, kind: 'app-install' | 'app-activate' | 'app-remove', spec?: object, version?: string, purge?: boolean, package?: string }} job
  * @returns {Promise<string>} the job id
  */
 export async function createAppJob({ agentLabel, plugin, kind, ...params }) {
+  if (!Object.hasOwn(AGENT_APP_JOB_KINDS, kind)) {
+    throw new TypeError(`Unknown app job kind "${kind}"`);
+  }
   const payload = appJobPayload(kind, params);
+  const key = await appJobSigningKey();
   return insertJob({
     agentLabel,
     plugin,
@@ -151,6 +185,11 @@ export async function createAppJob({ agentLabel, plugin, kind, ...params }) {
     input: null,
     payload: JSON.stringify(payload),
     timeoutMs: AGENT_APP_JOB_KINDS[kind],
+    sign: ({ id, issuedAt, expiresAt }) =>
+      signAppJob(
+        { agent: agentLabel, route: plugin, jobId: id, kind, payload, issuedAt, expiresAt },
+        key,
+      ),
   });
 }
 
@@ -180,7 +219,8 @@ async function expireOverdue(db) {
 /**
  * The agent-config `agentJobs` of agent `label`: pending, not yet overdue.
  * A `hook` job carries `stage` and `input`; an app job its parameters
- * (`spec`, `version` or `purge`).
+ * (`spec`; `version` and `package`; `purge` and `package`) and the relay's
+ * `signature` over them.
  */
 export async function pendingAgentJobs(label) {
   const db = await getStateDb();
@@ -196,7 +236,7 @@ export async function pendingAgentJobs(label) {
       const timing = { timeoutMs: job.timeoutMs, deadlineAt: job.deadlineAt };
       return job.kind === 'hook'
         ? { ...base, stage: job.stage, input: job.input, ...timing }
-        : { ...base, ...timing, ...job.payload };
+        : { ...base, ...timing, ...job.payload, signature: job.signature };
     });
 }
 

@@ -16,11 +16,12 @@
  * and the push-install gates must allow the action on the agent package
  * (global switch, the agent's window, the source IP, the policy). A plugin
  * whose agent half is installed by hand is hosted as before, unchecked.
+ * The agent's helper runs only app jobs this relay signed, so it must also
+ * trust the key the relay signs with (the agent reports the one pinned).
  */
 
 import {
   AGENT_LABEL_REGEX,
-  APPHOST_PATHS,
   PLUGIN_AGENT_CN_PREFIX,
   agentHookSetOf,
   derivePluginRoute,
@@ -57,6 +58,7 @@ import {
 } from './hook-pipelines.js';
 import { installedAgentHalf, installedVersionApproved } from './plugin-hooks.js';
 import { checkPushInstallAction, logPushInstallSession } from './push-install.js';
+import { relaySigner } from './relay-signing.js';
 import { findRetainedData, forgetRetainedData, listRetainedData } from './retained-data.js';
 import { recordAudit } from './audit.js';
 import { onHealthTransition } from './tunnel-hooks.js';
@@ -150,11 +152,30 @@ async function agentHostFacts(label) {
 }
 
 /**
+ * What this relay brings to eligibility: the id of the key it signs app
+ * jobs with — null when the key is unusable (it signs nothing then).
+ *
+ * @returns {Promise<import('@lamalibre/lamaste').HostEligibilityRelay>}
+ */
+export async function relayEligibility() {
+  try {
+    return { relayKid: (await relaySigner.current())?.kid ?? null };
+  } catch {
+    return { relayKid: null };
+  }
+}
+
+/**
  * Refuse (409 `agent_not_eligible`, with the reasons) an agent that cannot
  * host agent half `agentHalf` of a plugin requiring `requires`.
  */
 export async function assertAgentEligible(label, requires, agentHalf, pluginName) {
-  const { eligible, reasons } = hostEligibility(requires, agentHalf, await agentHostFacts(label));
+  const { eligible, reasons } = hostEligibility(
+    requires,
+    agentHalf,
+    await agentHostFacts(label),
+    await relayEligibility(),
+  );
   if (!eligible) {
     throw httpError(
       `Agent "${label}" cannot host plugin "${pluginName}": ${reasons.join('; ')}`,
@@ -235,6 +256,7 @@ export async function hostingEligibility(name) {
   const plugin = await requireHostablePlugin(name);
   const agentHalf = installedAgentHalf(plugin);
   const registry = await loadAgentRegistry();
+  const relay = agentHalf ? await relayEligibility() : null;
   return registry.agents
     .filter((a) => !a.revoked && AGENT_LABEL_REGEX.test(a.label))
     .sort((a, b) => a.label.localeCompare(b.label))
@@ -244,6 +266,7 @@ export async function hostingEligibility(name) {
         plugin.agent?.requires,
         agentHalf,
         a.hostFacts ?? null,
+        relay,
       );
       return { label: a.label, eligible, reasons };
     });
@@ -488,7 +511,7 @@ export async function purgeRetainedData(name, agentLabel, { actor, logger, sourc
   }
   if (!(await isActiveAgent(agentLabel))) {
     throw httpError(
-      `Agent "${agentLabel}" is no longer enrolled — nothing can be pushed to it. Purge the data on the machine (sudo ${APPHOST_PATHS.helper} remove ${retained.route} --purge), then forget the record (forget=true)`,
+      `Agent "${agentLabel}" is no longer enrolled — nothing can be pushed to it. Purge the data on the machine (sudo lamaste-agent apphost remove ${retained.route} --purge), then forget the record (forget=true)`,
       409,
       { code: 'agent_not_enrolled' },
     );

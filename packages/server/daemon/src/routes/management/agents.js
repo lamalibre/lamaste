@@ -467,8 +467,11 @@ export default async function agentsRoutes(fastify, _opts) {
   // made for it, which the agent's local registry name need not equal.
   // lamaste-agentd fetches both over its pinned mTLS channel and accepts a
   // request from the relay only with an assertion one of the keys verifies,
-  // made for that label. The keys are public material: any agent or admin
-  // certificate may read them (`agentLabel` is null for non-agent callers).
+  // made for that label. `sudo lamaste-agent apphost enable|pin` pins the
+  // first key, and the label, for the agent's root helper, which runs only
+  // the app jobs this relay signed with it (app-job-signature.ts). The keys
+  // are public material: any agent or admin certificate may read them
+  // (`agentLabel` is null for non-agent callers).
   // ------------------------------------------------------------------
   fastify.get(
     '/agents/me/relay-keys',

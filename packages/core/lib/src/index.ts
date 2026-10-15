@@ -89,6 +89,7 @@ export {
   PanelPageSchema,
   ManifestSchema,
   LamaPackageNameSchema,
+  ManifestValidationError,
   validateManifest,
   AgentRequiresSchema,
   AgentBlockSchema,
@@ -165,7 +166,42 @@ export {
 export type { AgentHalfDeclaration, AgentHalfPreview, AgentHalfSpec } from './agent-half.js';
 
 export { hostEligibility } from './host-eligibility.js';
-export type { HostEligibility } from './host-eligibility.js';
+export type { HostEligibility, HostEligibilityRelay } from './host-eligibility.js';
+
+// Relay-signed app jobs: what the agent's root helper verifies before it
+// installs, switches or removes an agent half
+export {
+  APP_JOB_ENVELOPE_MAX_CHARS,
+  APP_JOB_KINDS,
+  APP_JOB_SIGNATURE_CLOCK_SKEW_MS,
+  APP_JOB_SIGNATURE_MAX_LIFETIME_MS,
+  APP_JOB_SIGNATURE_TYPE,
+  APP_JOB_SIGNATURE_VERSION,
+  appJobEnvelopeMatches,
+  appJobPayload,
+  canonicalJson,
+  decodeAppJobSignature,
+  isAppJobKind,
+  parseAppJobEnvelope,
+  signAppJob,
+  verifyAppJobSignature,
+} from './app-job-signature.js';
+
+export type {
+  AppActivatePayload,
+  AppInstallPayload,
+  AppJobEnvelope,
+  AppJobExpectation,
+  AppJobKind,
+  AppJobPayloads,
+  AppJobSignature,
+  AppJobSignatureRejection,
+  AppJobSigningInput,
+  AppRemovePayload,
+  DecodedAppJobSignature,
+  VerifyAppJobSignatureOptions,
+  VerifyAppJobSignatureResult,
+} from './app-job-signature.js';
 
 // Agent jobs (relay -> agent work through agent-config; results both ends validate)
 export {
@@ -235,6 +271,8 @@ export {
   relayKeyId,
   relayVerifyKeyOf,
   parseRelayVerifyKey,
+  parseRelayKeysResponse,
+  relayPublicKeySpki,
   createRelaySigner,
   signRelayAssertion,
   verifyRelayAssertion,
@@ -247,6 +285,7 @@ export type {
   RelayAssertionPayload,
   RelaySigningKey,
   RelayVerifyKey,
+  RelayKeysAnswer,
   RelaySigner,
   RelaySignerOptions,
   RelayAssertionRejection,

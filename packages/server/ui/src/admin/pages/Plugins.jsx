@@ -194,6 +194,7 @@ function HostingSection({ plugin, dataDir, onHost, onUnhost, onRotate, isActing 
                 type="button"
                 onClick={() => {
                   setConfirmUnhost(false);
+                  setForce(false);
                   setPurge(false);
                 }}
                 className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"

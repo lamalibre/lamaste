@@ -1,5 +1,7 @@
 import { execa } from 'execa';
-import { unlink } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 /** The Node.js line the relay runs, from NodeSource. */
 export const NODE_MAJOR = 22;
@@ -65,34 +67,45 @@ export async function installedNodeVersion() {
 /**
  * Install or upgrade Node.js from NodeSource's {@link NODE_MAJOR}.x line.
  *
+ * The setup script runs as root, so it is downloaded into a directory of
+ * its own (`mkdtemp`, 0700) — never a fixed path in the shared /tmp, where
+ * another user could have put a file or a link first — and the directory
+ * goes on every path.
+ *
  * @param {(line: string) => void} report
+ * @param {{ exec?: typeof execa, tmpRoot?: string }} [options] - replaces the commands and the
+ *   temporary directory's parent (tests)
  */
-export async function installNodeFromNodeSource(report) {
-  const setupScript = '/tmp/nodesource_setup.sh';
-  report('Downloading the NodeSource setup script...');
+export async function installNodeFromNodeSource(report, options = {}) {
+  const exec = options.exec ?? execa;
+  const dir = await mkdtemp(path.join(options.tmpRoot ?? os.tmpdir(), 'lamaste-nodesource-'));
+  const setupScript = path.join(dir, 'nodesource_setup.sh');
   try {
-    await execa('curl', [
-      '-fsSL',
-      `https://deb.nodesource.com/setup_${NODE_MAJOR}.x`,
-      '-o',
-      setupScript,
-    ]);
-  } catch (error) {
-    throw new Error(
-      `Failed to download the NodeSource setup script. Check your internet connection.\n${error.stderr || error.message}`,
-    );
-  }
-  report('Running the NodeSource setup...');
-  try {
-    await execa('bash', [setupScript]);
-  } catch (error) {
-    throw new Error(`NodeSource setup script failed.\n${error.stderr || error.message}`);
+    report('Downloading the NodeSource setup script...');
+    try {
+      await exec('curl', [
+        '-fsSL',
+        `https://deb.nodesource.com/setup_${NODE_MAJOR}.x`,
+        '-o',
+        setupScript,
+      ]);
+    } catch (error) {
+      throw new Error(
+        `Failed to download the NodeSource setup script. Check your internet connection.\n${error.stderr || error.message}`,
+      );
+    }
+    report('Running the NodeSource setup...');
+    try {
+      await exec('bash', [setupScript]);
+    } catch (error) {
+      throw new Error(`NodeSource setup script failed.\n${error.stderr || error.message}`);
+    }
   } finally {
-    await unlink(setupScript).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
   }
   report('Running apt-get install nodejs...');
   try {
-    await execa('apt-get', ['install', '-y', 'nodejs']);
+    await exec('apt-get', ['install', '-y', 'nodejs']);
   } catch (error) {
     throw new Error(
       `Failed to install Node.js. Try running 'apt-get update' manually and retrying.\n${error.stderr || error.message}`,

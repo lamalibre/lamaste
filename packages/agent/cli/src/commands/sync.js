@@ -65,7 +65,9 @@ async function runPluginHooks(label, response, warnings) {
       events.push(
         job.kind === 'hook'
           ? `hook ${job.stage} ran: ${job.route}`
-          : `app ${job.kind.slice('app-'.length)} ran: ${job.route}`,
+          : job.kind === 'refused'
+            ? `app ${job.jobKind.slice('app-'.length)} refused (not signed by the relay): ${job.route}`
+            : `app ${job.kind.slice('app-'.length)} ran: ${job.route}`,
       );
     }
   }
@@ -158,18 +160,26 @@ export async function runSync({ label, quiet = false }) {
         `${now} ${label}: tunnel hook delivered (panel unreachable): ${toldDown.join(', ')}`,
       );
     }
+    // Kept with the last good run's warnings, so one that repeats while the
+    // panel stays unreachable is logged once — as on a successful run.
+    const seen = new Set(previous?.lastWarnings ?? []);
+    const newLossWarnings = lossWarnings.filter((w) => !seen.has(w));
     await writeSyncState(label, {
       lastRunAt: now,
       lastOkAt: previous?.lastOkAt ?? null,
       lastError: message,
       lastState: previous?.lastState ?? null,
       tunnels: previous?.tunnels ?? null,
-      lastWarnings: previous?.lastWarnings ?? [],
+      lastWarnings: [...seen, ...newLossWarnings],
     }).catch(() => undefined);
     if (!quiet) {
       console.error(chalk.red(`  ${label}: sync failed: ${message}`));
-    } else if (previous?.lastError !== message) {
-      console.error(`${now} ${label}: sync failed: ${message}`);
+      for (const warning of lossWarnings) console.log(chalk.yellow(`  ${warning}`));
+    } else {
+      if (previous?.lastError !== message) {
+        console.error(`${now} ${label}: sync failed: ${message}`);
+      }
+      for (const warning of newLossWarnings) console.log(`${now} ${label}: warning: ${warning}`);
     }
     // The timer run records the failure (sync-state.json, the log) and exits
     // 0 so its unit does not linger in a failed state; a manual run fails.

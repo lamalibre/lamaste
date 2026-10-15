@@ -4,12 +4,14 @@
  * the app host helper; reported when they change or a day has passed; a
  * panel without the endpoint is a warning, retried on the next sync. The
  * helper is asked through sudo only when its file changed or its answer is
- * a day old, so the sync does not fill the sudo log every 30 seconds.
+ * a day old, so the sync does not fill the sudo log every 30 seconds. The
+ * relay key pinned for the agent is read on every sync — a root-owned file
+ * anyone may read — so a re-pin is reported at once.
  */
 
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -83,10 +85,12 @@ test('os-release: ID, ID_LIKE and VERSION_ID, quoted or not; nothing invalid is 
   });
 });
 
+const KID = 'ab'.repeat(16);
+
 test('gather: a Linux agent with systemd and the helper; validated against the schema', async () => {
-  const facts = await agent.gatherHostFacts({
+  const facts = await agent.gatherHostFacts(LABEL, {
     ...linux(),
-    appHost: async () => ({ version: 1, node: '22.11.0' }),
+    appHost: async () => ({ version: 1, node: '22.11.0', relayKid: KID }),
   });
   assert.deepEqual(facts, {
     os: 'linux',
@@ -94,7 +98,7 @@ test('gather: a Linux agent with systemd and the helper; validated against the s
     distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
     node: '22.13.1',
     systemd: true,
-    apphost: { version: 1, node: '22.11.0' },
+    apphost: { version: 1, node: '22.11.0', relayKid: KID },
   });
   assert.ok(core.HostFactsSchema.safeParse(facts).success);
   const eligible = core.hostEligibility(
@@ -105,6 +109,7 @@ test('gather: a Linux agent with systemd and the helper; validated against the s
       systemPackages: ['sqlite3'],
     },
     facts,
+    { relayKid: KID },
   );
   assert.deepEqual(eligible, { eligible: true, reasons: [] });
 });
@@ -118,13 +123,13 @@ test("the helper's status must name its Node.js; the probe reports it as x.y.z",
 });
 
 test('gather: systemd from PID 1 when /run/systemd/system is missing; none otherwise; no helper', async () => {
-  const viaPid1 = await agent.gatherHostFacts({
+  const viaPid1 = await agent.gatherHostFacts(LABEL, {
     ...linux({ systemdDir: false }),
     appHost: async () => null,
   });
   assert.equal(viaPid1.systemd, true);
   assert.equal(viaPid1.apphost, null);
-  const none = await agent.gatherHostFacts({
+  const none = await agent.gatherHostFacts(LABEL, {
     ...linux({ systemdDir: false, pid1: '/sbin/init', osRelease: null }),
     appHost: async () => null,
   });
@@ -133,7 +138,7 @@ test('gather: systemd from PID 1 when /run/systemd/system is missing; none other
 });
 
 test('gather: macOS has no distribution, no systemd and never a helper', async () => {
-  const facts = await agent.gatherHostFacts({
+  const facts = await agent.gatherHostFacts(LABEL, {
     platform: 'darwin',
     arch: 'x64',
     nodeVersion: '24.1.0-pre',
@@ -147,7 +152,10 @@ test('gather: macOS has no distribution, no systemd and never a helper', async (
     systemd: false,
     apphost: null,
   });
-  await assert.rejects(agent.gatherHostFacts({ platform: 'win32' }), /not defined for platform/);
+  await assert.rejects(
+    agent.gatherHostFacts(LABEL, { platform: 'win32' }),
+    /not defined for platform/,
+  );
 });
 
 function reporter(answers = []) {
@@ -166,12 +174,24 @@ function reporter(answers = []) {
 }
 
 function helperProbe(answer = { version: 1, node: '22.13.1' }) {
-  const probe = { key: 'dev:1:100:1000', answer, probes: 0 };
+  const probe = {
+    key: 'dev:1:100:1000',
+    answer,
+    probes: 0,
+    relayKid: null,
+    kidReads: 0,
+    labels: new Set(),
+  };
   probe.options = {
     helperKey: async () => probe.key,
     probe: async () => {
       probe.probes++;
       return probe.answer;
+    },
+    relayKid: async (label) => {
+      probe.labels.add(label);
+      probe.kidReads++;
+      return probe.relayKid;
     },
   };
   return probe;
@@ -186,7 +206,7 @@ test('sync: reported on the first run and on a change, not when nothing changed,
 
   assert.deepEqual(await run(t0), { reported: true, changed: true });
   assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0].apphost, { version: 1, node: '22.13.1' });
+  assert.deepEqual(sent[0].apphost, { version: 1, node: '22.13.1', relayKid: null });
   assert.deepEqual(await run(t0 + 30_000), { reported: false, changed: false });
   assert.equal(sent.length, 1);
 
@@ -224,7 +244,7 @@ test('sync: the helper is probed once per helper file (or day), and its removal 
   probe.answer = { version: 2, node: '24.1.0' };
   await run(t0 + 90_000);
   assert.equal(probe.probes, 2);
-  assert.deepEqual(sent.at(-1).apphost, { version: 2, node: '24.1.0' });
+  assert.deepEqual(sent.at(-1).apphost, { version: 2, node: '24.1.0', relayKid: null });
 
   // A day on: asked again even though the file is the same.
   await run(t0 + 90_000 + DAY);
@@ -270,4 +290,77 @@ test('sync: a panel without the endpoint is a steady warning, retried on every s
     appHost: probe.options,
   });
   assert.match(warnings[0], /could not be reported .*HTTP 503.*retrying/);
+});
+
+test('sync: the pinned relay key is read every run, without sudo; a re-pin is a change reported at once', async () => {
+  const probe = helperProbe();
+  const { sent, calls } = reporter();
+  const t0 = Date.parse('2026-10-15T10:00:00Z');
+  const run = (now) =>
+    agent.syncHostFacts(LABEL, calls, [], { now, sources: linux(), appHost: probe.options });
+
+  await run(t0);
+  probe.relayKid = KID;
+  assert.deepEqual(await run(t0 + 30_000), { reported: true, changed: true });
+  assert.equal(probe.probes, 1, 'the helper itself is not asked again');
+  assert.equal(probe.kidReads, 2);
+  assert.deepEqual([...probe.labels], [LABEL], "the reporting agent's own pin");
+  assert.equal(sent.at(-1).apphost.relayKid, KID);
+  assert.deepEqual(await run(t0 + 60_000), { reported: false, changed: false });
+  probe.relayKid = 'cd'.repeat(16);
+  assert.deepEqual(await run(t0 + 90_000), { reported: true, changed: true });
+  assert.equal(sent.at(-1).apphost.relayKid, 'cd'.repeat(16));
+});
+
+test('relay pin: read as the helper reads it — a root-owned file in a root-owned directory, strictly', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'lamaste-relay-pin-'));
+  const uid = process.getuid();
+  const opts = { root, ownerUid: uid };
+  const signer = core.createRelaySigner(path.join(root, 'key.json'), { create: true });
+  const key = await signer.current();
+  const pin = {
+    label: LABEL,
+    agent: 'vm1-relay',
+    kid: key.kid,
+    publicKey: key.publicKey,
+    panelUrl: 'https://203.0.113.5:9292',
+    pinnedAt: '2026-10-16T08:00:00.000Z',
+  };
+  const file = path.join(root, core.APPHOST_PATHS.relayPinFile(LABEL));
+  try {
+    assert.deepEqual(await agent.readRelayPin(LABEL, opts), { state: 'absent' });
+    await mkdir(path.dirname(file), { recursive: true, mode: 0o755 });
+    await writeFile(file, agent.relayPinJson(pin), { mode: 0o644 });
+    assert.deepEqual(await agent.readRelayPin(LABEL, opts), { state: 'pinned', pin });
+    assert.equal(agent.parseRelayPin(agent.relayPinJson(pin), LABEL).kid, key.kid);
+
+    // Another owner — the agent's own user — is no pin.
+    assert.equal((await agent.readRelayPin(LABEL, { root, ownerUid: uid + 1 })).state, 'invalid');
+    // Writable by the group or others: no pin.
+    await chmod(file, 0o664);
+    assert.equal((await agent.readRelayPin(LABEL, opts)).state, 'invalid');
+    await chmod(file, 0o644);
+    await chmod(path.dirname(file), 0o777);
+    assert.equal((await agent.readRelayPin(LABEL, opts)).state, 'invalid');
+    await chmod(path.dirname(file), 0o755);
+    // A link: no pin.
+    await rm(file);
+    await writeFile(path.join(root, 'elsewhere.json'), agent.relayPinJson(pin));
+    await symlink(path.join(root, 'elsewhere.json'), file);
+    assert.equal((await agent.readRelayPin(LABEL, opts)).state, 'invalid');
+    await rm(file);
+
+    // The content, strictly: its own label, a kid derived from its key, no other field.
+    const text = (patch) => JSON.stringify({ v: 1, ...pin, ...patch });
+    assert.equal(agent.parseRelayPin(text({}), 'vm2'), null);
+    assert.equal(agent.parseRelayPin(text({ kid: 'cd'.repeat(16) }), LABEL), null);
+    assert.equal(agent.parseRelayPin(text({ v: 2 }), LABEL), null);
+    assert.equal(agent.parseRelayPin(text({ extra: 1 }), LABEL), null);
+    assert.equal(agent.parseRelayPin(text({ panelUrl: 'http://x' }), LABEL), null);
+    assert.equal(agent.parseRelayPin(text({ agent: 'VM1' }), LABEL), null);
+    assert.equal(agent.parseRelayPin('{', LABEL), null);
+    assert.ok(agent.parseRelayPin(text({}), LABEL));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

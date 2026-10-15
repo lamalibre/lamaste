@@ -176,6 +176,10 @@ fi
 log_section "The operator's step: lamaste-agent apphost enable"
 
 NODE_ON_AGENT=$(agent_exec "/usr/bin/node -p process.versions.node" 2>/dev/null || echo "")
+# The helper runs only app jobs the relay signed, verified with the relay's
+# key that enable pins for each agent on the machine.
+RELAY_KID=$(relay_kid_on_host)
+assert_eq "$(echo "${RELAY_KID}" | grep -cE '^[a-f0-9]{32}$')" "1" "The relay signs with key ${RELAY_KID}" || true
 if [ "$(app_host_helper_was_enabled)" != "true" ]; then
   APPHOST_ENABLED_HERE=1
   ENABLE_OUT=$(agent_exec "lamaste-agent apphost enable --user root --json 2>&1" 2>/dev/null || echo "")
@@ -183,8 +187,16 @@ if [ "$(app_host_helper_was_enabled)" != "true" ]; then
   assert_json_field "$ENABLE_JSON" '.ok' 'true' "apphost enable --user root ($(echo "$ENABLE_OUT" | tail -c 200))" || true
   assert_json_field "$ENABLE_JSON" '.protocol' '1' "…installed the helper, protocol 1" || true
   assert_json_field "$ENABLE_JSON" '.sudoers' 'null' "…and no sudoers rule: the agent runs as root" || true
+  assert_json_field "$ENABLE_JSON" "[.relays[]? | select(.label == \"${AGENT_LABEL}\")] | first | \"\(.kid) \(.agent)\"" "${RELAY_KID} ${HOST_AGENT_LABEL}" "…and pinned the relay's key for ${AGENT_LABEL}, with the name the relay knows it by" || true
+else
+  # Enabled before this spec: the relay's key pinned again (it may have changed).
+  PIN_JSON=$(agent_exec "lamaste-agent apphost pin --json 2>&1" 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}')
+  assert_json_field "$PIN_JSON" '.ok' 'true' "apphost pin: the relay's key pinned again" || true
 fi
+assert_eq "$(agent_relay_kid)" "${RELAY_KID}" "GET /api/agents/me/relay-keys, from the agent: the key the relay signs with" || true
 STATUS=$(agent_exec "lamaste-agent apphost status --json 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 || echo '{}')
+assert_json_field "$STATUS" ".relays[\"${AGENT_LABEL}\"].kid" "${RELAY_KID}" "apphost status: ${AGENT_LABEL} has that key pinned" || true
+assert_eq "$(agent_exec "stat -c '%a %U:%G' /etc/lamalibre/apphost/relays/${AGENT_LABEL}.json" 2>/dev/null || echo "")" "644 root:root" "…in /etc/lamalibre/apphost/relays/${AGENT_LABEL}.json, root:root 0644" || true
 assert_json_field "$STATUS" '.helper.installed' 'true' "apphost status: the helper is installed" || true
 assert_json_field "$STATUS" '.helper.upToDate' 'true' "…the one this lamaste-agent ships" || true
 assert_json_field "$STATUS" '.helper.node' "${NODE_ON_AGENT}" "…on /usr/bin/node ${NODE_ON_AGENT}, what the agent halves run on" || true
@@ -203,6 +215,7 @@ HOST_FACTS=$(agent_host_facts)
 assert_json_field "$HOST_FACTS" '"\(.os) \(.systemd)"' 'linux true' "Host facts: Linux, systemd" || true
 assert_json_field "$HOST_FACTS" '.apphost.version' '1' "Host facts: helper protocol 1" || true
 assert_json_field "$HOST_FACTS" '.apphost.node' "${NODE_ON_AGENT}" "Host facts: the helper's Node.js" || true
+assert_json_field "$HOST_FACTS" '.apphost.relayKid' "${RELAY_KID}" "Host facts: the relay key the helper verifies jobs with" || true
 assert_json_field "$HOST_FACTS" '.distro.id == "ubuntu" or ((.distro.idLike // []) | index("debian") != null)' 'true' "Host facts: a Debian-family distribution ($(json_get "$HOST_FACTS" '.distro.id') $(json_get "$HOST_FACTS" '.distro.versionId'))" || true
 ELIGIBILITY=$(host_api_get "plugins/${PLUGIN}/hosting/eligibility" | jq -c ".agents[]? | select(.label == \"${HOST_AGENT_LABEL}\")" 2>/dev/null || echo '{}')
 assert_json_field "$ELIGIBILITY" '"\(.eligible) \(.reasons | length)"' 'true 0' "Eligibility: ${HOST_AGENT_LABEL} can host it now" || true

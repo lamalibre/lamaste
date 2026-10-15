@@ -1,20 +1,25 @@
 /**
  * App jobs on the agent (slice 3): the relay's `agentJobs` carry
- * `app-install`, `app-activate` and `app-remove` beside the 2b hook jobs.
- * The sync validates them strictly, hands them to the caller's handlers (the
- * agent CLI, through the app host helper), and reports what the handlers
- * answer; without handlers an app job stays pending.
+ * `app-install`, `app-activate` and `app-remove` beside the 2b hook jobs,
+ * each with the relay's signature over it. The sync validates them
+ * strictly — a job and its signature must describe the same work, and one
+ * without a signature is reported failed, never run — hands them to the
+ * caller's handlers (the agent CLI, through the app host helper), and
+ * reports what the handlers answer; without handlers an app job stays
+ * pending. A result the relay did not take is reported again, the job not
+ * run again: the helper runs a signed job once.
  */
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 let home;
 let agent;
 let core;
+let relayKey;
 
 const LABEL = 'vm1';
 
@@ -23,6 +28,9 @@ before(async () => {
   process.env.HOME = home;
   agent = await import('@lamalibre/lamaste/agent');
   core = await import('@lamalibre/lamaste');
+  relayKey = await core
+    .createRelaySigner(path.join(home, 'relay-signing-key.json'), { create: true })
+    .current();
 });
 
 after(async () => {
@@ -37,6 +45,8 @@ const spec = {
   systemPackages: ['sqlite3'],
 };
 
+const PKG = '@lamalibre/fx-agent';
+
 const job = (kind, fields, extra = {}) => ({
   id: crypto.randomUUID(),
   route: 'fx',
@@ -47,9 +57,39 @@ const job = (kind, fields, extra = {}) => ({
   ...extra,
 });
 
-const install = (extra) => job('app-install', { spec }, extra);
-const activate = (extra) => job('app-activate', { version: '1.0.0' }, extra);
-const remove = (extra) => job('app-remove', { purge: false }, extra);
+/** The payload the relay signs for a listed app job. */
+function payloadOf(j) {
+  switch (j.kind) {
+    case 'app-install':
+      return { spec: j.spec };
+    case 'app-activate':
+      return { version: j.version, package: j.package };
+    default:
+      return { purge: j.purge, package: j.package };
+  }
+}
+
+/** `j` with the relay's signature over it, as agent-config lists it (`over` changes what is signed). */
+function signed(j, over = {}) {
+  const signature = core.signAppJob(
+    {
+      agent: LABEL,
+      route: j.route,
+      jobId: j.id,
+      kind: j.kind,
+      payload: payloadOf(j),
+      issuedAt: new Date(Date.parse(j.deadlineAt) - 60_000).toISOString(),
+      expiresAt: j.deadlineAt,
+      ...over,
+    },
+    relayKey,
+  );
+  return { ...j, signature };
+}
+
+const install = (extra) => signed(job('app-install', { spec }, extra));
+const activate = (extra) => signed(job('app-activate', { version: '1.0.0', package: PKG }, extra));
+const remove = (extra) => signed(job('app-remove', { purge: false, package: PKG }, extra));
 
 function recorder() {
   const reports = [];
@@ -86,10 +126,124 @@ test('parse: the app kinds validate, each timeout capped at its kind', () => {
   );
   assert.deepEqual(jobs[0].spec, spec);
   assert.equal(jobs[1].version, '1.0.0');
+  assert.equal(jobs[1].package, PKG);
   assert.equal(jobs[2].purge, true);
+  assert.equal(jobs[2].package, PKG);
+  for (const j of jobs.slice(0, 3)) {
+    assert.deepEqual(Object.keys(j.signature).sort(), ['envelope', 'sig']);
+  }
+});
+
+test('parse: an app job without a signature that matches it is refused, never runnable', () => {
+  const unsigned = { ...install() };
+  delete unsigned.signature;
+  const base = job('app-remove', { purge: false, package: PKG });
+  const otherJob = { ...signed(base), id: crypto.randomUUID() };
+  const cases = [
+    [unsigned, /did not sign this app-install job/],
+    [{ ...activate(), signature: { envelope: 'e30', sig: 'x' } }, /malformed/],
+    [{ ...activate(), signature: 'not an object' }, /malformed/],
+    [otherJob, /does not match the relay's signature/],
+    [signed(base, { route: 'gx' }), /does not match/],
+    [signed(base, { payload: { purge: true, package: PKG } }), /does not match/],
+    [
+      signed(base, { payload: { purge: false, package: '@lamalibre/other-agent' } }),
+      /does not match/,
+    ],
+    [
+      signed(base, { kind: 'app-activate', payload: { version: '1.0.0', package: PKG } }),
+      /does not match/,
+    ],
+    [
+      signed(base, { expiresAt: new Date(Date.parse(base.deadlineAt) + 1000).toISOString() }),
+      /does not match/,
+    ],
+  ];
+  const warnings = [];
+  const jobs = agent.parseAgentJobs(
+    cases.map(([j]) => j),
+    warnings,
+  );
+  assert.deepEqual(warnings, [], 'their own fields are valid: refused, not ignored');
+  assert.equal(jobs.length, cases.length);
+  for (const [i, parsed] of jobs.entries()) {
+    assert.equal(parsed.kind, 'refused', `case ${i}`);
+    assert.equal(parsed.id, cases[i][0].id);
+    assert.match(parsed.reason, cases[i][1], `case ${i}`);
+    assert.equal(parsed.signature, undefined);
+  }
+  assert.equal(jobs[0].jobKind, 'app-install');
+  // A hook job carries no signature: the helper never sees one.
+  const hook = job('hook', { stage: 'install:pre-tunnel', input: {} });
+  assert.equal(agent.parseAgentJobs([hook], warnings)[0].kind, 'hook');
+});
+
+test('run: a refused app job is reported failed and never handed to a handler', async () => {
+  const { reports, reporter } = recorder();
+  const warnings = [];
+  const unsigned = { ...remove() };
+  delete unsigned.signature;
+  const [refused] = agent.parseAgentJobs([unsigned], warnings);
+  const outcome = await agent.runAgentJobs(LABEL, [refused], reporter, warnings, {
+    appJobs: {
+      install: async () => assert.fail('not run'),
+      activate: async () => assert.fail('not run'),
+      remove: async () => assert.fail('not run'),
+    },
+  });
+  assert.deepEqual(outcome, { ran: [refused.id], deferred: [] });
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0][1].ok, false);
+  assert.match(reports[0][1].error, /did not sign this app-remove job/);
+  assert.ok(core.AgentJobResultSchema.safeParse(reports[0][1]).success);
+  assert.match(warnings[0], /app-remove job of "fx" was refused/);
+});
+
+test('run: a result the relay did not take is reported again, the job not run again', async () => {
+  const warnings = [];
+  let runs = 0;
+  const appJobs = {
+    install: async () => assert.fail('not listed'),
+    activate: async (j) => {
+      runs++;
+      return { ok: true, app: { version: j.version, unit: 'active' } };
+    },
+    remove: async () => assert.fail('not listed'),
+  };
+  const j = activate();
+  let up = false;
+  const reports = [];
+  const reporter = {
+    reportJobResult: async (id, result) => {
+      if (!up) throw new Error('panel unreachable');
+      reports.push([id, result]);
+    },
+  };
+  const file = path.join(home, '.lamalibre', 'lamaste', 'agents', LABEL, 'app-job-results.json');
+
+  assert.deepEqual(await agent.runAgentJobs(LABEL, [j], reporter, warnings, { appJobs }), {
+    ran: [],
+    deferred: [],
+  });
+  assert.equal(runs, 1);
+  assert.equal(((await stat(file)).mode & 0o777).toString(8), '600');
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(file, 'utf-8'))), [j.id]);
+
+  up = true;
+  assert.deepEqual(await agent.runAgentJobs(LABEL, [j], reporter, warnings, { appJobs }), {
+    ran: [j.id],
+    deferred: [],
+  });
+  assert.equal(runs, 1, 'reported from what was kept, not run again');
+  assert.deepEqual(reports, [[j.id, { ok: true, app: { version: '1.0.0', unit: 'active' } }]]);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf-8')), {}, 'dropped once taken');
 });
 
 test('parse: a malformed app job is ignored with a warning', () => {
+  // Their own fields are wrong: ignored before any signature is looked at.
+  const install = (extra) => job('app-install', { spec }, extra);
+  const activate = (extra) => job('app-activate', { version: '1.0.0', package: PKG }, extra);
+  const remove = (extra) => job('app-remove', { purge: false, package: PKG }, extra);
   const malformed = [
     install({ spec: { ...spec, integrity: 'sha512-short' } }),
     install({ spec: { ...spec, version: 'latest' } }),
@@ -101,6 +255,9 @@ test('parse: a malformed app job is ignored with a warning', () => {
     activate({ version: undefined }),
     remove({ purge: 'yes' }),
     remove({ purge: undefined }),
+    remove({ package: undefined }),
+    remove({ package: 'left-pad' }),
+    activate({ package: undefined }),
     remove({ route: '-fx' }),
     remove({ route: 'a'.repeat(101) }),
     remove({ route: '../fx' }),
@@ -112,7 +269,7 @@ test('parse: a malformed app job is ignored with a warning', () => {
     'app-install',
   ];
   const warnings = [];
-  assert.deepEqual(agent.parseAgentJobs([...malformed, remove()], warnings).length, 1);
+  assert.deepEqual(agent.parseAgentJobs([...malformed, signed(remove())], warnings).length, 1);
   assert.equal(warnings.length, malformed.length);
   assert.ok(warnings.every((w) => w === 'The panel reported a malformed agent job; ignoring it.'));
 });

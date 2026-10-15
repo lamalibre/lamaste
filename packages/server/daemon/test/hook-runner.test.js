@@ -56,6 +56,9 @@ export default {
     return { action: 'continue' };
   },
   'tunnel:down': (s) => ({ fallback: { status: 503, retryAfter: 30, body: { error: 'maintenance', reason: s.reason } } }),
+  // Decisions that cannot be encoded: a BigInt, with and without a replace body.
+  'install:post-tunnel': () => ({ action: 'replace', status: 200, body: 'x', n: 1n }),
+  'uninstall:pre-teardown': () => ({ ok: true, output: { n: 1n } }),
   'install:pre-tunnel': async () => ({
     ok: true,
     output: {
@@ -311,6 +314,20 @@ test('runner: a missing stage and a wrong plugin are failures, not decisions', a
   });
   assert.equal(wrong.ok, false);
   assert.equal(wrong.kind, 'invalid');
+});
+
+test('runner: a decision that cannot be encoded is invalid, whatever its action — not a throw', async () => {
+  for (const stage of ['install:post-tunnel', 'uninstall:pre-teardown']) {
+    const outcome = await callRelayHook(socketPath, {
+      plugin: PLUGIN,
+      stage,
+      call: { kind: 'app' },
+      input: {},
+      timeoutMs: 1000,
+    });
+    assert.equal(outcome.ok, false, stage);
+    assert.equal(outcome.kind, 'invalid', stage);
+  }
 });
 
 test('forwarder: pre-forward rejects before anything reaches the agent half', async () => {

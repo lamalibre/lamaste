@@ -374,10 +374,20 @@ export const HostFactsSchema = z
     /**
      * The app host helper; null — it is not enabled. `version` is its
      * protocol; `node` the Node.js version it runs on, which is the one an
-     * agent half Lamaste installs runs on (the unit's `ExecStart`).
+     * agent half Lamaste installs runs on (the unit's `ExecStart`);
+     * `relayKid` the id of the relay key the helper verifies this agent's
+     * app jobs with (`apphost enable|pin` pinned it), null when none is
+     * pinned for it.
      */
     apphost: z
-      .object({ version: z.number().int().min(1), node: z.string().regex(NODE_VERSION_RE) })
+      .object({
+        version: z.number().int().min(1),
+        node: z.string().regex(NODE_VERSION_RE),
+        relayKid: z
+          .string()
+          .regex(/^[a-f0-9]{32}$/)
+          .nullable(),
+      })
       .nullable(),
   })
   .strict();
@@ -827,12 +837,35 @@ export const LamaPackageNameSchema = z
   );
 
 /**
+ * A plugin manifest that does not satisfy {@link ManifestSchema}. Callers
+ * check for it with `instanceof` against this class, never against zod's
+ * `ZodError`: a workspace or an install can hold more than one copy of zod,
+ * and an error from one copy is not an instance of another's class.
+ */
+export class ManifestValidationError extends Error {
+  /** Each problem, with the dotted path of the field it is about (`""` for the root). */
+  readonly issues: readonly { readonly path: string; readonly message: string }[];
+
+  constructor(issues: readonly { readonly path: string; readonly message: string }[]) {
+    super(`Invalid plugin manifest: ${issues.map((i) => i.message).join(', ')}`);
+    this.name = 'ManifestValidationError';
+    this.issues = issues;
+  }
+}
+
+/**
  * Validate a raw plugin manifest against the schema.
  *
  * @param raw - The raw manifest object
  * @returns The validated and parsed manifest
- * @throws {z.ZodError} If validation fails
+ * @throws {ManifestValidationError} If validation fails
  */
 export function validateManifest(raw: unknown): ParsedManifest {
-  return ManifestSchema.parse(raw);
+  const result = ManifestSchema.safeParse(raw);
+  if (!result.success) {
+    throw new ManifestValidationError(
+      result.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    );
+  }
+  return result.data;
 }

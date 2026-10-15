@@ -6,7 +6,11 @@
  * bundled rule (no dependencies, no install scripts), the entry file — and
  * whose route it is: an owner record per route (package and agent label)
  * and the route on its account, so neither another plugin nor another agent
- * on the machine inherits an agent half's account or kept data.
+ * on the machine inherits an agent half's account or kept data. And it acts
+ * only on what the relay signed: `install`, `activate` and `remove` take the
+ * relay's signature over the job as the first line of stdin and verify it
+ * with the key pinned for the agent — any other key, any field that does
+ * not match the command, an expired or reused job is refused (exit 5).
  *
  * The tests run the helper in a sandbox root with the system commands
  * replaced (useradd, systemctl, apt-get, …), so they need no root and run
@@ -32,11 +36,20 @@ const helper = require(fileURLToPath(new URL('../scripts/lamaste-apphost', impor
 let core;
 let agentLib;
 let scratch;
+/** The relay's signing key, and another relay's. */
+let relayKey;
+let otherKey;
 
 before(async () => {
   core = await import('@lamalibre/lamaste');
   agentLib = await import('@lamalibre/lamaste/agent');
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'lamaste-apphost-'));
+  relayKey = await core
+    .createRelaySigner(path.join(scratch, 'relay-a.json'), { create: true })
+    .current();
+  otherKey = await core
+    .createRelaySigner(path.join(scratch, 'relay-b.json'), { create: true })
+    .current();
 });
 
 after(() => {
@@ -51,6 +64,7 @@ const UID = process.getuid();
 const GID = process.getgid();
 const LABEL = 'vm1';
 const ROUTE = 'fx';
+const PKG = '@lamalibre/fx-agent';
 
 function sandbox({ osRelease = 'ID=ubuntu\nID_LIKE=debian\nVERSION_ID="24.04"\n' } = {}) {
   const root = fs.mkdtempSync(path.join(scratch, 'root-'));
@@ -146,8 +160,6 @@ function tgzOf(entries, { trailer = Buffer.alloc(1024) } = {}) {
   return zlib.gzipSync(Buffer.concat([...entries.map(tarEntry), trailer]));
 }
 
-const PKG = '@lamalibre/fx-agent';
-
 function packageEntries({ version = '1.0.0', name = PKG, manifest = {}, extra = [] } = {}) {
   return [
     { name: 'package/', type: '5', mode: 0o755 },
@@ -176,8 +188,82 @@ function installInput(tgz, spec = specLine()) {
   return Buffer.concat([Buffer.from(`${JSON.stringify(spec)}\n`), tgz]);
 }
 
+/** Pin `key` for agent `label` in the sandbox, as `apphost enable|pin` writes it. */
+function writePin(root, label, { key = relayKey, agent = label } = {}) {
+  const file = path.join(root, core.APPHOST_PATHS.relayPinFile(label));
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+  fs.writeFileSync(
+    file,
+    agentLib.relayPinJson({
+      label,
+      agent,
+      kid: key.kid,
+      publicKey: key.publicKey,
+      panelUrl: 'https://203.0.113.5:9292',
+      pinnedAt: '2026-10-16T08:00:00.000Z',
+    }),
+    { mode: 0o644 },
+  );
+}
+
+const SIGNED = new Set(['install', 'activate', 'remove']);
+
+/**
+ * What the relay would sign for `argv` (and, for install, the spec line on
+ * `stdin`): the payload the command asks for, by the agent the label names.
+ * Null when the arguments could not make a job (the helper refuses them first).
+ */
+function jobFor(argv, stdin, over = {}) {
+  const [command, label, route, ...rest] = argv;
+  let kind;
+  let payload;
+  if (command === 'install') {
+    const [version, integrity] = rest;
+    let spec = specLine();
+    try {
+      const line = Buffer.from(stdin).toString('utf8').split('\n')[0];
+      const parsed = JSON.parse(line);
+      core.appJobPayload('app-install', { spec: { ...parsed, version, integrity } });
+      spec = parsed;
+    } catch {
+      // An invalid spec line: signed with a valid one, refused when parsed.
+    }
+    kind = 'app-install';
+    payload = { spec: { ...spec, version, integrity } };
+  } else if (command === 'activate') {
+    kind = 'app-activate';
+    payload = { version: rest[0], package: PKG };
+  } else {
+    kind = 'app-remove';
+    payload = { purge: rest.includes('--purge'), package: PKG };
+  }
+  const now = over.now ?? Date.now();
+  return {
+    agent: label,
+    route,
+    jobId: crypto.randomUUID(),
+    kind,
+    payload,
+    issuedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 600_000).toISOString(),
+    ...over.fields,
+  };
+}
+
+/** The signature line for `argv`; null when no job can be signed for it. */
+function signatureFor(argv, stdin, over = {}) {
+  let input;
+  try {
+    input = jobFor(argv, stdin, over);
+    return `${JSON.stringify(core.signAppJob(input, over.key ?? relayKey))}\n`;
+  } catch {
+    return null;
+  }
+}
+
 function setup(options = {}) {
   const root = sandbox(options);
+  for (const label of [LABEL, 'vm2']) writePin(root, label);
   const system = fakeSystem(options);
   const chowns = [];
   const context = {
@@ -189,7 +275,28 @@ function setup(options = {}) {
     freeBytes: () => 10 * 2 ** 30,
     getuid: () => 0,
   };
-  const call = (argv, stdin, extra = {}) => helper.main(argv, { ...context, stdin, ...extra });
+  /**
+   * Run the helper. `install`, `activate` and `remove` get the relay's
+   * signature over what they ask in front of their stdin, as the agent
+   * sends them; `sign: false` sends none, `sign: { key, fields, now }`
+   * signs with another key or other fields.
+   */
+  const call = (argv, stdin, { sign, ...extra } = {}) => {
+    // Never the test runner's own stdin: what the helper reads is given here.
+    let input = SIGNED.has(argv[0]) && stdin === undefined ? Buffer.alloc(0) : stdin;
+    if (SIGNED.has(argv[0]) && sign !== false) {
+      const raw = typeof stdin === 'function' ? null : (stdin ?? Buffer.alloc(0));
+      const line = signatureFor(argv, raw ?? Buffer.alloc(0), sign ?? {});
+      if (line !== null) {
+        const prefix = Buffer.from(line);
+        input =
+          typeof stdin === 'function'
+            ? () => Buffer.concat([prefix, Buffer.from(stdin())])
+            : Buffer.concat([prefix, Buffer.from(stdin ?? Buffer.alloc(0))]);
+      }
+    }
+    return helper.main(argv, { ...context, stdin: input, ...extra });
+  };
   const install = (version, tgz, { spec, label = LABEL, route = ROUTE, ...extra } = {}) =>
     call(['install', label, route, version, sri(tgz)], installInput(tgz, spec), extra);
   const at = (p) => path.join(root, p);
@@ -263,11 +370,15 @@ test('arguments are validated before anything is read or written', () => {
   assert.deepEqual(fs.readdirSync(at('opt')), []);
 });
 
-test('exit statuses: refused 2, not installed 3, not the owner 4, failed 1', () => {
+test('exit statuses: refused 2, not installed 3, not the owner 4, not signed 5, failed 1', () => {
   assert.equal(helper.exitStatus(new helper.UsageError('x')), 2);
   assert.equal(helper.exitStatus(new helper.NotInstalledError('x')), 3);
   assert.equal(helper.exitStatus(new helper.NotOwnerError('x')), 4);
+  assert.equal(helper.exitStatus(new helper.UnsignedError('x')), 5);
   assert.equal(helper.exitStatus(new Error('x')), 1);
+  assert.equal(agentLib.APPHOST_EXIT_UNSIGNED, 5);
+  assert.equal(agentLib.APPHOST_EXIT_NOT_OWNER, 4);
+  assert.equal(agentLib.APPHOST_EXIT_NOT_INSTALLED, 3);
 });
 
 test('the service spec line is strict', () => {
@@ -840,7 +951,7 @@ test('another agent on the machine is refused the route and its kept data until 
       err instanceof helper.NotOwnerError &&
       /fx belongs to @lamalibre\/fx-agent installed by agent "vm1"/.test(err.message) &&
       /not @lamalibre\/fx-agent from agent "vm2"/.test(err.message) &&
-      err.message.includes('sudo /usr/local/sbin/lamaste-apphost remove vm1 fx --purge'),
+      err.message.includes('sudo lamaste-agent apphost remove fx --purge'),
   );
   install('1.0.0', tgzOf(packageEntries()));
   for (const argv of [
@@ -849,7 +960,8 @@ test('another agent on the machine is refused the route and its kept data until 
     ['remove', other, ROUTE],
     ['remove', other, ROUTE, '--purge'],
   ]) {
-    assert.throws(() => call(argv, configInput()), helper.NotOwnerError, argv.join(' '));
+    const stdin = argv[0] === 'config' ? configInput() : undefined;
+    assert.throws(() => call(argv, stdin), helper.NotOwnerError, argv.join(' '));
   }
   assert.ok(fs.existsSync(at('opt/lamalibre/apps/fx/1.0.0')), 'nothing was removed');
 
@@ -907,8 +1019,8 @@ test("an account of the name that is not the route's — or a lone group — is 
 
 test('an install that fails after creating the account takes back what it created', () => {
   const { install, system, at } = setup();
-  // /etc/lamalibre is not a directory: the config directory cannot be made.
-  fs.writeFileSync(at('etc/lamalibre'), 'not a directory');
+  // /etc/lamalibre/apps is not a directory: the config directory cannot be made.
+  fs.writeFileSync(at('etc/lamalibre/apps'), 'not a directory');
   assert.throws(() => install('1.0.0', tgzOf(packageEntries())), /not a root-owned directory/);
   assert.ok(system.calls.some(([cmd]) => cmd === 'useradd'));
   assert.ok(!system.users.has(helper.serviceUser(ROUTE)), 'the account it made is deleted');
@@ -1043,6 +1155,448 @@ test('a tarball npm itself packed is accepted', () => {
     fs.readFileSync(at('opt/lamalibre/apps/fx/2.0.0/package/dist/agentd.js'), 'utf8'),
     'console.log("fx");\n',
   );
+});
+
+// ---------------------------------------------------------------------------
+// Only what the relay signed
+// ---------------------------------------------------------------------------
+
+/** The error the helper raises for a job the relay did not sign as asked. */
+const unsigned = (pattern) => (err) =>
+  err instanceof helper.UnsignedError && pattern.test(err.message);
+
+test('signed jobs: none, another key, another key pinned, no pin or an untrusted one — refused, nothing done', () => {
+  const tgz = tgzOf(packageEntries());
+  for (const [what, prepare, sign, pattern] of [
+    ['no signature', () => {}, false, /the relay's signature/],
+    [
+      'another relay',
+      () => {},
+      { key: otherKey },
+      /signed with relay key .* has .* pinned; re-pin/,
+    ],
+    [
+      'another key pinned',
+      (root) => writePin(root, LABEL, { key: otherKey }),
+      {},
+      /signed with relay key .* re-pin the relay key: sudo lamaste-agent apphost pin/,
+    ],
+    [
+      'no pin',
+      (root) => fs.rmSync(path.join(root, core.APPHOST_PATHS.relayPinFile(LABEL))),
+      {},
+      /no relay key is pinned for agent "vm1"; re-pin/,
+    ],
+    [
+      'a pin others may write',
+      (root) => fs.chmodSync(path.join(root, core.APPHOST_PATHS.relayPinFile(LABEL)), 0o666),
+      {},
+      /not a root-owned file/,
+    ],
+    [
+      'a pin directory others may write',
+      (root) => fs.chmodSync(path.join(root, core.APPHOST_PATHS.relaysDir), 0o777),
+      {},
+      /is not a root-owned directory/,
+    ],
+    [
+      'a pin that is a link',
+      (root) => {
+        const file = path.join(root, core.APPHOST_PATHS.relayPinFile(LABEL));
+        fs.renameSync(file, `${file}.real`);
+        fs.symlinkSync(`${file}.real`, file);
+      },
+      {},
+      /is a link/,
+    ],
+    [
+      'a pin whose key is not its kid',
+      (root) => {
+        const file = path.join(root, core.APPHOST_PATHS.relayPinFile(LABEL));
+        const pin = JSON.parse(fs.readFileSync(file, 'utf8'));
+        fs.writeFileSync(file, JSON.stringify({ ...pin, publicKey: otherKey.publicKey }));
+      },
+      {},
+      /pinned for agent "vm1" is unreadable/,
+    ],
+  ]) {
+    const { install, call, root, at, system } = setup();
+    prepare(root);
+    assert.throws(() => install('1.0.0', tgz, { sign }), unsigned(pattern), what);
+    assert.throws(
+      () => call(['remove', LABEL, ROUTE], undefined, { sign }),
+      unsigned(pattern),
+      what,
+    );
+    assert.deepEqual(listed(at('opt')), [], what);
+    assert.deepEqual(system.calls, [], `${what}: no command ran`);
+    assert.equal(helper.exitStatus(new helper.UnsignedError('x')), 5);
+  }
+});
+
+test('signed jobs: current only — expired, or issued ahead beyond the clock skew', () => {
+  const { install } = setup();
+  const tgz = tgzOf(packageEntries());
+  assert.throws(
+    () => install('1.0.0', tgz, { sign: { now: Date.now() - 600_001 } }),
+    unsigned(/the job has expired/),
+  );
+  assert.throws(
+    () => install('1.0.0', tgz, { sign: { now: Date.now() + 10_000 } }),
+    unsigned(/signed in the future/),
+  );
+  assert.equal(install('1.0.0', tgz, { sign: { now: Date.now() + 2_000 } }).ok, true);
+});
+
+test('signed jobs: a job runs once — replayed, it is refused; the ids are kept root-only until they expire', () => {
+  const { context, at } = setup();
+  const tgz = tgzOf(packageEntries());
+  const argv = ['install', LABEL, ROUTE, '1.0.0', sri(tgz)];
+  const line = signatureFor(argv, installInput(tgz));
+  const stdin = Buffer.concat([Buffer.from(line), installInput(tgz)]);
+  const run = () => helper.main(argv, { ...context, stdin });
+  assert.equal(run().ok, true);
+  assert.throws(run, unsigned(/has run already; a signed job runs once/));
+
+  const jobs = at('var/lib/lamalibre/apps/.jobs');
+  assert.equal(mode(jobs), '700');
+  assert.equal(mode(path.join(jobs, 'used.json')), '600');
+  const used = JSON.parse(fs.readFileSync(path.join(jobs, 'used.json'), 'utf8'));
+  assert.equal(used.v, 1);
+  assert.deepEqual(Object.keys(used.jobs).length, 1);
+
+  // Once it expired the id is forgotten — and the job could not verify anyway.
+  const later = () => helper.main(argv, { ...context, stdin, now: () => Date.now() + 700_000 });
+  assert.throws(later, unsigned(/expired/));
+  // An unreadable record refuses every signed job until an operator removes it.
+  fs.writeFileSync(path.join(jobs, 'used.json'), '{ broken');
+  assert.throws(
+    () =>
+      helper.main(argv, {
+        ...context,
+        stdin: Buffer.concat([
+          Buffer.from(signatureFor(argv, installInput(tgz))),
+          installInput(tgz),
+        ]),
+      }),
+    /used\.json is unreadable; delete it/,
+  );
+});
+
+test('signed jobs: install — exactly the version, integrity and service spec the relay signed', () => {
+  const tgz = tgzOf(packageEntries());
+  const spec = { ...specLine(), version: '1.0.0', integrity: sri(tgz) };
+  const signedWith = (over) => ({ fields: { payload: { spec: { ...spec, ...over } } } });
+  for (const [what, over] of [
+    ['version', { version: '1.0.1' }],
+    ['integrity', { integrity: sri(tgzOf(packageEntries({ version: '1.0.1' }))) }],
+  ]) {
+    const { install, at } = setup();
+    assert.throws(
+      () => install('1.0.0', tgz, { sign: signedWith(over) }),
+      unsigned(/another version or tarball integrity/),
+      what,
+    );
+    assert.deepEqual(listed(at('opt')), [], what);
+  }
+  for (const [what, over] of [
+    ['system packages', { systemPackages: ['openssh-server'] }],
+    ['entry', { service: { entry: 'dist/other.js', memoryMax: null } }],
+    ['memoryMax', { service: { entry: 'dist/agentd.js', memoryMax: '64M' } }],
+    ['package', { package: '@lamalibre/other-agent' }],
+  ]) {
+    const { install, system, at } = setup();
+    assert.throws(
+      () => install('1.0.0', tgz, { sign: signedWith(over) }),
+      unsigned(/the service spec is not the one the relay signed/),
+      what,
+    );
+    assert.ok(!system.calls.some(([cmd]) => cmd === 'apt-get' || cmd === 'useradd'), what);
+    assert.deepEqual(listed(at('opt')), [], what);
+  }
+  // The same spec, its system packages in another order: the same approval.
+  const { install } = setup();
+  const sorted = specLine({ systemPackages: ['libpq5', 'sqlite3'] });
+  const shuffled = specLine({ systemPackages: ['sqlite3', 'libpq5', 'sqlite3'] });
+  assert.equal(
+    install('1.0.0', tgz, {
+      spec: shuffled,
+      sign: { fields: { payload: { spec: { ...sorted, version: '1.0.0', integrity: sri(tgz) } } } },
+    }).ok,
+    true,
+  );
+});
+
+test('signed jobs: the agent, route and command the relay signed for', () => {
+  const tgz = tgzOf(packageEntries());
+  const { install, call } = setup();
+  assert.throws(
+    () => install('1.0.0', tgz, { sign: { fields: { agent: 'vm9' } } }),
+    unsigned(/the job is for agent "vm9", not "vm1"/),
+  );
+  assert.throws(
+    () => install('1.0.0', tgz, { sign: { fields: { route: 'gx' } } }),
+    unsigned(/the job is for gx, not fx/),
+  );
+  // A remove job's signature handed to an install, and the other way round.
+  assert.throws(
+    () =>
+      install('1.0.0', tgz, {
+        sign: { fields: { kind: 'app-remove', payload: { purge: true, package: PKG } } },
+      }),
+    unsigned(/an app-remove job, not app-install/),
+  );
+  install('1.0.0', tgz);
+  assert.throws(
+    () =>
+      call(['remove', LABEL, ROUTE], undefined, {
+        sign: { fields: { kind: 'app-activate', payload: { version: '1.0.0', package: PKG } } },
+      }),
+    unsigned(/an app-activate job, not app-remove/),
+  );
+  // The label on this machine and the relay's name for the agent may differ:
+  // the pin says which name the relay's jobs carry.
+  const renamed = setup();
+  writePin(renamed.root, LABEL, { agent: 'relay-vm1' });
+  assert.throws(
+    () => renamed.install('1.0.0', tgz),
+    unsigned(/for agent "vm1", not "relay-vm1" \(agent "vm1" on its relay\)/),
+  );
+  assert.equal(
+    renamed.install('1.0.0', tgz, { sign: { fields: { agent: 'relay-vm1' } } }).ok,
+    true,
+  );
+});
+
+test('signed jobs: activate — the version and the package that owns the route', () => {
+  const { install, call } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  install('1.1.0', tgzOf(packageEntries({ version: '1.1.0' })));
+  assert.throws(
+    () =>
+      call(['activate', LABEL, ROUTE, '1.0.0'], undefined, {
+        sign: { fields: { payload: { version: '1.1.0', package: PKG } } },
+      }),
+    unsigned(/the job activates 1\.1\.0, not 1\.0\.0/),
+  );
+  assert.throws(
+    () =>
+      call(['activate', LABEL, ROUTE, '1.0.0'], undefined, {
+        sign: { fields: { payload: { version: '1.0.0', package: '@lamalibre/other-agent' } } },
+      }),
+    (err) =>
+      err instanceof helper.NotOwnerError &&
+      /fx is @lamalibre\/fx-agent, not @lamalibre\/other-agent/.test(err.message),
+  );
+  assert.throws(
+    () => call(['activate', LABEL, ROUTE, '1.0.0'], Buffer.from('{}\n'), { sign: false }),
+    unsigned(/the first line of stdin is not the relay's signature/),
+  );
+  // The signature is all `activate` takes on stdin.
+  assert.throws(
+    () => call(['activate', LABEL, ROUTE, '1.0.0'], Buffer.from('more\n')),
+    /stdin holds only the relay's signature/,
+  );
+  assert.equal(call(['activate', LABEL, ROUTE, '1.0.0']).version, '1.0.0');
+});
+
+test("signed jobs: remove — the purge flag as signed, and never another package's data", () => {
+  const { install, call, at, system } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  call(['config', LABEL, ROUTE], configInput());
+  // Signed without purge, asked with --purge — and the other way round.
+  assert.throws(
+    () =>
+      call(['remove', LABEL, ROUTE, '--purge'], undefined, {
+        sign: { fields: { payload: { purge: false, package: PKG } } },
+      }),
+    unsigned(/removes fx without --purge/),
+  );
+  assert.throws(
+    () =>
+      call(['remove', LABEL, ROUTE], undefined, {
+        sign: { fields: { payload: { purge: true, package: PKG } } },
+      }),
+    unsigned(/removes fx with --purge/),
+  );
+  // A purge signed for another package: the kept data is not its to delete.
+  assert.throws(
+    () =>
+      call(['remove', LABEL, ROUTE, '--purge'], undefined, {
+        sign: { fields: { payload: { purge: true, package: '@lamalibre/intruder-agent' } } },
+      }),
+    (err) =>
+      err instanceof helper.NotOwnerError &&
+      /fx is @lamalibre\/fx-agent, not @lamalibre\/intruder-agent; its data is kept/.test(
+        err.message,
+      ),
+  );
+  assert.ok(fs.existsSync(at('opt/lamalibre/apps/fx/1.0.0')), 'nothing was removed');
+  assert.ok(fs.existsSync(at('var/lib/lamalibre/apps/fx')));
+  assert.ok(!system.calls.some(([cmd]) => cmd === 'userdel'));
+  assert.deepEqual(call(['remove', LABEL, ROUTE, '--purge']), {
+    ok: true,
+    version: null,
+    unit: 'absent',
+  });
+});
+
+test('operator: a caller already running as root removes without a signature; the command line never can', () => {
+  const { install, call, context, at } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  // Not from the command line: argv carries no operator authority.
+  assert.throws(
+    () => call(['remove', LABEL, ROUTE, '--operator'], undefined, { sign: false }),
+    helper.UsageError,
+  );
+  // Installing and activating always need the relay.
+  assert.throws(
+    () =>
+      helper.main(['activate', LABEL, ROUTE, '1.0.0'], {
+        ...context,
+        operator: true,
+        stdin: Buffer.alloc(0),
+      }),
+    helper.UnsignedError,
+  );
+  assert.deepEqual(
+    helper.main(['remove', LABEL, ROUTE, '--purge'], { ...context, operator: true }),
+    { ok: true, version: null, unit: 'absent' },
+  );
+  assert.ok(!fs.existsSync(at('var/lib/lamalibre/apps/fx')));
+});
+
+test('contract: what core signs the helper verifies — and nothing tampered with', () => {
+  const now = Date.now();
+  const input = {
+    agent: 'vm1',
+    route: 'fx',
+    jobId: crypto.randomUUID(),
+    kind: 'app-install',
+    payload: { spec: { ...specLine(), version: '1.0.0', integrity: sri(Buffer.from('x')) } },
+    issuedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 600_000).toISOString(),
+  };
+  const pin = {
+    kid: relayKey.kid,
+    agent: 'vm1',
+    publicKey: crypto.createPublicKey({
+      key: Buffer.from(relayKey.publicKey, 'base64'),
+      format: 'der',
+      type: 'spki',
+    }),
+  };
+  const expect = { pin, label: 'vm1', route: 'fx', kind: 'app-install', now };
+  const signature = core.signAppJob(input, relayKey);
+  const line = JSON.stringify(signature);
+  const envelope = helper.verifySignature(line, expect);
+  assert.deepEqual(envelope, {
+    v: 1,
+    typ: 'lamaste.apphost.job',
+    kid: relayKey.kid,
+    ...input,
+  });
+  // Both sides read the same envelope.
+  assert.deepEqual(core.decodeAppJobSignature(signature).envelope, envelope);
+  for (const kind of ['app-activate', 'app-remove']) {
+    const payload =
+      kind === 'app-activate' ? { version: '1.0.0', package: PKG } : { purge: true, package: PKG };
+    const other = core.signAppJob({ ...input, kind, payload }, relayKey);
+    assert.deepEqual(
+      helper.verifySignature(JSON.stringify(other), { ...expect, kind }).payload,
+      payload,
+    );
+  }
+
+  // Every field changed after signing: refused.
+  const original = JSON.parse(Buffer.from(signature.envelope, 'base64url').toString('utf8'));
+  const resign = (patch) =>
+    JSON.stringify({
+      ...signature,
+      envelope: Buffer.from(core.canonicalJson({ ...original, ...patch })).toString('base64url'),
+    });
+  for (const [field, value] of Object.entries({
+    v: 2,
+    typ: 'lamaste.relay.assertion',
+    kid: otherKey.kid,
+    agent: 'vm2',
+    route: 'gx',
+    jobId: crypto.randomUUID(),
+    kind: 'app-remove',
+    payload: { spec: { ...input.payload.spec, systemPackages: ['openssh-server'] } },
+    issuedAt: new Date(now - 1000).toISOString(),
+    expiresAt: new Date(now + 600_001).toISOString(),
+  })) {
+    assert.throws(
+      () => helper.verifySignature(resign({ [field]: value }), expect),
+      helper.UnsignedError,
+      field,
+    );
+  }
+  const sig = Buffer.from(signature.sig, 'base64url');
+  sig[0] ^= 1;
+  assert.throws(
+    () =>
+      helper.verifySignature(
+        JSON.stringify({ ...signature, sig: sig.toString('base64url') }),
+        expect,
+      ),
+    unsigned(/does not verify/),
+  );
+  // Not canonical, even signed: refused, as core refuses it.
+  const text = JSON.stringify({ v: 1, typ: 'lamaste.apphost.job', kid: relayKey.kid, ...input });
+  const forged = {
+    envelope: Buffer.from(text).toString('base64url'),
+    sig: crypto.sign(null, Buffer.from(text), relayKey.privateKey).toString('base64url'),
+  };
+  assert.throws(
+    () => helper.verifySignature(JSON.stringify(forged), expect),
+    unsigned(/not a valid app job/),
+  );
+  assert.equal(core.decodeAppJobSignature(forged), null);
+  // A relay assertion made with the same key is no job.
+  const assertion = core.signRelayAssertion(
+    { aud: 'vm1', port: 9393, caller: { type: 'admin' }, method: 'GET', target: { path: '/' } },
+    relayKey,
+  );
+  const [encoded, assertionSig] = assertion.split('.');
+  assert.throws(
+    () => helper.verifySignature(JSON.stringify({ envelope: encoded, sig: assertionSig }), expect),
+    helper.UnsignedError,
+  );
+});
+
+test('contract: canonical JSON, signature constants and paths equal the core library', () => {
+  for (const value of [
+    { b: 1, a: [{ d: null, c: 'x' }], e: { g: true, f: 1.5 } },
+    { spec: specLine(), version: '1.0.0' },
+    JSON.parse('{"__proto__":{"x":1},"a":1}'),
+    [],
+    'é ✓',
+  ]) {
+    assert.equal(helper.canonicalJson(value), core.canonicalJson(value));
+  }
+  assert.equal(helper.JOB_TYPE, core.APP_JOB_SIGNATURE_TYPE);
+  assert.equal(helper.JOB_VERSION, core.APP_JOB_SIGNATURE_VERSION);
+  assert.deepEqual(Object.values(helper.JOB_KINDS), [...core.APP_JOB_KINDS]);
+  assert.equal(helper.JOB_MAX_LIFETIME_MS, core.APP_JOB_SIGNATURE_MAX_LIFETIME_MS);
+  assert.equal(helper.JOB_CLOCK_SKEW_MS, core.APP_JOB_SIGNATURE_CLOCK_SKEW_MS);
+  assert.equal(helper.ENVELOPE_MAX, core.APP_JOB_ENVELOPE_MAX_CHARS);
+  assert.equal(helper.PATHS.relaysDir, core.APPHOST_PATHS.relaysDir);
+  assert.equal(helper.PATHS.jobsDir, core.APPHOST_PATHS.jobsDir);
+  for (const label of ['vm1', 'a', 'x'.repeat(63)]) {
+    assert.equal(helper.PATHS.relayPinFile(label), core.APPHOST_PATHS.relayPinFile(label));
+  }
+});
+
+test('contract: a pin the agent CLI writes is one the helper reads', () => {
+  const root = sandbox();
+  writePin(root, LABEL, { agent: 'relay-vm1' });
+  const ctx = helper.createContext({ root, rootUid: UID, rootGid: GID });
+  const pin = helper.readRelayPin(ctx, LABEL);
+  assert.equal(pin.kid, relayKey.kid);
+  assert.equal(pin.agent, 'relay-vm1');
+  assert.equal(pin.publicKey.asymmetricKeyType, 'ed25519');
 });
 
 // ---------------------------------------------------------------------------

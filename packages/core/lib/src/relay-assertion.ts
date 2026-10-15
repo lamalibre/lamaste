@@ -170,6 +170,37 @@ export function relayVerifyKeyOf(key: RelaySigningKey): RelayVerifyKey {
   return { kid: key.kid, publicKey: key.publicKey };
 }
 
+/** What `GET /api/agents/me/relay-keys` tells an agent, validated. */
+export interface RelayKeysAnswer {
+  /** The label the relay knows the calling agent by. */
+  readonly agentLabel: string;
+  /** The relay's verification keys, the one it signs with first; each id derived from its key. */
+  readonly keys: readonly { readonly kid: string; readonly publicKey: crypto.KeyObject }[];
+}
+
+/**
+ * Validate the panel's answer to `GET /api/agents/me/relay-keys` — the keys
+ * relay assertions and app jobs are signed with, and the label the relay
+ * knows the calling agent by. Throws when it is not that.
+ */
+export function parseRelayKeysResponse(response: unknown): RelayKeysAnswer {
+  const r = (response ?? {}) as Record<string, unknown>;
+  const list = r['keys'];
+  const agentLabel = r['agentLabel'];
+  if (!Array.isArray(list) || list.length > 16) {
+    throw new Error('Panel returned malformed relay keys');
+  }
+  if (typeof agentLabel !== 'string' || !AGENT_LABEL_REGEX.test(agentLabel)) {
+    throw new Error('Panel did not name this agent');
+  }
+  return { agentLabel, keys: list.map((entry) => parseRelayVerifyKey(entry)) };
+}
+
+/** Base64 of the DER SubjectPublicKeyInfo of a verification key — how keys are published and pinned. */
+export function relayPublicKeySpki(publicKey: crypto.KeyObject): string {
+  return publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+}
+
 // ---------------------------------------------------------------------------
 // Signing key file
 // ---------------------------------------------------------------------------

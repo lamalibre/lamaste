@@ -49,7 +49,7 @@ ${b('COMMANDS')}
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
   ${c('panel')}           Manage agent web panel (--enable, --disable, --status, reset-pin)
   ${c('chisel')}          Manage chisel tunnel credential (refresh-credential)
-  ${c('apphost')}         App host helper for plugins' agent halves (enable, status, disable)
+  ${c('apphost')}         App host helper for plugins' agent halves (enable, pin, status, disable)
   ${c('list')}            List all configured agents
   ${c('switch')}          Set the default agent
 
@@ -191,9 +191,10 @@ export async function main() {
       break;
     }
     case 'apphost': {
-      // Machine-wide (one helper per machine), not per agent label.
+      // Machine-wide (one helper per machine); --label narrows pin,
+      // relay-keys and remove to one agent.
       const { runApphost } = await import('./commands/apphost.js');
-      await runApphost(args.slice(1), { json });
+      await runApphost(args.slice(1), { json, label });
       break;
     }
     case 'list': {
