@@ -5,6 +5,6 @@
     "rootDir": "./src"
   },
   "include": ["src/server/**/*.ts"],
-  "exclude": ["src/agent/**", "src/*.ts"],
-  "references": [{ "path": "./tsconfig.shared.json" }]
+  "exclude": ["src/agent/**", "src/*.ts", "src/hooks/**"],
+  "references": [{ "path": "./tsconfig.hooks.json" }, { "path": "./tsconfig.shared.json" }]
 }

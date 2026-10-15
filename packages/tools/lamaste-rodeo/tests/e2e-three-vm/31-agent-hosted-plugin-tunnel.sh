@@ -6,12 +6,14 @@
 # host and agent VMs:
 #
 # 1. The plugin (fixture @lamalibre/e2e-app-plugin-server) is installed and
-#    enabled on the host, then hosted on the agent VM's agent. The agent's
-#    sync timer fetches the plugin config (port and secret) and acknowledges
-#    it, without any command on the agent VM.
+#    enabled on the host, then hosted on the agent VM's agent — an operation
+#    (4.3) that reserves the hosting, grants the tunnel and waits for the
+#    agent half. The agent's sync timer fetches the plugin config (port and
+#    secret) and acknowledges it, without any command on the agent VM.
 # 2. The agent half starts on the agent VM on the assigned port; the chisel
-#    client binds the same port on the host (the internal tunnel's grant), and
-#    the panel's forwarder reaches the agent half through it.
+#    client binds the same port on the host (the internal tunnel's grant), the
+#    hosting operation succeeds, and the panel's forwarder reaches the agent
+#    half through it.
 # 3. A secret rotation on the host is picked up by the sync timer: the
 #    forwarder keeps working throughout and the previous secret is dropped
 #    once the agent acknowledges the new one.
@@ -69,6 +71,22 @@ plugin_config_field() {
 # hosting_field <jq expr> — a field of GET /api/plugins/<name>/hosting on the host
 hosting_field() {
   host_api_get "plugins/${PLUGIN_NAME}/hosting" 2>/dev/null | jq -r "$1" 2>/dev/null || echo ""
+}
+
+# wait_operation <operation id> <seconds> — prints the operation once it ended
+# (still running after <seconds>: printed as is; the caller asserts its status)
+wait_operation() {
+  local id="$1" deadline=$((SECONDS + $2)) op='{}'
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    op=$(host_api_get "plugins/${PLUGIN_NAME}/operations/${id}" 2>/dev/null | jq -c '.operation' 2>/dev/null || echo '{}')
+    if [ "$(echo "$op" | jq -r '.status' 2>/dev/null)" != "running" ]; then
+      echo "$op"
+      return 0
+    fi
+    sleep 3
+  done
+  echo "$op"
+  return 0
 }
 
 # wait_health <state> <seconds>
@@ -130,7 +148,9 @@ begin_test "31 — Agent-hosted plugin through the internal tunnel (Three-VM)"
 
 cleanup() {
   log_info "Cleaning up test resources..."
-  timed_exec 60 multipass exec lamaste-host -- sudo bash -c "${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/hosting > /dev/null 2>&1; ${CURL_MTLS} -X POST https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/disable > /dev/null 2>&1; ${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME} > /dev/null 2>&1; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true" > /dev/null 2>&1
+  # Uninstalling tears a hosting down first (an operation); one still running
+  # refuses it until it ends.
+  timed_exec 240 multipass exec lamaste-host -- sudo bash -c "${CURL_MTLS} -X POST https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/disable > /dev/null 2>&1; for _ in \$(seq 1 70); do [ \"\$(${CURL_MTLS} -o /dev/null -w '%{http_code}' https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME})\" = 404 ] && break; ${CURL_MTLS} -X DELETE 'https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}?force=true' > /dev/null 2>&1; sleep 3; done; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true" > /dev/null 2>&1
   timed_exec 60 multipass exec lamaste-agent -- sudo bash -c "pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true" > /dev/null 2>&1
   if [ -n "$AGENT_LIB_PARENT" ]; then
     timed_exec 60 multipass exec lamaste-agent -- sudo bash -c "cd ${AGENT_LIB_PARENT} && node --input-type=module -e \"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', false))\" 2>/dev/null; lamaste-agent sync --label ${AGENT_LABEL} 2>/dev/null; true" > /dev/null 2>&1
@@ -219,9 +239,12 @@ assert_json_field "$ENABLE_RESPONSE" '.status' 'enabled' "Plugin enabled" || tru
 # sync.log outlives a run: count only the lines this run adds.
 SYNC_LOG_MARK=$(agent_exec "cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l" 2>/dev/null || echo "0")
 HOST_RESPONSE=$(host_api_post "plugins/${PLUGIN_NAME}/hosting" "{\"agentLabel\":\"${HOST_AGENT_LABEL}\"}")
-assert_json_field "$HOST_RESPONSE" '.ok' 'true' "Plugin hosted on ${HOST_AGENT_LABEL}" || true
-PORT=$(echo "$HOST_RESPONSE" | jq -r '.hosting.port' 2>/dev/null || echo "0")
-TUNNEL_ID=$(echo "$HOST_RESPONSE" | jq -r '.hosting.tunnelId' 2>/dev/null || echo "")
+assert_json_field "$HOST_RESPONSE" '.operation.kind' 'host' "Hosting on ${HOST_AGENT_LABEL} started as an operation" || true
+HOST_OP_ID=$(echo "$HOST_RESPONSE" | jq -r '.operation.id' 2>/dev/null || echo "")
+reserved() { [ -n "$(hosting_field '.hosting.port // empty')" ]; }
+wait_for 30 reserved || true
+PORT=$(hosting_field '.hosting.port')
+TUNNEL_ID=$(hosting_field '.hosting.tunnelId')
 if [ "$PORT" -ge 21000 ] 2>/dev/null && [ "$PORT" -le 21999 ] 2>/dev/null; then
   log_pass "Port ${PORT} assigned from the internal range"
 else
@@ -280,6 +303,10 @@ if wait_for 90 tunnel_up; then
 else
   log_fail "The internal tunnel did not come up within 90 seconds"
 fi
+
+HOST_OP=$(wait_operation "${HOST_OP_ID}" 180)
+assert_json_field "$HOST_OP" '.status' 'succeeded' "The hosting operation succeeded once the agent half answered through the tunnel" || true
+assert_eq "$(hosting_field '.hosting.phase')" "active" "The hosting is active" || true
 
 PING=$(host_api_get "${PLUGIN_NAME}/ping")
 assert_json_field "$PING" '.pong' 'true' "GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs" || true
@@ -371,7 +398,8 @@ fi
 log_section "Clear the hosting"
 
 UNHOST=$(host_api_delete "plugins/${PLUGIN_NAME}/hosting")
-assert_json_field "$UNHOST" '.ok' 'true' "Hosting removed" || true
+UNHOST_OP=$(wait_operation "$(echo "$UNHOST" | jq -r '.operation.id' 2>/dev/null)" 120)
+assert_json_field "$UNHOST_OP" '.status' 'succeeded' "Hosting removed" || true
 TUNNEL_LEFT=$(host_api_get "tunnels?limit=500" | jq "[.tunnels[] | select(.id == \"${TUNNEL_ID}\")] | length" 2>/dev/null || echo "-1")
 assert_eq "$TUNNEL_LEFT" "0" "The internal tunnel is gone" || true
 config_gone() { ! agent_exec "test -f ${PLUGIN_CONFIG_FILE}" 2>/dev/null; }

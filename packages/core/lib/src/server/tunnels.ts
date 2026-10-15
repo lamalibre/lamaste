@@ -430,6 +430,12 @@ export interface CreateTunnelOptions {
   agentLabel: string;
   /** Request body limit in MiB; defaults to `TUNNEL_MAX_BODY_MB.default`. */
   maxBodySizeMb?: number | undefined;
+  /**
+   * Internal tunnels only: `false` creates the tunnel without its chisel
+   * grant — the port is reserved, nothing is reachable until it is enabled
+   * (the install pipeline grants it once the agent half is ready).
+   */
+  enabled?: boolean | undefined;
   domain: string;
   email: string;
   nginx: NginxDeps;
@@ -530,7 +536,7 @@ async function createInternalTunnelLocked(opts: CreateTunnelOptions): Promise<Tu
     description: description ?? null,
     type: 'plugin',
     accessMode: undefined,
-    enabled: true,
+    enabled: opts.enabled ?? true,
     createdAt: new Date().toISOString(),
     exposure: 'internal',
     agentLabel,

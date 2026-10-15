@@ -20,26 +20,36 @@ import {
   removeSyncService,
 } from '@lamalibre/lamaste/agent';
 import { listAgents, removeAgent, loadRegistry } from '@lamalibre/lamaste/agent';
+import { assertNoAgentHalves } from '../lib/app-host-guard.js';
 import { removePanelServiceConfig } from '../lib/panel-service.js';
 
 /**
  * Unload the agent, remove the service config, and config.
  * Supports --label for single-agent and --all for everything.
+ *
+ * Refused while the app host helper still runs agent halves for the agents
+ * being removed: without the agent they would run on with no tunnel.
+ *
  * @param {{ label?: string, all?: boolean }} options
+ * @param {{ appHost?: object }} [testing] - replaces the helper and its record (tests)
  */
-export async function runUninstall({ label, all }) {
+export async function runUninstall({ label, all }, { appHost } = {}) {
   assertSupportedPlatform();
+  const registry = await loadRegistry();
+  const labels = (registry?.agents ?? []).map((a) => a.label);
 
   if (all) {
+    await assertNoAgentHalves(labels, { everyAgent: true }, appHost);
     return uninstallAll();
   }
 
   if (label) {
+    const others = labels.filter((l) => l !== label);
+    await assertNoAgentHalves([label], { everyAgent: others.length === 0 }, appHost);
     return uninstallSingle(label);
   }
 
   // No label, no --all: check how many agents exist
-  const registry = await loadRegistry();
   if (registry && registry.agents.length > 1) {
     console.error('');
     console.error(chalk.red('  Multiple agents configured. Specify which to uninstall:'));
@@ -56,10 +66,12 @@ export async function runUninstall({ label, all }) {
   }
 
   if (registry && registry.agents.length === 1) {
+    await assertNoAgentHalves(labels, { everyAgent: true }, appHost);
     return uninstallSingle(registry.agents[0].label);
   }
 
   // No registry — fall back to legacy uninstall (remove the agent root directory)
+  await assertNoAgentHalves([], { everyAgent: true }, appHost);
   return uninstallLegacy();
 }
 

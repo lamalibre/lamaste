@@ -23,6 +23,16 @@ function pushInstallConfigPath() {
   return path.join(STATE_DIR, 'push-install-config.json');
 }
 
+/** Actions a push-install policy can allow. */
+export const PUSH_INSTALL_ACTIONS = ['install', 'update', 'uninstall', 'check-prerequisites'];
+
+/**
+ * How long an agent's push-install window may be opened for, in minutes —
+ * enforced when one is opened and reported with the config, so clients
+ * offer the same bounds.
+ */
+export const PUSH_INSTALL_WINDOW_MINUTES = Object.freeze({ min: 5, max: 480 });
+
 const DEFAULT_POLICY = {
   id: 'default',
   name: 'Default',
@@ -30,8 +40,32 @@ const DEFAULT_POLICY = {
   allowedIps: [],
   deniedIps: [],
   allowedPlugins: [],
-  allowedActions: ['install', 'update', 'check-prerequisites'],
+  allowedActions: ['install', 'update', 'uninstall', 'check-prerequisites'],
 };
+
+/**
+ * The default policy's actions before `uninstall` joined them (4.3: removing
+ * an agent half Lamaste installed is a push to the agent too).
+ */
+const DEFAULT_ACTIONS_BEFORE_UNINSTALL = ['install', 'update', 'check-prerequisites'];
+
+/**
+ * A stored default policy whose actions were never edited gets `uninstall`
+ * with the default it was written from — the administrator chose nothing
+ * that excludes it. A policy that was edited, or any other policy, stays
+ * as stored.
+ */
+function withCurrentDefaults(policy) {
+  if (
+    policy?.id === DEFAULT_POLICY.id &&
+    Array.isArray(policy.allowedActions) &&
+    policy.allowedActions.length === DEFAULT_ACTIONS_BEFORE_UNINSTALL.length &&
+    DEFAULT_ACTIONS_BEFORE_UNINSTALL.every((a, i) => policy.allowedActions[i] === a)
+  ) {
+    return { ...policy, allowedActions: [...DEFAULT_POLICY.allowedActions] };
+  }
+  return policy;
+}
 
 const DEFAULT_PUSH_INSTALL_CONFIG = {
   enabled: false,
@@ -51,7 +85,7 @@ export async function readPushInstallConfig() {
     return {
       enabled: parsed.enabled ?? false,
       policies: Array.isArray(parsed.policies)
-        ? parsed.policies
+        ? parsed.policies.map(withCurrentDefaults)
         : [structuredClone(DEFAULT_POLICY)],
       defaultPolicy: parsed.defaultPolicy || 'default',
     };
@@ -387,4 +421,56 @@ export async function validatePushInstallAccess(label, sourceIp) {
   }
 
   return { ok: true, agent, config, policy };
+}
+
+/**
+ * Whether `policy` allows `action` on `packageName`. An empty list allows
+ * everything (as the policy editor documents). Returns the refusal, or null.
+ *
+ * @param {{ allowedActions?: string[], allowedPlugins?: string[] }} policy
+ * @param {string} action
+ * @param {string | null} packageName
+ * @returns {{ error: string, statusCode: number } | null}
+ */
+export function pushInstallPolicyRefusal(policy, action, packageName) {
+  if (
+    Array.isArray(policy.allowedActions) &&
+    policy.allowedActions.length > 0 &&
+    !policy.allowedActions.includes(action)
+  ) {
+    return { error: `Action "${action}" is not allowed by the assigned policy`, statusCode: 403 };
+  }
+  if (
+    packageName &&
+    Array.isArray(policy.allowedPlugins) &&
+    policy.allowedPlugins.length > 0 &&
+    !policy.allowedPlugins.includes(packageName)
+  ) {
+    return {
+      error: `Package "${packageName}" is not allowed by the assigned policy`,
+      statusCode: 403,
+    };
+  }
+  return null;
+}
+
+/**
+ * The push-install gates for one push to agent `label` from `sourceIp`:
+ * {@link validatePushInstallAccess} (global switch, the agent's window,
+ * the source IP) and the assigned policy's actions and packages. Hosting,
+ * updating and removing an agent half Lamaste installs are pushes: the
+ * relay has the agent install, switch or remove code as root.
+ *
+ * @param {string} label
+ * @param {string} sourceIp
+ * @param {'install' | 'update' | 'uninstall'} action
+ * @param {string} packageName the agent half's package
+ * @returns {Promise<{ ok: true, policy: object } | { ok: false, error: string, statusCode: number }>}
+ */
+export async function checkPushInstallAction(label, sourceIp, action, packageName) {
+  const access = await validatePushInstallAccess(label, sourceIp);
+  if (!access.ok) return access;
+  const refusal = pushInstallPolicyRefusal(access.policy, action, packageName);
+  if (refusal) return { ok: false, ...refusal };
+  return { ok: true, policy: access.policy };
 }

@@ -1,0 +1,3033 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 34,
+    "name": "App plugin installed onto an agent from the panel",
+    "suite": "e2e-three-vm",
+    "description": "34 — App plugin installed onto an agent from the panel (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-apphost"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-agent"
+    },
+    "SERVICE_USER": {
+      "value": "lamaste-app-e2e-apphost"
+    },
+    "UNIT": {
+      "value": "lamalibre-app-e2e-apphost.service"
+    },
+    "CODE_DIR": {
+      "value": "/opt/lamalibre/apps/e2e-apphost"
+    },
+    "DATA_DIR": {
+      "value": "/var/lib/lamalibre/apps/e2e-apphost"
+    },
+    "CONFIG_FILE": {
+      "value": "/etc/lamalibre/apps/e2e-apphost/plugin-config.json"
+    },
+    "SYSTEM_PACKAGE": {
+      "value": "sqlite3"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-34"
+    },
+    "REMOTE_DIR": {
+      "value": "/tmp/e2e-34-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}\"\n\n# ===========================================================================\n# 1. The fixture, the stand-in Feria and the panel's registry credential\n# ==========================================================================="
+    },
+    {
+      "id": "stand-in-feria-and-the-panel-s-registry-credential",
+      "label": "Stand-in Feria and the panel's registry credential",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-34-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Fixture built: ${SERVER_PACKAGE} and its bundled agent package ${AGENT_PACKAGE} 1.0.0",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} and its bundled agent package ${AGENT_PACKAGE} 1.0.0"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Set PINNED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "feria_integrity \"${AGENT_PACKAGE}\" 1.0.0"
+          },
+          "capture": [
+            {
+              "variable": "PINNED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "The stand-in Feria publishes ${AGENT_PACKAGE}@1.0.0 with a sha512 integrity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "sha512-"
+              },
+              "message": "The stand-in Feria publishes ${AGENT_PACKAGE}@1.0.0 with a sha512 integrity"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Stand-in Feria and the panel's registry credential\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-34-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" \"[\\\"${SYSTEM_PACKAGE}\\\"]\"; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} and its bundled agent package ${AGENT_PACKAGE} 1.0.0\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nPINNED=$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\nassert_contains \"$PINNED\" \"sha512-\" \"The stand-in Feria publishes ${AGENT_PACKAGE}@1.0.0 with a sha512 integrity\" || true\n\n# ===========================================================================\n# 2. Install: the agent half is pinned and previewed\n# ==========================================================================="
+    },
+    {
+      "id": "install-the-agent-half-is-pinned-and-shown-for-approval",
+      "label": "Install: the agent half is pinned and shown for approval",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "Set PACKAGE_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" \".packages[\\\"${SYSTEM_PACKAGE}\\\"]\""
+          },
+          "capture": [
+            {
+              "variable": "PACKAGE_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "Set APT_RUNS_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" \".aptRuns[\\\"${SYSTEM_PACKAGE}\\\"] // 0\""
+          },
+          "capture": [
+            {
+              "variable": "APT_RUNS_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "…an agent-hosted plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.hosting",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "…an agent-hosted plugin"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Set PREVIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$INSTALL\" | jq -c '.hooks.agentHalf' 2>/dev/null || echo 'null'"
+          },
+          "capture": [
+            {
+              "variable": "PREVIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "Preview: the agent package Lamaste installs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".package",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_PACKAGE"
+              },
+              "message": "Preview: the agent package Lamaste installs"
+            }
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Preview: at the plugin's version",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Preview: at the plugin's version"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Preview: the tarball integrity, pinned from the registry at install",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".integrity",
+              "expected": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "message": "Preview: the tarball integrity, pinned from the registry at install"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "Preview: the system package it brings",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".systemPackages | join(\",\")",
+              "expected": {
+                "kind": "var",
+                "name": "SYSTEM_PACKAGE"
+              },
+              "message": "Preview: the system package it brings"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Preview: the service account",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".serviceUser",
+              "expected": {
+                "kind": "var",
+                "name": "SERVICE_USER"
+              },
+              "message": "Preview: the service account"
+            }
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Preview: the unit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": ".unitName",
+              "expected": {
+                "kind": "var",
+                "name": "UNIT"
+              },
+              "message": "Preview: the unit"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Preview: the service entry and its memory limit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PREVIEW"
+              },
+              "path": "\"\\(.entry) \\(.memoryMax)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "dist/agentd.mjs 256M"
+              },
+              "message": "Preview: the service entry and its memory limit"
+            }
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Its approval is pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "Its approval is pending"
+            }
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Set DIGEST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INSTALL\" '.hooks.approval.digest // empty'"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "GET /api/plugins/${PLUGIN}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "HOOKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-28",
+          "label": "GET /plugins/${PLUGIN}/hooks shows the same agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOOKS"
+              },
+              "path": ".hooks.agentHalf.integrity",
+              "expected": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "message": "GET /plugins/${PLUGIN}/hooks shows the same agent half"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        }
+      ],
+      "bash": "log_section \"Install: the agent half is pinned and shown for approval\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\")\nPACKAGE_BEFORE=$(json_get \"$FACTS\" \".packages[\\\"${SYSTEM_PACKAGE}\\\"]\")\nAPT_RUNS_BEFORE=$(json_get \"$FACTS\" \".aptRuns[\\\"${SYSTEM_PACKAGE}\\\"] // 0\")\nif [ \"$PACKAGE_BEFORE\" != \"install ok installed\" ]; then\n  # Lamaste installs it; the cleanup puts the VM back as it was.\n  PURGE_PACKAGES=\"${SYSTEM_PACKAGE}\"\nfi\nlog_info \"${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}\"\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria\" || true\nassert_json_field \"$INSTALL\" '.plugin.hosting' 'agent' \"…an agent-hosted plugin\" || true\nPREVIEW=$(echo \"$INSTALL\" | jq -c '.hooks.agentHalf' 2>/dev/null || echo 'null')\nassert_json_field \"$PREVIEW\" '.package' \"${AGENT_PACKAGE}\" \"Preview: the agent package Lamaste installs\" || true\nassert_json_field \"$PREVIEW\" '.version' '1.0.0' \"Preview: at the plugin's version\" || true\nassert_json_field \"$PREVIEW\" '.integrity' \"${PINNED}\" \"Preview: the tarball integrity, pinned from the registry at install\" || true\nassert_json_field \"$PREVIEW\" '.systemPackages | join(\",\")' \"${SYSTEM_PACKAGE}\" \"Preview: the system package it brings\" || true\nassert_json_field \"$PREVIEW\" '.serviceUser' \"${SERVICE_USER}\" \"Preview: the service account\" || true\nassert_json_field \"$PREVIEW\" '.unitName' \"${UNIT}\" \"Preview: the unit\" || true\nassert_json_field \"$PREVIEW\" '\"\\(.entry) \\(.memoryMax)\"' 'dist/agentd.mjs 256M' \"Preview: the service entry and its memory limit\" || true\nassert_json_field \"$INSTALL\" '.hooks.approval.state' 'pending' \"Its approval is pending\" || true\nDIGEST=$(json_get \"$INSTALL\" '.hooks.approval.digest // empty')\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '.hooks.agentHalf.integrity' \"${PINNED}\" \"GET /plugins/${PLUGIN}/hooks shows the same agent half\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\n\n# ===========================================================================\n# 3. Refused: not approved; an agent without the app host helper\n# ==========================================================================="
+    },
+    {
+      "id": "refused-before-approval-and-on-an-agent-that-cannot-host-it",
+      "label": "Refused before approval and on an agent that cannot host it",
+      "steps": [
+        {
+          "id": "step-30",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "Hosting an unapproved agent half is refused (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$REFUSED\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Hosting an unapproved agent half is refused (409)"
+            }
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "…hooks_not_approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$REFUSED\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "hooks_not_approved"
+              },
+              "message": "…hooks_not_approved"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-34",
+          "label": "Approved with the digest the preview showed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVE"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "Approved with the digest the preview showed"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "The relay holds the agent's current host facts",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay holds the agent's current host facts"
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "The relay's host facts of ${HOST_AGENT_LABEL} are missing or stale: $(agent_host_facts)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The relay's host facts of ${HOST_AGENT_LABEL} are missing or stale: $(agent_host_facts)"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "The app host helper was enabled before this spec: an agent without it is not shown",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "The app host helper was enabled before this spec: an agent without it is not shown"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "GET /api/plugins/${PLUGIN}/hosting/eligibility",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hosting/eligibility"
+          },
+          "capture": [
+            {
+              "variable": "ELIGIBILITY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Eligibility: ${HOST_AGENT_LABEL} cannot host it yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ELIGIBILITY"
+              },
+              "path": ".eligible",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Eligibility: ${HOST_AGENT_LABEL} cannot host it yet"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…the app host helper is not enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$ELIGIBILITY\" '.reasons | join(\" / \")')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "app host helper is not enabled"
+              },
+              "message": "…the app host helper is not enabled"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Hosting on it is refused (409)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$REFUSED\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Hosting on it is refused (409)"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "…agent_not_eligible, with the reasons",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$REFUSED\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "agent_not_eligible"
+              },
+              "message": "…agent_not_eligible, with the reasons"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Refused before approval and on an agent that cannot host it\"\n\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"409\" \"Hosting an unapproved agent half is refused (409)\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'hooks_not_approved' \"…hooks_not_approved\" || true\nAPPROVE=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVE\" '.hooks.approval.state' 'approved' \"Approved with the digest the preview showed\" || true\n\n# The facts the relay holds must be the agent's current ones: a spec that\n# just disabled the helper is reported by the agent's next sync.\nfacts_current() {\n  local facts\n  facts=$(agent_host_facts)\n  [ -n \"$facts\" ] && [ \"$facts\" != \"null\" ] || return 1\n  [ \"$(app_host_helper_was_enabled)\" = \"true\" ] || [ \"$(json_get \"$facts\" '.apphost')\" = \"null\" ]\n}\nif wait_for 90 facts_current; then\n  log_pass \"The relay holds the agent's current host facts\"\nelse\n  log_fail \"The relay's host facts of ${HOST_AGENT_LABEL} are missing or stale: $(agent_host_facts)\"\nfi\nif [ \"$(app_host_helper_was_enabled)\" = \"true\" ]; then\n  log_skip \"The app host helper was enabled before this spec: an agent without it is not shown\"\nelse\n  ELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\n  assert_json_field \"$ELIGIBILITY\" '.eligible' 'false' \"Eligibility: ${HOST_AGENT_LABEL} cannot host it yet\" || true\n  assert_contains \"$(json_get \"$ELIGIBILITY\" '.reasons | join(\" / \")')\" \"app host helper is not enabled\" \"…the app host helper is not enabled\" || true\n  REFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\n  assert_eq \"$(status_of \"$REFUSED\")\" \"409\" \"Hosting on it is refused (409)\" || true\n  assert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'agent_not_eligible' \"…agent_not_eligible, with the reasons\" || true\nfi\n\n# ===========================================================================\n# 4. The operator's one-time step on the agent VM\n# ==========================================================================="
+    },
+    {
+      "id": "the-operator-s-step-lamaste-agent-apphost-enable",
+      "label": "The operator's step: lamaste-agent apphost enable",
+      "steps": [
+        {
+          "id": "step-50",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "/usr/bin/node -p process.versions.node"
+          },
+          "capture": [
+            {
+              "variable": "NODE_ON_AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent apphost enable --user root --json 2>&1"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Set ENABLE_JSON",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$ENABLE_OUT\" | grep -E '^\\{' | tail -n 1 || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-54",
+          "label": "apphost enable --user root ($(echo \"$ENABLE_OUT\" | tail -c 200))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_JSON"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "apphost enable --user root ($(echo \"$ENABLE_OUT\" | tail -c 200))"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…installed the helper, protocol 1",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_JSON"
+              },
+              "path": ".protocol",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…installed the helper, protocol 1"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "…and no sudoers rule: the agent runs as root",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_JSON"
+              },
+              "path": ".sudoers",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…and no sudoers rule: the agent runs as root"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent apphost status --json 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "apphost status: the helper is installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS"
+              },
+              "path": ".helper.installed",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "apphost status: the helper is installed"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "…the one this lamaste-agent ships",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS"
+              },
+              "path": ".helper.upToDate",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…the one this lamaste-agent ships"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "…on /usr/bin/node ${NODE_ON_AGENT}, what the agent halves run on",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS"
+              },
+              "path": ".helper.node",
+              "expected": {
+                "kind": "var",
+                "name": "NODE_ON_AGENT"
+              },
+              "message": "…on /usr/bin/node ${NODE_ON_AGENT}, what the agent halves run on"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "${APPHOST_HELPER} is root:root 0755",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".helper | \"\\(.mode) \\(.user):\\(.group)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "755 root:root"
+              },
+              "message": "${APPHOST_HELPER} is root:root 0755"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "No /etc/sudoers.d/lamaste-apphost for a root agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".sudoersRule",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "No /etc/sudoers.d/lamaste-apphost for a root agent"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "The agent's sync reported the helper to the relay",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent's sync reported the helper to the relay"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "The relay's host facts name no app host helper: $(agent_host_facts)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The relay's host facts name no app host helper: $(agent_host_facts)"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Set HOST_FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_host_facts"
+          },
+          "capture": [
+            {
+              "variable": "HOST_FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "Host facts: Linux, systemd",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_FACTS"
+              },
+              "path": "\"\\(.os) \\(.systemd)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "linux true"
+              },
+              "message": "Host facts: Linux, systemd"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "Host facts: helper protocol 1",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_FACTS"
+              },
+              "path": ".apphost.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Host facts: helper protocol 1"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Host facts: the helper's Node.js",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_FACTS"
+              },
+              "path": ".apphost.node",
+              "expected": {
+                "kind": "var",
+                "name": "NODE_ON_AGENT"
+              },
+              "message": "Host facts: the helper's Node.js"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Host facts: a Debian-family distribution ($(json_get \"$HOST_FACTS\" '.distro.id') $(json_get \"$HOST_FACTS\" '.distro.versionId'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_FACTS"
+              },
+              "path": ".distro.id == \"ubuntu\" or ((.distro.idLike // []) | index(\"debian\") != null)",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Host facts: a Debian-family distribution ($(json_get \"$HOST_FACTS\" '.distro.id') $(json_get \"$HOST_FACTS\" '.distro.versionId'))"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/plugins/${PLUGIN}/hosting/eligibility",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hosting/eligibility"
+          },
+          "capture": [
+            {
+              "variable": "ELIGIBILITY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "Eligibility: ${HOST_AGENT_LABEL} can host it now",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ELIGIBILITY"
+              },
+              "path": "\"\\(.eligible) \\(.reasons | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true 0"
+              },
+              "message": "Eligibility: ${HOST_AGENT_LABEL} can host it now"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The operator's step: lamaste-agent apphost enable\"\n\nNODE_ON_AGENT=$(agent_exec \"/usr/bin/node -p process.versions.node\" 2>/dev/null || echo \"\")\nif [ \"$(app_host_helper_was_enabled)\" != \"true\" ]; then\n  APPHOST_ENABLED_HERE=1\n  ENABLE_OUT=$(agent_exec \"lamaste-agent apphost enable --user root --json 2>&1\" 2>/dev/null || echo \"\")\n  ENABLE_JSON=$(echo \"$ENABLE_OUT\" | grep -E '^\\{' | tail -n 1 || echo '{}')\n  assert_json_field \"$ENABLE_JSON\" '.ok' 'true' \"apphost enable --user root ($(echo \"$ENABLE_OUT\" | tail -c 200))\" || true\n  assert_json_field \"$ENABLE_JSON\" '.protocol' '1' \"…installed the helper, protocol 1\" || true\n  assert_json_field \"$ENABLE_JSON\" '.sudoers' 'null' \"…and no sudoers rule: the agent runs as root\" || true\nfi\nSTATUS=$(agent_exec \"lamaste-agent apphost status --json 2>/dev/null\" 2>/dev/null | grep -E '^\\{' | tail -n 1 || echo '{}')\nassert_json_field \"$STATUS\" '.helper.installed' 'true' \"apphost status: the helper is installed\" || true\nassert_json_field \"$STATUS\" '.helper.upToDate' 'true' \"…the one this lamaste-agent ships\" || true\nassert_json_field \"$STATUS\" '.helper.node' \"${NODE_ON_AGENT}\" \"…on /usr/bin/node ${NODE_ON_AGENT}, what the agent halves run on\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.helper | \"\\(.mode) \\(.user):\\(.group)\"' '755 root:root' \"${APPHOST_HELPER} is root:root 0755\" || true\nif [ -n \"${APPHOST_ENABLED_HERE}\" ]; then\n  assert_json_field \"$FACTS\" '.sudoersRule' 'false' \"No /etc/sudoers.d/lamaste-apphost for a root agent\" || true\nfi\n\nif wait_for_app_host_facts 120; then\n  log_pass \"The agent's sync reported the helper to the relay\"\nelse\n  log_fail \"The relay's host facts name no app host helper: $(agent_host_facts)\"\nfi\nHOST_FACTS=$(agent_host_facts)\nassert_json_field \"$HOST_FACTS\" '\"\\(.os) \\(.systemd)\"' 'linux true' \"Host facts: Linux, systemd\" || true\nassert_json_field \"$HOST_FACTS\" '.apphost.version' '1' \"Host facts: helper protocol 1\" || true\nassert_json_field \"$HOST_FACTS\" '.apphost.node' \"${NODE_ON_AGENT}\" \"Host facts: the helper's Node.js\" || true\nassert_json_field \"$HOST_FACTS\" '.distro.id == \"ubuntu\" or ((.distro.idLike // []) | index(\"debian\") != null)' 'true' \"Host facts: a Debian-family distribution ($(json_get \"$HOST_FACTS\" '.distro.id') $(json_get \"$HOST_FACTS\" '.distro.versionId'))\" || true\nELIGIBILITY=$(host_api_get \"plugins/${PLUGIN}/hosting/eligibility\" | jq -c \".agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$ELIGIBILITY\" '\"\\(.eligible) \\(.reasons | length)\"' 'true 0' \"Eligibility: ${HOST_AGENT_LABEL} can host it now\" || true\n\n# ===========================================================================\n# 5. The push-install gates\n# ==========================================================================="
+    },
+    {
+      "id": "refused-by-the-push-install-gates-the-window-opened",
+      "label": "Refused by the push-install gates; the window opened",
+      "steps": [
+        {
+          "id": "step-74",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Push-install off: hosting is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$REFUSED\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Push-install off: hosting is refused"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$REFUSED\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "push_install_refused"
+              },
+              "message": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))"
+            }
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "PATCH /api/plugins/push-install/config",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "plugins/push-install/config",
+            "body": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "DELETE /api/plugins/push-install/enable/${HOST_AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/enable/${HOST_AGENT_LABEL}"
+          },
+          "continueOnError": true
+        },
+        {
+          "id": "step-81",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-82",
+          "label": "Push-install on, the agent's window closed: hosting is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$REFUSED\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Push-install on, the agent's window closed: hosting is refused"
+            }
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$REFUSED\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "push_install_refused"
+              },
+              "message": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set WINDOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "open_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]'"
+          },
+          "capture": [
+            {
+              "variable": "WINDOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "WINDOW"
+              },
+              "path": ".pushInstallPolicy",
+              "expected": {
+                "kind": "var",
+                "name": "POLICY_ID"
+              },
+              "message": "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Refused by the push-install gates; the window opened\"\n\nremember_push_install\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":false}' > /dev/null\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"400\" \"Push-install off: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nhost_api_patch \"plugins/push-install/config\" '{\"enabled\":true}' > /dev/null\nPUSH_WINDOW=1\nhost_api_delete \"plugins/push-install/enable/${HOST_AGENT_LABEL}\" > /dev/null 2>&1 || true\nREFUSED=$(host_api_call POST \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"403\" \"Push-install on, the agent's window closed: hosting is refused\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\n\nWINDOW=$(open_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]')\nassert_json_field \"$WINDOW\" '.pushInstallPolicy' \"${POLICY_ID}\" \"The agent's window is open, under a policy naming only ${AGENT_PACKAGE}\" || true\n\n# ===========================================================================\n# 6. Hosting from the panel; the agent's sync timer does the rest\n# ==========================================================================="
+    },
+    {
+      "id": "hosting-nothing-more-is-done-on-the-agent-vm",
+      "label": "Hosting: nothing more is done on the agent VM",
+      "steps": [
+        {
+          "id": "step-86",
+          "label": "Set SYNC_MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sync_log_lines"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "Set HOST_EPOCH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_epoch"
+          },
+          "capture": [
+            {
+              "variable": "HOST_EPOCH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOSTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Set OP_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$HOSTED\" '.operation.id // empty'"
+          },
+          "capture": [
+            {
+              "variable": "OP_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "Hosting did not start: ${HOSTED}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Hosting did not start: ${HOSTED}"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "OP_ID"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})"
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Step: ${step}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" \"$step\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Step: ${step}"
+            }
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "The agent half was installed before its first hook ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_order \"$OP\" 'install the agent half' 'agent install:pre-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent half was installed before its first hook ran"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "GET /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "HOSTING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$HOSTING\" '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-100",
+          "label": "The hosting is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOSTING"
+              },
+              "path": ".hosting.phase",
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The hosting is active"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOSTING"
+              },
+              "path": ".hosting.agentHalf.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Port ${PORT} assigned from the internal range",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${PORT} assigned from the internal range"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "Port ${PORT} is not in 21000–21999",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${PORT} is not in 21000–21999"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "GET /api/plugins/push-install/sessions",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/push-install/sessions"
+          },
+          "capture": [
+            {
+              "variable": "SESSION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-105",
+          "label": "The push is in the push-install session log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SESSION"
+              },
+              "path": "\"\\(.action) \\(.packageName) \\(.policyId)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "install ${AGENT_PACKAGE} ${POLICY_ID}"
+              },
+              "message": "The push is in the push-install session log"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "Audit: plugin.agent-half.installed, with the pinned integrity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" plugin.agent-half.installed \".version == \\\"1.0.0\\\" and .integrity == \\\"${PINNED}\\\"\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audit: plugin.agent-half.installed, with the pinned integrity"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set SYNC_EVENTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "sync_log_since \"$SYNC_MARK\""
+          },
+          "capture": [
+            {
+              "variable": "SYNC_EVENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "The agent's sync ran the app-install job (sync.log)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_EVENTS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "app install ran: ${PLUGIN}"
+              },
+              "message": "The agent's sync ran the app-install job (sync.log)"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "…then the pre-tunnel hook job",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_EVENTS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "hook install:pre-tunnel ran: ${PLUGIN}"
+              },
+              "message": "…then the pre-tunnel hook job"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Set JOURNAL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "unit_journal_since \"${UNIT}\" \"${HOST_EPOCH}\""
+          },
+          "capture": [
+            {
+              "variable": "JOURNAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-111",
+          "label": "The installed service answered install:pre-tunnel (its journal)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "JOURNAL"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:pre-tunnel phase=install version=1.0.0"
+              },
+              "message": "The installed service answered install:pre-tunnel (its journal)"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "…and install:post-tunnel through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "JOURNAL"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:post-tunnel phase=install version=1.0.0"
+              },
+              "message": "…and install:post-tunnel through the tunnel"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Hosting: nothing more is done on the agent VM\"\n\nSYNC_MARK=$(sync_log_lines)\nHOST_EPOCH=$(agent_epoch)\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nlog_pass \"Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})\"\n# Only the relay is polled while it runs: the agent's own sync timer fetches\n# the config, runs the app-install and hook jobs and takes up the grant.\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'reserve port, secret and capability' 'install the agent half' 'agent install:pre-tunnel' 'grant the tunnel and wait for the agent half' 'agent install:post-tunnel' 'activate'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'install the agent half' 'agent install:pre-tunnel')\" \"true\" \"The agent half was installed before its first hook ran\" || true\n\nHOSTING=$(host_api_get \"plugins/${PLUGIN}/hosting\")\nPORT=$(json_get \"$HOSTING\" '.hosting.port')\nassert_json_field \"$HOSTING\" '.hosting.phase' 'active' \"The hosting is active\" || true\nassert_json_field \"$HOSTING\" '.hosting.agentHalf.version' '1.0.0' \"The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}\" || true\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nSESSION=$(host_api_get \"plugins/push-install/sessions\" | jq -c \"[.sessions[]? | select(.operationId == \\\"${OP_ID}\\\")] | last // {}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SESSION\" '\"\\(.action) \\(.packageName) \\(.policyId)\"' \"install ${AGENT_PACKAGE} ${POLICY_ID}\" \"The push is in the push-install session log\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.installed \".version == \\\"1.0.0\\\" and .integrity == \\\"${PINNED}\\\"\")\" \"1\" \"Audit: plugin.agent-half.installed, with the pinned integrity\" || true\nSYNC_EVENTS=$(sync_log_since \"$SYNC_MARK\")\nassert_contains \"$SYNC_EVENTS\" \"app install ran: ${PLUGIN}\" \"The agent's sync ran the app-install job (sync.log)\" || true\nassert_contains \"$SYNC_EVENTS\" \"hook install:pre-tunnel ran: ${PLUGIN}\" \"…then the pre-tunnel hook job\" || true\nJOURNAL=$(unit_journal_since \"${UNIT}\" \"${HOST_EPOCH}\")\nassert_contains \"$JOURNAL\" \"hook install:pre-tunnel phase=install version=1.0.0\" \"The installed service answered install:pre-tunnel (its journal)\" || true\nassert_contains \"$JOURNAL\" \"hook install:post-tunnel phase=install version=1.0.0\" \"…and install:post-tunnel through the tunnel\" || true\n\n# ===========================================================================\n# 7. The agent half on the agent VM\n# ==========================================================================="
+    },
+    {
+      "id": "on-the-agent-vm-account-files-unit-system-package",
+      "label": "On the agent VM: account, files, unit, system package",
+      "steps": [
+        {
+          "id": "step-113",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "${UNIT} is active and enabled (it starts at boot)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.unit.props.ActiveState) \\(.unit.props.UnitFileState)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "active enabled"
+              },
+              "message": "${UNIT} is active and enabled (it starts at boot)"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "It runs as User=${SERVICE_USER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".unit.props.User",
+              "expected": {
+                "kind": "var",
+                "name": "SERVICE_USER"
+              },
+              "message": "It runs as User=${SERVICE_USER}"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "…and its process is owned by ${SERVICE_USER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".unit.processUser",
+              "expected": {
+                "kind": "var",
+                "name": "SERVICE_USER"
+              },
+              "message": "…and its process is owned by ${SERVICE_USER}"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "The account is not root",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".account.user.uid > 0 and .account.user.gid > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The account is not root"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "…a system account without login shell or home",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.account.user.shell) \\(.account.homeExists)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "/usr/sbin/nologin false"
+              },
+              "message": "…a system account without login shell or home"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "${CODE_DIR}: root's, 0755",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".code.dir | \"\\(.mode) \\(.user)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "755 root"
+              },
+              "message": "${CODE_DIR}: root's, 0755"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "current → 1.0.0, the version installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.code.current) \\(.code.versions | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0 1.0.0"
+              },
+              "message": "current → 1.0.0, the version installed"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "Every file of the code is root's and writable by root only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.code.notRootOwned) \\(.code.writableByOthers)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 0"
+              },
+              "message": "Every file of the code is root's and writable by root only"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "${DATA_DIR}: 0700, the account's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.dir | \"\\(.mode) \\(.user):\\(.group)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "700 ${SERVICE_USER}:${SERVICE_USER}"
+              },
+              "message": "${DATA_DIR}: 0700, the account's"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "…where the agent half keeps its state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.state.starts >= 1",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…where the agent half keeps its state"
+            }
+          }
+        },
+        {
+          "id": "step-124",
+          "label": "$(dirname \"${CONFIG_FILE}\"): 0750 root:${SERVICE_USER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".config.dir | \"\\(.mode) \\(.user):\\(.group)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "750 root:${SERVICE_USER}"
+              },
+              "message": "$(dirname \"${CONFIG_FILE}\"): 0750 root:${SERVICE_USER}"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "${CONFIG_FILE}: 0600, the account's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".config.file | \"\\(.mode) \\(.user):\\(.group)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "600 ${SERVICE_USER}:${SERVICE_USER}"
+              },
+              "message": "${CONFIG_FILE}: 0600, the account's"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "…for this plugin and its port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.config.plugin) \\(.config.port)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${PLUGIN} ${PORT}"
+              },
+              "message": "…for this plugin and its port"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "…holding the secret the agent holds (compared on the VM, never printed)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".config.secretMatchesAgentCopy",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…holding the secret the agent holds (compared on the VM, never printed)"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "The agent records the agent half it had installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".apphostRecord",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "The agent records the agent half it had installed"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "${SYSTEM_PACKAGE} was installed before this spec: its installation by Lamaste is not shown",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "${SYSTEM_PACKAGE} was installed before this spec: its installation by Lamaste is not shown"
+          }
+        }
+      ],
+      "bash": "log_section \"On the agent VM: account, files, unit, system package\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\")\nassert_json_field \"$FACTS\" '\"\\(.unit.props.ActiveState) \\(.unit.props.UnitFileState)\"' 'active enabled' \"${UNIT} is active and enabled (it starts at boot)\" || true\nassert_json_field \"$FACTS\" '.unit.props.User' \"${SERVICE_USER}\" \"It runs as User=${SERVICE_USER}\" || true\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"…and its process is owned by ${SERVICE_USER}\" || true\nassert_json_field \"$FACTS\" '.account.user.uid > 0 and .account.user.gid > 0' 'true' \"The account is not root\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user.shell) \\(.account.homeExists)\"' '/usr/sbin/nologin false' \"…a system account without login shell or home\" || true\nassert_json_field \"$FACTS\" '.code.dir | \"\\(.mode) \\(.user)\"' '755 root' \"${CODE_DIR}: root's, 0755\" || true\nassert_json_field \"$FACTS\" '\"\\(.code.current) \\(.code.versions | join(\",\"))\"' '1.0.0 1.0.0' \"current → 1.0.0, the version installed\" || true\nassert_json_field \"$FACTS\" '\"\\(.code.notRootOwned) \\(.code.writableByOthers)\"' '0 0' \"Every file of the code is root's and writable by root only\" || true\nassert_json_field \"$FACTS\" '.data.dir | \"\\(.mode) \\(.user):\\(.group)\"' \"700 ${SERVICE_USER}:${SERVICE_USER}\" \"${DATA_DIR}: 0700, the account's\" || true\nassert_json_field \"$FACTS\" '.data.state.starts >= 1' 'true' \"…where the agent half keeps its state\" || true\nassert_json_field \"$FACTS\" '.config.dir | \"\\(.mode) \\(.user):\\(.group)\"' \"750 root:${SERVICE_USER}\" \"$(dirname \"${CONFIG_FILE}\"): 0750 root:${SERVICE_USER}\" || true\nassert_json_field \"$FACTS\" '.config.file | \"\\(.mode) \\(.user):\\(.group)\"' \"600 ${SERVICE_USER}:${SERVICE_USER}\" \"${CONFIG_FILE}: 0600, the account's\" || true\nassert_json_field \"$FACTS\" '\"\\(.config.plugin) \\(.config.port)\"' \"${PLUGIN} ${PORT}\" \"…for this plugin and its port\" || true\nassert_json_field \"$FACTS\" '.config.secretMatchesAgentCopy' 'true' \"…holding the secret the agent holds (compared on the VM, never printed)\" || true\nassert_json_field \"$FACTS\" '.apphostRecord' '1.0.0' \"The agent records the agent half it had installed\" || true\nassert_json_field \"$FACTS\" \".packages[\\\"${SYSTEM_PACKAGE}\\\"]\" 'install ok installed' \"${SYSTEM_PACKAGE} is installed\" || true\nif [ -n \"${PURGE_PACKAGES}\" ]; then\n  assert_json_field \"$FACTS\" \".aptRuns[\\\"${SYSTEM_PACKAGE}\\\"] > ${APT_RUNS_BEFORE:-0}\" 'true' \"…by apt-get install --no-install-recommends during the hosting (apt history)\" || true\nelse\n  log_skip \"${SYSTEM_PACKAGE} was installed before this spec: its installation by Lamaste is not shown\"\nfi"
+    },
+    {
+      "id": "the-unit-as-written-and-as-systemd-applies-it",
+      "label": "The unit: as written, and as systemd applies it",
+      "steps": [
+        {
+          "id": "step-133",
+          "label": "Unit: ${line}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FACTS\" | jq --arg l \"$line\" '.unit.lines | index($l) != null' 2>/dev/null || echo false)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Unit: ${line}"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "systemctl show: ${prop}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FACTS\" | jq -r --arg k \"${prop%%=*}\" '.unit.props[$k] // \"unset\"' 2>/dev/null || echo unset)"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "${prop#*=}"
+              },
+              "message": "systemctl show: ${prop}"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The unit: as written, and as systemd applies it\"\n\nfor line in \"User=${SERVICE_USER}\" \"Group=${SERVICE_USER}\" \\\n  \"ExecStart=/usr/bin/node ${CODE_DIR}/current/package/dist/agentd.mjs\" \\\n  \"Environment=LAMASTE_APP_CONFIG=${CONFIG_FILE}\" \"Environment=LAMASTE_APP_DATA_DIR=${DATA_DIR}\" \\\n  \"WorkingDirectory=${DATA_DIR}\" 'Restart=on-failure' 'NoNewPrivileges=yes' 'ProtectSystem=strict' \\\n  \"ReadWritePaths=${DATA_DIR}\" 'ProtectHome=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \\\n  'ProtectControlGroups=yes' 'ProtectClock=yes' 'ProtectHostname=yes' 'RestrictSUIDSGID=yes' \\\n  'RestrictRealtime=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' \\\n  'SystemCallArchitectures=native' 'CapabilityBoundingSet=' 'UMask=0077' 'MemoryMax=256M' \\\n  'WantedBy=multi-user.target'; do\n  assert_eq \"$(echo \"$FACTS\" | jq --arg l \"$line\" '.unit.lines | index($l) != null' 2>/dev/null || echo false)\" \"true\" \"Unit: ${line}\" || true\ndone\nassert_eq \"$(echo \"$FACTS\" | jq '[.unit.lines[] | select(test(\"[0-9a-f]{64}\"))] | length' 2>/dev/null || echo \"-1\")\" \"0\" \"The unit names paths, never the secret\" || true\nfor prop in 'ProtectSystem=strict' 'ProtectHome=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'RestrictSUIDSGID=yes' 'LockPersonality=yes' \"ReadWritePaths=${DATA_DIR}\" 'MemoryMax=268435456' \\\n  'CapabilityBoundingSet=' 'UMask=0077'; do\n  assert_eq \"$(echo \"$FACTS\" | jq -r --arg k \"${prop%%=*}\" '.unit.props[$k] // \"unset\"' 2>/dev/null || echo unset)\" \"${prop#*=}\" \"systemctl show: ${prop}\" || true\ndone\n\n# ===========================================================================\n# 8. Through the tunnel: the admin pages and the sandbox\n# ==========================================================================="
+    },
+    {
+      "id": "through-the-tunnel-the-installed-version-answers",
+      "label": "Through the tunnel: the installed version answers",
+      "steps": [
+        {
+          "id": "step-139",
+          "label": "GET /api/${PLUGIN}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/ping"
+          },
+          "capture": [
+            {
+              "variable": "PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-140",
+          "label": "GET /api/${PLUGIN}/ping reaches the service on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/${PLUGIN}/ping reaches the service on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "…the installed version, 1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "…the installed version, 1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "…running as ${SERVICE_USER}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".user",
+              "expected": {
+                "kind": "var",
+                "name": "SERVICE_USER"
+              },
+              "message": "…running as ${SERVICE_USER}"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "…which sees the admin as its caller",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".caller.type",
+              "expected": {
+                "kind": "literal",
+                "value": "admin"
+              },
+              "message": "…which sees the admin as its caller"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "GET /api/${PLUGIN}/panel.js",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/panel.js"
+          },
+          "capture": [
+            {
+              "variable": "BUNDLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-145",
+          "label": "The admin page's bundle comes from the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BUNDLE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "__lamalibrePlugins"
+              },
+              "message": "The admin page's bundle comes from the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "GET /api/${PLUGIN}/sandbox",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/sandbox"
+          },
+          "capture": [
+            {
+              "variable": "SANDBOX",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-147",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "Sandbox: the service is ${SERVICE_USER}, not root",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": "\"\\(.user) \\(.uid > 0)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${SERVICE_USER} true"
+              },
+              "message": "Sandbox: the service is ${SERVICE_USER}, not root"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "Sandbox: it writes its data directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".writes.dataDir",
+              "expected": {
+                "kind": "literal",
+                "value": "ALLOWED"
+              },
+              "message": "Sandbox: it writes its data directory"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".writes.runLock",
+              "expected": {
+                "kind": "literal",
+                "value": "EROFS"
+              },
+              "message": "Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "skip",
+            "message": "/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out"
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "Sandbox: it has a /tmp…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".writes.privateTmp",
+              "expected": {
+                "kind": "literal",
+                "value": "ALLOWED"
+              },
+              "message": "Sandbox: it has a /tmp…"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "…of its own (PrivateTmp): nothing appears in the machine's /tmp",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".privateTmpLeak",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…of its own (PrivateTmp): nothing appears in the machine's /tmp"
+            }
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "Sandbox: no new privileges, no capabilities",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": "\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1 0000000000000000 0000000000000000"
+              },
+              "message": "Sandbox: no new privileges, no capabilities"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
+    },
+    {
+      "id": "feria-s-record-the-agent-pulled-the-package-itself",
+      "label": "Feria's record: the agent pulled the package itself",
+      "steps": [
+        {
+          "id": "step-160",
+          "label": "Set REQUESTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | startswith(\\\"/${AGENT_PACKAGE}\\\")))]\" 2>/dev/null || echo '[]'"
+          },
+          "capture": [
+            {
+              "variable": "REQUESTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-163",
+          "label": "Set TOKENS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\""
+          },
+          "capture": [
+            {
+              "variable": "TOKENS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "Its token: an agent token, read scope",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKENS"
+              },
+              "path": "[.tokens[]? | select(.kind == \"agent\" and (.scopes | join(\",\")) == \"read\")] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Its token: an agent token, read scope"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "…brokered by the panel's OIDC identity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TOKENS"
+              },
+              "path": "[.tokens[]? | .createdBy] | unique | join(\",\")",
+              "expected": {
+                "kind": "expr",
+                "template": "ci:auth.${DOMAIN}/lamaste-server"
+              },
+              "message": "…brokered by the panel's OIDC identity"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Feria's record: the agent pulled the package itself\"\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | startswith(\\\"/${AGENT_PACKAGE}\\\")))]\" 2>/dev/null || echo '[]')\nassert_json_field \"$REQUESTS\" \"[.[] | select((.path | endswith(\\\"/e2e-apphost-agent-1.0.0.tgz\\\")) and .owner == \\\"agent:${HOST_AGENT_LABEL}\\\" and .status == 200)] | length > 0\" 'true' \"agent:${HOST_AGENT_LABEL} downloaded ${AGENT_PACKAGE}-1.0.0.tgz\" || true\nassert_json_field \"$REQUESTS\" \"[.[] | select(.path | endswith(\\\".tgz\\\")) | .owner] | unique | join(\\\",\\\")\" \"agent:${HOST_AGENT_LABEL}\" \"…and nobody else did: the relay pinned it from the packument alone\" || true\nTOKENS=$(stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\")\nassert_json_field \"$TOKENS\" '[.tokens[]? | select(.kind == \"agent\" and (.scopes | join(\",\")) == \"read\")] | length > 0' 'true' \"Its token: an agent token, read scope\" || true\nassert_json_field \"$TOKENS\" '[.tokens[]? | .createdBy] | unique | join(\",\")' \"ci:auth.${DOMAIN}/lamaste-server\" \"…brokered by the panel's OIDC identity\" || true\n\n# ===========================================================================\n# 10. Uninstall with purge: nothing is left\n# ==========================================================================="
+    },
+    {
+      "id": "uninstall-with-purge-leaves-nothing",
+      "label": "Uninstall with purge leaves nothing",
+      "steps": [
+        {
+          "id": "step-166",
+          "label": "POST /api/plugins/${PLUGIN}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/disable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}?purge=true"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-168",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-169",
+          "label": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "Step: ${step}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" \"$step\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Step: ${step}"
+            }
+          }
+        },
+        {
+          "id": "step-173",
+          "label": "The agent half went before the secret it runs with",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_order \"$OP\" 'remove the agent half' 'revoke the secret and the capability')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent half went before the secret it runs with"
+            }
+          }
+        },
+        {
+          "id": "step-174",
+          "label": "The plugin is gone from the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"plugins/${PLUGIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The plugin is gone from the relay"
+            }
+          }
+        },
+        {
+          "id": "step-176",
+          "label": "Audit: plugin.agent-half.removed, purge",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == true')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audit: plugin.agent-half.removed, purge"
+            }
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-178",
+          "label": "No unit on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.unit.file) \\(.unit.props.LoadState)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false not-found"
+              },
+              "message": "No unit on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-179",
+          "label": "No code, config or data directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.code.dir) \\(.config.dir) \\(.data.dir)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null null"
+              },
+              "message": "No code, config or data directory"
+            }
+          }
+        },
+        {
+          "id": "step-180",
+          "label": "No ${SERVICE_USER} account or group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.account.user) \\(.account.group)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "No ${SERVICE_USER} account or group"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "The agent's record no longer lists it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".apphostRecord",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "The agent's record no longer lists it"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "The agent's own copy of the plugin config is gone",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent's own copy of the plugin config is gone"
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "The agent still holds a plugin config for ${PLUGIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent still holds a plugin config for ${PLUGIN}"
+          }
+        }
+      ],
+      "bash": "log_section \"Uninstall with purge leaves nothing\"\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability' 'remove the package'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'remove the agent half' 'revoke the secret and the capability')\" \"true\" \"The agent half went before the secret it runs with\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Uninstalled\"\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == true')\" \"1\" \"Audit: plugin.agent-half.removed, purge\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"No unit on the agent VM\" || true\nassert_json_field \"$FACTS\" '\"\\(.code.dir) \\(.config.dir) \\(.data.dir)\"' 'null null null' \"No code, config or data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"No ${SERVICE_USER} account or group\" || true\nassert_json_field \"$FACTS\" '.apphostRecord' 'null' \"The agent's record no longer lists it\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"The agent's own copy of the plugin config is gone\"\nelse\n  log_fail \"The agent still holds a plugin config for ${PLUGIN}\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel installs\n#    from it and holds its registry credential (OIDC), which brokers the\n#    agent's read tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only.\n# 5. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows agent:<label> pulling the tarball.\n# 6. Uninstalling with purge leaves no unit, code, config, data, account,\n#    tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

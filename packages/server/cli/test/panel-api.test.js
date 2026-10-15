@@ -78,3 +78,67 @@ test("a non-2xx answer throws with the panel's error and details", () => {
   );
   assert.throws(() => parsePanelResponse('\n000', 'GET', '/p'), /HTTP 0\)/);
 });
+
+test('a refusal keeps its code, reasons and operation id for the caller to act on', () => {
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        JSON.stringify({
+          error: 'Agent "vm1" cannot host plugin "fx": The app host helper is not enabled',
+          code: 'agent_not_eligible',
+          reasons: ['The app host helper is not enabled on the agent', 42],
+        }) + '\n409',
+        'POST',
+        '/api/plugins/fx/hosting',
+      ),
+    (err) => {
+      assert.equal(err.statusCode, 409);
+      assert.equal(err.code, 'agent_not_eligible');
+      assert.deepEqual(err.reasons, ['The app host helper is not enabled on the agent']);
+      assert.equal(err.operationId, undefined);
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        '{"error":"Plugin \\"fx\\" has an operation in progress","operationId":"op-1"}\n409',
+        'DELETE',
+        '/api/plugins/fx',
+      ),
+    (err) => {
+      assert.equal(err.operationId, 'op-1');
+      assert.equal(err.code, undefined);
+      assert.equal(err.reasons, undefined);
+      return true;
+    },
+  );
+});
+
+test('a failed validation names what to correct, not just that it failed', () => {
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        JSON.stringify({
+          error: 'Validation failed',
+          details: {
+            issues: [
+              {
+                path: ['durationMinutes'],
+                message: 'A push-install window is open 5 to 480 minutes',
+              },
+            ],
+          },
+        }) + '\n400',
+        'POST',
+        '/api/plugins/push-install/enable/vm1',
+      ),
+    /HTTP 400\): Validation failed: durationMinutes: A push-install window is open 5 to 480 minutes$/,
+  );
+  // Details that are neither a string nor issues are left out, never "[object Object]".
+  assert.throws(
+    () =>
+      parsePanelResponse('{"error":"Internal server error","details":{"x":1}}\n500', 'GET', '/p'),
+    /HTTP 500\): Internal server error$/,
+  );
+});

@@ -1,0 +1,2123 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 33,
+    "name": "Lifecycle hooks on both machines",
+    "suite": "e2e-three-vm",
+    "description": "33 — Lifecycle hooks on both machines (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq"]
+  },
+  "env": {},
+  "constants": {
+    "CURL_MTLS": {
+      "value": "curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt"
+    },
+    "PANEL": {
+      "value": "https://127.0.0.1:9292/api"
+    },
+    "STUB_PORT": {
+      "value": "4874"
+    },
+    "STUB_URL": {
+      "value": "http://127.0.0.1:${STUB_PORT}",
+      "expression": true
+    },
+    "STUB_ADMIN_TOKEN": {
+      "value": "feria_e2eadmin_threevm_hooks_000000000000"
+    },
+    "PLUGIN": {
+      "value": "e2e-hooks"
+    },
+    "PACKAGE": {
+      "value": "@lamalibre/e2e-hooks-server"
+    },
+    "AGENT_HOOKS": {
+      "value": "'{ \"install\": { \"pre-tunnel\": {}, \"post-tunnel\": {} }, \"uninstall\": { \"pre-teardown\": {}, \"post-teardown\": {} }, \"tunnel\": { \"down\": {}, \"up\": {} } }'"
+    },
+    "AGENT_LABEL": {
+      "value": "e2e-agent"
+    },
+    "AGENT_DIR": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LABEL}",
+      "expression": true
+    },
+    "AGENT_CONFIG": {
+      "value": "${AGENT_DIR}/config.json",
+      "expression": true
+    },
+    "PLUGIN_CONFIG_FILE": {
+      "value": "${AGENT_DIR}/app-plugins/${PLUGIN}.json",
+      "expression": true
+    },
+    "SYNC_TIMER": {
+      "value": "lamalibre-lamaste-sync-${AGENT_LABEL}.timer",
+      "expression": true
+    },
+    "CHISEL_SERVICE": {
+      "value": "lamalibre-lamaste-chisel-${AGENT_LABEL}.service",
+      "expression": true
+    },
+    "REMOTE_DIR": {
+      "value": "/tmp/e2e-33-hooks"
+    },
+    "HALF_LOG": {
+      "value": "${REMOTE_DIR}/half.log",
+      "expression": true
+    },
+    "AUDIT_BASE": {
+      "value": "0"
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "The hook runner units are not installed on the host (create-lamaste 4.3)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The hook runner units are not installed on the host (create-lamaste 4.3)"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Set HOST_AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"agentLabel\""
+          },
+          "capture": [
+            {
+              "variable": "HOST_AGENT_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_ENROLLED",
+              "from": {
+                "kind": "jq",
+                "expression": "[.agents[]? | select(.label == \""
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "Agent ${HOST_AGENT_LABEL} is enrolled on the host",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent ${HOST_AGENT_LABEL} is enrolled on the host"
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "Set TIMER_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "TIMER_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "Sync timer ${SYNC_TIMER} is active on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer ${SYNC_TIMER} is active on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "find \\"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LIB_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "@lamalibre/lamaste not found under the agent VM's global lamaste-agent install",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "@lamalibre/lamaste not found under the agent VM's global lamaste-agent install"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "AGENT_LIB_DIR"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Set AGENT_LIB_PARENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "dirname \"$(dirname \"$(dirname \"${AGENT_LIB_DIR}\")\")\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LIB_PARENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-13",
+          "label": "The agent VM's @lamalibre/lamaste has no agent hook support (4.3)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM's @lamalibre/lamaste has no agent hook support (4.3)"
+          }
+        },
+        {
+          "id": "step-14",
+          "label": "Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "AGENT_ENROLLED",
+        "value": "0"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(host_api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\n\nif ! host_exec \"systemctl cat lamalibre-lamaste-hooks@.service > /dev/null 2>&1\"; then\n  log_fail \"The hook runner units are not installed on the host (create-lamaste 4.3)\"\n  end_test\n  exit $?\nfi\n\nHOST_AGENT_LABEL=$(agent_config_field \"agentLabel\")\nHOST_AGENT_LABEL=\"${HOST_AGENT_LABEL:-test-agent}\"\nAGENT_ENROLLED=$(host_api_get \"certs/agent\" | jq -r '[.agents[]? | select(.label == \"'\"${HOST_AGENT_LABEL}\"'\" and (.revoked // false) == false)] | length' 2>/dev/null || echo \"0\")\nif [ \"$AGENT_ENROLLED\" = \"0\" ]; then\n  log_skip \"Agent ${HOST_AGENT_LABEL} is not enrolled on the host — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Agent ${HOST_AGENT_LABEL} is enrolled on the host\"\n\nTIMER_STATE=$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\nassert_eq \"$TIMER_STATE\" \"active\" \"Sync timer ${SYNC_TIMER} is active on the agent VM\" || true\n\nAGENT_LIB_DIR=$(agent_exec \"find \\\"\\$(npm root -g)/@lamalibre/lamaste-agent\\\" -path '*/@lamalibre/lamaste/package.json' -print -quit 2>/dev/null | xargs -r dirname\" 2>/dev/null || echo \"\")\nif [ -z \"$AGENT_LIB_DIR\" ]; then\n  log_fail \"@lamalibre/lamaste not found under the agent VM's global lamaste-agent install\"\n  end_test\n  exit $?\nfi\nAGENT_LIB_PARENT=$(dirname \"$(dirname \"$(dirname \"${AGENT_LIB_DIR}\")\")\")\nif ! agent_exec \"test -f ${AGENT_LIB_DIR}/dist/agent/app-plugin-hooks.js\"; then\n  log_fail \"The agent VM's @lamalibre/lamaste has no agent hook support (4.3)\"\n  end_test\n  exit $?\nfi\nlog_info \"Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}\"\n\n# ===========================================================================\n# 1. Install, approve, host: the install pipeline on both machines\n# ==========================================================================="
+    },
+    {
+      "id": "install-and-approve-the-hooks-fixture",
+      "label": "Install and approve the hooks fixture",
+      "steps": [
+        {
+          "id": "step-15",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-16",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-33-hooks-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-23",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "tar -C ${REMOTE_DIR} -xzf ${REMOTE_DIR}/fixture.tgz && chmod -R a+rX ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/flags && chmod a+rwx ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[s]tub-registry.mjs' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Stand-in registry is up on the host VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STUB_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Stand-in registry is up on the host VM"
+            }
+          }
+        },
+        {
+          "id": "step-35",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc"
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Fixture installed; its relay hooks wait for approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "Fixture installed; its relay hooks wait for approval"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "The install shows the six agent stages",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$INSTALL\" | jq -r '.hooks.agent.stages | length' 2>/dev/null)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "6"
+              },
+              "message": "The install shows the six agent stages"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Extract DIGEST",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DIGEST",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "expression": ".hooks.relay.digest"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "Approved: the runner holds the module",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVE"
+              },
+              "path": ".hooks.runner.current",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Approved: the runner holds the module"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable",
+            "body": {}
+          }
+        }
+      ],
+      "bash": "log_section \"Install and approve the hooks fixture\"\n\nAUDIT_BASE=$(host_api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-33-hooks-XXXXXXXX)\nwrite_stub_registry \"${LOCAL_TMP}/stub-registry.mjs\"\nwrite_hooks_fixture_plugin \"${LOCAL_TMP}/fixture\" \"${PLUGIN}\" 1.0.0 main \"${AGENT_HOOKS}\"\nwrite_app_plugin_half \"${LOCAL_TMP}/app-plugin-half.mjs\"\ntar -C \"${LOCAL_TMP}\" -czf \"${LOCAL_TMP}/fixture.tgz\" fixture stub-registry.mjs\nhost_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/fixture.tgz\" \"lamaste-host:${REMOTE_DIR}/fixture.tgz\"\nhost_exec \"tar -C ${REMOTE_DIR} -xzf ${REMOTE_DIR}/fixture.tgz && chmod -R a+rX ${REMOTE_DIR}\"\nagent_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/flags && chmod a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/app-plugin-half.mjs\" \"lamaste-agent:${REMOTE_DIR}/app-plugin-half.mjs\"\n\nhost_exec \"pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\"\nhost_exec \"nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit\"\nSTUB_UP=\"no\"\nfor _ in $(seq 1 30); do\n  if host_exec \"curl -sf --max-time 3 ${STUB_URL}/-/ping > /dev/null 2>&1\"; then\n    STUB_UP=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$STUB_UP\" \"yes\" \"Stand-in registry is up on the host VM\" || true\nhost_exec \"printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc\"\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.hooks.approval.state' 'pending' \"Fixture installed; its relay hooks wait for approval\" || true\nassert_eq \"$(echo \"$INSTALL\" | jq -r '.hooks.agent.stages | length' 2>/dev/null)\" \"6\" \"The install shows the six agent stages\" || true\nDIGEST=$(echo \"$INSTALL\" | jq -r '.hooks.relay.digest' 2>/dev/null || echo \"\")\nAPPROVE=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVE\" '.hooks.runner.current' 'true' \"Approved: the runner holds the module\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null"
+    },
+    {
+      "id": "host-install-pipeline-across-the-machines",
+      "label": "Host: install pipeline across the machines",
+      "steps": [
+        {
+          "id": "step-44",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_LOG_MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Extract HOST_OP_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HOST_OP_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST"
+              },
+              "expression": ".operation.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Hosting did not start: ${HOST}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Hosting did not start: ${HOST}"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "HOST_OP_ID"
+            }
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${HOST_OP_ID}\" 360"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "The hosting operation succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Step: ${step}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" \"$step\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Step: ${step}"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Extract ORDER",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ORDER",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "expression": "[.steps[].name] | (index(\"agent install:pre-tunnel\") < index(\"grant the tunnel and wait for the agent half\"))"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "The agent's pre-tunnel stage finished before the tunnel was granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ORDER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent's pre-tunnel stage finished before the tunnel was granted"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "Set HALF_LOG_TEXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_since 0"
+          },
+          "capture": [
+            {
+              "variable": "HALF_LOG_TEXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "The agent half ran install:pre-tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:pre-tunnel phase=install"
+              },
+              "message": "The agent half ran install:pre-tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "The agent half ran install:post-tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:post-tunnel phase=install"
+              },
+              "message": "The agent half ran install:post-tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_EVENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "The agent's sync ran the pre-tunnel job (sync.log)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_EVENTS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "hook install:pre-tunnel ran: ${PLUGIN}"
+              },
+              "message": "The agent's sync ran the pre-tunnel job (sync.log)"
+            }
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "The hosting is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.phase')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The hosting is active"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hook.sandbox.probe",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hook.sandbox.probe"
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Sandbox: a relay hook cannot read Lamaste's files",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".readLamaste",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "Sandbox: a relay hook cannot read Lamaste's files"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Sandbox: a relay hook cannot spawn a process",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".spawn",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "Sandbox: a relay hook cannot spawn a process"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Sandbox: a relay hook has no network",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$PROBE\" | jq -r '.tcpOut')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "CONNECTED"
+              },
+              "message": "Sandbox: a relay hook has no network"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "Sandbox: a relay hook sees an empty environment",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".envKeys",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Sandbox: a relay hook sees an empty environment"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Host: install pipeline across the machines\"\n\nstart_half\nSYNC_LOG_MARK=$(agent_exec \"cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l\" 2>/dev/null || echo \"0\")\nHOST=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nHOST_OP_ID=$(echo \"$HOST\" | jq -r '.operation.id // empty' 2>/dev/null || echo \"\")\nif [ -z \"$HOST_OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOST}\"\n  end_test\n  exit $?\nfi\nOP=$(wait_operation \"${HOST_OP_ID}\" 360)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded\" || true\nfor step in 'relay install:pre-tunnel' 'reserve port, secret and capability' 'agent install:pre-tunnel' 'grant the tunnel and wait for the agent half' 'agent install:post-tunnel' 'relay install:post-tunnel' 'activate'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nORDER=$(echo \"$OP\" | jq -r '[.steps[].name] | (index(\"agent install:pre-tunnel\") < index(\"grant the tunnel and wait for the agent half\"))' 2>/dev/null || echo \"false\")\nassert_eq \"$ORDER\" \"true\" \"The agent's pre-tunnel stage finished before the tunnel was granted\" || true\nHALF_LOG_TEXT=$(half_log_since 0)\nassert_contains \"$HALF_LOG_TEXT\" \"hook install:pre-tunnel phase=install\" \"The agent half ran install:pre-tunnel\" || true\nassert_contains \"$HALF_LOG_TEXT\" \"hook install:post-tunnel phase=install\" \"The agent half ran install:post-tunnel\" || true\nSYNC_EVENTS=$(agent_exec \"tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_EVENTS\" \"hook install:pre-tunnel ran: ${PLUGIN}\" \"The agent's sync ran the pre-tunnel job (sync.log)\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"active\" \"The hosting is active\" || true\n\nPROBE=$(host_api_get \"audit?plugin=${PLUGIN}&action=hook.sandbox.probe\" | jq -c '.entries[0].details' 2>/dev/null || echo '{}')\nassert_json_field \"$PROBE\" '.readLamaste' 'ERR_ACCESS_DENIED' \"Sandbox: a relay hook cannot read Lamaste's files\" || true\nassert_json_field \"$PROBE\" '.spawn' 'ERR_ACCESS_DENIED' \"Sandbox: a relay hook cannot spawn a process\" || true\nassert_not_eq \"$(echo \"$PROBE\" | jq -r '.tcpOut')\" \"CONNECTED\" \"Sandbox: a relay hook has no network\" || true\nassert_json_field \"$PROBE\" '.envKeys' '0' \"Sandbox: a relay hook sees an empty environment\" || true\n\n# ===========================================================================\n# 2. A request hook across the tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "request-hook-across-the-tunnel",
+      "label": "Request hook across the tunnel",
+      "steps": [
+        {
+          "id": "step-66",
+          "label": "GET /api/${PLUGIN}/export/all",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/export/all"
+          },
+          "capture": [
+            {
+              "variable": "EXPORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-67",
+          "label": "The token planted on the agent VM is redacted by the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPORT"
+              },
+              "path": ".token",
+              "expected": {
+                "kind": "literal",
+                "value": "[REDACTED:github-token]"
+              },
+              "message": "The token planted on the agent VM is redacted by the relay"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…and never leaves the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "EXPORT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2eToken0"
+              },
+              "message": "…and never leaves the relay"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Request hook across the tunnel\"\n\nEXPORT=$(host_api_get \"${PLUGIN}/export/all\")\nassert_json_field \"$EXPORT\" '.token' '[REDACTED:github-token]' \"The token planted on the agent VM is redacted by the relay\" || true\nassert_not_contains \"$EXPORT\" \"E2eToken0\" \"…and never leaves the relay\" || true\n\n# ===========================================================================\n# 3. Tunnel down and up: both sides\n# ==========================================================================="
+    },
+    {
+      "id": "tunnel-down-and-tunnel-up-on-both-machines",
+      "label": "tunnel:down and tunnel:up on both machines",
+      "steps": [
+        {
+          "id": "step-69",
+          "label": "Set MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_mark"
+          },
+          "capture": [
+            {
+              "variable": "MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "Set CHISEL_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "The agent's tunnel client is stopped",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The agent's tunnel client is stopped"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Relay: reason tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "Relay: reason tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "${CURL_MTLS} -w '\\n%{http_code}' '${PANEL}/${PLUGIN}/ping'"
+          },
+          "capture": [
+            {
+              "variable": "FALLBACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Relay: the plugin's fallback answers while down",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FALLBACK\" | tail -1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "Relay: the plugin's fallback answers while down"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "…with the plugin's body",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(echo \"$FALLBACK\" | head -1)"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "maintenance"
+              },
+              "message": "…with the plugin's body"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Agent: the sync told the agent half tunnel:down (reason tunnel)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent: the sync told the agent half tunnel:down (reason tunnel)"
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Agent: the agent half was not told tunnel:down",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent: the agent half was not told tunnel:down"
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "Set MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_mark"
+          },
+          "capture": [
+            {
+              "variable": "MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent sync --label ${AGENT_LABEL} > /dev/null 2>&1 || true"
+          }
+        },
+        {
+          "id": "step-86",
+          "label": "Agent: the sync told the agent half tunnel:up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent: the sync told the agent half tunnel:up"
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "Agent: the agent half was not told tunnel:up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent: the agent half was not told tunnel:up"
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Requests reach the agent half again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"${PLUGIN}/ping\")"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Requests reach the agent half again"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_EVENTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-90",
+          "label": "sync.log records the tunnel hooks",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_EVENTS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "tunnel hook delivered: ${PLUGIN}"
+              },
+              "message": "sync.log records the tunnel hooks"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"tunnel:down and tunnel:up on both machines\"\n\nif wait_health up 60; then log_pass \"Health is up\"; else log_fail \"Health: $(hosting_field '.hosting.health')\"; fi\nMARK=$(half_log_mark)\nset_tunnels_stopped true\nCHISEL_STATE=$(user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\")\nassert_not_eq \"$CHISEL_STATE\" \"active\" \"The agent's tunnel client is stopped\" || true\nif wait_health down 75; then log_pass \"Relay: health down\"; else log_fail \"Relay: health did not go down\"; fi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"tunnel\" \"Relay: reason tunnel\" || true\nrelay_down_ran() { [ \"$(audit_count hook.tunnel.down '.reason == \"tunnel\"')\" -ge 1 ] 2>/dev/null; }\nif wait_for 30 relay_down_ran; then log_pass \"Relay: tunnel:down ran (reason tunnel)\"; else log_fail \"Relay: tunnel:down did not run\"; fi\nFALLBACK=$(host_exec \"${CURL_MTLS} -w '\\n%{http_code}' '${PANEL}/${PLUGIN}/ping'\" 2>/dev/null || echo \"\")\nassert_eq \"$(echo \"$FALLBACK\" | tail -1)\" \"503\" \"Relay: the plugin's fallback answers while down\" || true\nassert_json_field \"$(echo \"$FALLBACK\" | head -1)\" '.error' 'maintenance' \"…with the plugin's body\" || true\nagent_down_ran() { half_log_since \"$MARK\" | grep -q \"hook tunnel:down phase=- reason=tunnel state=down\"; }\nif wait_for 90 agent_down_ran; then\n  log_pass \"Agent: the sync told the agent half tunnel:down (reason tunnel)\"\nelse\n  log_fail \"Agent: the agent half was not told tunnel:down\"\nfi\n\nMARK=$(half_log_mark)\nset_tunnels_stopped false\nagent_exec \"lamaste-agent sync --label ${AGENT_LABEL} > /dev/null 2>&1 || true\"\nif wait_health up 120; then log_pass \"Relay: health up again\"; else log_fail \"Relay: health did not recover\"; fi\nrelay_up_ran() { [ \"$(audit_count hook.tunnel.up)\" -ge 1 ] 2>/dev/null; }\nif wait_for 30 relay_up_ran; then log_pass \"Relay: tunnel:up ran\"; else log_fail \"Relay: tunnel:up did not run\"; fi\nagent_up_ran() { half_log_since \"$MARK\" | grep -q \"hook tunnel:up .*state=up\"; }\nif wait_for 90 agent_up_ran; then\n  log_pass \"Agent: the sync told the agent half tunnel:up\"\nelse\n  log_fail \"Agent: the agent half was not told tunnel:up\"\nfi\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Requests reach the agent half again\" || true\nSYNC_EVENTS=$(agent_exec \"tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_EVENTS\" \"tunnel hook delivered: ${PLUGIN}\" \"sync.log records the tunnel hooks\" || true\n\n# ===========================================================================\n# 4. Unhost: the uninstall pipeline on both machines\n# ==========================================================================="
+    },
+    {
+      "id": "unhost-uninstall-pipeline-across-the-machines",
+      "label": "Unhost: uninstall pipeline across the machines",
+      "steps": [
+        {
+          "id": "step-91",
+          "label": "Set MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_mark"
+          },
+          "capture": [
+            {
+              "variable": "MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "DELETE /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-93",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 240"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-94",
+          "label": "The unhosting operation succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The unhosting operation succeeded"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Step: ${step}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" \"$step\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Step: ${step}"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Extract ORDER",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ORDER",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "expression": "[.steps[].name] | (index(\"remove the tunnel\") < index(\"agent uninstall:post-teardown\")) and (index(\"agent uninstall:post-teardown\") < index(\"revoke the secret and the capability\"))"
+            }
+          }
+        },
+        {
+          "id": "step-99",
+          "label": "The agent's post-teardown ran after the tunnel went and before the secret was revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ORDER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent's post-teardown ran after the tunnel went and before the secret was revoked"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Set HALF_LOG_TEXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_since \"$MARK\""
+          },
+          "capture": [
+            {
+              "variable": "HALF_LOG_TEXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "The agent half ran uninstall:pre-teardown",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:pre-teardown phase=uninstall"
+              },
+              "message": "The agent half ran uninstall:pre-teardown"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "The agent half ran uninstall:post-teardown",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:post-teardown phase=uninstall"
+              },
+              "message": "The agent half ran uninstall:post-teardown"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Unhost: uninstall pipeline across the machines\"\n\nMARK=$(half_log_mark)\nUNHOST=$(host_api_delete \"plugins/${PLUGIN}/hosting\")\nOP=$(wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 240)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The unhosting operation succeeded\" || true\nfor step in 'relay uninstall:pre-teardown' 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'revoke the secret and the capability' 'relay uninstall:post-teardown'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nORDER=$(echo \"$OP\" | jq -r '[.steps[].name] | (index(\"remove the tunnel\") < index(\"agent uninstall:post-teardown\")) and (index(\"agent uninstall:post-teardown\") < index(\"revoke the secret and the capability\"))' 2>/dev/null || echo \"false\")\nassert_eq \"$ORDER\" \"true\" \"The agent's post-teardown ran after the tunnel went and before the secret was revoked\" || true\nHALF_LOG_TEXT=$(half_log_since \"$MARK\")\nassert_contains \"$HALF_LOG_TEXT\" \"hook uninstall:pre-teardown phase=uninstall\" \"The agent half ran uninstall:pre-teardown\" || true\nassert_contains \"$HALF_LOG_TEXT\" \"hook uninstall:post-teardown phase=uninstall\" \"The agent half ran uninstall:post-teardown\" || true\nnothing_left \"Unhosted\"\n\n# ===========================================================================\n# 5. The agent half refuses install:post-tunnel: rollback\n# ==========================================================================="
+    },
+    {
+      "id": "a-failing-agent-install-post-tunnel-rolls-back",
+      "label": "A failing agent install:post-tunnel rolls back",
+      "steps": [
+        {
+          "id": "step-104",
+          "label": "Set RELAY_ROLLBACKS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"'"
+          },
+          "capture": [
+            {
+              "variable": "RELAY_ROLLBACKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "Set MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_mark"
+          },
+          "capture": [
+            {
+              "variable": "MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-107",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$HOST\" | jq -r '.operation.id' 2>/dev/null)\" 360"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-109",
+          "label": "The operation rolled back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "rolled-back"
+              },
+              "message": "The operation rolled back"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "agent install:post-tunnel failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'agent install:post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "agent install:post-tunnel failed"
+            }
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "…with the agent half's reason",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$OP\" | jq -r '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "refused by flag"
+              },
+              "message": "…with the agent half's reason"
+            }
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "Rollback: the agent half's uninstall:pre-teardown ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'agent uninstall:pre-teardown')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Rollback: the agent half's uninstall:pre-teardown ran"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Rollback: the agent half's uninstall:post-teardown ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'agent uninstall:post-teardown')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Rollback: the agent half's uninstall:post-teardown ran"
+            }
+          }
+        },
+        {
+          "id": "step-114",
+          "label": "Set HALF_LOG_TEXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_since \"$MARK\""
+          },
+          "capture": [
+            {
+              "variable": "HALF_LOG_TEXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-115",
+          "label": "The agent half saw phase rollback (pre-teardown)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:pre-teardown phase=rollback"
+              },
+              "message": "The agent half saw phase rollback (pre-teardown)"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "The agent half saw phase rollback (post-teardown)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:post-teardown phase=rollback"
+              },
+              "message": "The agent half saw phase rollback (post-teardown)"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "The relay's uninstall stages ran with phase rollback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$((RELAY_ROLLBACKS + 1))"
+              },
+              "message": "The relay's uninstall stages ran with phase rollback"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A failing agent install:post-tunnel rolls back\"\n\nRELAY_ROLLBACKS=$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')\nstart_half 'install:post-tunnel'\nMARK=$(half_log_mark)\nHOST=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP=$(wait_operation \"$(echo \"$HOST\" | jq -r '.operation.id' 2>/dev/null)\" 360)\nassert_json_field \"$OP\" '.status' 'rolled-back' \"The operation rolled back\" || true\nassert_eq \"$(step_status \"$OP\" 'agent install:post-tunnel')\" \"failed\" \"agent install:post-tunnel failed\" || true\nassert_contains \"$(echo \"$OP\" | jq -r '.error')\" \"refused by flag\" \"…with the agent half's reason\" || true\nassert_eq \"$(step_status \"$OP\" 'agent uninstall:pre-teardown')\" \"done\" \"Rollback: the agent half's uninstall:pre-teardown ran\" || true\nassert_eq \"$(step_status \"$OP\" 'agent uninstall:post-teardown')\" \"done\" \"Rollback: the agent half's uninstall:post-teardown ran\" || true\nHALF_LOG_TEXT=$(half_log_since \"$MARK\")\nassert_contains \"$HALF_LOG_TEXT\" \"hook uninstall:pre-teardown phase=rollback\" \"The agent half saw phase rollback (pre-teardown)\" || true\nassert_contains \"$HALF_LOG_TEXT\" \"hook uninstall:post-teardown phase=rollback\" \"The agent half saw phase rollback (post-teardown)\" || true\nassert_eq \"$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')\" \"$((RELAY_ROLLBACKS + 1))\" \"The relay's uninstall stages ran with phase rollback\" || true\nnothing_left \"Rolled back\"\n\n# ===========================================================================\n# 6. The agent half refuses install:pre-tunnel: nothing is left\n# ==========================================================================="
+    },
+    {
+      "id": "a-failing-agent-install-pre-tunnel-leaves-nothing",
+      "label": "A failing agent install:pre-tunnel leaves nothing",
+      "steps": [
+        {
+          "id": "step-119",
+          "label": "Set RELAY_ROLLBACKS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"'"
+          },
+          "capture": [
+            {
+              "variable": "RELAY_ROLLBACKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "Set MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_mark"
+          },
+          "capture": [
+            {
+              "variable": "MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-122",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-123",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$HOST\" | jq -r '.operation.id' 2>/dev/null)\" 240"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "The operation failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "The operation failed"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "…at the agent's pre-tunnel stage",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$OP\" | jq -r '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "agent install:pre-tunnel refused"
+              },
+              "message": "…at the agent's pre-tunnel stage"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "The tunnel was never granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "absent"
+              },
+              "message": "The tunnel was never granted"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "Set HALF_LOG_TEXT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "half_log_since \"$MARK\""
+          },
+          "capture": [
+            {
+              "variable": "HALF_LOG_TEXT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-128",
+          "label": "The agent half was asked (and refused)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:pre-tunnel phase=install"
+              },
+              "message": "The agent half was asked (and refused)"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "The agent side, whose own stage failed, is not asked to undo anything",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "HALF_LOG_TEXT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:"
+              },
+              "message": "The agent side, whose own stage failed, is not asked to undo anything"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "The relay's pre stage was rolled back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$((RELAY_ROLLBACKS + 1))"
+              },
+              "message": "The relay's pre stage was rolled back"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A failing agent install:pre-tunnel leaves nothing\"\n\nRELAY_ROLLBACKS=$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')\nstart_half 'install:pre-tunnel'\nMARK=$(half_log_mark)\nHOST=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP=$(wait_operation \"$(echo \"$HOST\" | jq -r '.operation.id' 2>/dev/null)\" 240)\nassert_json_field \"$OP\" '.status' 'failed' \"The operation failed\" || true\nassert_contains \"$(echo \"$OP\" | jq -r '.error')\" \"agent install:pre-tunnel refused\" \"…at the agent's pre-tunnel stage\" || true\nassert_eq \"$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')\" \"absent\" \"The tunnel was never granted\" || true\nHALF_LOG_TEXT=$(half_log_since \"$MARK\")\nassert_contains \"$HALF_LOG_TEXT\" \"hook install:pre-tunnel phase=install\" \"The agent half was asked (and refused)\" || true\nassert_not_contains \"$HALF_LOG_TEXT\" \"hook uninstall:\" \"The agent side, whose own stage failed, is not asked to undo anything\" || true\nassert_eq \"$(audit_count hook.uninstall.pre-teardown '.phase == \"rollback\"')\" \"$((RELAY_ROLLBACKS + 1))\" \"The relay's pre stage was rolled back\" || true\nnothing_left \"Failed before the tunnel\"\n\n# ===========================================================================\n# 7. Uninstall\n# ==========================================================================="
+    },
+    {
+      "id": "uninstall",
+      "label": "Uninstall",
+      "steps": [
+        {
+          "id": "step-132",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "POST /api/plugins/${PLUGIN}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/disable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "DELETE /api/plugins/${PLUGIN}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-135",
+          "label": "The plugin is uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The plugin is uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "systemctl is-active lamalibre-lamaste-hooks@${PLUGIN}.socket 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "RUNNER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-137",
+          "label": "Its hook runner is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "RUNNER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Its hook runner is gone"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "test -d /opt/lamalibre/lamaste/hooks/${PLUGIN} && echo present || echo gone"
+          },
+          "capture": [
+            {
+              "variable": "MODULES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-139",
+          "label": "Its hook modules are removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MODULES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "gone"
+              },
+              "message": "Its hook modules are removed"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Uninstall\"\n\nagent_exec \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\"\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}\")\nassert_json_field \"$UNINSTALL\" '.ok' 'true' \"The plugin is uninstalled\" || true\nRUNNER=$(host_exec \"systemctl is-active lamalibre-lamaste-hooks@${PLUGIN}.socket 2>/dev/null || true\")\nassert_not_eq \"$RUNNER\" \"active\" \"Its hook runner is gone\" || true\nMODULES=$(host_exec \"test -d /opt/lamalibre/lamaste/hooks/${PLUGIN} && echo present || echo gone\")\nassert_eq \"$MODULES\" \"gone\" \"Its hook modules are removed\" || true"
+    }
+  ],
+  "apiHelpers": ["host_api_get", "host_api_get_status", "host_api_post", "host_api_delete"],
+  "headerRaw": "# ============================================================================\n# 33 — Lifecycle hooks on both machines (Three-VM)\n# ============================================================================\n# An agent-hosted plugin with relay and agent lifecycle hooks (fixture\n# @lamalibre/e2e-hooks-server, every agent stage declared), hosted on the\n# agent VM's agent:\n#\n# 1. Hosting runs the install pipeline across both machines: relay\n#    install:pre-tunnel in the host's hook runner; the reservation (secret\n#    delivered by the agent's sync timer); the agent half's\n#    install:pre-tunnel as an agent job, run by the sync on the agent VM's\n#    loopback before the tunnel is granted; the grant; the agent half's\n#    install:post-tunnel through the tunnel; relay install:post-tunnel.\n#    The relay hook's sandbox probe holds on this host too.\n# 2. A request hook works across the tunnel (secret-scan redaction).\n# 3. The agent's tunnel client stopped: the relay runs tunnel:down and answers\n#    with its fallback; the agent's sync tells the agent half tunnel:down.\n#    Back: tunnel:up on both sides.\n# 4. Unhosting runs the uninstall pipeline on both machines; the agent half's\n#    uninstall:post-teardown runs after the tunnel is gone, as an agent job.\n# 5. The agent half refusing install:post-tunnel rolls the hosting back:\n#    both sides' uninstall stages run with phase rollback; nothing is left.\n# 6. The agent half refusing install:pre-tunnel leaves nothing: the tunnel is\n#    never granted, the relay's pre stage is rolled back.\n# 7. Uninstalling the plugin removes its hook runner.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nCURL_MTLS=\"curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\nPANEL=\"https://127.0.0.1:9292/api\"\n\n# The URL is quoted: query strings carry & and ?.\nhost_api_get() {\n  host_exec \"${CURL_MTLS} -H 'Accept: application/json' '${PANEL}/$1'\"\n}\nhost_api_get_status() {\n  host_exec \"${CURL_MTLS} -o /dev/null -w '%{http_code}' '${PANEL}/$1'\" 2>/dev/null || echo \"000\"\n}\nhost_api_post() {\n  host_exec \"${CURL_MTLS} -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' '${PANEL}/$1'\"\n}\nhost_api_delete() {\n  host_exec \"${CURL_MTLS} -X DELETE -H 'Accept: application/json' '${PANEL}/$1'\"\n}\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\nhosting_field() {\n  host_api_get \"plugins/${PLUGIN}/hosting\" 2>/dev/null | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(host_api_get \"plugins/${PLUGIN}/operations/${id}\" 2>/dev/null | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 3\n  done\n  echo \"$op\"\n  return 0\n}\n\n# step_status <operation json> <step name> — the status of one step (its last run)\nstep_status() {\n  echo \"$1\" | jq -r --arg n \"$2\" '[.steps[] | select(.name == $n) | .status] | last // \"absent\"' 2>/dev/null || echo \"absent\"\n}\n\n# audit_count <action> [<jq filter on details>] — this run's entries of one\n# action for the plugin (the audit log outlives a run: entries after AUDIT_BASE)\naudit_count() {\n  host_api_get \"audit?plugin=${PLUGIN}&action=$1&limit=200\" | jq \"[.entries[] | select(.id > ${AUDIT_BASE}) | select(.details | ${2:-true})] | length\" 2>/dev/null || echo \"0\"\n}\n\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# set_tunnels_stopped true|false — what the agent daemon's /stop and /start\n# do: remembered by the sync timer, which otherwise restarts the client\nset_tunnels_stopped() {\n  agent_exec \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', $1))\\\"\"\n}\n\n# half_log_since <mark> — the agent half's log lines after line <mark>\nhalf_log_since() {\n  agent_exec \"tail -n +$(($1 + 1)) ${HALF_LOG} 2>/dev/null\" 2>/dev/null || echo \"\"\n}\nhalf_log_mark() {\n  agent_exec \"cat ${HALF_LOG} 2>/dev/null | wc -l\" 2>/dev/null || echo \"0\"\n}\n\n# start_half [flag...] — (re)start the agent half on the agent VM. It waits\n# for the plugin config the sync timer delivers; each flag makes that stage\n# refuse (fail-<stage>).\nstart_half() {\n  local flags=\"\"\n  for f in \"$@\"; do flags=\"${flags} && touch ${REMOTE_DIR}/flags/fail-${f}\"; done\n  agent_exec \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}/flags && mkdir -p ${REMOTE_DIR}/flags ${flags}; true\"\n  agent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} --flags ${REMOTE_DIR}/flags --wait-config &>> ${REMOTE_DIR}/half.out & exit\"\n}\n\nconfig_present() { agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\nconfig_gone() { ! agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\n\n# nothing_left <message prefix> — no hosting, tunnel, capability or agent config\nnothing_left() {\n  assert_eq \"$(host_api_get_status \"plugins/${PLUGIN}/hosting\")\" \"404\" \"$1: no hosting record\" || true\n  assert_eq \"$(host_api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.pluginRoute == \\\"${PLUGIN}\\\")] | length\" 2>/dev/null || echo \"-1\")\" \"0\" \"$1: no tunnel\" || true\n  assert_not_contains \"$(host_api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${HOST_AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null)\" \"plugin:${PLUGIN}:host\" \"$1: no host capability\" || true\n  if wait_for 90 config_gone; then\n    log_pass \"$1: the sync timer removed the agent's plugin config\"\n  else\n    log_fail \"$1: the plugin config is still on the agent VM\"\n  fi\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_threevm_hooks_000000000000\"\nPLUGIN=\"e2e-hooks\"\nPACKAGE=\"@lamalibre/e2e-hooks-server\"\nAGENT_HOOKS='{ \"install\": { \"pre-tunnel\": {}, \"post-tunnel\": {} }, \"uninstall\": { \"pre-teardown\": {}, \"post-teardown\": {} }, \"tunnel\": { \"down\": {}, \"up\": {} } }'\nAGENT_LABEL=\"e2e-agent\"\nAGENT_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}\"\nAGENT_CONFIG=\"${AGENT_DIR}/config.json\"\nPLUGIN_CONFIG_FILE=\"${AGENT_DIR}/app-plugins/${PLUGIN}.json\"\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LABEL}.timer\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LABEL}.service\"\nREMOTE_DIR=\"/tmp/e2e-33-hooks\"\nHALF_LOG=\"${REMOTE_DIR}/half.log\"\nLOCAL_TMP=\"\"\nAUDIT_BASE=0\nHOST_AGENT_LABEL=\"\"\nAGENT_LIB_DIR=\"\"\nAGENT_LIB_PARENT=\"\"\n\nbegin_test \"33 — Lifecycle hooks on both machines (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; true\" > /dev/null 2>&1\n  # Uninstalling tears a hosting down first (an operation, forced: the agent\n  # half is gone); one still running refuses it until it ends.\n  timed_exec 300 multipass exec lamaste-host -- sudo bash -c \"${CURL_MTLS} -X POST ${PANEL}/plugins/${PLUGIN}/disable > /dev/null 2>&1; for _ in \\$(seq 1 90); do [ \\\"\\$(${CURL_MTLS} -o /dev/null -w '%{http_code}' ${PANEL}/plugins/${PLUGIN})\\\" = 404 ] && break; ${CURL_MTLS} -X DELETE '${PANEL}/plugins/${PLUGIN}?force=true' > /dev/null 2>&1; sleep 3; done; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  if [ -n \"$AGENT_LIB_PARENT\" ]; then\n    timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', false))\\\" 2>/dev/null; lamaste-agent sync --label ${AGENT_LABEL} 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  fi\n  if [ -n \"$LOCAL_TMP\" ]; then rm -rf \"$LOCAL_TMP\"; fi\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

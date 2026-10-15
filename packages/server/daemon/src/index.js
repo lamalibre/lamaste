@@ -26,7 +26,11 @@ import {
   userAccessProtectedRoutes,
 } from './routes/user-access.js';
 import userAccessSessionMiddleware from './middleware/user-access-session.js';
-import { getPluginCapabilities } from './lib/plugins.js';
+import { getPluginCapabilities, readPlugins } from './lib/plugins.js';
+import { markInterruptedOperations } from './lib/plugin-operations.js';
+import { trustLocalNginxHop } from './lib/trust-proxy.js';
+import { reconcileRelayHooks } from './lib/plugin-hooks.js';
+import { loadTunnelFallbacks } from './lib/request-hooks.js';
 import { setPluginCapabilities } from './lib/mtls.js';
 import { startChiselReconciler } from './lib/chisel-reconcile.js';
 import {
@@ -66,9 +70,10 @@ async function start() {
 
   const server = Fastify({
     logger: true,
-    // Behind nginx: trust exactly one proxy hop so request.ip reflects the real client IP
-    // from nginx's $remote_addr, not a spoofed X-Forwarded-For value from upstream.
-    trustProxy: 1,
+    // Behind the local nginx: trust exactly that one loopback hop, so
+    // request.ip is the client address nginx appended to X-Forwarded-For —
+    // not a value the client sent, and nothing from a non-local peer.
+    trustProxy: trustLocalNginxHop,
   });
 
   // Wire ticket module to the Fastify root logger so any load-time warnings
@@ -185,6 +190,14 @@ async function start() {
 
   // --- Start ---
   await server.listen({ host: '127.0.0.1', port: 3100 });
+
+  // --- Lifecycle hooks: operations a restart cut short, the runners of
+  // approved relay hook sets (a redeploy may have reset them), fallbacks ---
+  await markInterruptedOperations(server.log);
+  await loadTunnelFallbacks();
+  readPlugins()
+    .then(({ plugins }) => reconcileRelayHooks(plugins, server.log))
+    .catch((err) => server.log.error({ err: err.message }, 'Relay hook reconciliation failed'));
 
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
   startHostedPluginHealthMonitor(server.log);

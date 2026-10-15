@@ -49,6 +49,7 @@ ${b('COMMANDS')}
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
   ${c('panel')}           Manage agent web panel (--enable, --disable, --status, reset-pin)
   ${c('chisel')}          Manage chisel tunnel credential (refresh-credential)
+  ${c('apphost')}         App host helper for plugins' agent halves (enable, status, disable)
   ${c('list')}            List all configured agents
   ${c('switch')}          Set the default agent
 
@@ -88,6 +89,9 @@ ${b('EXAMPLES')}
 
   ${d('# Uninstall all agents')}
   ${c('lamaste-agent uninstall --all')}
+
+  ${d("# Let the panel install plugins' agent halves here (Linux, systemd)")}
+  ${c('sudo lamaste-agent apphost enable')}
 
 ${b('PREREQUISITES')}
 
@@ -184,6 +188,12 @@ export async function main() {
       const resolved = await resolveLabel(label);
       const { runChisel } = await import('./commands/chisel.js');
       await runChisel(args.slice(1), { label: resolved });
+      break;
+    }
+    case 'apphost': {
+      // Machine-wide (one helper per machine), not per agent label.
+      const { runApphost } = await import('./commands/apphost.js');
+      await runApphost(args.slice(1), { json });
       break;
     }
     case 'list': {

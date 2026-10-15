@@ -441,15 +441,21 @@ There is no rule for `mv`, `cp`, `rm`, `chmod`, `chown`, `mkdir`, `cat`, `find`,
 - **Binaries, units, accounts.** Chisel and Authelia (pinned, digest-verified releases), their systemd units and the service accounts are installed by `create-lamaste`, which runs as root. The panel never writes a unit or a binary; onboarding only checks they exist.
 - **Code.** `/opt/lamalibre/lamaste` (panel, gatekeeper, `lamaste-server` CLI, UI, docs) is root-owned and read-only for `lamaste`, so a compromised panel cannot rewrite code that root later runs through `sudo lamaste-server`.
 
+#### Plugin code on the relay: the hook runner
+
+Server plugins run inside the panel (the `@lamalibre/` scope is their trust boundary). Agent-hosted plugins never do: the panel does not import them. Their **relay hooks** — code an administrator approves by digest — run in `lamalibre-lamaste-hooks@<route>.service`: a systemd dynamic user, a read-only file system without Lamaste's state, Authelia, certificates, nginx or SSH configuration, its own network namespace with Unix sockets only, no capabilities, Node's permission model allowing reads of the runner and the approved module only, an empty environment, and its output discarded. The panel calls it over a socket only the `lamaste` group can open; a hook can affect nothing but its answer and the rate-limited effects Lamaste performs for it. See [Lifecycle Hooks](../04-api-reference/lifecycle-hooks.md#the-hook-runner).
+
 #### `lamaste-priv`
 
 `/usr/local/sbin/lamaste-priv` is a root-owned (`0755`), zero-dependency Node.js program installed by `create-lamaste`. Content (vhost text, TOTP secrets) arrives on stdin, never on the command line, so it is not written to the sudo log. It reads nothing the `lamaste` user can write.
 
-| Operation                                                                           | Does                                                                                                                           |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `nginx-site write\|backup\|restore\|discard-backup\|enable\|disable\|remove <name>` | Manage `sites-available/<name>` (and its `.bak`) and its `sites-enabled` link. `write` validates the vhost on stdin first.     |
-| `authelia-totp <username>`                                                          | Store the TOTP secret from stdin with Authelia's CLI, run as `lamaste-authelia` (the database is that account's file)          |
-| `self-update <version>`                                                             | Start `npx @lamalibre/create-lamaste@<version> --yes` in a transient systemd unit two seconds later (`MAJOR.MINOR.PATCH` only) |
+| Operation                                                                           | Does                                                                                                                                                            |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nginx-site write\|backup\|restore\|discard-backup\|enable\|disable\|remove <name>` | Manage `sites-available/<name>` (and its `.bak`) and its `sites-enabled` link. `write` validates the vhost on stdin first.                                      |
+| `authelia-totp <username>`                                                          | Store the TOTP secret from stdin with Authelia's CLI, run as `lamaste-authelia` (the database is that account's file)                                           |
+| `self-update <version>`                                                             | Start `npx @lamalibre/create-lamaste@<version> --yes` in a transient systemd unit two seconds later (`MAJOR.MINOR.PATCH` only)                                  |
+| `hooks install <route> <sha256\|none>`                                              | Write a plugin's approved relay hook module (stdin, checked against the digest) root-owned to `/opt/lamalibre/lamaste/hooks/<route>/`, enable its runner socket |
+| `hooks activate\|restart\|remove <route> [sha256]`                                  | Point the runner back at the kept previous module; stop a stuck runner; disable it and delete its modules                                                       |
 
 Site names are limited to the panel's own vhosts: `lamalibre-lamaste-panel-domain`, `-auth`, `-tunnel`, `-app-<subdomain>`, `-agent-panel-<label>` and `-site-<uuid>`. `lamalibre-lamaste-panel-ip` (written by `create-lamaste`) may only be enabled or disabled.
 

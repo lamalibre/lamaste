@@ -8,22 +8,30 @@
  * assigned from the internal range), a hosting record with a fresh
  * installation secret, and the `plugin:<route>:host` capability on the
  * agent's certificate — the only thing that lets the agent fetch the secret.
+ *
+ * When Lamaste installs the agent half itself (`agent.package`, slice 3) the
+ * relay has the agent install, switch or remove code as root. Hosting,
+ * updating and removing such a hosting are therefore pushes: the agent must
+ * be able to host it (`hostEligibility` over the host facts it reported)
+ * and the push-install gates must allow the action on the agent package
+ * (global switch, the agent's window, the source IP, the policy). A plugin
+ * whose agent half is installed by hand is hosted as before, unchecked.
  */
 
 import {
   AGENT_LABEL_REGEX,
+  APPHOST_PATHS,
   PLUGIN_AGENT_CN_PREFIX,
+  agentHookSetOf,
   derivePluginRoute,
   hasAgentHalf,
+  hostEligibility,
   pluginHostCapability,
 } from '@lamalibre/lamaste';
 import {
   TUNNEL_MAX_BODY_MB,
-  createTunnel,
-  deleteTunnel,
-  createPluginHosting,
-  removePluginHosting,
   getPluginHosting,
+  pluginHostingOwner,
   readPluginHostings,
   rotatePluginHostingSecret,
   acknowledgePluginHostingSecret,
@@ -33,27 +41,32 @@ import {
   agentPluginConfigFor,
   agentPluginAssignments,
   startPluginHealthMonitor,
+  pluginHostingPhase,
   PluginHostingError,
-  TunnelError,
 } from '@lamalibre/lamaste/server';
+import { httpError } from './app-error.js';
 import { getConfig } from './config.js';
 import { readTunnels } from './state.js';
 import { loadAgentRegistry, saveAgentRegistry, withRegistryLock } from './mtls.js';
+import { startPluginOperation } from './plugin-operations.js';
 import {
-  tunnelNginxDeps,
-  tunnelCertbotDeps,
-  tunnelChiselDeps,
-  tunnelStateDeps,
-} from './tunnel-deps.js';
+  pipelineContext,
+  runInstallPipeline,
+  runPurgeRetainedData,
+  runUninstallPipeline,
+} from './hook-pipelines.js';
+import { installedAgentHalf, installedVersionApproved } from './plugin-hooks.js';
+import { checkPushInstallAction, logPushInstallSession } from './push-install.js';
+import { findRetainedData, forgetRetainedData, listRetainedData } from './retained-data.js';
+import { recordAudit } from './audit.js';
+import { onHealthTransition } from './tunnel-hooks.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
-function httpError(message, statusCode) {
-  return Object.assign(new Error(message), { statusCode });
-}
-
 /**
- * The installed plugin `name` must be agent-hosted with an agent half.
+ * The installed plugin `name` must be agent-hosted with an agent half, and
+ * hold its route — the route keys its hosting and everything the hosting
+ * creates, on the relay and on the agent.
  * @param {string} name
  */
 async function requireHostablePlugin(name) {
@@ -68,11 +81,45 @@ async function requireHostablePlugin(name) {
       400,
     );
   }
+  if (plugin.route === null) {
+    throw httpError(
+      `Plugin "${name}" shares the route "${derivePluginRoute(name)}" with another installed plugin (both were installed before routes were unique) — uninstall one of them, then reinstall`,
+      409,
+      { code: 'route_conflict' },
+    );
+  }
+  if (plugin.route !== plugin.name) {
+    throw httpError(
+      `A plugin with an agent half is named by its route: "${name}" would be served as "${plugin.route}" — reinstall it named "${plugin.route}"`,
+      409,
+      { code: 'route_conflict' },
+    );
+  }
   return plugin;
 }
 
+/**
+ * The hosting installed plugin `plugin` owns, or null. A hosting on its
+ * route that names another plugin as its owner is not its own — no
+ * operation of one plugin reads, changes or removes another's hosting.
+ *
+ * @param {{ name: string, route: string | null }} plugin registry entry
+ */
+export async function ownHosting(plugin) {
+  if (!plugin.route) return null;
+  const record = await getPluginHosting(STATE_DIR, plugin.route);
+  return record && pluginHostingOwner(record) === plugin.name ? record : null;
+}
+
+/** {@link ownHosting} of installed plugin `name`; null when it is not installed. */
+async function ownHostingOf(name) {
+  const { findPlugin } = await import('./plugins.js');
+  const plugin = await findPlugin(name);
+  return plugin ? ownHosting(plugin) : null;
+}
+
 /** Add or remove one capability on an agent's certificate record, under the registry lock. */
-function setAgentCapability(label, capability, present) {
+export function setAgentCapability(label, capability, present) {
   return withRegistryLock(async () => {
     const registry = await loadAgentRegistry();
     const agent = registry.agents.find((a) => a.label === label && !a.revoked);
@@ -87,20 +134,136 @@ function setAgentCapability(label, capability, present) {
   });
 }
 
-async function isActiveAgent(label) {
+export async function isActiveAgent(label) {
   const registry = await loadAgentRegistry();
   return registry.agents.some((a) => a.label === label && !a.revoked);
 }
 
+// ---------------------------------------------------------------------------
+// Pushing an agent half: eligibility and the push-install gates
+// ---------------------------------------------------------------------------
+
+/** The host facts agent `label` last reported, or null. */
+async function agentHostFacts(label) {
+  const registry = await loadAgentRegistry();
+  return registry.agents.find((a) => a.label === label && !a.revoked)?.hostFacts ?? null;
+}
+
 /**
- * Host plugin `name` on agent `agentLabel`.
+ * Refuse (409 `agent_not_eligible`, with the reasons) an agent that cannot
+ * host agent half `agentHalf` of a plugin requiring `requires`.
+ */
+export async function assertAgentEligible(label, requires, agentHalf, pluginName) {
+  const { eligible, reasons } = hostEligibility(requires, agentHalf, await agentHostFacts(label));
+  if (!eligible) {
+    throw httpError(
+      `Agent "${label}" cannot host plugin "${pluginName}": ${reasons.join('; ')}`,
+      409,
+      { code: 'agent_not_eligible', reasons },
+    );
+  }
+}
+
+/**
+ * The push-install gates for `action` on agent half package `packageName`
+ * to agent `label`, from `sourceIp`. Refused with the gate's status and code
+ * `push_install_refused`. Returns the push to log once its operation runs.
+ */
+export async function assertAgentHalfPush(label, sourceIp, action, packageName) {
+  const gate = await checkPushInstallAction(label, sourceIp, action, packageName);
+  if (!gate.ok) {
+    throw httpError(gate.error, gate.statusCode, { code: 'push_install_refused' });
+  }
+  return { agentLabel: label, action, packageName, sourceIp, policyId: gate.policy.id };
+}
+
+/** Record a push in the push-install session log (best effort: its operation already runs). */
+export async function logAgentHalfPush(push, operationId, logger) {
+  if (!push) return;
+  try {
+    await logPushInstallSession({ ...push, status: 'started', operationId });
+  } catch (err) {
+    logger?.warn({ err: err.message }, 'Failed to log the push-install session');
+  }
+}
+
+/**
+ * The checks before a hosting is removed (unhost, or uninstalling a hosted
+ * plugin). `purge` applies to an agent half Lamaste installs only. Removing
+ * one is a push (`uninstall`) — unless its agent is no longer enrolled:
+ * nothing can be pushed to it then, the pipeline skips the removal and says
+ * how to finish it on the machine. Returns the push to log, or null.
+ *
+ * @param {object} plugin registry entry
+ * @param {{ agentLabel: string }} record the hosting (the plugin's own — see {@link ownHosting})
+ * @param {{ purge: boolean, sourceIp: string }} opts
+ */
+export async function prepareHostingRemoval(plugin, record, { purge, sourceIp }) {
+  if (pluginHostingOwner(record) !== plugin.name) {
+    throw httpError(
+      `The hosting on route "${record.plugin}" is not plugin "${plugin.name}"'s`,
+      409,
+      {
+        code: 'hosting_owner_mismatch',
+      },
+    );
+  }
+  const agentHalf = installedAgentHalf(plugin);
+  if (!agentHalf) {
+    if (purge) {
+      throw httpError(
+        `purge removes the data of an agent half Lamaste installed — the agent half of "${plugin.name}" is installed by hand`,
+        400,
+      );
+    }
+    return null;
+  }
+  if (!(await isActiveAgent(record.agentLabel))) return null;
+  return assertAgentHalfPush(record.agentLabel, sourceIp, 'uninstall', agentHalf.package);
+}
+
+/**
+ * Which machine agents can host plugin `name` and, for each that cannot,
+ * why — what the host dialog lists. For a plugin whose agent half is
+ * installed by hand every enrolled agent is listed as eligible: hosting
+ * checks nothing then (as before slice 3).
+ *
+ * @param {string} name
+ * @returns {Promise<Array<{ label: string, eligible: boolean, reasons: string[] }>>}
+ */
+export async function hostingEligibility(name) {
+  const plugin = await requireHostablePlugin(name);
+  const agentHalf = installedAgentHalf(plugin);
+  const registry = await loadAgentRegistry();
+  return registry.agents
+    .filter((a) => !a.revoked && AGENT_LABEL_REGEX.test(a.label))
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((a) => {
+      if (!agentHalf) return { label: a.label, eligible: true, reasons: [] };
+      const { eligible, reasons } = hostEligibility(
+        plugin.agent?.requires,
+        agentHalf,
+        a.hostFacts ?? null,
+      );
+      return { label: a.label, eligible, reasons };
+    });
+}
+
+/**
+ * Host plugin `name` on agent `agentLabel`: start the install pipeline
+ * (`hook-pipelines.js`) as an operation and return it. Checked first, so a
+ * request that cannot succeed is refused at once: the plugin is installed
+ * and has an agent half, the agent is enrolled, the plugin is not hosted,
+ * the relay is onboarded, and what it brings (relay hooks, an agent half
+ * Lamaste installs) is approved. An agent half Lamaste installs also needs
+ * an eligible agent and the push-install gates (`sourceIp`: the admin's).
  *
  * @param {string} name
  * @param {string} agentLabel
- * @param {import('pino').Logger} logger
- * @returns {Promise<import('@lamalibre/lamaste/server').PluginHostingView>}
+ * @param {{ actor: string, logger: import('pino').Logger, sourceIp: string }} opts
+ * @returns {Promise<object>} the operation
  */
-export async function hostPlugin(name, agentLabel, logger) {
+export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) {
   const plugin = await requireHostablePlugin(name);
   const route = derivePluginRoute(plugin.name);
   if (!AGENT_LABEL_REGEX.test(agentLabel) || agentLabel.startsWith(PLUGIN_AGENT_CN_PREFIX)) {
@@ -109,120 +272,106 @@ export async function hostPlugin(name, agentLabel, logger) {
   if (!(await isActiveAgent(agentLabel))) {
     throw httpError(`Agent "${agentLabel}" is not enrolled or has been revoked`, 400);
   }
-  if (await getPluginHosting(STATE_DIR, route)) {
-    throw httpError(`Plugin "${name}" is already hosted — clear its hosting first`, 409);
+  const existing = await getPluginHosting(STATE_DIR, route);
+  if (existing) {
+    const owner = pluginHostingOwner(existing);
+    throw owner === plugin.name
+      ? httpError(`Plugin "${name}" is already hosted — clear its hosting first`, 409)
+      : httpError(`The route "${route}" is hosted for plugin "${owner}"`, 409, {
+          code: 'hosting_owner_mismatch',
+        });
   }
-
   const config = getConfig();
   if (!config.domain || !config.email) {
     throw httpError('Domain and email must be configured before hosting a plugin', 400);
   }
-
-  // 1. The internal tunnel: chisel grant + assigned port, nothing public.
-  let tunnel;
-  try {
-    tunnel = await createTunnel({
-      exposure: 'internal',
-      type: 'plugin',
-      pluginName: plugin.packageName,
-      agentLabel,
-      description: `Internal tunnel of plugin ${plugin.name}`,
-      maxBodySizeMb: TUNNEL_MAX_BODY_MB.default,
-      domain: config.domain,
-      email: config.email,
-      nginx: tunnelNginxDeps,
-      certbot: tunnelCertbotDeps,
-      chisel: tunnelChiselDeps,
-      state: tunnelStateDeps,
-      agents: { isActiveAgent },
-      logger,
-    });
-  } catch (err) {
-    if (err instanceof TunnelError) throw httpError(err.message, 400);
-    throw err;
+  if (!(await installedVersionApproved(plugin))) {
+    throw httpError(
+      `Plugin "${name}" brings relay hooks or an agent half that are not approved — review and approve them first`,
+      409,
+      { code: 'hooks_not_approved' },
+    );
+  }
+  let push = null;
+  const agentHalf = installedAgentHalf(plugin);
+  if (agentHalf) {
+    await assertAgentEligible(agentLabel, plugin.agent?.requires, agentHalf, plugin.name);
+    await assertNoForeignRetainedData(agentLabel, route, agentHalf.package);
+    push = await assertAgentHalfPush(agentLabel, sourceIp, 'install', agentHalf.package);
   }
 
-  const rollbackTunnel = async () => {
-    try {
-      await deleteTunnel({
-        id: tunnel.id,
-        nginx: tunnelNginxDeps,
-        chisel: tunnelChiselDeps,
-        state: tunnelStateDeps,
-        logger,
-      });
-    } catch (rollbackErr) {
-      logger.error(
-        { err: rollbackErr, tunnelId: tunnel.id },
-        'Rollback: failed to remove the internal plugin tunnel',
-      );
-    }
-  };
-
-  // 2. The hosting record with its secret.
-  let record;
-  try {
-    record = await createPluginHosting(STATE_DIR, {
-      plugin: route,
-      agentLabel,
-      port: tunnel.port,
-      tunnelId: tunnel.id,
-    });
-  } catch (err) {
-    await rollbackTunnel();
-    if (err instanceof PluginHostingError) throw httpError(err.message, 409);
-    throw err;
-  }
-
-  // 3. The host capability on the agent's certificate.
-  try {
-    await setAgentCapability(agentLabel, pluginHostCapability(route), true);
-  } catch (err) {
-    await removePluginHosting(STATE_DIR, route).catch(() => undefined);
-    await rollbackTunnel();
-    throw err;
-  }
-
-  logger.info({ plugin: route, agentLabel, port: tunnel.port }, 'Plugin hosted on agent');
-  return pluginHostingView(record);
+  const ctx = pipelineContext({
+    plugin,
+    agentLabel,
+    domain: config.domain,
+    email: config.email,
+    logger,
+  });
+  const { operation } = await startPluginOperation({
+    plugin: plugin.name,
+    kind: 'host',
+    actor,
+    params: { agentLabel },
+    logger,
+    run: (op) => runInstallPipeline(op, ctx),
+  });
+  await logAgentHalfPush(push, operation.id, logger);
+  return operation;
 }
 
 /**
- * Undo `hostPlugin`: capability, record, tunnel. With `ifHosted` a plugin
- * that is not hosted is not an error.
+ * Remove plugin `name`'s hosting: start the uninstall pipeline as an
+ * operation. `force` lets failing pre-teardown stages pass (reported and
+ * audited) — for an agent that is gone or a half that no longer answers.
+ * `purge` removes the data directory and service account of an agent half
+ * Lamaste installed (kept by default).
  *
  * @param {string} name
- * @param {import('pino').Logger} logger
- * @param {{ ifHosted?: boolean }} [options]
+ * @param {{ actor: string, logger: import('pino').Logger, force?: boolean, purge?: boolean, sourceIp: string }} opts
+ * @returns {Promise<object>} the operation
  */
-export async function unhostPlugin(name, logger, options = {}) {
-  const route = derivePluginRoute(name);
-  const record = await getPluginHosting(STATE_DIR, route);
+export async function unhostPlugin(
+  name,
+  { actor, logger, force = false, purge = false, sourceIp },
+) {
+  const plugin = await requireHostablePlugin(name);
+  const record = await ownHosting(plugin);
   if (!record) {
-    if (options.ifHosted) return { ok: true, removed: false };
     throw httpError(`Plugin "${name}" is not hosted on an agent`, 404);
   }
+  const push = await prepareHostingRemoval(plugin, record, { purge, sourceIp });
+  const { operation } = await startPluginOperation({
+    plugin: plugin.name,
+    kind: 'unhost',
+    actor,
+    params: { force, ...(purge ? { purge } : {}) },
+    logger,
+    run: (op) => teardownHosting(op, plugin, { force, purge, logger }),
+  });
+  await logAgentHalfPush(push, operation.id, logger);
+  return operation;
+}
 
-  try {
-    await setAgentCapability(record.agentLabel, pluginHostCapability(route), false);
-  } catch (err) {
-    // A revoked agent has no record to edit; the capability went with it.
-    if (err.statusCode !== 400) throw err;
-  }
-  await removePluginHosting(STATE_DIR, route);
-  try {
-    await deleteTunnel({
-      id: record.tunnelId,
-      nginx: tunnelNginxDeps,
-      chisel: tunnelChiselDeps,
-      state: tunnelStateDeps,
-      logger,
-    });
-  } catch (err) {
-    if (!(err instanceof TunnelError && err.code === 'NOT_FOUND')) throw err;
-  }
-  logger.info({ plugin: route, agentLabel: record.agentLabel }, 'Plugin hosting removed');
-  return { ok: true, removed: true };
+/**
+ * The uninstall pipeline for a plugin's hosting, inside an operation that
+ * is already running (unhost, or uninstalling a hosted plugin).
+ */
+export async function teardownHosting(op, plugin, { force = false, purge = false, logger }) {
+  const config = getConfig();
+  const ctx = pipelineContext({
+    plugin,
+    agentLabel: null,
+    domain: config.domain,
+    email: config.email,
+    logger,
+    purge,
+  });
+  return runUninstallPipeline(op, ctx, { force });
+}
+
+/** Whether installed plugin `name` has a hosting of its own (in any phase). */
+export async function isPluginHosted(name) {
+  return (await ownHostingOf(name)) !== null;
 }
 
 /**
@@ -230,16 +379,26 @@ export async function unhostPlugin(name, logger, options = {}) {
  * @returns {Promise<import('@lamalibre/lamaste/server').PluginHostingView | null>}
  */
 export async function getHostingView(name) {
-  const record = await getPluginHosting(STATE_DIR, derivePluginRoute(name));
+  const record = await ownHostingOf(name);
   return record ? withLiveHealth(pluginHostingView(record)) : null;
 }
 
-/** `agentHosting` for every plugin of a list — null for plugins that are not hosted. */
+/**
+ * `agentHosting` for every plugin of a list — null for plugins that are not
+ * hosted — and `retainedData`: what agents keep of the plugin's agent half
+ * after it was removed without purge.
+ */
 export async function attachHostings(plugins) {
   const store = await readPluginHostings(STATE_DIR);
+  const retained = await listRetainedData();
   return plugins.map((p) => {
-    const record = store[derivePluginRoute(p.name)];
-    return { ...p, agentHosting: record ? withLiveHealth(pluginHostingView(record)) : null };
+    const record = p.route ? store[p.route] : undefined;
+    const own = record && pluginHostingOwner(record) === p.name ? record : null;
+    return {
+      ...p,
+      agentHosting: own ? withLiveHealth(pluginHostingView(own)) : null,
+      retainedData: retained.filter((r) => r.plugin === p.name),
+    };
   });
 }
 
@@ -248,11 +407,12 @@ export async function attachHostings(plugins) {
  * @param {import('pino').Logger} logger
  */
 export async function rotateHostingSecret(name, logger) {
-  const route = derivePluginRoute(name);
+  const record = await ownHostingOf(name);
+  if (!record) throw httpError(`Plugin "${name}" is not hosted on an agent`, 404);
   try {
-    const record = await rotatePluginHostingSecret(STATE_DIR, route);
-    logger.info({ plugin: route }, 'Plugin installation secret rotated');
-    return pluginHostingView(record);
+    const rotated = await rotatePluginHostingSecret(STATE_DIR, record.plugin);
+    logger.info({ plugin: record.plugin }, 'Plugin installation secret rotated');
+    return pluginHostingView(rotated);
   } catch (err) {
     if (err instanceof PluginHostingError) throw httpError(err.message, 404);
     throw err;
@@ -260,12 +420,119 @@ export async function rotateHostingSecret(name, logger) {
 }
 
 // ---------------------------------------------------------------------------
+// Data agent halves left on agents
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuse (409 `retained_data_conflict`) installing agent package `pkg` for
+ * route `route` on agent `label` while that agent keeps the data of another
+ * agent package for the route — the agent's helper would refuse it too, and
+ * the data would otherwise go to code it does not belong to. Data of the
+ * same package is taken back by the install.
+ */
+export async function assertNoForeignRetainedData(label, route, pkg) {
+  const retained = await findRetainedData(label, route);
+  if (retained && retained.package !== pkg) {
+    throw httpError(
+      `Agent "${label}" keeps the data of ${retained.package} (plugin "${retained.plugin}") for route "${route}" since ${retained.since} — Lamaste does not install ${pkg} over it; purge that data first (DELETE /api/plugins/${retained.plugin}/retained-data?agentLabel=${label})`,
+      409,
+      { code: 'retained_data_conflict', retained },
+    );
+  }
+}
+
+/**
+ * What agents keep of plugin `name`'s agent half — by the name the plugin
+ * had, so it is found after the plugin is uninstalled too.
+ * @param {string} name
+ */
+export function retainedDataOf(name) {
+  return listRetainedData({ plugin: name });
+}
+
+/**
+ * Purge the data agent `agentLabel` keeps of plugin `name`'s agent half —
+ * its data directory and service account — through the agent's helper (an
+ * `app-remove` job with purge, push-install gated as `uninstall`), as an
+ * operation. Works whether the plugin is still installed or not. `forget`
+ * only drops the relay's record and leaves the agent alone — for an agent
+ * that is gone, or data removed on the machine by hand; audited.
+ *
+ * @param {string} name the plugin the data belonged to
+ * @param {string} agentLabel
+ * @param {{ actor: string, logger: import('pino').Logger, sourceIp: string, forget?: boolean }} opts
+ * @returns {Promise<{ operation: object } | { forgotten: object }>}
+ */
+export async function purgeRetainedData(name, agentLabel, { actor, logger, sourceIp, forget }) {
+  const retained = (await listRetainedData({ plugin: name, agentLabel }))[0] ?? null;
+  if (!retained) {
+    throw httpError(`Agent "${agentLabel}" keeps no data of plugin "${name}"`, 404);
+  }
+  const hosting = await ownHostingOf(name);
+  if (hosting && hosting.agentLabel === agentLabel) {
+    throw httpError(
+      `Plugin "${name}" is hosted on agent "${agentLabel}" and uses that data — remove its hosting with purge instead`,
+      409,
+      { code: 'retained_data_in_use' },
+    );
+  }
+  if (forget) {
+    await forgetRetainedData(agentLabel, retained.route);
+    await recordAudit({
+      actor,
+      action: 'plugin.agent-half.retained-data.forgotten',
+      plugin: name,
+      details: { agentLabel, route: retained.route, package: retained.package },
+    });
+    return { forgotten: retained };
+  }
+  if (!(await isActiveAgent(agentLabel))) {
+    throw httpError(
+      `Agent "${agentLabel}" is no longer enrolled — nothing can be pushed to it. Purge the data on the machine (sudo ${APPHOST_PATHS.helper} remove ${retained.route} --purge), then forget the record (forget=true)`,
+      409,
+      { code: 'agent_not_enrolled' },
+    );
+  }
+  const push = await assertAgentHalfPush(agentLabel, sourceIp, 'uninstall', retained.package);
+  const { operation } = await startPluginOperation({
+    plugin: name,
+    kind: 'purge-data',
+    actor,
+    params: { agentLabel },
+    logger,
+    run: (op) => runPurgeRetainedData(op, { retained, logger }),
+  });
+  await logAgentHalfPush(push, operation.id, logger);
+  return { operation };
+}
+
+// ---------------------------------------------------------------------------
 // The hosting agent's side
 // ---------------------------------------------------------------------------
 
-/** The `appPlugins` entries of the agent-config response for agent `label`. */
+/**
+ * The `appPlugins` entries of the agent-config response for agent `label`,
+ * each with the tunnel-state hooks its agent half declares — the agent's
+ * sync calls them on its loopback when the relay's view of the tunnel
+ * changes (`health`).
+ */
 export async function listAgentPluginAssignments(label) {
-  return agentPluginAssignments(await readPluginHostings(STATE_DIR), label);
+  const { findPlugin } = await import('./plugins.js');
+  const store = await readPluginHostings(STATE_DIR);
+  const assignments = agentPluginAssignments(store, label);
+  return Promise.all(
+    assignments.map(async (a) => {
+      const owner = store[a.route] ? pluginHostingOwner(store[a.route]) : null;
+      const plugin = owner ? await findPlugin(owner) : null;
+      const stages = agentHookSetOf({ hooks: plugin?.hooks })?.stages ?? [];
+      return {
+        ...a,
+        agentHooks: stages
+          .filter((h) => h.stage === 'tunnel:down' || h.stage === 'tunnel:up')
+          .map((h) => ({ stage: h.stage, timeoutMs: h.timeoutMs })),
+      };
+    }),
+  );
 }
 
 /**
@@ -306,12 +573,12 @@ export async function acknowledgeAgentPluginConfig(label, route, issuedAt) {
  * @param {string} route
  */
 export async function resolveForwardTarget(route) {
-  const { findPlugin } = await import('./plugins.js');
-  const plugin = await findPlugin(route);
+  const { findPluginByRoute } = await import('./plugins.js');
+  const plugin = await findPluginByRoute(route);
   if (!plugin || !hasAgentHalf(plugin)) return { kind: 'not_found' };
   if (plugin.status !== 'enabled') return { kind: 'disabled' };
-  const record = await getPluginHosting(STATE_DIR, route);
-  if (!record) return { kind: 'not_hosted' };
+  const record = await ownHosting(plugin);
+  if (!record || pluginHostingPhase(record) !== 'active') return { kind: 'not_hosted' };
   const tunnels = await readTunnels();
   const tunnel = tunnels.find((t) => t.id === record.tunnelId);
   const maxBodyMb = tunnel?.maxBodySizeMb ?? TUNNEL_MAX_BODY_MB.default;
@@ -359,7 +626,7 @@ export function startHostedPluginHealthMonitor(logger) {
         (await readPlugins()).plugins.filter((p) => p.status === 'enabled').map((p) => p.name),
       );
       return Object.values(await readPluginHostings(STATE_DIR))
-        .filter((r) => enabled.has(r.plugin))
+        .filter((r) => enabled.has(pluginHostingOwner(r)) && pluginHostingPhase(r) === 'active')
         .map((r) => ({
           plugin: r.plugin,
           port: r.port,
@@ -368,7 +635,10 @@ export function startHostedPluginHealthMonitor(logger) {
         }));
     },
     onTransition: async (plugin, health) => {
+      const before = (await getPluginHosting(STATE_DIR, plugin))?.health ?? null;
       await updatePluginHostingHealth(STATE_DIR, plugin, health);
+      // The relay's tunnel:down / tunnel:up hooks, beside the monitor.
+      void onHealthTransition(plugin, before, health, logger);
     },
     logger,
   });

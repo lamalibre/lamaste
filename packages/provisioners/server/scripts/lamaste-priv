@@ -17,6 +17,11 @@
  *   nginx-site remove <name>           delete <name>, its link and its backup
  *   authelia-totp <username>           stdin: base32 secret
  *   self-update <version>              run create-lamaste@<version> detached
+ *   hooks install <route> <sha256|none>  stdin: the plugin's approved relay hook
+ *                                      module (none: shared hooks only); start its runner
+ *   hooks activate <route> <sha256>    point the runner back at a module kept from before
+ *   hooks restart <route>              stop the plugin's hook runner (the socket stays)
+ *   hooks remove <route>               disable the runner and delete its modules
  *
  * Why vhosts are validated: nginx's master process runs as root and opens the
  * files a configuration names — `access_log /etc/cron.d/x` with a crafted
@@ -484,7 +489,7 @@ function isRegularFile(p) {
   }
 }
 
-function readStdin(maxBytes) {
+function readStdinBytes(maxBytes) {
   const chunks = [];
   let total = 0;
   const buf = Buffer.alloc(65536);
@@ -502,7 +507,11 @@ function readStdin(maxBytes) {
     if (total > maxBytes) throw new UsageError('input is too large');
     chunks.push(Buffer.from(buf.subarray(0, read)));
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+function readStdin(maxBytes) {
+  return readStdinBytes(maxBytes).toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -668,6 +677,193 @@ function selfUpdate(version) {
   process.stdout.write(`${unit}\n`);
 }
 
+// ---------------------------------------------------------------------------
+// Relay hook runners
+// ---------------------------------------------------------------------------
+
+const HOOKS_DIR = '/opt/lamalibre/lamaste/hooks';
+const HOOKS_UNIT_PREFIX = 'lamalibre-lamaste-hooks';
+const SYSTEMCTL = '/usr/bin/systemctl';
+const HOOK_ROUTE_RE = /^[a-z0-9]([a-z0-9-]{0,98}[a-z0-9])?$/;
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const MAX_HOOK_MODULE_BYTES = 4 * 1024 * 1024;
+
+function assertHookRoute(route) {
+  if (typeof route !== 'string' || !HOOK_ROUTE_RE.test(route)) {
+    throw new UsageError('invalid plugin route');
+  }
+}
+
+function assertSha256(digest) {
+  if (typeof digest !== 'string' || !SHA256_RE.test(digest)) {
+    throw new UsageError('digest must be a SHA-256 hex string');
+  }
+}
+
+/** Create `dir` (0755, root) unless it exists; refuse anything but a root-owned directory. */
+function ensureRootDirectory(dir) {
+  try {
+    fs.mkdirSync(dir, { mode: 0o755 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== 0) {
+    throw new Error(`${dir} is not a root-owned directory`);
+  }
+}
+
+function sha256(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function systemctl(args, { allowFailure = false } = {}) {
+  const result = spawnSync(SYSTEMCTL, args, {
+    cwd: '/',
+    env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && !allowFailure) {
+    throw new Error(
+      `systemctl ${args.join(' ')} exited with status ${result.status}: ${(result.stderr || '').trim()}`,
+    );
+  }
+}
+
+function runnerEnvPath(route) {
+  return path.join(HOOKS_DIR, route, 'runner.env');
+}
+
+/** The module the runner currently loads (from runner.env), or null. */
+function activeHookModule(route) {
+  let text;
+  try {
+    text = fs.readFileSync(runnerEnvPath(route), 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+  const m = /^LAMASTE_HOOK_RUNNER_ARGS=--entry (\S+)$/m.exec(text);
+  return m ? m[1] : null;
+}
+
+/**
+ * runner.env: the node flag that lets the runner read the module, and the
+ * runner flag that names it. Both empty when the plugin uses shared hooks
+ * only. Paths are built here, never taken from the caller.
+ */
+function writeRunnerEnv(route, modulePath) {
+  const nodeArgs = modulePath ? `--allow-fs-read=${modulePath}` : '';
+  const runnerArgs = modulePath ? `--entry ${modulePath}` : '';
+  atomicWrite(
+    runnerEnvPath(route),
+    `# Managed by lamaste-priv: the approved relay hook module of plugin ${route}.\n` +
+      `LAMASTE_HOOK_NODE_ARGS=${nodeArgs}\nLAMASTE_HOOK_RUNNER_ARGS=${runnerArgs}\n`,
+    0o644,
+  );
+}
+
+/** Keep the active module and the one before it (for `hooks activate`); delete the rest. */
+function pruneHookModules(route, keep) {
+  const dir = path.join(HOOKS_DIR, route);
+  for (const name of fs.readdirSync(dir)) {
+    if (!/^[a-f0-9]{64}\.mjs$/.test(name)) continue;
+    const file = path.join(dir, name);
+    if (!keep.includes(file)) unlinkIfPresent(file);
+  }
+}
+
+function restartRunner(route) {
+  // The socket stays; the next call starts a runner with the new module.
+  systemctl(['stop', `${HOOKS_UNIT_PREFIX}@${route}.service`]);
+}
+
+function hooksInstall(route, digest) {
+  assertHookRoute(route);
+  if (digest !== 'none') assertSha256(digest);
+  ensureRootDirectory(HOOKS_DIR);
+  ensureRootDirectory(path.join(HOOKS_DIR, route));
+  const previous = activeHookModule(route);
+
+  let modulePath = null;
+  if (digest !== 'none') {
+    const bytes = readStdinBytes(MAX_HOOK_MODULE_BYTES);
+    if (bytes.length === 0) throw new UsageError('the hook module arrives on stdin');
+    if (sha256(bytes) !== digest) {
+      throw new Error('the hook module does not match the approved digest');
+    }
+    modulePath = path.join(HOOKS_DIR, route, `${digest}.mjs`);
+    if (!isRegularFile(modulePath) || sha256(fs.readFileSync(modulePath)) !== digest) {
+      atomicWrite(modulePath, bytes, 0o644);
+    }
+  }
+  writeRunnerEnv(route, modulePath);
+  pruneHookModules(route, [modulePath, previous].filter(Boolean));
+  systemctl(['enable', '--now', `${HOOKS_UNIT_PREFIX}@${route}.socket`]);
+  restartRunner(route);
+}
+
+function hooksActivate(route, digest) {
+  assertHookRoute(route);
+  assertSha256(digest);
+  const modulePath = path.join(HOOKS_DIR, route, `${digest}.mjs`);
+  if (!isRegularFile(modulePath) || sha256(fs.readFileSync(modulePath)) !== digest) {
+    throw new Error('no kept hook module has that digest');
+  }
+  const previous = activeHookModule(route);
+  writeRunnerEnv(route, modulePath);
+  pruneHookModules(route, [modulePath, previous].filter(Boolean));
+  systemctl(['enable', '--now', `${HOOKS_UNIT_PREFIX}@${route}.socket`]);
+  restartRunner(route);
+}
+
+function hooksRestart(route) {
+  assertHookRoute(route);
+  restartRunner(route);
+}
+
+function hooksRemove(route) {
+  assertHookRoute(route);
+  systemctl(['disable', '--now', `${HOOKS_UNIT_PREFIX}@${route}.socket`], { allowFailure: true });
+  systemctl(['stop', `${HOOKS_UNIT_PREFIX}@${route}.service`], { allowFailure: true });
+  const dir = path.join(HOOKS_DIR, route);
+  let st = null;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (st) {
+    if (!st.isDirectory() || st.uid !== 0) throw new Error(`${dir} is not a root-owned directory`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function hooks(action, rest) {
+  switch (action) {
+    case 'install':
+      if (rest.length !== 2) throw new UsageError('usage: hooks install <route> <sha256|none>');
+      hooksInstall(rest[0], rest[1]);
+      return;
+    case 'activate':
+      if (rest.length !== 2) throw new UsageError('usage: hooks activate <route> <sha256>');
+      hooksActivate(rest[0], rest[1]);
+      return;
+    case 'restart':
+      if (rest.length !== 1) throw new UsageError('usage: hooks restart <route>');
+      hooksRestart(rest[0]);
+      return;
+    case 'remove':
+      if (rest.length !== 1) throw new UsageError('usage: hooks remove <route>');
+      hooksRemove(rest[0]);
+      return;
+    default:
+      throw new UsageError(`unknown hooks action: ${action ?? '(none)'}`);
+  }
+}
+
 function main(argv) {
   if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
     throw new UsageError('must run as root (via sudo)');
@@ -686,6 +882,10 @@ function main(argv) {
     case 'self-update':
       if (rest.length !== 1) throw new UsageError('usage: self-update <version>');
       selfUpdate(rest[0]);
+      return;
+    case 'hooks':
+      if (rest.length < 1) throw new UsageError('usage: hooks <action> <route> [...]');
+      hooks(rest[0], rest.slice(1));
       return;
     default:
       throw new UsageError(`unknown operation: ${op ?? '(none)'}`);
@@ -708,5 +908,8 @@ if (require.main === module) {
     PANEL_SITE_RE,
     UsageError,
     AUTHELIA_CLI_ENV,
+    assertHookRoute,
+    HOOK_ROUTE_RE,
+    main,
   };
 }

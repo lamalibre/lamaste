@@ -14,6 +14,7 @@
  *   logs          View server log output (journalctl)
  *   restart       Restart panel server (and optionally gatekeeper)
  *   plugins       Manage server-side plugins
+ *   push-install  Push install: the switch, the default policy, agents' windows
  *   tunnels       Manage tunnels
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
@@ -58,7 +59,9 @@ ${b('COMMANDS')}
   ${c('status')}          Server health, uptime, services, certificate status
   ${c('logs')}            View server log output (journalctl wrapper)
   ${c('restart')}         Restart panel server and optionally gatekeeper
-  ${c('plugins')}         Manage server-side plugins (list, install, enable, disable, uninstall, oidc-clients, rotate-secret)
+  ${c('plugins')}         Manage plugins (list, install, enable, disable, uninstall, update, hosting, hooks, operations, …)
+  ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
+  ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle)
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
@@ -93,6 +96,10 @@ ${b('EXAMPLES')}
 
   ${d('# Install a plugin')}
   ${c('lamaste-server plugins install @lamalibre/herd-server')}
+
+  ${d("# Let the panel install an app plugin's agent half on agent vm1 for the next hour")}
+  ${c('lamaste-server push-install on')}
+  ${c('lamaste-server push-install open vm1 --minutes 60')}
 
   ${d("# Broker agent install tokens from the registry as the panel's own Authelia client")}
   ${c('lamaste-server registry-credential set --url https://feria.example.com --oidc')}
@@ -146,6 +153,16 @@ async function main() {
     case 'plugins': {
       const { runPlugins } = await import('../src/commands/plugins.js');
       await runPlugins(args.slice(1), { json });
+      break;
+    }
+    case 'push-install': {
+      const { runPushInstall } = await import('../src/commands/push-install.js');
+      await runPushInstall(args.slice(1), { json });
+      break;
+    }
+    case 'audit': {
+      const { runAudit } = await import('../src/commands/audit.js');
+      await runAudit(args.slice(1), { json });
       break;
     }
     case 'tunnels': {

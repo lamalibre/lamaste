@@ -1,0 +1,1445 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 36,
+    "name": "App plugin agent half: removal and refusals",
+    "suite": "e2e-three-vm",
+    "description": "36 — App plugin agent half: removal and refusals (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-apphost-rm"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-rm-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-rm-agent"
+    },
+    "AGENT_TARBALL": {
+      "value": "e2e-apphost-rm-agent-1.0.0.tgz"
+    },
+    "SERVICE_USER": {
+      "value": "lamaste-app-e2e-apphost-rm"
+    },
+    "DEPS_PLUGIN": {
+      "value": "e2e-apphost-deps"
+    },
+    "DEPS_SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-deps-server"
+    },
+    "DEPS_AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-deps-agent"
+    },
+    "DEPS_SERVICE_USER": {
+      "value": "lamaste-app-e2e-apphost-deps"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-36"
+    },
+    "REMOTE_DIR": {
+      "value": "/tmp/e2e-36-app-plugin"
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN} ${DEPS_PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN} ${DEPS_PLUGIN}",
+      "expression": true
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}\"\n\n# ===========================================================================\n# 1. Install and host\n# ==========================================================================="
+    },
+    {
+      "id": "install-and-host-the-plugin",
+      "label": "Install and host the plugin",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-36-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Set TAMPERED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "npm pack \"${LOCAL_TMP}/tampered/agent\" --pack-destination \"${LOCAL_TMP}/ship\" --json --loglevel=error 2>/dev/null | jq -r '.[0].filename // empty' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "TAMPERED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-9",
+          "label": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "var_not_eq",
+                "variable": "FIXTURES",
+                "value": "built"
+              },
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "TAMPERED"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tampered ${AGENT_PACKAGE}@1.0.0",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tampered ${AGENT_PACKAGE}@1.0.0"
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "Set PINNED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$INSTALL\" '.hooks.agentHalf.integrity'"
+          },
+          "capture": [
+            {
+              "variable": "PINNED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-19",
+          "label": "The relay pinned the integrity the stand-in Feria publishes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)"
+              },
+              "message": "The relay pinned the integrity the stand-in Feria publishes"
+            }
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Set INSTANCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty'"
+          },
+          "capture": [
+            {
+              "variable": "INSTANCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "The agent half answers through the tunnel (its data: instance ${INSTANCE})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half answers through the tunnel (its data: instance ${INSTANCE})"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "INSTANCE"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "The agent half does not answer through the tunnel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent half does not answer through the tunnel"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "INSTANCE"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install and host the plugin\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-36-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/main\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/deps\" \"${DEPS_PLUGIN}\" 1.0.0 deps \"${BUILD}\" '[]' || FIXTURES=\"failed\"\n# Same package and version as fixtures/main, other bytes: what a registry\n# serving something else under a published version hands out.\nwrite_app_install_fixture \"${LOCAL_TMP}/tampered\" \"${PLUGIN}\" 1.0.0 tampered \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nTAMPERED=$(npm pack \"${LOCAL_TMP}/tampered/agent\" --pack-destination \"${LOCAL_TMP}/ship\" --json --loglevel=error 2>/dev/null | jq -r '.[0].filename // empty' 2>/dev/null || echo \"\")\nif [ \"$FIXTURES\" != \"built\" ] || [ -z \"$TAMPERED\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nmv \"${LOCAL_TMP}/ship/$(basename \"${TAMPERED}\")\" \"${LOCAL_TMP}/ship/tampered.tgz\"\nlog_pass \"Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tampered ${AGENT_PACKAGE}@1.0.0\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/main/server fixtures/main/agent fixtures/deps/server fixtures/deps/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\",\\\"${DEPS_AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nPINNED=$(json_get \"$INSTALL\" '.hooks.agentHalf.integrity')\nassert_eq \"$PINNED\" \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\" \"The relay pinned the integrity the stand-in Feria publishes\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nINSTANCE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty')\nif [ -n \"$INSTANCE\" ]; then\n  log_pass \"The agent half answers through the tunnel (its data: instance ${INSTANCE})\"\nelse\n  log_fail \"The agent half does not answer through the tunnel\"\nfi\n\n# ===========================================================================\n# 2. Unhost: the data and the account stay\n# ==========================================================================="
+    },
+    {
+      "id": "unhosting-keeps-the-agent-half-s-data-and-account",
+      "label": "Unhosting keeps the agent half's data and account",
+      "steps": [
+        {
+          "id": "step-25",
+          "label": "DELETE /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"$(json_get \"$UNHOST\" '.operation.id // empty')\" 240 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-29",
+          "label": "Step: ${step}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" \"$step\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Step: ${step}"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Audit: plugin.agent-half.removed, data kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == false')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Audit: plugin.agent-half.removed, data kept"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Unhosted: the data directory stays, still the account's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.dir | \"\\(.mode) \\(.user)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "700 ${SERVICE_USER}"
+              },
+              "message": "Unhosted: the data directory stays, still the account's"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "…with the agent half's data in it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.state.instance",
+              "expected": {
+                "kind": "var",
+                "name": "INSTANCE"
+              },
+              "message": "…with the agent half's data in it"
+            }
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "Unhosted: the account ${SERVICE_USER} stays",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".account.user != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Unhosted: the account ${SERVICE_USER} stays"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Unhosted: the agent dropped its copy of the plugin config",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Unhosted: the agent dropped its copy of the plugin config"
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "Unhosted: the agent still holds a plugin config for ${PLUGIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Unhosted: the agent still holds a plugin config for ${PLUGIN}"
+          }
+        }
+      ],
+      "bash": "log_section \"Unhosting keeps the agent half's data and account\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN}/hosting\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNHOST\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == false')\" \"1\" \"Audit: plugin.agent-half.removed, data kept\" || true\nassert_relay_clean \"${PLUGIN}\" \"Unhosted\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Unhosted\"\nassert_json_field \"$FACTS\" '.data.dir | \"\\(.mode) \\(.user)\"' \"700 ${SERVICE_USER}\" \"Unhosted: the data directory stays, still the account's\" || true\nassert_json_field \"$FACTS\" '.data.state.instance' \"${INSTANCE}\" \"…with the agent half's data in it\" || true\nassert_json_field \"$FACTS\" '.account.user != null' 'true' \"Unhosted: the account ${SERVICE_USER} stays\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"Unhosted: the agent dropped its copy of the plugin config\"\nelse\n  log_fail \"Unhosted: the agent still holds a plugin config for ${PLUGIN}\"\nfi\n\n# ===========================================================================\n# 3. Other bytes under the pinned version\n# ==========================================================================="
+    },
+    {
+      "id": "a-tarball-that-is-not-the-pinned-one-is-refused",
+      "label": "A tarball that is not the pinned one is refused",
+      "steps": [
+        {
+          "id": "step-40",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${STUB_PORT}/${AGENT_PACKAGE}/-/${AGENT_TARBALL}",
+            "timeout": 30,
+            "headers": {
+              "Authorization": "Bearer ${STUB_ADMIN_TOKEN}"
+            }
+          },
+          "capture": [
+            {
+              "variable": "KEPT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-41",
+          "label": "The published tarball (the pinned bytes) is kept aside",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "KEPT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "message": "The published tarball (the pinned bytes) is kept aside"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Set REPLACED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_put_tarball \"${REMOTE_DIR}/tampered.tgz\""
+          },
+          "capture": [
+            {
+              "variable": "REPLACED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-43",
+          "label": "The stand-in Feria now serves other bytes as ${AGENT_PACKAGE}@1.0.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REPLACED"
+              },
+              "path": "\"\\(.name)@\\(.version) \\(.replaced)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "${AGENT_PACKAGE}@1.0.0 true"
+              },
+              "message": "The stand-in Feria now serves other bytes as ${AGENT_PACKAGE}@1.0.0"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set TAMPERED_INTEGRITY",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$REPLACED\" '.integrity'"
+          },
+          "capture": [
+            {
+              "variable": "TAMPERED_INTEGRITY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "…whose integrity is not the pinned one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TAMPERED_INTEGRITY"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "message": "…whose integrity is not the pinned one"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "…and its packument says so: npm itself has nothing to object to",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "TAMPERED_INTEGRITY"
+              },
+              "message": "…and its packument says so: npm itself has nothing to object to"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set REQUEST_MARK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/e2e/requests\" | jq '.requests | length' 2>/dev/null || echo \"0\""
+          },
+          "capture": [
+            {
+              "variable": "REQUEST_MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-48",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 240 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-49",
+          "label": "Hosting failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "Hosting failed"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "…at install the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'install the agent half')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "…at install the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "…the agent refused the tarball against the pinned integrity",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OP\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "does not match the integrity the panel pinned"
+              },
+              "message": "…the agent refused the tarball against the pinned integrity"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "The tunnel was never granted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "absent"
+              },
+              "message": "The tunnel was never granted"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "Set PULLS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/e2e/requests\" | jq -c --argjson m \"${REQUEST_MARK:-0}\" \"[.requests[\\$m:][] | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/${AGENT_TARBALL}\\\")))]\" 2>/dev/null || echo '[]'"
+          },
+          "capture": [
+            {
+              "variable": "PULLS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-56",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "Refused: the kept data is untouched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.state.instance",
+              "expected": {
+                "kind": "var",
+                "name": "INSTANCE"
+              },
+              "message": "Refused: the kept data is untouched"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Refused: the agent dropped its copy of the plugin config",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Refused: the agent dropped its copy of the plugin config"
+          }
+        },
+        {
+          "id": "step-60",
+          "label": "Refused: the agent still holds a plugin config for ${PLUGIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Refused: the agent still holds a plugin config for ${PLUGIN}"
+          }
+        }
+      ],
+      "bash": "log_section \"A tarball that is not the pinned one is refused\"\n\n# The published tarball, kept aside to be served again afterwards.\nKEPT=$(host_exec \"curl -sf --max-time 30 -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -o ${REMOTE_DIR}/original.tgz 'http://127.0.0.1:${STUB_PORT}/${AGENT_PACKAGE}/-/${AGENT_TARBALL}' && echo \\\"sha512-\\$(openssl dgst -sha512 -binary ${REMOTE_DIR}/original.tgz | base64 -w0)\\\"\" 2>/dev/null || echo \"\")\nassert_eq \"$KEPT\" \"$PINNED\" \"The published tarball (the pinned bytes) is kept aside\" || true\nREPLACED=$(stub_put_tarball \"${REMOTE_DIR}/tampered.tgz\")\nassert_json_field \"$REPLACED\" '\"\\(.name)@\\(.version) \\(.replaced)\"' \"${AGENT_PACKAGE}@1.0.0 true\" \"The stand-in Feria now serves other bytes as ${AGENT_PACKAGE}@1.0.0\" || true\nTAMPERED_INTEGRITY=$(json_get \"$REPLACED\" '.integrity')\nassert_not_eq \"$TAMPERED_INTEGRITY\" \"$PINNED\" \"…whose integrity is not the pinned one\" || true\nassert_eq \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\" \"$TAMPERED_INTEGRITY\" \"…and its packument says so: npm itself has nothing to object to\" || true\nREQUEST_MARK=$(stub_get \"-/e2e/requests\" | jq '.requests | length' 2>/dev/null || echo \"0\")\n\nOP=$(host_plugin \"${PLUGIN}\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'failed' \"Hosting failed\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"failed\" \"…at install the agent half\" || true\nassert_contains \"$(json_get \"$OP\" '.error')\" \"does not match the integrity the panel pinned\" \"…the agent refused the tarball against the pinned integrity\" || true\nassert_eq \"$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')\" \"absent\" \"The tunnel was never granted\" || true\nPULLS=$(stub_get \"-/e2e/requests\" | jq -c --argjson m \"${REQUEST_MARK:-0}\" \"[.requests[\\$m:][] | select(.method == \\\"GET\\\" and (.path | endswith(\\\"/${AGENT_TARBALL}\\\")))]\" 2>/dev/null || echo '[]')\nassert_json_field \"$PULLS\" \"[.[] | select(.owner == \\\"agent:${HOST_AGENT_LABEL}\\\" and .status == 200)] | length > 0\" 'true' \"agent:${HOST_AGENT_LABEL} did fetch the republished tarball\" || true\nassert_relay_clean \"${PLUGIN}\" \"Refused\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Refused\"\nassert_json_field \"$FACTS\" '.data.state.instance' \"${INSTANCE}\" \"Refused: the kept data is untouched\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"Refused: the agent dropped its copy of the plugin config\"\nelse\n  log_fail \"Refused: the agent still holds a plugin config for ${PLUGIN}\"\nfi\n\n# ===========================================================================\n# 4. Hosting again finds the data; purge removes it\n# ==========================================================================="
+    },
+    {
+      "id": "hosting-again-finds-the-kept-data-purge-removes-it",
+      "label": "Hosting again finds the kept data; purge removes it",
+      "steps": [
+        {
+          "id": "step-61",
+          "label": "Set RESTORED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_put_tarball \"${REMOTE_DIR}/original.tgz\""
+          },
+          "capture": [
+            {
+              "variable": "RESTORED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "The stand-in Feria serves the published bytes again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RESTORED"
+              },
+              "path": ".integrity",
+              "expected": {
+                "kind": "var",
+                "name": "PINNED"
+              },
+              "message": "The stand-in Feria serves the published bytes again"
+            }
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-64",
+          "label": "Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "GET /api/${PLUGIN}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/ping"
+          },
+          "capture": [
+            {
+              "variable": "PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-66",
+          "label": "The agent half found the data the unhosting kept",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".data.instance",
+              "expected": {
+                "kind": "var",
+                "name": "INSTANCE"
+              },
+              "message": "The agent half found the data the unhosting kept"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "POST /api/plugins/${PLUGIN}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/disable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}?purge=true"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 240 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "The plugin is gone from the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"plugins/${PLUGIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The plugin is gone from the relay"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Purged: no data directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".data.dir",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "Purged: no data directory"
+            }
+          }
+        },
+        {
+          "id": "step-76",
+          "label": "Purged: no ${SERVICE_USER} account or group",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.account.user) \\(.account.group)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "Purged: no ${SERVICE_USER} account or group"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Hosting again finds the kept data; purge removes it\"\n\nRESTORED=$(stub_put_tarball \"${REMOTE_DIR}/original.tgz\")\nassert_json_field \"$RESTORED\" '.integrity' \"${PINNED}\" \"The stand-in Feria serves the published bytes again\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"The agent half found the data the unhosting kept\" || true\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Purged\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Purged\"\nassert_json_field \"$FACTS\" '.data.dir' 'null' \"Purged: no data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"Purged: no ${SERVICE_USER} account or group\" || true\n\n# ===========================================================================\n# 5. An agent package with dependencies\n# ==========================================================================="
+    },
+    {
+      "id": "an-agent-package-that-is-not-bundled-is-refused",
+      "label": "An agent package that is not bundled is refused",
+      "steps": [
+        {
+          "id": "step-77",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${DEPS_PLUGIN}\" \"${DEPS_SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Installed ${DEPS_SERVER_PACKAGE}; its agent half is ${DEPS_AGENT_PACKAGE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".hooks.agentHalf.package",
+              "expected": {
+                "kind": "var",
+                "name": "DEPS_AGENT_PACKAGE"
+              },
+              "message": "Installed ${DEPS_SERVER_PACKAGE}; its agent half is ${DEPS_AGENT_PACKAGE}"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${DEPS_PLUGIN}\" 240 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "Hosting failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "Hosting failed"
+            }
+          }
+        },
+        {
+          "id": "step-81",
+          "label": "…at install the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'install the agent half')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "…at install the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "…the agent's helper refused a package with dependencies",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$OP\" '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "must be bundled, but it declares dependencies"
+              },
+              "message": "…the agent's helper refused a package with dependencies"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${DEPS_PLUGIN}\" \"${DEPS_SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "Refused: no data directory, no account",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.data.dir) \\(.account.user)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "null null"
+              },
+              "message": "Refused: no data directory, no account"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"An agent package that is not bundled is refused\"\n\nINSTALL=$(install_approved \"${DEPS_PLUGIN}\" \"${DEPS_SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.hooks.agentHalf.package' \"${DEPS_AGENT_PACKAGE}\" \"Installed ${DEPS_SERVER_PACKAGE}; its agent half is ${DEPS_AGENT_PACKAGE}\" || true\nOP=$(host_plugin \"${DEPS_PLUGIN}\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'failed' \"Hosting failed\" || true\nassert_eq \"$(step_status \"$OP\" 'install the agent half')\" \"failed\" \"…at install the agent half\" || true\nassert_contains \"$(json_get \"$OP\" '.error')\" \"must be bundled, but it declares dependencies\" \"…the agent's helper refused a package with dependencies\" || true\nassert_relay_clean \"${DEPS_PLUGIN}\" \"Refused\"\nFACTS=$(agent_facts \"${DEPS_PLUGIN}\" \"${DEPS_SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Refused\"\nassert_json_field \"$FACTS\" '\"\\(.data.dir) \\(.account.user)\"' 'null null' \"Refused: no data directory, no account\" || true\n\n# ===========================================================================\n# 6. The agent's window closed\n# ==========================================================================="
+    },
+    {
+      "id": "with-the-agent-s-push-install-window-closed-hosting-is-refused",
+      "label": "With the agent's push-install window closed, hosting is refused",
+      "steps": [
+        {
+          "id": "step-87",
+          "label": "DELETE /api/plugins/push-install/enable/${HOST_AGENT_LABEL}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/push-install/enable/${HOST_AGENT_LABEL}"
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "Set REFUSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call POST \"plugins/${DEPS_PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\""
+          },
+          "capture": [
+            {
+              "variable": "REFUSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Hosting is refused (403)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$REFUSED\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Hosting is refused (403)"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$REFUSED\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "push_install_refused"
+              },
+              "message": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Nothing was started",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"plugins/${DEPS_PLUGIN}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "Nothing was started"
+            }
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "POST /api/plugins/${DEPS_PLUGIN}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${DEPS_PLUGIN}/disable",
+            "body": {}
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "${DEPS_PLUGIN}, never hosted, is uninstalled at once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$(host_api_call DELETE \"plugins/${DEPS_PLUGIN}\")\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${DEPS_PLUGIN}, never hosted, is uninstalled at once"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"With the agent's push-install window closed, hosting is refused\"\n\nhost_api_delete \"plugins/push-install/enable/${HOST_AGENT_LABEL}\" > /dev/null\nREFUSED=$(host_api_call POST \"plugins/${DEPS_PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_eq \"$(status_of \"$REFUSED\")\" \"403\" \"Hosting is refused (403)\" || true\nassert_json_field \"$(body_of \"$REFUSED\")\" '.code' 'push_install_refused' \"…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${DEPS_PLUGIN}/hosting\")\" \"404\" \"Nothing was started\" || true\n\nhost_api_post \"plugins/${DEPS_PLUGIN}/disable\" '{}' > /dev/null\nassert_eq \"$(status_of \"$(host_api_call DELETE \"plugins/${DEPS_PLUGIN}\")\")\" \"200\" \"${DEPS_PLUGIN}, never hosted, is uninstalled at once\" || true"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 36 — App plugin agent half: removal and refusals (Three-VM)\n# ============================================================================\n# An app plugin whose agent half Lamaste installs (fixture\n# @lamalibre/e2e-apphost-rm-server, helpers.sh), hosted on the agent VM from\n# the panel as in spec 34:\n#\n# 1. Unhosting (default) removes the unit, the code and the config, the\n#    tunnel, the secret and the capability; the agent half's data directory\n#    and account stay.\n# 2. The stand-in Feria then serves other bytes under the pinned version\n#    (a consistent packument, a new integrity): hosting again fails at\n#    \"install the agent half\" — the agent fetched the tarball and refused it\n#    against the integrity the relay pinned — and leaves nothing behind.\n# 3. With the published bytes back, hosting again finds the data the\n#    unhosting kept; uninstalling with purge then removes the data\n#    directory and the account too.\n# 4. A plugin whose agent package declares `dependencies` (fixture\n#    @lamalibre/e2e-apphost-deps-server) fails at \"install the agent half\":\n#    the agent's root helper refuses a package that is not bundled; nothing\n#    is left.\n# 5. With the agent's push-install window closed, hosting is refused.\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-rm\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-rm-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-rm-agent\"\nAGENT_TARBALL=\"e2e-apphost-rm-agent-1.0.0.tgz\"\nSERVICE_USER=\"lamaste-app-e2e-apphost-rm\"\nDEPS_PLUGIN=\"e2e-apphost-deps\"\nDEPS_SERVER_PACKAGE=\"@lamalibre/e2e-apphost-deps-server\"\nDEPS_AGENT_PACKAGE=\"@lamalibre/e2e-apphost-deps-agent\"\nDEPS_SERVICE_USER=\"lamaste-app-e2e-apphost-deps\"\nPOLICY_ID=\"e2e-apphost-36\"\nREMOTE_DIR=\"/tmp/e2e-36-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${DEPS_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${DEPS_PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\n# stub_put_tarball <file on the host VM> — publish it on the stand-in Feria\n# (replacing the version it holds); prints the registry's answer\nstub_put_tarball() {\n  host_exec \"curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/octet-stream' --data-binary @$1 'http://127.0.0.1:${STUB_PORT}/-/e2e/packages'\"\n}\n\n# assert_nothing_installed <facts json> <message prefix> — no unit, code or config\n# of the agent half on the agent VM\nassert_nothing_installed() {\n  assert_json_field \"$1\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"$2: no unit\" || true\n  assert_json_field \"$1\" '\"\\(.code.dir) \\(.config.dir)\"' 'null null' \"$2: no code, no config\" || true\n  assert_json_field \"$1\" '.apphostRecord' 'null' \"$2: not in the agent's record\" || true\n}\n\nbegin_test \"36 — App plugin agent half: removal and refusals (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -87,7 +87,7 @@ function healthRequest(
           [CALLER_ASSERTION_HEADER]: signCallerAssertion(
             {
               plugin: target.plugin,
-              caller: { type: 'admin' },
+              caller: { type: 'lamaste' },
               method: 'GET',
               path: AGENT_HALF_HEALTH_PATH,
             },

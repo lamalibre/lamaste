@@ -583,12 +583,21 @@ write_stub_registry() {
 // clients reach the registry at (default http://127.0.0.1:<port>), used in
 // the tarball URLs of the packuments.
 //
+// Every request is recorded with the owner of the token it carried and the
+// status it was answered with — what Feria's audit log says about who pulled
+// what. Packuments are answered `cache-control: no-cache`, so a client sees a
+// republished version at once.
+//
 // Admin-only e2e endpoints: GET /-/e2e/requests (what was recorded),
-// POST /-/e2e/config {"agentTokenTtlSeconds": n} (lifetime of brokered tokens).
+// POST /-/e2e/config {"agentTokenTtlSeconds": n} (lifetime of brokered tokens),
+// PUT /-/e2e/packages with a package .tgz as the body (publish that version, or
+// replace its tarball: the packument then advertises the new integrity, as a
+// registry that serves other bytes under a published version would).
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { gunzipSync } from 'node:zlib';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
@@ -626,9 +635,9 @@ const json = (res, status, payload) => {
 };
 const readBody = (req) =>
   new Promise((resolve) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => resolve(body));
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
   });
 
 function issue({ owner, kind, scopes, label, ttlSeconds, createdBy }) {
@@ -704,7 +713,53 @@ async function verifyAssertion(assertion) {
 }
 
 // --- fixture packages ---
-const packages = new Map(); // name → { packument, tarballs: Map<file, Buffer> }
+const packages = new Map(); // name → { versions: { [version]: manifest }, tarballs: Map<file, Buffer> }
+
+/** Serve `tarball` as version `pkg.version` of `pkg.name`, replacing what was there. */
+function publish(pkg, tarball) {
+  const unscoped = pkg.name.replace(/^@[^/]+\//, '');
+  const file = `${unscoped}-${pkg.version}.tgz`;
+  const dist = {
+    tarball: `${BASE}/${pkg.name}/-/${file}`,
+    integrity: `sha512-${crypto.createHash('sha512').update(tarball).digest('base64')}`,
+    shasum: crypto.createHash('sha1').update(tarball).digest('hex'),
+  };
+  const entry = packages.get(pkg.name) ?? { tarballs: new Map(), versions: {} };
+  entry.versions[pkg.version] = { ...pkg, dist };
+  entry.tarballs.set(file, tarball);
+  packages.set(pkg.name, entry);
+  return dist;
+}
+
+/** The package/package.json of a package tarball (.tgz). */
+function packageJsonOf(tgz) {
+  const tar = gunzipSync(tgz);
+  let paxPath = null;
+  for (let at = 0; at + 512 <= tar.length; ) {
+    const header = tar.subarray(at, at + 512);
+    if (header.every((b) => b === 0)) break;
+    const field = (start, length) => {
+      const raw = header.subarray(start, start + length);
+      const nul = raw.indexOf(0);
+      return raw.subarray(0, nul === -1 ? length : nul).toString('utf8');
+    };
+    const size = Number.parseInt(field(124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(header[156]);
+    const data = tar.subarray(at + 512, at + 512 + size);
+    if (type === 'x') {
+      paxPath = /(?:^|\n)\d+ path=([^\n]*)\n/.exec(data.toString('utf8'))?.[1] ?? null;
+    } else {
+      const name = paxPath ?? (field(345, 155) ? `${field(345, 155)}/${field(0, 100)}` : field(0, 100));
+      if ((type === '0' || type === '\0') && name === 'package/package.json') {
+        return JSON.parse(data.toString('utf8'));
+      }
+      paxPath = null;
+    }
+    at += 512 + Math.ceil(size / 512) * 512;
+  }
+  throw new Error('the tarball holds no package/package.json');
+}
+
 async function loadPackages() {
   for (const dir of opts.packages) {
     const dest = await mkdtemp(path.join(tmpdir(), 'stub-registry-pack-'));
@@ -715,16 +770,10 @@ async function loadPackages() {
     );
     const [info] = JSON.parse(stdout);
     const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'));
-    const tarball = await readFile(path.join(dest, info.filename));
-    const unscoped = pkg.name.replace(/^@[^/]+\//, '');
-    const file = `${unscoped}-${pkg.version}.tgz`;
-    const entry = packages.get(pkg.name) ?? { tarballs: new Map(), versions: {} };
-    entry.versions[pkg.version] = {
-      ...pkg,
-      dist: { tarball: `${BASE}/${pkg.name}/-/${file}`, integrity: info.integrity, shasum: info.shasum },
-    };
-    entry.tarballs.set(file, tarball);
-    packages.set(pkg.name, entry);
+    const dist = publish(pkg, await readFile(path.join(dest, info.filename)));
+    if (dist.integrity !== info.integrity) {
+      throw new Error(`${pkg.name}@${pkg.version}: the integrity npm reported is not the tarball's`);
+    }
   }
 }
 
@@ -743,13 +792,19 @@ function packumentOf(name) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, BASE);
   const principal = principalOf(req);
-  const body = await readBody(req);
-  requests.push({
+  const raw = await readBody(req);
+  const body = raw.toString('utf8');
+  const record = {
     at: new Date().toISOString(),
     method: req.method,
     path: decodeURIComponent(url.pathname) + url.search,
     authorization: req.headers.authorization ?? null,
     owner: principal?.owner ?? null,
+    status: null,
+  };
+  requests.push(record);
+  res.on('finish', () => {
+    record.status = res.statusCode;
   });
   const requireAuth = () => {
     if (!principal) {
@@ -813,6 +868,21 @@ const server = createServer(async (req, res) => {
       if (Number.isInteger(cfg.agentTokenTtlSeconds) && cfg.agentTokenTtlSeconds > 0) agentTokenTtlSeconds = cfg.agentTokenTtlSeconds;
       return json(res, 200, { agentTokenTtlSeconds });
     }
+    if (req.method === 'PUT' && url.pathname === '/-/e2e/packages') {
+      if (!requireAdmin()) return;
+      let pkg;
+      try {
+        pkg = packageJsonOf(raw);
+      } catch (err) {
+        return json(res, 400, { error: `not a package tarball: ${err.message}` });
+      }
+      if (!/^@[a-z0-9-]+\/[a-z0-9][a-z0-9.-]*$/.test(pkg.name ?? '') || typeof pkg.version !== 'string') {
+        return json(res, 400, { error: 'the tarball names no scoped package and version' });
+      }
+      const replaced = packages.get(pkg.name)?.versions[pkg.version] !== undefined;
+      const dist = publish(pkg, raw);
+      return json(res, 200, { name: pkg.name, version: pkg.version, replaced, ...dist });
+    }
 
     // npm registry: packument and tarballs of the fixture packages. Scoped
     // names arrive as @scope%2fname or @scope/name.
@@ -830,6 +900,7 @@ const server = createServer(async (req, res) => {
       if (!requireAuth()) return;
       const doc = packumentOf(packument[1]);
       if (!doc) return json(res, 404, { error: 'not found' });
+      res.setHeader('cache-control', 'no-cache');
       return json(res, 200, doc);
     }
     json(res, 404, { error: 'not found' });
@@ -1011,7 +1082,13 @@ FIXTURE_EOF
 # @lamalibre/lamaste/agent's createCallerAssertionVerifier.
 #
 #   node app-plugin-half.mjs --config <plugin config json> --plugin <route> \
-#     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>]
+#     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>] \
+#     [--flags <dir>] [--wait-config]
+#
+# Lifecycle hooks (4.3): /admin/hooks/<stage> answered by
+# createAgentHookHandler (Lamaste's calls only); each stage logs a line
+# `hook <stage> phase=… reason=… state=…`, and <flags>/fail-<stage> makes it
+# refuse. --wait-config waits for the agent's sync to deliver the config.
 #
 # Routes: /admin/health, /admin/ping (echoes caller, path, what headers
 # arrived), /admin/panel.js (a mount(ctx) bundle), /admin/echo (POST, counts
@@ -1023,7 +1100,7 @@ write_app_plugin_half() {
   cat > "$dest" <<'HALF_EOF'
 import http from 'node:http';
 import path from 'node:path';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -1035,13 +1112,35 @@ const configPath = opt('--config');
 const plugin = opt('--plugin');
 const lamasteDir = opt('--lamaste');
 const logFile = opt('--log');
+const flagsDir = opt('--flags');
 if (!configPath || !plugin || !lamasteDir) {
-  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>]');
+  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>] [--flags <dir>] [--wait-config]');
   process.exit(2);
+}
+// --wait-config: the agent's sync delivers the config after the half starts.
+if (args.includes('--wait-config')) {
+  while (!existsSync(configPath)) await new Promise((r) => setTimeout(r, 500));
 }
 const agentLib = await import(pathToFileURL(path.join(lamasteDir, 'dist', 'agent', 'index.js')).href);
 const verifier = agentLib.createCallerAssertionVerifier({ configPath, plugin, reloadIntervalMs: 500 });
 const port = await verifier.port();
+const callerName = (c) => (c.type === 'agent' ? `agent:${c.label}` : c.type);
+
+// Lifecycle hooks (4.3): each stage logs what it was called with; a file
+// <flags>/fail-<stage> makes that stage refuse.
+const failing = (stage) => Boolean(flagsDir) && existsSync(path.join(flagsDir, `fail-${stage}`));
+const hookFor = (stage) => (input) => {
+  log(`hook ${stage} phase=${input.phase ?? '-'} reason=${input.reason ?? '-'} state=${input.state ?? '-'}`);
+  return failing(stage) ? { ok: false, reason: `e2e: ${stage} refused by flag` } : { ok: true, output: { stage } };
+};
+const hookHandler = agentLib.createAgentHookHandler
+  ? agentLib.createAgentHookHandler({
+      verifier,
+      hooks: Object.fromEntries(
+        ['install:pre-tunnel', 'install:post-tunnel', 'uninstall:pre-teardown', 'uninstall:post-teardown', 'tunnel:down', 'tunnel:up'].map((s) => [s, hookFor(s)]),
+      ),
+    })
+  : null;
 
 function log(line) {
   const text = `${new Date().toISOString()} ${line}\n`;
@@ -1068,13 +1167,21 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
     return;
   }
+  if (p.startsWith('/admin/hooks/') && hookHandler) {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const out = await hookHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    log(`${req.method} ${req.url} ${out.status} hook-call`);
+    json(res, out.status, out.body);
+    return;
+  }
   const result = await verifier.verify(req.headers, req.method, req.url);
   if (!result.ok) {
     log(`${req.method} ${req.url} 401 refused=${result.reason}`);
     json(res, 401, { error: 'caller assertion refused', reason: result.reason });
     return;
   }
-  const caller = result.payload.caller.type === 'admin' ? 'admin' : `agent:${result.payload.caller.label}`;
+  const caller = callerName(result.payload.caller);
   if (p === '/admin/health') {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
     json(res, 200, { ok: true, plugin, port });
@@ -1124,12 +1231,518 @@ const server = http.createServer(async (req, res) => {
     }, 200);
     return;
   }
+  // Routes the request-hook specs use (4.3).
+  if (p.startsWith('/admin/import/') && req.method === 'POST') {
+    let bytes = 0;
+    req.on('data', (c) => (bytes += c.length));
+    req.on('end', () => {
+      log(`POST ${req.url} 200 caller=${caller} bytes=${bytes} validated=${req.headers['x-validated'] ?? '-'}`);
+      json(res, 200, { imported: true, bytes, validated: req.headers['x-validated'] ?? null });
+    });
+    return;
+  }
+  if (p.startsWith('/admin/export/')) {
+    log(`${req.method} ${req.url} 200 caller=${caller} encoding=${req.headers['accept-encoding'] ?? '-'}`);
+    // A planted credential the relay's secret scanner must redact.
+    json(res, 200, { rows: 2, token: 'ghp_' + 'E2eToken0'.repeat(4), total: '12345678901234567890' }, { etag: '"e2e"' });
+    return;
+  }
+  if (p === '/admin/report') {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('quarterly report — BLOCKME');
+    return;
+  }
+  if (p === '/admin/stuck') {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    json(res, 200, { reached: true });
+    return;
+  }
   log(`${req.method} ${req.url} 404 caller=${caller}`);
   json(res, 404, { error: 'no such admin route' });
 });
 
 server.listen(port, '127.0.0.1', () => log(`listening on 127.0.0.1:${port} for plugin ${plugin}`));
 HALF_EOF
+}
+
+# write_hooks_fixture_plugin dir name version mode agent-hooks-json
+# An agent-hosted plugin with lifecycle hooks (4.3): package
+# @lamalibre/<name>-server at <version>. Its relay module (hooks/relay.mjs,
+# self-contained) runs in Lamaste's hook runner and reports what the
+# sandbox let it do as an audit effect (`hook.sandbox.probe`). <mode>:
+#   main      — every relay stage succeeds; request hooks on
+#               POST /admin/import/* (rejects {"valid":false}),
+#               GET /admin/stuck (never answers: a busy loop),
+#               GET /admin/export/* (lamaste:secret-scan) and
+#               GET /admin/report (blocks a body containing BLOCKME);
+#               tunnel:down returns a 503 maintenance fallback
+#   failpre   — relay install:pre-tunnel refuses
+#   failpost  — relay install:post-tunnel refuses
+# Every relay lifecycle stage records `hook.<stage-with-dots>` with its phase.
+# <agent-hooks-json> is the manifest's `hooks.agent` block ('{}' for none).
+# [revision] (default 1) changes the relay module's bytes — and so the hook
+# set's digest — without changing what it does; the version alone does not.
+write_hooks_fixture_plugin() {
+  local dir="$1" name="$2" version="$3" mode="$4" agent_hooks="$5" revision="${6:-1}"
+  local pkg="@lamalibre/${name}-server"
+  mkdir -p "${dir}/hooks"
+  cat > "${dir}/package.json" <<FIXTURE_EOF
+{
+  "name": "${pkg}",
+  "version": "${version}",
+  "description": "Lamaste e2e fixture: an agent-hosted plugin with lifecycle hooks (${mode})",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json", "hooks"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+  cat > "${dir}/index.js" <<FIXTURE_EOF
+throw new Error('${name}: agent-hosted plugin code was imported by the panel');
+FIXTURE_EOF
+  local request_hooks='[]'
+  if [ "${mode}" = "main" ]; then
+    request_hooks='[
+      { "stage": "pre-forward", "routes": ["POST /admin/import/*", "GET /admin/stuck"], "body": { "maxBytes": 4096 }, "timeoutMs": 1000 },
+      { "stage": "post-forward", "use": "lamaste:secret-scan", "routes": ["GET /admin/export/*"], "body": { "maxBytes": 65536 } },
+      { "stage": "post-forward", "routes": ["GET /admin/report"], "body": { "maxBytes": 65536 } }
+    ]'
+  fi
+  cat > "${dir}/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E Hooks ${mode}",
+  "version": "${version}",
+  "description": "Lifecycle hooks fixture (${mode})",
+  "hosting": "agent",
+  "agent": { "requires": { "node": ">=22", "os": ["linux"] } },
+  "modes": ["server"],
+  "packages": { "server": "${pkg}" },
+  "capabilities": ["plugin:${name}:use"],
+  "hooks": {
+    "relay": {
+      "entry": "hooks/relay.mjs",
+      "effects": ["audit", "notify-admins"],
+      "install": { "pre-tunnel": {}, "post-tunnel": {} },
+      "uninstall": { "pre-teardown": {}, "post-teardown": {} },
+      "request": ${request_hooks},
+      "tunnel": { "down": {}, "up": {} }
+    },
+    "agent": ${agent_hooks}
+  }
+}
+FIXTURE_EOF
+  cat > "${dir}/hooks/relay.mjs" <<FIXTURE_EOF
+// e2e relay hooks — mode ${mode}, revision ${revision}. Self-contained: the
+// runner may read nothing but this file.
+const MODE = '${mode}';
+export const REVISION = '${revision}';
+import fs from 'node:fs';
+import net from 'node:net';
+
+const attempt = async (fn) => {
+  try {
+    await fn();
+    return 'ALLOWED';
+  } catch (err) {
+    return String(err && (err.code || err.name) || 'error');
+  }
+};
+const connect = (opts) =>
+  new Promise((resolve) => {
+    let s;
+    try {
+      s = net.connect(opts);
+    } catch (err) {
+      resolve(String(err.code || err.name));
+      return;
+    }
+    const timer = setTimeout(() => {
+      s.destroy();
+      resolve('TIMEOUT');
+    }, 3000);
+    s.once('connect', () => {
+      clearTimeout(timer);
+      s.destroy();
+      resolve('CONNECTED');
+    });
+    s.once('error', (err) => {
+      clearTimeout(timer);
+      resolve(String(err.code || err.name));
+    });
+  });
+
+async function probe() {
+  return {
+    readLamaste: await attempt(() => fs.readFileSync('/etc/lamalibre/lamaste/panel.json')),
+    readPasswd: await attempt(() => fs.readFileSync('/etc/passwd')),
+    write: await attempt(() => fs.writeFileSync('/tmp/e2e-hook-escape', 'x')),
+    spawn: await attempt(async () => (await import('node:child_process')).execFileSync('/bin/true')),
+    worker: await attempt(async () => new (await import('node:worker_threads')).Worker('1', { eval: true })),
+    tcpOut: await connect({ host: '1.1.1.1', port: 443 }),
+    tcpPanel: await connect({ host: '127.0.0.1', port: 3100 }),
+    journal: await connect({ path: '/run/systemd/journal/stdout' }),
+    dbus: await connect({ path: '/run/dbus/system_bus_socket' }),
+    uid: typeof process.getuid === 'function' ? process.getuid() : -1,
+    envKeys: Object.keys(process.env).length,
+  };
+}
+
+const lifecycle = (stage) => async (input) => {
+  const effects = [{ type: 'audit', event: stage.replace(':', '.'), data: { phase: input.phase, version: input.version } }];
+  if (stage === 'install:pre-tunnel') {
+    effects.push({ type: 'audit', event: 'sandbox.probe', data: await probe() });
+    if (MODE === 'failpre') return { ok: false, reason: 'e2e: refused before the tunnel', effects };
+  }
+  if (stage === 'install:post-tunnel' && MODE === 'failpost') {
+    return { ok: false, reason: 'e2e: refused after the tunnel', effects };
+  }
+  return { ok: true, output: { stage }, effects };
+};
+
+export default {
+  'install:pre-tunnel': lifecycle('install:pre-tunnel'),
+  'install:post-tunnel': lifecycle('install:post-tunnel'),
+  'uninstall:pre-teardown': lifecycle('uninstall:pre-teardown'),
+  'uninstall:post-teardown': lifecycle('uninstall:post-teardown'),
+  'request:pre-forward': (req) => {
+    if (req.path === '/admin/stuck') {
+      for (;;) {
+        // never decides: the runner must be replaced
+      }
+    }
+    let data = null;
+    try {
+      data = req.body ? req.body.json() : null;
+    } catch {
+      return { action: 'reject', status: 400, body: { error: 'not JSON' } };
+    }
+    if (!data || data.valid !== true) {
+      return { action: 'reject', status: 422, body: { error: 'invalid import' }, effects: [{ type: 'audit', event: 'import.rejected' }] };
+    }
+    return { action: 'continue', setHeaders: { 'x-validated': 'yes' } };
+  },
+  'request:post-forward': (res) =>
+    res.body && res.body.text().includes('BLOCKME')
+      ? { action: 'block', reasonId: 'e2e.blocked' }
+      : { action: 'pass' },
+  'tunnel:down': (state) => ({
+    fallback: { status: 503, retryAfter: 30, body: { error: 'maintenance', reason: state.reason } },
+    effects: [
+      { type: 'notify-admins', level: 'warning', message: 'e2e hooks plugin down (' + state.reason + ')' },
+      { type: 'audit', event: 'tunnel.down', data: { reason: state.reason } },
+    ],
+  }),
+  'tunnel:up': () => ({ effects: [{ type: 'audit', event: 'tunnel.up' }] }),
+};
+FIXTURE_EOF
+}
+
+# write_app_install_fixture dir name version mode build-id [system-packages-json]
+# An agent-hosted plugin whose agent half Lamaste installs onto the hosting
+# agent itself (slice 3) — two packages at <version>:
+#   <dir>/server  @lamalibre/<name>-server: the manifest — hosting "agent";
+#                 agent.requires Node.js >=22, Linux and <system-packages-json>
+#                 (default ["sqlite3"]); agent.package @lamalibre/<name>-agent;
+#                 agent.service dist/agentd.mjs with MemoryMax 256M; admin
+#                 pages; agent hooks for the install and uninstall stages.
+#                 Its main module throws if the panel ever imports it.
+#   <dir>/agent   @lamalibre/<name>-agent: ONE bundled ES module,
+#                 dist/agentd.mjs, built with esbuild (build-app-agent-half.js,
+#                 next to this file) from <dir>/agent-src against this
+#                 workspace's @lamalibre/lamaste/agent — no runtime
+#                 dependencies, as real app plugins ship.
+# The agent half reads LAMASTE_APP_CONFIG with createCallerAssertionVerifier
+# (re-read on a signature it cannot verify), listens on 127.0.0.1:<the
+# config's port> and answers /admin/health, /admin/ping (caller, its package
+# version, its account, its data), /admin/panel.js, /admin/sandbox (what its
+# unit lets it write and read) and /admin/hooks/* (createAgentHookHandler:
+# Lamaste's calls only; each stage logs `hook <stage> phase=… version=…` to
+# the journal). LAMASTE_APP_DATA_DIR/state.json counts its starts under one
+# random instance id: data that is kept keeps the id. <mode>:
+#   main      — every hook stage succeeds
+#   failpost  — install:post-tunnel refuses: a bad release
+#   deps      — the agent package declares `dependencies`, which the agent's
+#               root helper refuses (an agent half ships bundled)
+#   tampered  — as main, other bytes: what a registry serving something else
+#               under a published version hands out
+# <build-id> goes into the agent package, so each run's tarballs — and their
+# integrity — are new: an agent's npm cache never answers for the registry.
+# Needs node, this workspace's node_modules (esbuild) and its core library
+# build (packages/core/lib/dist).
+write_app_install_fixture() {
+  local dir="$1" name="$2" version="$3" mode="$4" build_id="$5"
+  local system_packages="${6:-[\"sqlite3\"]}"
+  local server_pkg="@lamalibre/${name}-server"
+  local agent_pkg="@lamalibre/${name}-agent"
+  local here deps=''
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  case "$mode" in
+    main | failpost | deps | tampered) ;;
+    *)
+      echo "write_app_install_fixture: unknown mode ${mode}" >&2
+      return 2
+      ;;
+  esac
+  if ! [[ "$name" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || ! [[ "$build_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "write_app_install_fixture: invalid name or build id" >&2
+    return 2
+  fi
+  if [ "$mode" = "deps" ]; then
+    deps=',
+  "dependencies": { "left-pad": "1.3.0" }'
+  fi
+  mkdir -p "${dir}/server" "${dir}/agent/dist" "${dir}/agent-src"
+
+  cat > "${dir}/server/package.json" <<FIXTURE_EOF
+{
+  "name": "${server_pkg}",
+  "version": "${version}",
+  "description": "Lamaste e2e fixture: an app plugin whose agent half Lamaste installs (${mode})",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+  cat > "${dir}/server/index.js" <<FIXTURE_EOF
+// The application runs on its hosting agent; the panel forwards to it and
+// never loads this module.
+throw new Error('${name}: agent-hosted plugin code was imported');
+FIXTURE_EOF
+  cat > "${dir}/server/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E App Host (${mode})",
+  "version": "${version}",
+  "description": "An agent half Lamaste installs onto its hosting agent, admin pages in the panel",
+  "hosting": "agent",
+  "agent": {
+    "requires": { "node": ">=22", "os": ["linux"], "systemPackages": ${system_packages} },
+    "package": "${agent_pkg}",
+    "service": { "entry": "dist/agentd.mjs", "memoryMax": "256M" }
+  },
+  "modes": ["server"],
+  "packages": { "server": "${server_pkg}" },
+  "capabilities": ["plugin:${name}:use"],
+  "panel": {
+    "pages": [{ "path": "/status", "title": "Status", "icon": "activity" }],
+    "apiPrefix": "/api/${name}"
+  },
+  "hooks": {
+    "agent": {
+      "install": { "pre-tunnel": {}, "post-tunnel": {} },
+      "uninstall": { "pre-teardown": {}, "post-teardown": {} }
+    }
+  }
+}
+FIXTURE_EOF
+
+  cat > "${dir}/agent/package.json" <<FIXTURE_EOF
+{
+  "name": "${agent_pkg}",
+  "version": "${version}",
+  "description": "Lamaste e2e fixture: the bundled agent half of ${name} (${mode}, build ${build_id})",
+  "type": "module",
+  "files": ["dist"],
+  "license": "PolyForm-Noncommercial-1.0.0"${deps}
+}
+FIXTURE_EOF
+  cat > "${dir}/agent-src/agentd.mjs" <<'AGENTD_EOF'
+// E2E app plugin — the agent half Lamaste installs onto its hosting agent.
+// Bundled into one ES module (build-app-agent-half.js defines __E2E_ROUTE__
+// and __E2E_MODE__); runs under the unit lamaste-apphost writes, as the
+// plugin's own account, with its config and data paths in the environment.
+import crypto from 'node:crypto';
+import {
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createAgentHookHandler, createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
+
+const ROUTE = __E2E_ROUTE__;
+const MODE = __E2E_MODE__;
+const HOOK_STAGES = ['install:pre-tunnel', 'install:post-tunnel', 'uninstall:pre-teardown', 'uninstall:post-teardown'];
+
+const configPath = process.env.LAMASTE_APP_CONFIG;
+const dataDir = process.env.LAMASTE_APP_DATA_DIR;
+if (!configPath || !dataDir) {
+  process.stderr.write('LAMASTE_APP_CONFIG and LAMASTE_APP_DATA_DIR are not set: run as the unit lamaste-apphost writes\n');
+  process.exit(2);
+}
+const log = (line) => process.stdout.write(`${line}\n`);
+
+// This file is <package>/dist/agentd.mjs: the version that runs is its package's.
+const packageDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const VERSION = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf8')).version;
+const USER = os.userInfo().username;
+
+// The data directory outlives versions, reboots and an unhosting that keeps
+// it: state.json counts the starts of this installation.
+function writeFileAtomic(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  const fd = openSync(tmp, 'w', 0o600);
+  try {
+    writeSync(fd, text);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, file);
+}
+const statePath = path.join(dataDir, 'state.json');
+let previous = null;
+try {
+  previous = JSON.parse(readFileSync(statePath, 'utf8'));
+} catch {
+  previous = null;
+}
+const state = {
+  instance: typeof previous?.instance === 'string' ? previous.instance : crypto.randomBytes(8).toString('hex'),
+  createdAt: previous?.createdAt ?? new Date().toISOString(),
+  starts: (Number.isInteger(previous?.starts) ? previous.starts : 0) + 1,
+  versions: [...(Array.isArray(previous?.versions) ? previous.versions : []), VERSION].slice(-20),
+  startedAt: new Date().toISOString(),
+};
+writeFileAtomic(statePath, `${JSON.stringify(state)}\n`);
+
+const verifier = createCallerAssertionVerifier({ configPath, plugin: ROUTE, reloadIntervalMs: 1000 });
+const hookFor = (stage) => (input) => {
+  log(`hook ${stage} phase=${input?.phase ?? '-'} version=${VERSION}`);
+  if (stage === 'install:post-tunnel' && MODE === 'failpost') {
+    return { ok: false, reason: `e2e: release ${VERSION} refuses install:post-tunnel` };
+  }
+  return { ok: true, output: { stage, version: VERSION } };
+};
+const hooks = createAgentHookHandler({
+  verifier,
+  hooks: Object.fromEntries(HOOK_STAGES.map((stage) => [stage, hookFor(stage)])),
+});
+
+// What the unit's sandbox lets this process do. Each write is attempted and
+// undone when it succeeds; all but the data directory and the private /tmp
+// must fail.
+const errorCode = (err) => String(err?.code ?? err?.name ?? 'error');
+function tryWrite(file, keep = false) {
+  try {
+    writeFileSync(file, `e2e probe ${process.pid}\n`);
+  } catch (err) {
+    return errorCode(err);
+  }
+  if (!keep) rmSync(file, { force: true });
+  return 'ALLOWED';
+}
+function tryRead(read) {
+  try {
+    read();
+    return 'ALLOWED';
+  } catch (err) {
+    return errorCode(err);
+  }
+}
+function procStatus(field) {
+  try {
+    return new RegExp(`^${field}:\\s*(\\S+)`, 'm').exec(readFileSync('/proc/self/status', 'utf8'))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+function sandboxProbe() {
+  const probe = `e2e-${ROUTE}-probe`;
+  return {
+    uid: process.getuid(),
+    gid: process.getgid(),
+    user: USER,
+    noNewPrivs: procStatus('NoNewPrivs'),
+    capEff: procStatus('CapEff'),
+    capBnd: procStatus('CapBnd'),
+    writes: {
+      dataDir: tryWrite(path.join(dataDir, probe)),
+      privateTmp: tryWrite(`/tmp/e2e-${ROUTE}-private-tmp`, true),
+      etc: tryWrite(`/etc/${probe}`),
+      code: tryWrite(`/opt/lamalibre/apps/${ROUTE}/current/package/${probe}`),
+      appsDir: tryWrite(`/opt/lamalibre/apps/${ROUTE}/${probe}`),
+      configDir: tryWrite(`/etc/lamalibre/apps/${ROUTE}/${probe}`),
+      usrLocal: tryWrite(`/usr/local/${probe}`),
+      root: tryWrite(`/root/${probe}`),
+      home: tryWrite(`/home/${probe}`),
+      runLock: tryWrite(`/run/lock/${probe}`),
+    },
+    reads: {
+      agentState: tryRead(() => readdirSync('/root/.lamalibre')),
+      shadow: tryRead(() => readFileSync('/etc/shadow')),
+    },
+  };
+}
+
+function json(res, status, body) {
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+const PANEL_JS =
+  'window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n' +
+  `window.__lamalibrePlugins[${JSON.stringify(ROUTE)}] = { mount(ctx) { ctx.mountPoint.textContent = ${JSON.stringify(`E2E app plugin ${VERSION}, installed by Lamaste on its agent`)}; return () => {}; } };\n`;
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const target = req.url ?? '/';
+    const method = req.method ?? 'GET';
+    const p = new URL(target, 'http://127.0.0.1').pathname;
+    if (p.startsWith('/admin/hooks/')) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const out = await hooks.handle({ method, url: target, headers: req.headers, body: Buffer.concat(chunks) });
+      return json(res, out.status, out.body);
+    }
+    if (p !== '/admin' && !p.startsWith('/admin/')) return json(res, 404, { error: 'not found' });
+    const verified = await verifier.verify(req.headers, method, target);
+    if (!verified.ok) return json(res, 401, { error: 'caller assertion refused', reason: verified.reason });
+    const caller = verified.payload.caller;
+    if (p === '/admin/health') return json(res, 200, { ok: true, plugin: ROUTE, version: VERSION });
+    log(`${method} ${p} caller=${caller.type === 'agent' ? `agent:${caller.label}` : caller.type}`);
+    if (p === '/admin/ping') {
+      return json(res, 200, {
+        pong: true,
+        plugin: ROUTE,
+        version: VERSION,
+        mode: MODE,
+        caller,
+        user: USER,
+        pid: process.pid,
+        data: { instance: state.instance, starts: state.starts, versions: state.versions },
+      });
+    }
+    if (p === '/admin/panel.js') {
+      res.writeHead(200, { 'content-type': 'application/javascript' });
+      return res.end(PANEL_JS);
+    }
+    if (p === '/admin/sandbox') return json(res, 200, sandboxProbe());
+    return json(res, 404, { error: 'no such admin route' });
+  } catch (err) {
+    log(`error: ${err?.message ?? err}`);
+    return json(res, 500, { error: 'internal error' });
+  }
+});
+
+const port = await verifier.port();
+server.listen(port, '127.0.0.1', () =>
+  log(`${ROUTE} agent half ${VERSION} (${MODE}) on 127.0.0.1:${port} as ${USER}, start ${state.starts} of ${state.instance}`),
+);
+AGENTD_EOF
+  node "${here}/build-app-agent-half.js" --entry "${dir}/agent-src/agentd.mjs" \
+    --outfile "${dir}/agent/dist/agentd.mjs" --route "${name}" --mode "${mode}" > /dev/null
 }
 
 # decode_jwt_payload token

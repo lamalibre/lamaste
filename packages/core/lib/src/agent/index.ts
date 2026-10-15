@@ -70,6 +70,7 @@ export {
 
 // Agent registry
 export {
+  AGENT_LABEL_RE,
   validateLabel,
   deriveLabel,
   loadRegistry,
@@ -175,6 +176,82 @@ export type {
   CallerAssertionVerifierOptions,
   CallerAssertionVerifier,
 } from './app-plugins.js';
+export {
+  PANEL_LOSS_DOWN_AFTER_MS,
+  parseAgentJobs,
+  runAgentJobs,
+  parseTunnelHookAssignments,
+  syncAgentTunnelHooks,
+  agentTunnelHooksOnPanelLoss,
+  createAgentHookHandler,
+} from './app-plugin-hooks.js';
+export type {
+  AgentJob,
+  AgentHookJob,
+  AgentAppJob,
+  AgentAppInstallJob,
+  AgentAppActivateJob,
+  AgentAppRemoveJob,
+  AgentAppJobHandlers,
+  AgentAppJobOutcome,
+  AgentJobDeferral,
+  AgentJobRunOptions,
+  AgentJobResult,
+  AgentJobReporter,
+  AgentJobRunResult,
+  AgentTunnelHookDecl,
+  TunnelHookAssignment,
+  AgentHookRequest,
+  AgentHookResponse,
+  AgentHookHandlerOptions,
+} from './app-plugin-hooks.js';
+// App host helper (slice 3): running lamaste-apphost, the record of the agent
+// halves it installed here, and the host facts the relay checks hosting against
+export { appServiceAccountComment } from '../agent-half.js';
+export {
+  APPHOST_EXIT_NOT_INSTALLED,
+  APPHOST_EXIT_NOT_OWNER,
+  appHostInvocation,
+  runAppHost,
+  appHostFailure,
+  isAppHostEnabled,
+  appHostHelperKey,
+  parseAppHostStatus,
+  parseAppHostOutcome,
+  appHostStatus,
+} from './apphost.js';
+export type {
+  AppHostRunOptions,
+  AppHostRun,
+  AppHostStatus,
+  AppHostOutcome,
+  AppHostAvailability,
+} from './apphost.js';
+export {
+  appHostStatePath,
+  readAppHostState,
+  appHostRoutes,
+  recordAppHostApp,
+  forgetAppHostApp,
+  appHostRouteRecordedElsewhere,
+  rebuildAppHostState,
+} from './apphost-state.js';
+export type { AppHostAppRecord, AppHostState } from './apphost-state.js';
+export {
+  HOST_FACTS_REFRESH_MS,
+  parseOsRelease,
+  probeAppHost,
+  gatherHostFacts,
+  hostFactsHash,
+  hostFactsStatePath,
+  syncHostFacts,
+} from './host-facts.js';
+export type {
+  HostFactsSources,
+  HostFactsPanelCalls,
+  HostFactsSyncOptions,
+  HostFactsSyncResult,
+} from './host-facts.js';
 export type {
   AgentConfigResponse,
   IssuedChiselCredential,

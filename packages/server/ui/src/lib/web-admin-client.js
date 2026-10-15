@@ -38,6 +38,25 @@ function jsonDelete(url, data) {
   return apiFetch(url, opts);
 }
 
+/** `?a=1&b=x` from the defined values of `query` (empty when none). */
+function toQuery(query) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+/**
+ * `?force=true&purge=true` for removing a plugin's hosting: `force` lets
+ * failing pre-teardown hooks pass, `purge` deletes the data and service
+ * account of an agent half Lamaste installed. Only the flags that are set.
+ */
+function removalQuery({ force = false, purge = false } = {}) {
+  return toQuery({ force: force ? 'true' : undefined, purge: purge ? 'true' : undefined });
+}
+
 export const webAdminClient = {
   // --- Users ---
   getUsers: () => apiFetch('/api/users'),
@@ -163,13 +182,28 @@ export const webAdminClient = {
   installPlugin: (packageName) => jsonPost('/api/plugins/install', { packageName }),
   enablePlugin: (name) => jsonPost(`/api/plugins/${encodeURIComponent(name)}/enable`),
   disablePlugin: (name) => jsonPost(`/api/plugins/${encodeURIComponent(name)}/disable`),
-  uninstallPlugin: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}`),
+  uninstallPlugin: (name, options = {}) =>
+    jsonDelete(`/api/plugins/${encodeURIComponent(name)}${removalQuery(options)}`),
   getPluginHosting: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/hosting`),
+  getPluginHostingEligibility: (name) =>
+    apiFetch(`/api/plugins/${encodeURIComponent(name)}/hosting/eligibility`),
   setPluginHosting: (name, agentLabel) =>
     jsonPost(`/api/plugins/${encodeURIComponent(name)}/hosting`, { agentLabel }),
-  clearPluginHosting: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}/hosting`),
+  clearPluginHosting: (name, options = {}) =>
+    jsonDelete(`/api/plugins/${encodeURIComponent(name)}/hosting${removalQuery(options)}`),
   rotatePluginHostingSecret: (name) =>
     jsonPost(`/api/plugins/${encodeURIComponent(name)}/hosting/rotate-secret`),
+  getPluginOperations: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations`),
+  getPluginOperation: (name, id) =>
+    apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations/${encodeURIComponent(id)}`),
+  getPluginHooks: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/hooks`),
+  approvePluginHooks: (name, digest) =>
+    jsonPost(`/api/plugins/${encodeURIComponent(name)}/hooks/approve`, { digest }),
+  setPluginHooksAutoApprove: (name, enabled) =>
+    jsonPut(`/api/plugins/${encodeURIComponent(name)}/hooks/auto-approve`, { enabled }),
+  updatePlugin: (name, version) =>
+    jsonPost(`/api/plugins/${encodeURIComponent(name)}/update`, version ? { version } : {}),
+  discardPluginUpdate: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}/update`),
   fetchPluginBundle: async (name) => {
     const res = await fetch(`/api/${encodeURIComponent(name)}/panel.js`);
     if (!res.ok) throw new Error(`Failed to load plugin bundle for "${name}"`);
@@ -190,6 +224,11 @@ export const webAdminClient = {
   pushInstallCommand: (label, data) =>
     jsonPost(`/api/plugins/push-install/${encodeURIComponent(label)}`, data),
   getPushInstallSessions: () => apiFetch('/api/plugins/push-install/sessions'),
+
+  // --- Audit log and notifications ---
+  getAuditLog: (query = {}) => apiFetch(`/api/audit${toQuery(query)}`),
+  getNotifications: (query = {}) => apiFetch(`/api/notifications${toQuery(query)}`),
+  markNotificationsRead: (target) => jsonPost('/api/notifications/read', target),
 
   // --- Storage ---
   registerStorageServer: (data) => jsonPost('/api/storage/servers', data),

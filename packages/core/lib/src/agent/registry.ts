@@ -78,11 +78,8 @@ export interface AgentRegistry {
 // Label validation
 // ---------------------------------------------------------------------------
 
-/**
- * Label validation regex: lowercase alphanumeric and hyphens, 1-63 chars,
- * must start and end with a letter or digit.
- */
-const LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+/** An agent label: lowercase letters, digits and hyphens, 1–63 characters (the app host helper checks the same). */
+export const AGENT_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /** Validate an agent label. */
 export function validateLabel(label: string): void {
@@ -92,7 +89,7 @@ export function validateLabel(label: string): void {
   if (label.length === 0 || label.length > 63) {
     throw new Error('Agent label must be 1-63 characters');
   }
-  if (!LABEL_REGEX.test(label)) {
+  if (!AGENT_LABEL_RE.test(label)) {
     throw new Error(
       `Invalid agent label "${label}". Must be lowercase alphanumeric and hyphens, ` +
         'starting and ending with a letter or digit.',
@@ -122,7 +119,7 @@ export function deriveLabel(domain: string | undefined, agentLabel: string | und
   while (start < end && normalised.charCodeAt(start) === 0x2d /* '-' */) start++;
   while (end > start && normalised.charCodeAt(end - 1) === 0x2d /* '-' */) end--;
   const candidate = normalised.slice(start, end);
-  if (candidate.length > 0 && LABEL_REGEX.test(candidate)) {
+  if (candidate.length > 0 && AGENT_LABEL_RE.test(candidate)) {
     return candidate;
   }
   return 'default';

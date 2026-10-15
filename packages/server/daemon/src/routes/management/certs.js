@@ -25,6 +25,7 @@ import { getConfig, updateConfig } from '../../lib/config.js';
 import { addToRevocationList } from '../../lib/revocation.js';
 import { agentOwnsInstanceForScope } from '../../lib/tickets.js';
 import * as nginx from '../../lib/nginx.js';
+import { actorFromRequest } from '../../lib/actor.js';
 
 const DomainParamSchema = z.object({
   domain: z
@@ -141,21 +142,6 @@ const DelegatedEnrollBodySchema = z.object({
       'Scope must follow plugin:<name>:<action> format (e.g., plugin:sync:connect)',
     ),
 });
-
-/**
- * Derive a stable audit identifier for the calling principal.
- *
- * Returns the certificate CN form (`admin`, `agent:<label>`, `plugin-agent:...`)
- * so a journalctl reader can correlate cert lifecycle events with the
- * principal that initiated them. Returns `'unknown'` when middleware did not
- * populate cert metadata (e.g. dev mode shortcut on /api/health).
- */
-function actorFromRequest(request) {
-  if (request.certRole === 'admin') return 'admin';
-  if (request.certRole === 'agent' && request.certLabel) return `agent:${request.certLabel}`;
-  if (request.certRole === 'plugin-agent' && request.certLabel) return request.certLabel;
-  return 'unknown';
-}
 
 /**
  * Parse certbot listing results into the unified cert response format.

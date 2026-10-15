@@ -32,6 +32,8 @@ export const RESERVED_API_PREFIXES = [
   'agents',
   'user-access',
   'gatekeeper',
+  'audit',
+  'notifications',
 ] as const;
 
 export type ReservedApiPrefix = (typeof RESERVED_API_PREFIXES)[number];

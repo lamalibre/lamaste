@@ -1,0 +1,3832 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 30,
+    "name": "Lifecycle hooks: approval, sandbox, request pipeline, relay stages",
+    "suite": "e2e",
+    "description": "30 — Lifecycle hooks: approval, sandbox, request pipeline, relay stages",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "npm", "openssl", "systemctl"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "POST plugins/${p}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${p}/disable"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${p}?force=true",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${p}?force=true"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "The hook runner units are not installed (create-lamaste 4.3)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The hook runner units are not installed (create-lamaste 4.3)"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "The hook runner template units are installed",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The hook runner template units are installed"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "GET /api/plugins/$1/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/$1/hosting"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "GET /api/audit?plugin=$1&action=$2&limit=200",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=$1&action=$2&limit=200"
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "GET /api/audit?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "AUDIT_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "GET /api/notifications?limit=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?limit=1"
+          },
+          "capture": [
+            {
+              "variable": "NOTIFICATION_BASE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping lifecycle hook tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\n\nif ! systemctl cat lamalibre-lamaste-hooks@.service > /dev/null 2>&1; then\n  log_fail \"The hook runner units are not installed (create-lamaste 4.3)\"\n  end_test\n  exit $?\nfi\nlog_pass \"The hook runner template units are installed\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nHOOKS_DIR=\"/opt/lamalibre/lamaste/hooks\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-hooks\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_hooks_00000000000000000000\"\nPLUGIN=\"e2e-hooks\"\nPACKAGE=\"@lamalibre/e2e-hooks-server\"\nFAILPRE=\"e2e-hooks-failpre\"\nFAILPOST=\"e2e-hooks-failpost\"\nAGENT_LABEL=\"e2e-hookhost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nAGENT_HOOKS='{ \"install\": { \"post-tunnel\": {} }, \"uninstall\": { \"pre-teardown\": {} } }'\nPORT=\"\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  # Uninstalling tears a hosting down first (an operation, forced: the agent\n  # half is gone); an operation still running refuses it until it ends.\n  local deadline=$((SECONDS + 240)) p left\n  for p in \"${PLUGIN}\" \"${FAILPRE}\" \"${FAILPOST}\"; do\n    api_post \"plugins/${p}/disable\" > /dev/null 2>&1 || true\n  done\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    left=0\n    for p in \"${PLUGIN}\" \"${FAILPRE}\" \"${FAILPOST}\"; do\n      if [ \"$(api_get_status \"plugins/${p}\")\" != \"404\" ]; then\n        left=1\n        api_delete \"plugins/${p}?force=true\" > /dev/null 2>&1 || true\n      fi\n    done\n    [ \"$left\" = \"0\" ] && break\n    sleep 3\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\n\nhosting_field() {\n  api_get \"plugins/$1/hosting\" | jq -r \"$2\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <plugin> <operation id> <seconds> — prints the final operation\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local plugin=\"$1\" id=\"$2\" deadline=$((SECONDS + $3)) op\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${plugin}/operations/${id}\" | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# step_status <operation json> <step name> — the status of one step\nstep_status() {\n  echo \"$1\" | jq -r --arg n \"$2\" '[.steps[] | select(.name == $n) | .status] | last // \"absent\"' 2>/dev/null || echo \"absent\"\n}\n\n# audit_count <plugin> <action> — this run's entries of one action for one\n# plugin (the audit log outlives a run: entries after AUDIT_BASE only)\naudit_count() {\n  api_get \"audit?plugin=$1&action=$2&limit=200\" | jq \"[.entries[] | select(.id > ${AUDIT_BASE})] | length\" 2>/dev/null || echo \"0\"\n}\n\n# wait_health <plugin> <state> <seconds>\nwait_health() {\n  local deadline=$((SECONDS + $3))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field \"$1\" '.hosting.health.state')\" = \"$2\" ]; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# deliver_config <plugin> <config file> — what the agent's sync does: fetch the\n# plugin config with the hosting agent's certificate, once the hosting is reserved\ndeliver_config() {\n  local plugin=\"$1\" file=\"$2\" deadline=$((SECONDS + 60)) config\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    config=$(agent_api_get \"agents/me/plugin-config/${plugin}\" 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$config\" | jq -r '.port // empty' 2>/dev/null)\" != \"\" ]; then\n      echo \"$config\" | jq '. + {fetchedAt: (now | todate), acknowledged: true}' > \"${file}.tmp\"\n      chmod 600 \"${file}.tmp\"\n      mv \"${file}.tmp\" \"${file}\"\n      echo \"$config\" | jq -r '.port'\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# start_half <plugin> <config file> <log file> <port>\nstart_half() {\n  pkill -f \"[a]pp-plugin-half.mjs --config $2\" 2>/dev/null || true\n  nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"$2\" --plugin \"$1\" --lamaste \"${LAMASTE_LIB}\" --log \"$3\" --flags \"${WORK_DIR}/flags\" &> \"$3.out\" &\n  local deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:$4/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# host_with_half <plugin> — host it, play the agent (config, agent half), and\n# print the finished operation\nhost_with_half() {\n  local plugin=\"$1\" started id port\n  started=$(api_post \"plugins/${plugin}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\n  id=$(echo \"$started\" | jq -r '.operation.id // empty' 2>/dev/null || echo \"\")\n  if [ -z \"$id\" ]; then\n    echo \"$started\"\n    return 0\n  fi\n  if port=$(deliver_config \"$plugin\" \"${WORK_DIR}/${plugin}.json\"); then\n    start_half \"$plugin\" \"${WORK_DIR}/${plugin}.json\" \"${WORK_DIR}/${plugin}.log\" \"$port\" || true\n  fi\n  wait_operation \"$plugin\" \"$id\" 240\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures; install; agent\n# ===========================================================================\n\n# The audit log and notifications outlive a run: this run's entries come after these.\nAUDIT_BASE=$(api_get \"audit?limit=1\" | jq '.entries[0].id // 0' 2>/dev/null || echo \"0\")\nNOTIFICATION_BASE=$(api_get \"notifications?limit=1\" | jq '.notifications[0].id // 0' 2>/dev/null || echo \"0\")"
+    },
+    {
+      "id": "install-the-hooks-fixture",
+      "label": "Install the hooks fixture",
+      "steps": [
+        {
+          "id": "step-97",
+          "label": "Stand-in registry is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up"
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "Fixture 1.0.0 installed (a pinned version)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Fixture 1.0.0 installed (a pinned version)"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "The registry row names the bare package",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.packageName",
+              "expected": {
+                "kind": "var",
+                "name": "PACKAGE"
+              },
+              "message": "The registry row names the bare package"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Its relay hooks wait for approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "pending"
+              },
+              "message": "Its relay hooks wait for approval"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Extract DIGEST",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "DIGEST",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "expression": ".hooks.relay.digest"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "Extract ENTRY_SHA",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ENTRY_SHA",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "expression": ".hooks.relay.entrySha256"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "The preview lists the three request hooks",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$INSTALL\" | jq -r '.hooks.relay.request | length')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "3"
+              },
+              "message": "The preview lists the three request hooks"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "The preview lists the effects",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$INSTALL\" | jq -r '.hooks.relay.effects | join(\",\")')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "audit,notify-admins"
+              },
+              "message": "The preview lists the effects"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "The preview names the scanner's rule pack",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$INSTALL\" | jq -r '.hooks.relay.packs | join(\",\")')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "credentials@1"
+              },
+              "message": "The preview names the scanner's rule pack"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "POST /api/plugins/${PLUGIN}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/enable"
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-112",
+          "label": "Agent certificate issued for ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent certificate issued for ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install the hooks fixture\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}/flags\" \"${AGENT_CERT_DIR}\"\nchmod 700 \"${AGENT_CERT_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_hooks_fixture_plugin \"${WORK_DIR}/v100\" \"${PLUGIN}\" 1.0.0 main \"${AGENT_HOOKS}\"\nwrite_hooks_fixture_plugin \"${WORK_DIR}/v110\" \"${PLUGIN}\" 1.1.0 main \"${AGENT_HOOKS}\"\nwrite_hooks_fixture_plugin \"${WORK_DIR}/v120\" \"${PLUGIN}\" 1.2.0 main \"${AGENT_HOOKS}\" 2\nwrite_hooks_fixture_plugin \"${WORK_DIR}/v130\" \"${PLUGIN}\" 1.3.0 main \"${AGENT_HOOKS}\" 3\nwrite_hooks_fixture_plugin \"${WORK_DIR}/failpre\" \"${FAILPRE}\" 1.0.0 failpre '{}'\nwrite_hooks_fixture_plugin \"${WORK_DIR}/failpost\" \"${FAILPOST}\" 1.0.0 failpost '{}'\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json \\\n  --package \"${WORK_DIR}/v100\" --package \"${WORK_DIR}/v110\" --package \"${WORK_DIR}/v120\" --package \"${WORK_DIR}/v130\" \\\n  --package \"${WORK_DIR}/failpre\" --package \"${WORK_DIR}/failpost\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\n\nINSTALL=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.ok' 'true' \"Fixture 1.0.0 installed (a pinned version)\" || true\nassert_json_field \"$INSTALL\" '.plugin.packageName' \"${PACKAGE}\" \"The registry row names the bare package\" || true\nassert_json_field \"$INSTALL\" '.hooks.approval.state' 'pending' \"Its relay hooks wait for approval\" || true\nDIGEST=$(echo \"$INSTALL\" | jq -r '.hooks.relay.digest' 2>/dev/null || echo \"\")\nENTRY_SHA=$(echo \"$INSTALL\" | jq -r '.hooks.relay.entrySha256' 2>/dev/null || echo \"\")\nassert_eq \"$(echo \"$INSTALL\" | jq -r '.hooks.relay.request | length')\" \"3\" \"The preview lists the three request hooks\" || true\nassert_eq \"$(echo \"$INSTALL\" | jq -r '.hooks.relay.effects | join(\",\")')\" \"audit,notify-admins\" \"The preview lists the effects\" || true\nassert_eq \"$(echo \"$INSTALL\" | jq -r '.hooks.relay.packs | join(\",\")')\" \"credentials@1\" \"The preview names the scanner's rule pack\" || true\napi_post \"plugins/${PLUGIN}/enable\" > /dev/null\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\n\n# ===========================================================================\n# 2. Approval\n# ==========================================================================="
+    },
+    {
+      "id": "approval-of-the-relay-hooks",
+      "label": "Approval of the relay hooks",
+      "steps": [
+        {
+          "id": "step-118",
+          "label": "POST /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "UNAPPROVED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "Hosting is refused until the relay hooks are approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNAPPROVED"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "hooks_not_approved"
+              },
+              "message": "Hosting is refused until the relay hooks are approved"
+            }
+          }
+        },
+        {
+          "id": "step-120",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "WRONG",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-121",
+          "label": "Approving another digest than the one shown is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WRONG"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "Approving another digest than the one shown is refused"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "No runner before the approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-enabled \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "No runner before the approval"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "The hook set is approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVE"
+              },
+              "path": ".hooks.approval.state",
+              "expected": {
+                "kind": "literal",
+                "value": "approved"
+              },
+              "message": "The hook set is approved"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "The runner holds the approved module",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVE"
+              },
+              "path": ".hooks.runner.current",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The runner holds the approved module"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "The runner's socket is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The runner's socket is active"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "The approved module is root-owned, read-only",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stat -c '%U:%G %a' \"${MODULE}\" 2>/dev/null || echo missing)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root:root 644"
+              },
+              "message": "The approved module is root-owned, read-only"
+            }
+          }
+        },
+        {
+          "id": "step-129",
+          "label": "…and is the module that was approved",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(sha256sum \"${MODULE}\" 2>/dev/null | cut -d' ' -f1)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ENTRY_SHA"
+              },
+              "message": "…and is the module that was approved"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "Only the panel's group can reach the runner",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stat -c '%U:%G %a' \"/run/lamalibre-lamaste-hooks/${PLUGIN}.sock\" 2>/dev/null || echo missing)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "root:lamaste 660"
+              },
+              "message": "Only the panel's group can reach the runner"
+            }
+          }
+        },
+        {
+          "id": "step-131",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hooks.approved",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hooks.approved"
+          },
+          "capture": [
+            {
+              "variable": "APPROVED_AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-132",
+          "label": "The approval is in the audit log with its digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED_AUDIT"
+              },
+              "path": ".details.digest",
+              "expected": {
+                "kind": "var",
+                "name": "DIGEST"
+              },
+              "message": "The approval is in the audit log with its digest"
+            }
+          }
+        },
+        {
+          "id": "step-133",
+          "label": "…and the approver",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPROVED_AUDIT"
+              },
+              "path": ".actor",
+              "expected": {
+                "kind": "literal",
+                "value": "admin"
+              },
+              "message": "…and the approver"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Approval of the relay hooks\"\n\nUNAPPROVED=$(api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$UNAPPROVED\" '.code' 'hooks_not_approved' \"Hosting is refused until the relay hooks are approved\" || true\n\nWRONG=$(api_post_status \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(printf 'f%.0s' $(seq 1 64))\\\"}\")\nassert_eq \"$WRONG\" \"409\" \"Approving another digest than the one shown is refused\" || true\nassert_eq \"$(systemctl is-enabled \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)\" \"disabled\" \"No runner before the approval\" || true\n\nAPPROVE=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${DIGEST}\\\"}\")\nassert_json_field \"$APPROVE\" '.hooks.approval.state' 'approved' \"The hook set is approved\" || true\nassert_json_field \"$APPROVE\" '.hooks.runner.current' 'true' \"The runner holds the approved module\" || true\nassert_eq \"$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)\" \"active\" \"The runner's socket is active\" || true\nMODULE=\"${HOOKS_DIR}/${PLUGIN}/${ENTRY_SHA}.mjs\"\nassert_eq \"$(stat -c '%U:%G %a' \"${MODULE}\" 2>/dev/null || echo missing)\" \"root:root 644\" \"The approved module is root-owned, read-only\" || true\nassert_eq \"$(sha256sum \"${MODULE}\" 2>/dev/null | cut -d' ' -f1)\" \"${ENTRY_SHA}\" \"…and is the module that was approved\" || true\nassert_eq \"$(stat -c '%U:%G %a' \"/run/lamalibre-lamaste-hooks/${PLUGIN}.sock\" 2>/dev/null || echo missing)\" \"root:lamaste 660\" \"Only the panel's group can reach the runner\" || true\nAPPROVED_AUDIT=$(api_get \"audit?plugin=${PLUGIN}&action=hooks.approved\" | jq -c '.entries[0]' 2>/dev/null || echo '{}')\nassert_json_field \"$APPROVED_AUDIT\" '.details.digest' \"${DIGEST}\" \"The approval is in the audit log with its digest\" || true\nassert_json_field \"$APPROVED_AUDIT\" '.actor' 'admin' \"…and the approver\" || true\n\n# ===========================================================================\n# 3. Hosting: the install pipeline; the sandbox\n# ==========================================================================="
+    },
+    {
+      "id": "host-the-install-pipeline",
+      "label": "Host: the install pipeline",
+      "steps": [
+        {
+          "id": "step-134",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_with_half \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-135",
+          "label": "The hosting operation succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded"
+            }
+          }
+        },
+        {
+          "id": "step-136",
+          "label": "relay install:pre-tunnel ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'relay install:pre-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "relay install:pre-tunnel ran"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "Lamaste reserved the hosting",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'reserve port, secret and capability')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Lamaste reserved the hosting"
+            }
+          }
+        },
+        {
+          "id": "step-138",
+          "label": "The agent's pre-tunnel stage is not declared here",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'agent install:pre-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "skipped"
+              },
+              "message": "The agent's pre-tunnel stage is not declared here"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "The tunnel was granted and the agent half answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "The tunnel was granted and the agent half answered"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "The agent half's install:post-tunnel ran through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'agent install:post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "The agent half's install:post-tunnel ran through the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "relay install:post-tunnel ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$OP\" 'relay install:post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "relay install:post-tunnel ran"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "The hosting is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field \"${PLUGIN}\" '.hosting.phase')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The hosting is active"
+            }
+          }
+        },
+        {
+          "id": "step-143",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field \"${PLUGIN}\" '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-144",
+          "label": "Set GRANT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "GRANT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-145",
+          "label": "The chisel authfile grants port ${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GRANT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The chisel authfile grants port ${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "The agent half saw install:post-tunnel (phase install)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${HALF_LOG}\" 2>/dev/null)"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:post-tunnel phase=install"
+              },
+              "message": "The agent half saw install:post-tunnel (phase install)"
+            }
+          }
+        },
+        {
+          "id": "step-148",
+          "label": "relay install:post-tunnel reported through the audit effect",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'hook.install.post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "relay install:post-tunnel reported through the audit effect"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "The hosting is in the audit log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'plugin.hosted')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The hosting is in the audit log"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Host: the install pipeline\"\n\nOP=$(host_with_half \"${PLUGIN}\")\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded\" || true\nassert_eq \"$(step_status \"$OP\" 'relay install:pre-tunnel')\" \"done\" \"relay install:pre-tunnel ran\" || true\nassert_eq \"$(step_status \"$OP\" 'reserve port, secret and capability')\" \"done\" \"Lamaste reserved the hosting\" || true\nassert_eq \"$(step_status \"$OP\" 'agent install:pre-tunnel')\" \"skipped\" \"The agent's pre-tunnel stage is not declared here\" || true\nassert_eq \"$(step_status \"$OP\" 'grant the tunnel and wait for the agent half')\" \"done\" \"The tunnel was granted and the agent half answered\" || true\nassert_eq \"$(step_status \"$OP\" 'agent install:post-tunnel')\" \"done\" \"The agent half's install:post-tunnel ran through the tunnel\" || true\nassert_eq \"$(step_status \"$OP\" 'relay install:post-tunnel')\" \"done\" \"relay install:post-tunnel ran\" || true\nassert_eq \"$(hosting_field \"${PLUGIN}\" '.hosting.phase')\" \"active\" \"The hosting is active\" || true\nPORT=$(hosting_field \"${PLUGIN}\" '.hosting.port')\nGRANT=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT\" \"1\" \"The chisel authfile grants port ${PORT}\" || true\nHALF_LOG=\"${WORK_DIR}/${PLUGIN}.log\"\nassert_contains \"$(cat \"${HALF_LOG}\" 2>/dev/null)\" \"hook install:post-tunnel phase=install\" \"The agent half saw install:post-tunnel (phase install)\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" 'hook.install.post-tunnel')\" \"1\" \"relay install:post-tunnel reported through the audit effect\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" 'plugin.hosted')\" \"1\" \"The hosting is in the audit log\" || true"
+    },
+    {
+      "id": "from-inside-the-hook-runner",
+      "label": "From inside the hook runner",
+      "steps": [
+        {
+          "id": "step-150",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hook.sandbox.probe",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hook.sandbox.probe"
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-151",
+          "label": "A hook cannot read /etc/lamalibre",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".readLamaste",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "A hook cannot read /etc/lamalibre"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "A hook cannot read /etc/passwd",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".readPasswd",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "A hook cannot read /etc/passwd"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "A hook cannot write a file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".write",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "A hook cannot write a file"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "A hook cannot spawn a process",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".spawn",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "A hook cannot spawn a process"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "A hook cannot start a worker",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".worker",
+              "expected": {
+                "kind": "literal",
+                "value": "ERR_ACCESS_DENIED"
+              },
+              "message": "A hook cannot start a worker"
+            }
+          }
+        },
+        {
+          "id": "step-156",
+          "label": "Extract TCP_OUT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TCP_OUT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "expression": ".tcpOut"
+            }
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "A hook cannot open a TCP connection out (${TCP_OUT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TCP_OUT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "CONNECTED"
+              },
+              "message": "A hook cannot open a TCP connection out (${TCP_OUT})"
+            }
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "Extract TCP_PANEL",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TCP_PANEL",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "expression": ".tcpPanel"
+            }
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "A hook cannot reach the panel on the relay loopback (${TCP_PANEL})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "TCP_PANEL"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "CONNECTED"
+              },
+              "message": "A hook cannot reach the panel on the relay loopback (${TCP_PANEL})"
+            }
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "A hook cannot reach the journal socket",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$PROBE\" | jq -r '.journal')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "CONNECTED"
+              },
+              "message": "A hook cannot reach the journal socket"
+            }
+          }
+        },
+        {
+          "id": "step-161",
+          "label": "A hook cannot reach D-Bus",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$PROBE\" | jq -r '.dbus')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "CONNECTED"
+              },
+              "message": "A hook cannot reach D-Bus"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "Extract HOOK_UID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HOOK_UID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "expression": ".uid"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "Set LAMASTE_UID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "id -u lamaste"
+          },
+          "capture": [
+            {
+              "variable": "LAMASTE_UID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "The runner runs as a dynamic user (uid ${HOOK_UID}), not root or lamaste",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The runner runs as a dynamic user (uid ${HOOK_UID}), not root or lamaste"
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "The runner's uid is ${HOOK_UID}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The runner's uid is ${HOOK_UID}"
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "A hook sees an empty environment",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".envKeys",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "A hook sees an empty environment"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"From inside the hook runner\"\n\nPROBE=$(api_get \"audit?plugin=${PLUGIN}&action=hook.sandbox.probe\" | jq -c '.entries[0].details' 2>/dev/null || echo '{}')\nassert_json_field \"$PROBE\" '.readLamaste' 'ERR_ACCESS_DENIED' \"A hook cannot read /etc/lamalibre\" || true\nassert_json_field \"$PROBE\" '.readPasswd' 'ERR_ACCESS_DENIED' \"A hook cannot read /etc/passwd\" || true\nassert_json_field \"$PROBE\" '.write' 'ERR_ACCESS_DENIED' \"A hook cannot write a file\" || true\nassert_json_field \"$PROBE\" '.spawn' 'ERR_ACCESS_DENIED' \"A hook cannot spawn a process\" || true\nassert_json_field \"$PROBE\" '.worker' 'ERR_ACCESS_DENIED' \"A hook cannot start a worker\" || true\nTCP_OUT=$(echo \"$PROBE\" | jq -r '.tcpOut' 2>/dev/null || echo \"\")\nassert_not_eq \"$TCP_OUT\" \"CONNECTED\" \"A hook cannot open a TCP connection out (${TCP_OUT})\" || true\nTCP_PANEL=$(echo \"$PROBE\" | jq -r '.tcpPanel' 2>/dev/null || echo \"\")\nassert_not_eq \"$TCP_PANEL\" \"CONNECTED\" \"A hook cannot reach the panel on the relay loopback (${TCP_PANEL})\" || true\nassert_not_eq \"$(echo \"$PROBE\" | jq -r '.journal')\" \"CONNECTED\" \"A hook cannot reach the journal socket\" || true\nassert_not_eq \"$(echo \"$PROBE\" | jq -r '.dbus')\" \"CONNECTED\" \"A hook cannot reach D-Bus\" || true\nHOOK_UID=$(echo \"$PROBE\" | jq -r '.uid' 2>/dev/null || echo \"0\")\nLAMASTE_UID=$(id -u lamaste)\nif [ \"${HOOK_UID}\" -ne 0 ] 2>/dev/null && [ \"${HOOK_UID}\" -ne \"${LAMASTE_UID}\" ] 2>/dev/null; then\n  log_pass \"The runner runs as a dynamic user (uid ${HOOK_UID}), not root or lamaste\"\nelse\n  log_fail \"The runner's uid is ${HOOK_UID}\"\nfi\nassert_json_field \"$PROBE\" '.envKeys' '0' \"A hook sees an empty environment\" || true\n\n# ===========================================================================\n# 4. The request pipeline\n# ==========================================================================="
+    },
+    {
+      "id": "request-hooks",
+      "label": "Request hooks",
+      "steps": [
+        {
+          "id": "step-168",
+          "label": "Set BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wc -l < \"${HALF_LOG}\""
+          },
+          "capture": [
+            {
+              "variable": "BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-169",
+          "label": "Set REJECT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":false}' -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/import/batch\""
+          },
+          "capture": [
+            {
+              "variable": "REJECT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-170",
+          "label": "pre-forward rejects an invalid import (422)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$REJECT\" | tail -1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "422"
+              },
+              "message": "pre-forward rejects an invalid import (422)"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "…with the hook's answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(echo \"$REJECT\" | head -1)"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "invalid import"
+              },
+              "message": "…with the hook's answer"
+            }
+          }
+        },
+        {
+          "id": "step-172",
+          "label": "Set IMPORTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "tail -n +\"$((BEFORE + 1))\" \"${HALF_LOG}\" | grep -c \"/admin/import\" || true"
+          },
+          "capture": [
+            {
+              "variable": "IMPORTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-173",
+          "label": "The rejected request never reached the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "IMPORTS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The rejected request never reached the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-174",
+          "label": "The rejection is audited (effect)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'hook.import.rejected')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The rejection is audited (effect)"
+            }
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "Set ACCEPT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":true,\"rows\":[1,2]}' \"${BASE_URL}/api/${PLUGIN}/import/batch\""
+          },
+          "capture": [
+            {
+              "variable": "ACCEPT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-176",
+          "label": "A valid import passes",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACCEPT"
+              },
+              "path": ".imported",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A valid import passes"
+            }
+          }
+        },
+        {
+          "id": "step-177",
+          "label": "…with the header the hook added",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACCEPT"
+              },
+              "path": ".validated",
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "…with the header the hook added"
+            }
+          }
+        },
+        {
+          "id": "step-178",
+          "label": "POST /api/${PLUGIN}/hooks/install:pre-tunnel",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "${PLUGIN}/hooks/install:pre-tunnel",
+            "body": {},
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "HOOKS_THROUGH",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-179",
+          "label": "/admin/hooks is never forwarded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HOOKS_THROUGH"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "/admin/hooks is never forwarded"
+            }
+          }
+        },
+        {
+          "id": "step-180",
+          "label": "GET /api/${PLUGIN}/export/all",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/export/all"
+          },
+          "capture": [
+            {
+              "variable": "EXPORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-181",
+          "label": "post-forward redacts the planted token",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "EXPORT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2eToken0"
+              },
+              "message": "post-forward redacts the planted token"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "…replaced by its rule id",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPORT"
+              },
+              "path": ".token",
+              "expected": {
+                "kind": "literal",
+                "value": "[REDACTED:github-token]"
+              },
+              "message": "…replaced by its rule id"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "…and changes nothing else",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "EXPORT"
+              },
+              "path": ".total",
+              "expected": {
+                "kind": "literal",
+                "value": "12345678901234567890"
+              },
+              "message": "…and changes nothing else"
+            }
+          }
+        },
+        {
+          "id": "step-184",
+          "label": "A scanned route asks the agent half for an uncompressed body",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${HALF_LOG}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "encoding=identity"
+              },
+              "message": "A scanned route asks the agent half for an uncompressed body"
+            }
+          }
+        },
+        {
+          "id": "step-185",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hook.secret-scan.redacted",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hook.secret-scan.redacted"
+          },
+          "capture": [
+            {
+              "variable": "REDACTED_AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-186",
+          "label": "The redaction is audited by rule",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "REDACTED_AUDIT"
+              },
+              "path": ".rules",
+              "expected": {
+                "kind": "literal",
+                "value": "github-token"
+              },
+              "message": "The redaction is audited by rule"
+            }
+          }
+        },
+        {
+          "id": "step-187",
+          "label": "…never with the value",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REDACTED_AUDIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "E2eToken0"
+              },
+              "message": "…never with the value"
+            }
+          }
+        },
+        {
+          "id": "step-188",
+          "label": "Set REPORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/report\""
+          },
+          "capture": [
+            {
+              "variable": "REPORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-189",
+          "label": "post-forward blocks a response (502)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$REPORT\" | tail -1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "post-forward blocks a response (502)"
+            }
+          }
+        },
+        {
+          "id": "step-190",
+          "label": "…with the hook's reason",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(echo \"$REPORT\" | head -1)"
+              },
+              "path": ".reasonId",
+              "expected": {
+                "kind": "literal",
+                "value": "e2e.blocked"
+              },
+              "message": "…with the hook's reason"
+            }
+          }
+        },
+        {
+          "id": "step-191",
+          "label": "The blocked body does not leave the relay",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "REPORT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "BLOCKME"
+              },
+              "message": "The blocked body does not leave the relay"
+            }
+          }
+        },
+        {
+          "id": "step-192",
+          "label": "Set START",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date +%s"
+          },
+          "capture": [
+            {
+              "variable": "START",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-193",
+          "label": "GET /api/${PLUGIN}/stuck",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN}/stuck",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "STUCK",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-194",
+          "label": "Set ELAPSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "( $(date +%s) - START )"
+          },
+          "capture": [
+            {
+              "variable": "ELAPSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-195",
+          "label": "A hook that never decides fails closed (503)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STUCK"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "A hook that never decides fails closed (503)"
+            }
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "Set AFTER_STUCK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":true}' \"${BASE_URL}/api/${PLUGIN}/import/again\""
+          },
+          "capture": [
+            {
+              "variable": "AFTER_STUCK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-201",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-203",
+          "label": "The runner was replaced: hooks answer again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The runner was replaced: hooks answer again"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "RECOVERED"
+          }
+        },
+        {
+          "id": "step-204",
+          "label": "Hooks did not recover after the stuck call: ${AFTER_STUCK}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Hooks did not recover after the stuck call: ${AFTER_STUCK}"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "RECOVERED"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Request hooks\"\n\n: > \"${HALF_LOG}.mark\"\nBEFORE=$(wc -l < \"${HALF_LOG}\")\nREJECT=$(_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":false}' -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/import/batch\")\nassert_eq \"$(echo \"$REJECT\" | tail -1)\" \"422\" \"pre-forward rejects an invalid import (422)\" || true\nassert_json_field \"$(echo \"$REJECT\" | head -1)\" '.error' 'invalid import' \"…with the hook's answer\" || true\nIMPORTS=$(tail -n +\"$((BEFORE + 1))\" \"${HALF_LOG}\" | grep -c \"/admin/import\" || true)\nassert_eq \"$IMPORTS\" \"0\" \"The rejected request never reached the agent half\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" 'hook.import.rejected')\" \"1\" \"The rejection is audited (effect)\" || true\n\nACCEPT=$(_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":true,\"rows\":[1,2]}' \"${BASE_URL}/api/${PLUGIN}/import/batch\")\nassert_json_field \"$ACCEPT\" '.imported' 'true' \"A valid import passes\" || true\nassert_json_field \"$ACCEPT\" '.validated' 'yes' \"…with the header the hook added\" || true\n\nHOOKS_THROUGH=$(api_post_status \"${PLUGIN}/hooks/install:pre-tunnel\" '{}')\nassert_eq \"$HOOKS_THROUGH\" \"404\" \"/admin/hooks is never forwarded\" || true\n\nEXPORT=$(api_get \"${PLUGIN}/export/all\")\nassert_not_contains \"$EXPORT\" \"E2eToken0\" \"post-forward redacts the planted token\" || true\nassert_json_field \"$EXPORT\" '.token' '[REDACTED:github-token]' \"…replaced by its rule id\" || true\nassert_json_field \"$EXPORT\" '.total' '12345678901234567890' \"…and changes nothing else\" || true\nassert_contains \"$(cat \"${HALF_LOG}\")\" \"encoding=identity\" \"A scanned route asks the agent half for an uncompressed body\" || true\nREDACTED_AUDIT=$(api_get \"audit?plugin=${PLUGIN}&action=hook.secret-scan.redacted\" | jq -c '.entries[0].details' 2>/dev/null || echo '{}')\nassert_json_field \"$REDACTED_AUDIT\" '.rules' 'github-token' \"The redaction is audited by rule\" || true\nassert_not_contains \"$REDACTED_AUDIT\" \"E2eToken0\" \"…never with the value\" || true\n\nREPORT=$(_curl_mtls -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/report\")\nassert_eq \"$(echo \"$REPORT\" | tail -1)\" \"502\" \"post-forward blocks a response (502)\" || true\nassert_json_field \"$(echo \"$REPORT\" | head -1)\" '.reasonId' 'e2e.blocked' \"…with the hook's reason\" || true\nassert_not_contains \"$REPORT\" \"BLOCKME\" \"The blocked body does not leave the relay\" || true\n\nSTART=$(date +%s)\nSTUCK=$(api_get_status \"${PLUGIN}/stuck\")\nELAPSED=$(( $(date +%s) - START ))\nassert_eq \"$STUCK\" \"503\" \"A hook that never decides fails closed (503)\" || true\nif [ \"$ELAPSED\" -le 5 ]; then log_pass \"…after its timeout (${ELAPSED}s)\"; else log_fail \"The stuck hook took ${ELAPSED}s\"; fi\n# The stuck runner is replaced in the background; calls meanwhile fail closed.\nRECOVERED=\"\"\nfor _ in $(seq 1 15); do\n  AFTER_STUCK=$(_curl_mtls -X POST -H 'Content-Type: application/json' -d '{\"valid\":true}' \"${BASE_URL}/api/${PLUGIN}/import/again\")\n  if [ \"$(echo \"$AFTER_STUCK\" | jq -r '.imported' 2>/dev/null)\" = \"true\" ]; then\n    RECOVERED=1\n    break\n  fi\n  sleep 1\ndone\nif [ -n \"$RECOVERED\" ]; then\n  log_pass \"The runner was replaced: hooks answer again\"\nelse\n  log_fail \"Hooks did not recover after the stuck call: ${AFTER_STUCK}\"\nfi\n\n# ===========================================================================\n# 5. Tunnel state on the relay\n# ==========================================================================="
+    },
+    {
+      "id": "tunnel-down-and-tunnel-up",
+      "label": "tunnel:down and tunnel:up",
+      "steps": [
+        {
+          "id": "step-206",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-207",
+          "label": "Set FALLBACK",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -D \"${WORK_DIR}/fallback.headers\" -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/ping\""
+          },
+          "capture": [
+            {
+              "variable": "FALLBACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-208",
+          "label": "While down, tunnel:down's fallback answers instead of a 502",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FALLBACK\" | tail -1)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "While down, tunnel:down's fallback answers instead of a 502"
+            }
+          }
+        },
+        {
+          "id": "step-209",
+          "label": "…with the plugin's own body",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(echo \"$FALLBACK\" | head -1)"
+              },
+              "path": ".error",
+              "expected": {
+                "kind": "literal",
+                "value": "maintenance"
+              },
+              "message": "…with the plugin's own body"
+            }
+          }
+        },
+        {
+          "id": "step-210",
+          "label": "…and its Retry-After",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(tr 'A-Z' 'a-z' < \"${WORK_DIR}/fallback.headers\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "retry-after: 30"
+              },
+              "message": "…and its Retry-After"
+            }
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "GET /api/notifications?unread=true",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "notifications?unread=true"
+          },
+          "capture": [
+            {
+              "variable": "NOTIFIED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-212",
+          "label": "tunnel:down ran once",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'hook.tunnel.down')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "tunnel:down ran once"
+            }
+          }
+        },
+        {
+          "id": "step-214",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-215",
+          "label": "tunnel:up ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'hook.tunnel.up')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "tunnel:up ran"
+            }
+          }
+        },
+        {
+          "id": "step-216",
+          "label": "Requests reach the agent half again (no fallback)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"${PLUGIN}/ping\")"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Requests reach the agent half again (no fallback)"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"tunnel:down and tunnel:up\"\n\nif wait_health \"${PLUGIN}\" up 60; then log_pass \"Health is up\"; else log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"; fi\npkill -f \"[a]pp-plugin-half.mjs --config ${WORK_DIR}/${PLUGIN}.json\" 2>/dev/null || true\nif wait_health \"${PLUGIN}\" down 60; then log_pass \"Health is down once the agent half stops\"; else log_fail \"Health did not go down\"; fi\nsleep 3\nFALLBACK=$(_curl_mtls -D \"${WORK_DIR}/fallback.headers\" -w '\\n%{http_code}' \"${BASE_URL}/api/${PLUGIN}/ping\")\nassert_eq \"$(echo \"$FALLBACK\" | tail -1)\" \"503\" \"While down, tunnel:down's fallback answers instead of a 502\" || true\nassert_json_field \"$(echo \"$FALLBACK\" | head -1)\" '.error' 'maintenance' \"…with the plugin's own body\" || true\nassert_contains \"$(tr 'A-Z' 'a-z' < \"${WORK_DIR}/fallback.headers\")\" \"retry-after: 30\" \"…and its Retry-After\" || true\nNOTIFIED=$(api_get \"notifications?unread=true\" | jq \"[.notifications[] | select(.id > ${NOTIFICATION_BASE} and .source == \\\"plugin:${PLUGIN}\\\")] | length\" 2>/dev/null || echo \"0\")\nif [ \"${NOTIFIED}\" -ge 1 ] 2>/dev/null; then log_pass \"Admins were notified (notify-admins effect)\"; else log_fail \"No notification from the plugin\"; fi\nassert_eq \"$(audit_count \"${PLUGIN}\" 'hook.tunnel.down')\" \"1\" \"tunnel:down ran once\" || true\n\nstart_half \"${PLUGIN}\" \"${WORK_DIR}/${PLUGIN}.json\" \"${HALF_LOG}\" \"${PORT}\" || true\nif wait_health \"${PLUGIN}\" up 60; then log_pass \"Health is up again\"; else log_fail \"Health did not recover\"; fi\nsleep 3\nassert_eq \"$(audit_count \"${PLUGIN}\" 'hook.tunnel.up')\" \"1\" \"tunnel:up ran\" || true\nassert_json_field \"$(api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Requests reach the agent half again (no fallback)\" || true\n\n# ===========================================================================\n# 6. Updating in place\n# ==========================================================================="
+    },
+    {
+      "id": "update-in-place",
+      "label": "Update in place",
+      "steps": [
+        {
+          "id": "step-217",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "1.1.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_SAME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-218",
+          "label": "Extract SAME_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SAME_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPDATE_SAME"
+              },
+              "expression": ".operation.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "1.1.0 brings the same hook set: it updates without asking",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "1.1.0 brings the same hook set: it updates without asking"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "SAME_ID"
+          }
+        },
+        {
+          "id": "step-220",
+          "label": "Set SAME_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"${SAME_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "SAME_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "SAME_ID"
+          }
+        },
+        {
+          "id": "step-221",
+          "label": "The update succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SAME_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The update succeeded"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "SAME_ID"
+          }
+        },
+        {
+          "id": "step-222",
+          "label": "The agent half's post stage ran through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$SAME_OP\" 'agent install:post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "The agent half's post stage ran through the tunnel"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "SAME_ID"
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "Update to 1.1.0 did not start: ${UPDATE_SAME}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Update to 1.1.0 did not start: ${UPDATE_SAME}"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "SAME_ID"
+            }
+          }
+        },
+        {
+          "id": "step-224",
+          "label": "The plugin is at 1.1.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.1.0"
+              },
+              "message": "The plugin is at 1.1.0"
+            }
+          }
+        },
+        {
+          "id": "step-225",
+          "label": "The agent half saw phase upgrade",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${HALF_LOG}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook install:post-tunnel phase=upgrade"
+              },
+              "message": "The agent half saw phase upgrade"
+            }
+          }
+        },
+        {
+          "id": "step-226",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "1.2.0"
+            }
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_NEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-227",
+          "label": "Extract NEW_DIGEST",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_DIGEST",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPDATE_NEW"
+              },
+              "expression": ".pendingUpdate.digest // empty"
+            }
+          }
+        },
+        {
+          "id": "step-228",
+          "label": "1.2.0 changes the relay hooks: it waits for approval",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE_NEW"
+              },
+              "path": ".pendingUpdate.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.2.0"
+              },
+              "message": "1.2.0 changes the relay hooks: it waits for approval"
+            }
+          }
+        },
+        {
+          "id": "step-229",
+          "label": "…with another digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_DIGEST"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "DIGEST"
+              },
+              "message": "…with another digest"
+            }
+          }
+        },
+        {
+          "id": "step-230",
+          "label": "The installed version stays live meanwhile",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.1.0"
+              },
+              "message": "The installed version stays live meanwhile"
+            }
+          }
+        },
+        {
+          "id": "step-231",
+          "label": "A pending update can be discarded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_delete \"plugins/${PLUGIN}/update\")"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "A pending update can be discarded"
+            }
+          }
+        },
+        {
+          "id": "step-232",
+          "label": "…and is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": ".hooks.pendingUpdate",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "…and is gone"
+            }
+          }
+        },
+        {
+          "id": "step-233",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {
+              "version": "1.2.0"
+            }
+          }
+        },
+        {
+          "id": "step-234",
+          "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/hooks/approve",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "APPROVE_NEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-235",
+          "label": "Extract NEW_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "APPROVE_NEW"
+              },
+              "expression": ".operation.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-236",
+          "label": "Set NEW_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"${NEW_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "NEW_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-237",
+          "label": "Approving the new hook set applies the update",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "NEW_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Approving the new hook set applies the update"
+            }
+          }
+        },
+        {
+          "id": "step-238",
+          "label": "The plugin is at 1.2.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.2.0"
+              },
+              "message": "The plugin is at 1.2.0"
+            }
+          }
+        },
+        {
+          "id": "step-239",
+          "label": "The new digest is the approved one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": ".hooks.approval.approvedDigest",
+              "expected": {
+                "kind": "var",
+                "name": "NEW_DIGEST"
+              },
+              "message": "The new digest is the approved one"
+            }
+          }
+        },
+        {
+          "id": "step-240",
+          "label": "The runner holds the 1.2.0 module",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": ".hooks.runner.current",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The runner holds the 1.2.0 module"
+            }
+          }
+        },
+        {
+          "id": "step-241",
+          "label": "Auto-approve is off by default",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": ".hooks.autoApprove",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Auto-approve is off by default"
+            }
+          }
+        },
+        {
+          "id": "step-242",
+          "label": "PUT /api/plugins/${PLUGIN}/hooks/auto-approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PUT",
+            "path": "plugins/${PLUGIN}/hooks/auto-approve",
+            "body": {
+              "enabled": true
+            }
+          },
+          "capture": [
+            {
+              "variable": "AUTO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-243",
+          "label": "Auto-approve can be turned on for one plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTO"
+              },
+              "path": ".autoApprove",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Auto-approve can be turned on for one plugin"
+            }
+          }
+        },
+        {
+          "id": "step-244",
+          "label": "…and that is audited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'hooks.auto-approve.enabled')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…and that is audited"
+            }
+          }
+        },
+        {
+          "id": "step-245",
+          "label": "POST /api/plugins/${PLUGIN}/update",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/update",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "UPDATE_AUTO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-246",
+          "label": "Extract AUTO_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "AUTO_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "UPDATE_AUTO"
+              },
+              "expression": ".operation.id // empty"
+            }
+          }
+        },
+        {
+          "id": "step-247",
+          "label": "1.3.0 changes the relay hooks again: with auto-approve it updates without asking",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "1.3.0 changes the relay hooks again: with auto-approve it updates without asking"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "AUTO_ID"
+          }
+        },
+        {
+          "id": "step-248",
+          "label": "Set AUTO_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"${AUTO_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "AUTO_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "AUTO_ID"
+          }
+        },
+        {
+          "id": "step-249",
+          "label": "The auto-approved update succeeded",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTO_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The auto-approved update succeeded"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "AUTO_ID"
+          }
+        },
+        {
+          "id": "step-250",
+          "label": "Update to 1.3.0 did not start: ${UPDATE_AUTO}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Update to 1.3.0 did not start: ${UPDATE_AUTO}"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "AUTO_ID"
+            }
+          }
+        },
+        {
+          "id": "step-251",
+          "label": "The plugin is at 1.3.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1.3.0"
+              },
+              "message": "The plugin is at 1.3.0"
+            }
+          }
+        },
+        {
+          "id": "step-252",
+          "label": "GET /api/audit?plugin=${PLUGIN}&action=hooks.approved",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${PLUGIN}&action=hooks.approved"
+          },
+          "capture": [
+            {
+              "variable": "AUTO_AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-253",
+          "label": "The automatic approval is in the audit log",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTO_AUDIT"
+              },
+              "path": ".actor",
+              "expected": {
+                "kind": "literal",
+                "value": "auto-approve"
+              },
+              "message": "The automatic approval is in the audit log"
+            }
+          }
+        },
+        {
+          "id": "step-254",
+          "label": "…for 1.3.0",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AUTO_AUDIT"
+              },
+              "path": ".details.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.3.0"
+              },
+              "message": "…for 1.3.0"
+            }
+          }
+        },
+        {
+          "id": "step-255",
+          "label": "GET /api/plugins/${PLUGIN}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "CURRENT_DIGEST",
+              "from": {
+                "kind": "jq",
+                "expression": ".hooks.relay.digest"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-256",
+          "label": "The runner holds the 1.3.0 module",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(api_get \"plugins/${PLUGIN}/hooks\")"
+              },
+              "path": ".hooks.runner.current",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The runner holds the 1.3.0 module"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Update in place\"\n\nUPDATE_SAME=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.1.0\"}')\nSAME_ID=$(echo \"$UPDATE_SAME\" | jq -r '.operation.id // empty' 2>/dev/null || echo \"\")\nif [ -n \"$SAME_ID\" ]; then\n  log_pass \"1.1.0 brings the same hook set: it updates without asking\"\n  SAME_OP=$(wait_operation \"${PLUGIN}\" \"${SAME_ID}\" 180)\n  assert_json_field \"$SAME_OP\" '.status' 'succeeded' \"The update succeeded\" || true\n  assert_eq \"$(step_status \"$SAME_OP\" 'agent install:post-tunnel')\" \"done\" \"The agent half's post stage ran through the tunnel\" || true\nelse\n  log_fail \"Update to 1.1.0 did not start: ${UPDATE_SAME}\"\nfi\nassert_eq \"$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')\" \"1.1.0\" \"The plugin is at 1.1.0\" || true\nassert_contains \"$(cat \"${HALF_LOG}\")\" \"hook install:post-tunnel phase=upgrade\" \"The agent half saw phase upgrade\" || true\n\nUPDATE_NEW=$(api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.2.0\"}')\nNEW_DIGEST=$(echo \"$UPDATE_NEW\" | jq -r '.pendingUpdate.digest // empty' 2>/dev/null || echo \"\")\nassert_json_field \"$UPDATE_NEW\" '.pendingUpdate.version' '1.2.0' \"1.2.0 changes the relay hooks: it waits for approval\" || true\nassert_not_eq \"$NEW_DIGEST\" \"$DIGEST\" \"…with another digest\" || true\nassert_eq \"$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')\" \"1.1.0\" \"The installed version stays live meanwhile\" || true\nassert_json_field \"$(api_delete \"plugins/${PLUGIN}/update\")\" '.ok' 'true' \"A pending update can be discarded\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.pendingUpdate' 'null' \"…and is gone\" || true\n\napi_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.2.0\"}' > /dev/null\nAPPROVE_NEW=$(api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"${NEW_DIGEST}\\\"}\")\nNEW_ID=$(echo \"$APPROVE_NEW\" | jq -r '.operation.id // empty' 2>/dev/null || echo \"\")\nNEW_OP=$(wait_operation \"${PLUGIN}\" \"${NEW_ID}\" 180)\nassert_json_field \"$NEW_OP\" '.status' 'succeeded' \"Approving the new hook set applies the update\" || true\nassert_eq \"$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')\" \"1.2.0\" \"The plugin is at 1.2.0\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.approvedDigest' \"${NEW_DIGEST}\" \"The new digest is the approved one\" || true\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.runner.current' 'true' \"The runner holds the 1.2.0 module\" || true\nif [ \"$(audit_count \"${PLUGIN}\" 'plugin.updated')\" -ge 2 ] 2>/dev/null; then log_pass \"Both updates are audited\"; else log_fail \"Updates not audited\"; fi\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.autoApprove' 'false' \"Auto-approve is off by default\" || true\nAUTO=$(api_put \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$AUTO\" '.autoApprove' 'true' \"Auto-approve can be turned on for one plugin\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" 'hooks.auto-approve.enabled')\" \"1\" \"…and that is audited\" || true\nUPDATE_AUTO=$(api_post \"plugins/${PLUGIN}/update\" '{}')\nAUTO_ID=$(echo \"$UPDATE_AUTO\" | jq -r '.operation.id // empty' 2>/dev/null || echo \"\")\nif [ -n \"$AUTO_ID\" ]; then\n  log_pass \"1.3.0 changes the relay hooks again: with auto-approve it updates without asking\"\n  AUTO_OP=$(wait_operation \"${PLUGIN}\" \"${AUTO_ID}\" 180)\n  assert_json_field \"$AUTO_OP\" '.status' 'succeeded' \"The auto-approved update succeeded\" || true\nelse\n  log_fail \"Update to 1.3.0 did not start: ${UPDATE_AUTO}\"\nfi\nassert_eq \"$(api_get \"plugins/${PLUGIN}\" | jq -r '.plugin.version')\" \"1.3.0\" \"The plugin is at 1.3.0\" || true\nAUTO_AUDIT=$(api_get \"audit?plugin=${PLUGIN}&action=hooks.approved\" | jq -c '.entries[0]' 2>/dev/null || echo '{}')\nassert_json_field \"$AUTO_AUDIT\" '.actor' 'auto-approve' \"The automatic approval is in the audit log\" || true\nassert_json_field \"$AUTO_AUDIT\" '.details.version' '1.3.0' \"…for 1.3.0\" || true\nCURRENT_DIGEST=$(api_get \"plugins/${PLUGIN}/hooks\" | jq -r '.hooks.relay.digest' 2>/dev/null || echo \"\")\nassert_json_field \"$(api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.runner.current' 'true' \"The runner holds the 1.3.0 module\" || true\n\n# ===========================================================================\n# 7. Failing stages\n# ==========================================================================="
+    },
+    {
+      "id": "a-failing-relay-install-pre-tunnel-leaves-nothing",
+      "label": "A failing relay install:pre-tunnel leaves nothing",
+      "steps": [
+        {
+          "id": "step-257",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-258",
+          "label": "POST /api/plugins/${FAILPRE}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${FAILPRE}/enable"
+          }
+        },
+        {
+          "id": "step-259",
+          "label": "GET /api/plugins/${FAILPRE}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${FAILPRE}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "FAILPRE_DIGEST",
+              "from": {
+                "kind": "jq",
+                "expression": ".hooks.relay.digest"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-260",
+          "label": "POST /api/plugins/${FAILPRE}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${FAILPRE}/hooks/approve",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-261",
+          "label": "POST /api/plugins/${FAILPRE}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${FAILPRE}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "FP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-262",
+          "label": "Set FP_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${FAILPRE}\" \"$(echo \"$FP\" | jq -r '.operation.id')\" 120"
+          },
+          "capture": [
+            {
+              "variable": "FP_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-263",
+          "label": "The operation failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FP_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "The operation failed"
+            }
+          }
+        },
+        {
+          "id": "step-264",
+          "label": "…with the hook's reason",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FP_OP\" | jq -r '.error')"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "refused before the tunnel"
+              },
+              "message": "…with the hook's reason"
+            }
+          }
+        },
+        {
+          "id": "step-265",
+          "label": "No hosting record",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${FAILPRE}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "No hosting record"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A failing relay install:pre-tunnel leaves nothing\"\n\napi_post \"plugins/install\" \"{\\\"packageName\\\":\\\"@lamalibre/${FAILPRE}-server\\\"}\" > /dev/null\napi_post \"plugins/${FAILPRE}/enable\" > /dev/null\nFAILPRE_DIGEST=$(api_get \"plugins/${FAILPRE}/hooks\" | jq -r '.hooks.relay.digest' 2>/dev/null || echo \"\")\napi_post \"plugins/${FAILPRE}/hooks/approve\" \"{\\\"digest\\\":\\\"${FAILPRE_DIGEST}\\\"}\" > /dev/null\nFP=$(api_post \"plugins/${FAILPRE}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nFP_OP=$(wait_operation \"${FAILPRE}\" \"$(echo \"$FP\" | jq -r '.operation.id')\" 120)\nassert_json_field \"$FP_OP\" '.status' 'failed' \"The operation failed\" || true\nassert_contains \"$(echo \"$FP_OP\" | jq -r '.error')\" \"refused before the tunnel\" \"…with the hook's reason\" || true\nassert_eq \"$(api_get_status \"plugins/${FAILPRE}/hosting\")\" \"404\" \"No hosting record\" || true\nassert_eq \"$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.pluginRoute == \\\"${FAILPRE}\\\")] | length\")\" \"0\" \"No tunnel\" || true\nassert_not_contains \"$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\")\" \"plugin:${FAILPRE}:host\" \"No host capability\" || true\nassert_eq \"$(agent_api_get \"tunnels/agent-config\" | jq \"[.appPlugins[] | select(.route == \\\"${FAILPRE}\\\")] | length\")\" \"0\" \"Nothing for the agent\" || true"
+    },
+    {
+      "id": "a-failing-relay-install-post-tunnel-rolls-back-to-nothing",
+      "label": "A failing relay install:post-tunnel rolls back to nothing",
+      "steps": [
+        {
+          "id": "step-269",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-270",
+          "label": "POST /api/plugins/${FAILPOST}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${FAILPOST}/enable"
+          }
+        },
+        {
+          "id": "step-271",
+          "label": "GET /api/plugins/${FAILPOST}/hooks",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${FAILPOST}/hooks"
+          },
+          "capture": [
+            {
+              "variable": "FAILPOST_DIGEST",
+              "from": {
+                "kind": "jq",
+                "expression": ".hooks.relay.digest"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-272",
+          "label": "POST /api/plugins/${FAILPOST}/hooks/approve",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${FAILPOST}/hooks/approve",
+            "body": "{\\"
+          }
+        },
+        {
+          "id": "step-273",
+          "label": "Set RB_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_with_half \"${FAILPOST}\""
+          },
+          "capture": [
+            {
+              "variable": "RB_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-274",
+          "label": "The operation rolled back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RB_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "rolled-back"
+              },
+              "message": "The operation rolled back"
+            }
+          }
+        },
+        {
+          "id": "step-275",
+          "label": "relay install:post-tunnel failed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$RB_OP\" 'relay install:post-tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "failed"
+              },
+              "message": "relay install:post-tunnel failed"
+            }
+          }
+        },
+        {
+          "id": "step-276",
+          "label": "The tunnel was removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$RB_OP\" 'remove the tunnel')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "The tunnel was removed"
+            }
+          }
+        },
+        {
+          "id": "step-277",
+          "label": "Secret and capability were revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$RB_OP\" 'revoke the secret and the capability')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "Secret and capability were revoked"
+            }
+          }
+        },
+        {
+          "id": "step-278",
+          "label": "GET /api/audit?plugin=${FAILPOST}&action=hook.uninstall.pre-teardown",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "audit?plugin=${FAILPOST}&action=hook.uninstall.pre-teardown"
+          },
+          "capture": [
+            {
+              "variable": "ROLLBACK_AUDIT",
+              "from": {
+                "kind": "jq",
+                "expression": ".entries[0].details.phase"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-279",
+          "label": "The relay's uninstall stages ran with phase rollback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ROLLBACK_AUDIT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "rollback"
+              },
+              "message": "The relay's uninstall stages ran with phase rollback"
+            }
+          }
+        },
+        {
+          "id": "step-280",
+          "label": "No hosting record",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${FAILPOST}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "No hosting record"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A failing relay install:post-tunnel rolls back to nothing\"\n\napi_post \"plugins/install\" \"{\\\"packageName\\\":\\\"@lamalibre/${FAILPOST}-server\\\"}\" > /dev/null\napi_post \"plugins/${FAILPOST}/enable\" > /dev/null\nFAILPOST_DIGEST=$(api_get \"plugins/${FAILPOST}/hooks\" | jq -r '.hooks.relay.digest' 2>/dev/null || echo \"\")\napi_post \"plugins/${FAILPOST}/hooks/approve\" \"{\\\"digest\\\":\\\"${FAILPOST_DIGEST}\\\"}\" > /dev/null\nRB_OP=$(host_with_half \"${FAILPOST}\")\nassert_json_field \"$RB_OP\" '.status' 'rolled-back' \"The operation rolled back\" || true\nassert_eq \"$(step_status \"$RB_OP\" 'relay install:post-tunnel')\" \"failed\" \"relay install:post-tunnel failed\" || true\nassert_eq \"$(step_status \"$RB_OP\" 'remove the tunnel')\" \"done\" \"The tunnel was removed\" || true\nassert_eq \"$(step_status \"$RB_OP\" 'revoke the secret and the capability')\" \"done\" \"Secret and capability were revoked\" || true\nROLLBACK_AUDIT=$(api_get \"audit?plugin=${FAILPOST}&action=hook.uninstall.pre-teardown\" | jq -r '.entries[0].details.phase' 2>/dev/null || echo \"\")\nassert_eq \"$ROLLBACK_AUDIT\" \"rollback\" \"The relay's uninstall stages ran with phase rollback\" || true\nassert_eq \"$(api_get_status \"plugins/${FAILPOST}/hosting\")\" \"404\" \"No hosting record\" || true\nassert_eq \"$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.pluginRoute == \\\"${FAILPOST}\\\")] | length\")\" \"0\" \"No tunnel\" || true\nassert_not_contains \"$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\")\" \"plugin:${FAILPOST}:host\" \"No host capability\" || true\npkill -f \"[a]pp-plugin-half.mjs --config ${WORK_DIR}/${FAILPOST}.json\" 2>/dev/null || true\n\n# ===========================================================================\n# 8. Unhost and uninstall; the CLI\n# ==========================================================================="
+    },
+    {
+      "id": "unhost-uninstall-cli",
+      "label": "Unhost, uninstall, CLI",
+      "steps": [
+        {
+          "id": "step-284",
+          "label": "Set CLI_HOOKS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins hooks \"${PLUGIN}\" 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_HOOKS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-285",
+          "label": "lamaste-server plugins hooks shows the digest",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_HOOKS"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "CURRENT_DIGEST"
+              },
+              "message": "lamaste-server plugins hooks shows the digest"
+            }
+          }
+        },
+        {
+          "id": "step-286",
+          "label": "Set CLI_AUDIT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server audit --plugin \"${PLUGIN}\" 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_AUDIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-287",
+          "label": "lamaste-server audit lists the approvals",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_AUDIT"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hooks.approved"
+              },
+              "message": "lamaste-server audit lists the approvals"
+            }
+          }
+        },
+        {
+          "id": "step-288",
+          "label": "DELETE /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-289",
+          "label": "Set UNHOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${PLUGIN}\" \"$(echo \"$UNHOST\" | jq -r '.operation.id')\" 240"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-290",
+          "label": "Unhosting ran the uninstall pipeline",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNHOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Unhosting ran the uninstall pipeline"
+            }
+          }
+        },
+        {
+          "id": "step-291",
+          "label": "relay uninstall:pre-teardown ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$UNHOST_OP\" 'relay uninstall:pre-teardown')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "relay uninstall:pre-teardown ran"
+            }
+          }
+        },
+        {
+          "id": "step-292",
+          "label": "The agent half's uninstall:pre-teardown ran through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$UNHOST_OP\" 'agent uninstall:pre-teardown')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "The agent half's uninstall:pre-teardown ran through the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-293",
+          "label": "relay uninstall:post-teardown ran",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(step_status \"$UNHOST_OP\" 'relay uninstall:post-teardown')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "done"
+              },
+              "message": "relay uninstall:post-teardown ran"
+            }
+          }
+        },
+        {
+          "id": "step-294",
+          "label": "The agent half saw uninstall:pre-teardown",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cat \"${HALF_LOG}\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "hook uninstall:pre-teardown phase=uninstall"
+              },
+              "message": "The agent half saw uninstall:pre-teardown"
+            }
+          }
+        },
+        {
+          "id": "step-295",
+          "label": "The hosting is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${PLUGIN}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The hosting is gone"
+            }
+          }
+        },
+        {
+          "id": "step-296",
+          "label": "The runner stays while the plugin is installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The runner stays while the plugin is installed"
+            }
+          }
+        },
+        {
+          "id": "step-297",
+          "label": "POST /api/plugins/${PLUGIN}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN}/disable"
+          }
+        },
+        {
+          "id": "step-298",
+          "label": "DELETE /api/plugins/${PLUGIN}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN}"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-299",
+          "label": "The plugin is uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The plugin is uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-300",
+          "label": "Its runner is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Its runner is gone"
+            }
+          }
+        },
+        {
+          "id": "step-301",
+          "label": "The uninstall is audited",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(audit_count \"${PLUGIN}\" 'plugin.uninstalled')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The uninstall is audited"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Unhost, uninstall, CLI\"\n\nCLI_HOOKS=$(lamaste-server plugins hooks \"${PLUGIN}\" 2>&1 || true)\nassert_contains \"$CLI_HOOKS\" \"${CURRENT_DIGEST}\" \"lamaste-server plugins hooks shows the digest\" || true\nCLI_AUDIT=$(lamaste-server audit --plugin \"${PLUGIN}\" 2>&1 || true)\nassert_contains \"$CLI_AUDIT\" \"hooks.approved\" \"lamaste-server audit lists the approvals\" || true\n\nUNHOST=$(api_delete \"plugins/${PLUGIN}/hosting\")\nUNHOST_OP=$(wait_operation \"${PLUGIN}\" \"$(echo \"$UNHOST\" | jq -r '.operation.id')\" 240)\nassert_json_field \"$UNHOST_OP\" '.status' 'succeeded' \"Unhosting ran the uninstall pipeline\" || true\nassert_eq \"$(step_status \"$UNHOST_OP\" 'relay uninstall:pre-teardown')\" \"done\" \"relay uninstall:pre-teardown ran\" || true\nassert_eq \"$(step_status \"$UNHOST_OP\" 'agent uninstall:pre-teardown')\" \"done\" \"The agent half's uninstall:pre-teardown ran through the tunnel\" || true\nassert_eq \"$(step_status \"$UNHOST_OP\" 'relay uninstall:post-teardown')\" \"done\" \"relay uninstall:post-teardown ran\" || true\nassert_contains \"$(cat \"${HALF_LOG}\")\" \"hook uninstall:pre-teardown phase=uninstall\" \"The agent half saw uninstall:pre-teardown\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN}/hosting\")\" \"404\" \"The hosting is gone\" || true\nassert_eq \"$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)\" \"active\" \"The runner stays while the plugin is installed\" || true\n\napi_post \"plugins/${PLUGIN}/disable\" > /dev/null\nUNINSTALL=$(api_delete \"plugins/${PLUGIN}\")\nassert_json_field \"$UNINSTALL\" '.ok' 'true' \"The plugin is uninstalled\" || true\nassert_not_eq \"$(systemctl is-active \"lamalibre-lamaste-hooks@${PLUGIN}.socket\" 2>/dev/null || true)\" \"active\" \"Its runner is gone\" || true\nif [ -d \"${HOOKS_DIR}/${PLUGIN}\" ]; then log_fail \"Its hook modules are still on disk\"; else log_pass \"Its hook modules are removed\"; fi\nassert_eq \"$(audit_count \"${PLUGIN}\" 'plugin.uninstalled')\" \"1\" \"The uninstall is audited\" || true"
+    }
+  ],
+  "apiHelpers": ["agent_api_get"],
+  "headerRaw": "# ============================================================================\n# 30 — Lifecycle hooks: approval, sandbox, request pipeline, relay stages\n# ============================================================================\n# An agent-hosted plugin with lifecycle hooks (fixture\n# @lamalibre/e2e-hooks-server, from a stand-in registry on the VM), on one VM:\n# - its relay hooks wait for approval: hosting is refused until the digest\n#   shown is approved; the approval installs the module, root-owned, into\n#   the plugin's runner (lamalibre-lamaste-hooks@<route>) and is audited\n# - from inside the runner a hook cannot read Lamaste's files or\n#   /etc/passwd, write, spawn, start a worker, open a TCP socket, or reach\n#   the journal or D-Bus; it runs as a dynamic user with an empty environment\n# - hosting runs the install pipeline as an operation: relay pre, reserve,\n#   tunnel granted, the agent half's install:post-tunnel through the\n#   tunnel, relay post\n# - pre-forward rejects an invalid request before the agent half sees it and\n#   adds a header to a valid one; post-forward redacts a planted token with\n#   lamaste:secret-scan and blocks a response; a hook that never decides\n#   fails closed and its runner is replaced\n# - the agent half down: tunnel:down's fallback answers instead of a 502,\n#   admins are notified; back up: tunnel:up, normal answers\n# - update in place: same hook set applies at once (phase upgrade); a\n#   changed one waits for approval, can be discarded, then approved; with\n#   the plugin's auto-approve on, a changed one applies at once, audited\n# - a failing relay install:pre-tunnel leaves nothing; a failing\n#   install:post-tunnel rolls back to nothing (uninstall hooks, phase\n#   rollback)\n# - unhosting runs the uninstall pipeline; uninstalling removes the runner\n#\n# The agent half listens on the relay loopback (one VM cannot run the chisel\n# leg), so its agent jobs (install:pre-tunnel, uninstall:post-teardown) are\n# proven by three-VM spec 32; this fixture declares only the agent stages\n# that run through the tunnel.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl systemctl\n\nbegin_test \"30 — Lifecycle hooks: approval, sandbox, request pipeline, relay stages\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

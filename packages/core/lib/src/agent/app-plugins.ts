@@ -13,7 +13,10 @@
  *     ~/.lamalibre/lamaste/agents/<label>/app-plugins/<route>.json   (0600)
  *
  * and acknowledges it, which lets the relay stop signing with the previous
- * secret. A plugin the relay no longer lists loses its file.
+ * secret. A plugin the relay no longer lists loses its file. When the app
+ * host helper installed the plugin's agent half (slice 3), the service has a
+ * copy of its own (`/etc/lamalibre/apps/<route>/plugin-config.json`): a
+ * config is acknowledged only once both copies are written.
  *
  * The agent half reads that file for its port and verifies every request on
  * `/admin/*` with {@link createCallerAssertionVerifier}, which re-reads the
@@ -26,6 +29,7 @@ import path from 'node:path';
 import { CALLER_ASSERTION_HEADER, NonceStore, verifyCallerAssertion } from '../caller-assertion.js';
 import type { VerifyCallerAssertionResult } from '../caller-assertion.js';
 import { atomicWriteJSON } from '../file-helpers.js';
+import { appHostRouteRecordedElsewhere, appHostRoutes, forgetAppHostApp } from './apphost-state.js';
 import { agentDataDir } from './platform.js';
 
 const ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -179,6 +183,20 @@ export interface IssuedAppPluginConfig {
 export interface AppPluginPanelCalls {
   fetchPluginConfig(route: string): Promise<IssuedAppPluginConfig>;
   acknowledgePluginConfig(route: string, issuedAt: string): Promise<void>;
+  /**
+   * Hand `config` to the service of an agent half the app host helper
+   * installed (a route in `apphost-state.json`) — called before the config
+   * is acknowledged. `not-installed`: the helper no longer has that agent
+   * half, so the agent's own copy is the only one. Throws when the config
+   * could not be delivered: it then stays unacknowledged, and the relay
+   * keeps signing with the previous secret, which the service still holds.
+   * A caller without it (the agent daemon) leaves such configs
+   * unacknowledged for the sync timer, which delivers them.
+   */
+  deliverPluginConfig?(
+    route: string,
+    config: AgentAppPluginConfig,
+  ): Promise<'delivered' | 'not-installed'>;
 }
 
 export interface AppPluginSyncResult {
@@ -224,9 +242,11 @@ export function parseAppPluginAssignments(raw: unknown, warnings: string[]): App
 /**
  * Bring the config files in line with what the relay reports. Fetches a
  * config whose secret the agent does not hold (or holds for another port),
- * acknowledges what the relay has not yet seen acknowledged, and removes
- * files for plugins no longer hosted here. A failure on one plugin is a
- * warning; the others are still processed.
+ * acknowledges what the relay has not yet seen acknowledged — for an agent
+ * half the app host helper installed, only after
+ * {@link AppPluginPanelCalls.deliverPluginConfig} wrote the service's copy —
+ * and removes files for plugins no longer hosted here. A failure on one
+ * plugin is a warning; the others are still processed.
  */
 export async function syncAppPluginConfigs(
   label: string,
@@ -237,6 +257,23 @@ export async function syncAppPluginConfigs(
   const fetched: string[] = [];
   const acknowledged: string[] = [];
   const removed: string[] = [];
+
+  // The agent halves the app host helper installed for this agent. When the
+  // record cannot be read this agent cannot show which services are its own:
+  // no config is delivered (another agent's service must not get it) and
+  // none is acknowledged (the relay keeps signing with secrets the services
+  // still hold) until the record is repaired — fail closed.
+  let apphostRoutes: ReadonlySet<string> | null = null;
+  try {
+    apphostRoutes = new Set(await appHostRoutes(label));
+  } catch (err: unknown) {
+    warnings.push(
+      'The record of the agent halves installed for this agent (apphost-state.json) could not ' +
+        `be read (${err instanceof Error ? err.message : String(err)}); no plugin config is ` +
+        'delivered or acknowledged until it is repaired (the sync rebuilds it from the app ' +
+        'host helper).',
+    );
+  }
 
   for (const assignment of assignments) {
     try {
@@ -265,6 +302,27 @@ export async function syncAppPluginConfigs(
         fetched.push(assignment.route);
       }
       if (stored && (!stored.acknowledged || !assignment.secretAcknowledged)) {
+        if (apphostRoutes === null) continue;
+        if (apphostRoutes.has(assignment.route)) {
+          const elsewhere = await appHostRouteRecordedElsewhere(label, assignment.route);
+          if (elsewhere.length > 0) {
+            warnings.push(
+              `The agent half of "${assignment.route}" is also recorded by agent ` +
+                `${elsewhere.join(', ')} on this machine; its plugin config is neither ` +
+                'delivered nor acknowledged while two agents claim it.',
+            );
+            continue;
+          }
+          if (!panel.deliverPluginConfig) {
+            warnings.push(
+              `The plugin config of "${assignment.route}" is acknowledged once the sync timer ` +
+                "has delivered it to the agent half's service.",
+            );
+            continue;
+          }
+          const delivery = await panel.deliverPluginConfig(assignment.route, stored);
+          if (delivery === 'not-installed') await forgetAppHostApp(label, assignment.route);
+        }
         await panel.acknowledgePluginConfig(assignment.route, stored.issuedAt);
         await saveAppPluginConfig(label, { ...stored, acknowledged: true });
         acknowledged.push(assignment.route);

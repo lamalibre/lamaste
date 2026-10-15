@@ -50,9 +50,31 @@ export function buildPanelCurlArgs({ method, path, body = null, p12Path, configP
 }
 
 /**
+ * The `details` of a panel error as text: a string as it is, a failed
+ * validation's `issues` as `field: message; …`; anything else is left out.
+ *
+ * @param {unknown} details
+ * @returns {string}
+ */
+function detailsText(details) {
+  if (typeof details === 'string') return details;
+  if (details === null || typeof details !== 'object' || !Array.isArray(details.issues)) return '';
+  const found = details.issues
+    .filter((issue) => typeof issue?.message === 'string')
+    .map((issue) =>
+      Array.isArray(issue.path) && issue.path.length > 0
+        ? `${issue.path.join('.')}: ${issue.message}`
+        : issue.message,
+    );
+  return [...new Set(found)].join('; ');
+}
+
+/**
  * Split curl's output (`<payload>\n<status>`) and turn a non-2xx status
- * into an error carrying the panel's `error` (and `details`). Pure,
- * exported for tests.
+ * into an error carrying the panel's `error` (and `details`) in its message,
+ * the status as `statusCode`, and what a caller acts on beyond the message
+ * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons` and
+ * a running operation's `operationId`. Pure, exported for tests.
  *
  * @param {string} stdout
  * @param {string} method
@@ -75,11 +97,16 @@ export function parsePanelResponse(stdout, method, path) {
   // Anything but a 2xx is an error: 4xx/5xx from the panel, a 3xx curl did
   // not follow, or 0 when curl reported no status at all.
   if (!Number.isInteger(status) || status < 200 || status >= 300) {
-    const reason = [parsed.error, parsed.details].filter(Boolean).join(': ');
+    const reason = [parsed.error, detailsText(parsed.details)].filter(Boolean).join(': ');
     const err = new Error(
       `${method} ${path} failed (HTTP ${status})${reason ? `: ${reason}` : ''}`,
     );
     err.statusCode = status;
+    if (typeof parsed.code === 'string') err.code = parsed.code;
+    if (Array.isArray(parsed.reasons)) {
+      err.reasons = parsed.reasons.filter((r) => typeof r === 'string');
+    }
+    if (typeof parsed.operationId === 'string') err.operationId = parsed.operationId;
     throw err;
   }
 
@@ -92,7 +119,8 @@ export function parsePanelResponse(stdout, method, path) {
  * Uses curl with the admin client certificate (mTLS) and a temporary
  * config file for the P12 password (never in process args). Resolves with
  * the JSON body; rejects with an Error (`statusCode`, the panel's `error`
- * in the message) for any non-2xx answer.
+ * in the message, a refusal's `code`, `reasons` and `operationId`) for any
+ * non-2xx answer.
  *
  * @param {string} method
  * @param {string} path  e.g. '/api/tunnels'

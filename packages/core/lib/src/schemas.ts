@@ -7,7 +7,15 @@
  * - lamaste-agent/src/lib/local-plugins.js
  */
 
+import semver from 'semver';
 import { z } from 'zod';
+import {
+  APPHOST_ROUTE_RE,
+  AgentHalfPackageNameSchema,
+  AgentServiceEntrySchema,
+  AgentServiceMemoryMaxSchema,
+  SystemPackageNameSchema,
+} from './agent-half.js';
 import {
   CORE_CAPABILITY_NAMESPACES,
   DEFAULT_PLUGIN_HOSTING,
@@ -17,6 +25,22 @@ import {
   derivePluginRoute,
   pluginCapabilityRegexFor,
 } from './constants.js';
+import {
+  HOOK_EFFECT_TYPES,
+  HOOK_TIMEOUTS,
+  POST_FORWARD_ON_ERROR,
+  PRE_FORWARD_ON_ERROR,
+  REQUEST_HOOKS_MAX,
+  REQUEST_HOOK_MAX_BODY_BYTES,
+  REQUEST_HOOK_ROUTES_MAX,
+  REQUEST_STAGES,
+  SECRET_SCAN_ACTIONS,
+  SECRET_SCAN_HOOK,
+  SECRET_SCAN_ON_UNSCANNABLE,
+  SECRET_SCAN_PACK_NAMES,
+  SHARED_HOOKS,
+  parseRoutePattern,
+} from './hooks/index.js';
 
 // ---------------------------------------------------------------------------
 // Capability string
@@ -238,10 +262,10 @@ export type OidcClientDeclaration = z.infer<typeof OidcClientSchema>;
 export const AGENT_HALF_OS = ['linux', 'darwin'] as const;
 
 /**
- * What the agent half requires of its hosting agent. Validated here; checked
- * against the agent's reported platform when Lamaste installs the agent half
- * onto an agent (the install flow — not yet; hosting an agent half that was
- * installed by hand checks nothing).
+ * What the agent half requires of its hosting agent, checked against the
+ * agent's reported host facts ({@link HostFactsSchema}) when a plugin is
+ * hosted (see `hostEligibility`). Hosting an agent half that was installed
+ * by hand checks nothing.
  */
 export const AgentRequiresSchema = z
   .object({
@@ -250,20 +274,33 @@ export const AgentRequiresSchema = z
       .string()
       .min(1)
       .max(50)
-      .regex(/^[0-9A-Za-z .<>=^~|*x-]+$/, 'node must be a semver range')
+      .refine(
+        (range) => /^[0-9A-Za-z .<>=^~|*x-]+$/.test(range) && semver.validRange(range) !== null,
+        'node must be a semver range',
+      )
       .optional(),
     os: z.array(z.enum(AGENT_HALF_OS)).min(1).max(AGENT_HALF_OS.length).optional(),
-    /** System packages the agent half's installer needs; listed for the install preview. */
-    systemPackages: z
-      .array(
-        z
-          .string()
-          .min(1)
-          .max(100)
-          .regex(/^[a-z0-9][a-z0-9+.-]*$/, 'System package names are lowercase'),
-      )
-      .max(50)
-      .optional(),
+    /**
+     * System packages the agent half needs. Lamaste installs them (apt-get,
+     * after approval) when it installs the agent half (`package`); for an
+     * agent half installed by hand they are listed for the operator.
+     */
+    systemPackages: z.array(SystemPackageNameSchema).max(50).optional(),
+  })
+  .strict();
+
+export type AgentRequires = z.infer<typeof AgentRequiresSchema>;
+
+/**
+ * How Lamaste runs an agent half it installs: the package's entry file as a
+ * hardened systemd service (see `APPHOST_PATHS` and `appUnitName`).
+ */
+export const AgentServiceSchema = z
+  .object({
+    /** The service's entry, a path inside the agent package (`dist/agentd.js`). */
+    entry: AgentServiceEntrySchema,
+    /** The unit's `MemoryMax=`; unset — no limit. */
+    memoryMax: AgentServiceMemoryMaxSchema.optional(),
   })
   .strict();
 
@@ -271,15 +308,288 @@ export const AgentRequiresSchema = z
  * The `agent` block of an agent-hosted plugin: present when the plugin has
  * an agent half Lamaste connects to through an internal plugin tunnel. The
  * port is assigned by Lamaste when the plugin is hosted, so the block does
- * not name one. See `plugin-development/design/agent-hosted-app-plugins.md`.
+ * not name one. With `package` (and `service`) Lamaste installs the agent
+ * half onto the hosting agent itself; without, the agent half is installed
+ * by hand. See `plugin-development/design/agent-hosted-app-plugins.md`.
  */
 export const AgentBlockSchema = z
   .object({
     requires: AgentRequiresSchema.optional(),
+    /** The agent half's package — one self-contained tarball, published at the plugin's version. */
+    package: AgentHalfPackageNameSchema.optional(),
+    /** How the agent half runs; required with `package`, and only with it. */
+    service: AgentServiceSchema.optional(),
+  })
+  .strict()
+  .superRefine((block, ctx) => {
+    if (block.package !== undefined && block.service === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['service'],
+        message: '"package" needs "service": how Lamaste runs the agent half it installs',
+      });
+    }
+    if (block.service !== undefined && block.package === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['package'],
+        message: '"service" needs "package": the agent half Lamaste installs',
+      });
+    }
+  });
+
+export type AgentBlock = z.infer<typeof AgentBlockSchema>;
+
+// ---------------------------------------------------------------------------
+// Host facts (what an agent reports about its host, for `agent.requires`)
+// ---------------------------------------------------------------------------
+
+const DISTRO_ID_RE = /^[a-z0-9._-]{1,40}$/;
+const NODE_VERSION_RE = /^\d+\.\d+\.\d+$/;
+
+/**
+ * What an agent reports about its host on each sync (when it changed), kept
+ * on its record so the relay can tell which agents can host a plugin.
+ */
+export const HostFactsSchema = z
+  .object({
+    os: z.enum(AGENT_HALF_OS),
+    arch: z.string().regex(/^[a-z0-9_]{1,20}$/),
+    /** From `/etc/os-release` (`ID`, `ID_LIKE`, `VERSION_ID`); null when there is none (macOS). */
+    distro: z
+      .object({
+        id: z.string().regex(DISTRO_ID_RE),
+        idLike: z.array(z.string().regex(DISTRO_ID_RE)).max(10),
+        versionId: z.string().regex(/^[A-Za-z0-9._-]{0,40}$/),
+      })
+      .nullable(),
+    /**
+     * The Node.js version the agent runs (`22.13.1`) — what an agent half
+     * installed by hand is checked against (it runs however the operator
+     * runs it).
+     */
+    node: z.string().regex(NODE_VERSION_RE),
+    /** Whether systemd is the system manager (PID 1). */
+    systemd: z.boolean(),
+    /**
+     * The app host helper; null — it is not enabled. `version` is its
+     * protocol; `node` the Node.js version it runs on, which is the one an
+     * agent half Lamaste installs runs on (the unit's `ExecStart`).
+     */
+    apphost: z
+      .object({ version: z.number().int().min(1), node: z.string().regex(NODE_VERSION_RE) })
+      .nullable(),
   })
   .strict();
 
-export type AgentBlock = z.infer<typeof AgentBlockSchema>;
+export type HostFacts = z.infer<typeof HostFactsSchema>;
+
+// ---------------------------------------------------------------------------
+// Lifecycle hooks (agent-hosted plugins with an agent half)
+// ---------------------------------------------------------------------------
+
+const timeoutSchema = (max: number) => z.number().int().min(1).max(max);
+
+const LifecycleStageSchema = z
+  .object({ timeoutMs: timeoutSchema(HOOK_TIMEOUTS.lifecycle.max).optional() })
+  .strict();
+const TunnelStageSchema = z
+  .object({ timeoutMs: timeoutSchema(HOOK_TIMEOUTS.tunnel.max).optional() })
+  .strict();
+const AgentStageSchema = z
+  .object({ timeoutMs: timeoutSchema(HOOK_TIMEOUTS.agent.max).optional() })
+  .strict();
+
+/** A request hook route pattern, `"POST /admin/import/*"` (see `@lamalibre/lamaste/hooks`). */
+export const RoutePatternSchema = z.string().superRefine((raw, ctx) => {
+  const parsed = parseRoutePattern(raw);
+  if ('error' in parsed) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: parsed.error });
+  }
+});
+
+/** Settings of the shared `lamaste:secret-scan` hook (`with`): Lamaste rule packs only. */
+export const SecretScanConfigSchema = z
+  .object({
+    action: z.enum(SECRET_SCAN_ACTIONS).optional(),
+    packs: z
+      .array(z.enum(SECRET_SCAN_PACK_NAMES))
+      .min(1)
+      .max(SECRET_SCAN_PACK_NAMES.length)
+      .refine((packs) => new Set(packs).size === packs.length, 'packs must not repeat')
+      .optional(),
+    onUnscannable: z.enum(SECRET_SCAN_ON_UNSCANNABLE).optional(),
+  })
+  .strict();
+
+export const RequestHookSchema = z
+  .object({
+    stage: z.enum(REQUEST_STAGES),
+    routes: z.array(RoutePatternSchema).min(1).max(REQUEST_HOOK_ROUTES_MAX),
+    /** The hook sees the body, buffered up to `maxBytes`. Without it the hook sees none. */
+    body: z
+      .object({ maxBytes: z.number().int().min(1).max(REQUEST_HOOK_MAX_BODY_BYTES) })
+      .strict()
+      .optional(),
+    timeoutMs: timeoutSchema(HOOK_TIMEOUTS.request.max).optional(),
+    /** Fail closed by default: `reject` (pre-forward) / `block` (post-forward). */
+    onError: z.enum([...PRE_FORWARD_ON_ERROR, ...POST_FORWARD_ON_ERROR]).optional(),
+    /** A body larger than `body.maxBytes`: `reject` / `block` by default. */
+    onOversize: z.enum([...PRE_FORWARD_ON_ERROR, ...POST_FORWARD_ON_ERROR]).optional(),
+    /** A shared hook shipped by Lamaste instead of the plugin's own module. */
+    use: z.enum(SHARED_HOOKS).optional(),
+    /** The shared hook's settings. */
+    with: z.record(z.unknown()).optional(),
+  })
+  .strict()
+  .superRefine((hook, ctx) => {
+    const allowed: readonly string[] =
+      hook.stage === 'pre-forward' ? PRE_FORWARD_ON_ERROR : POST_FORWARD_ON_ERROR;
+    for (const key of ['onError', 'onOversize'] as const) {
+      const value = hook[key];
+      if (value !== undefined && !allowed.includes(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} of a ${hook.stage} hook is one of ${allowed.join(', ')}`,
+        });
+      }
+    }
+    if (hook.with !== undefined && hook.use === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['with'],
+        message: '"with" configures a shared hook — name it with "use"',
+      });
+    }
+    if (hook.use === SECRET_SCAN_HOOK) {
+      if (hook.stage !== 'post-forward') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['stage'],
+          message: `${SECRET_SCAN_HOOK} scans responses: its stage is post-forward`,
+        });
+      }
+      if (hook.body === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['body'],
+          message: `${SECRET_SCAN_HOOK} needs the response body: declare body.maxBytes`,
+        });
+      }
+      const settings = SecretScanConfigSchema.safeParse(hook.with ?? {});
+      if (!settings.success) {
+        for (const issue of settings.error.issues) {
+          ctx.addIssue({ ...issue, path: ['with', ...issue.path] });
+        }
+      }
+    }
+  });
+
+export type RequestHookDeclaration = z.infer<typeof RequestHookSchema>;
+
+const RelayHooksSchema = z
+  .object({
+    /**
+     * The plugin's relay hook module, inside its relay package: one
+     * self-contained ES module (Node built-ins only), run by Lamaste's hook
+     * runner and never imported by the panel.
+     */
+    entry: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(
+        /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._/-]+\.(?:mjs|js)$/,
+        'entry is a relative path to a .mjs or .js file inside the package',
+      )
+      .optional(),
+    /** Effect types the plugin's own hooks may return; anything else is dropped. */
+    effects: z
+      .array(z.enum(HOOK_EFFECT_TYPES))
+      .max(HOOK_EFFECT_TYPES.length)
+      .refine((e) => new Set(e).size === e.length, 'effects must not repeat')
+      .optional(),
+    install: z
+      .object({
+        'pre-tunnel': LifecycleStageSchema.optional(),
+        'post-tunnel': LifecycleStageSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    uninstall: z
+      .object({
+        'pre-teardown': LifecycleStageSchema.optional(),
+        'post-teardown': LifecycleStageSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    request: z.array(RequestHookSchema).max(REQUEST_HOOKS_MAX).optional(),
+    tunnel: z
+      .object({ down: TunnelStageSchema.optional(), up: TunnelStageSchema.optional() })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((relay, ctx) => {
+    const ownHooks =
+      Object.keys(relay.install ?? {}).length +
+      Object.keys(relay.uninstall ?? {}).length +
+      Object.keys(relay.tunnel ?? {}).length +
+      (relay.request ?? []).filter((h) => h.use === undefined).length;
+    if (ownHooks > 0 && relay.entry === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entry'],
+        message: 'Relay hooks of the plugin itself need "entry", the module that implements them',
+      });
+    }
+    if (ownHooks === 0 && relay.entry !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entry'],
+        message: '"entry" is set but no relay hook of the plugin itself is declared',
+      });
+    }
+  });
+
+const AgentHooksSchema = z
+  .object({
+    install: z
+      .object({
+        'pre-tunnel': AgentStageSchema.optional(),
+        'post-tunnel': AgentStageSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    uninstall: z
+      .object({
+        'pre-teardown': AgentStageSchema.optional(),
+        'post-teardown': AgentStageSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    tunnel: z
+      .object({ down: AgentStageSchema.optional(), up: AgentStageSchema.optional() })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/**
+ * The `hooks` block of an agent-hosted plugin with an agent half: code that
+ * runs around Lamaste's own steps — relay hooks in Lamaste's sandboxed hook
+ * runner, agent hooks in the agent half (`POST /admin/hooks/<stage>`). See
+ * `plugin-development/design/agent-hosted-app-plugins.md`, "Slice 2 design".
+ */
+export const HooksBlockSchema = z
+  .object({
+    relay: RelayHooksSchema.optional(),
+    agent: AgentHooksSchema.optional(),
+  })
+  .strict();
+
+export type HooksBlock = z.infer<typeof HooksBlockSchema>;
 
 // ---------------------------------------------------------------------------
 // Plugin manifest
@@ -397,6 +707,12 @@ export const ManifestSchema = z
      * Only meaningful — and only accepted — with `hosting: "agent"`.
      */
     agent: AgentBlockSchema.optional(),
+    /**
+     * Lifecycle hooks (see `HooksBlockSchema`). Only for an agent-hosted
+     * plugin with an agent half — the pipelines they plug into exist only
+     * around a hosting.
+     */
+    hooks: HooksBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
@@ -404,6 +720,30 @@ export const ManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ['agent'],
         message: 'An "agent" block needs "hosting": "agent" — a server plugin has no agent half',
+      });
+    }
+
+    if (manifest.hooks !== undefined && (manifest.hosting !== 'agent' || !manifest.agent)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['hooks'],
+        message:
+          'Lifecycle hooks need an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block)',
+      });
+    }
+
+    // The agent's root helper names the agent half's account, unit and
+    // directories after the route, and accepts only a route without a
+    // leading or trailing hyphen.
+    if (
+      manifest.agent?.package !== undefined &&
+      !APPHOST_ROUTE_RE.test(derivePluginRoute(manifest.name))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['name'],
+        message:
+          'A plugin whose agent half Lamaste installs needs a route that starts and ends with a letter or digit',
       });
     }
 

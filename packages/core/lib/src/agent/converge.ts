@@ -44,6 +44,8 @@ export interface AgentConfigResponse {
   readonly tunnels?: unknown;
   /** The agent-hosted plugins this agent hosts (relay 4.3+). */
   readonly appPlugins?: unknown;
+  /** Agent jobs for this agent's sync to run: hook calls and app jobs (relay 4.3+). */
+  readonly agentJobs?: unknown;
 }
 
 export interface IssuedChiselCredential {
@@ -56,6 +58,8 @@ export interface IssuedChiselCredential {
  * Panel calls converge may need, bound to the agent's mTLS identity. The
  * plugin-config calls are optional so an older caller still converges; a
  * relay listing `appPlugins` to a caller without them gets a warning.
+ * `deliverPluginConfig` (the agent CLI's, through the app host helper)
+ * hands a config to an agent half's service before it is acknowledged.
  */
 export interface ConvergePanelCalls extends Partial<AppPluginPanelCalls> {
   fetchChiselCredential(): Promise<IssuedChiselCredential>;
@@ -283,6 +287,7 @@ async function ensureAppPluginConfigs(
     {
       fetchPluginConfig: panel.fetchPluginConfig,
       acknowledgePluginConfig: panel.acknowledgePluginConfig,
+      ...(panel.deliverPluginConfig ? { deliverPluginConfig: panel.deliverPluginConfig } : {}),
     },
     warnings,
   );

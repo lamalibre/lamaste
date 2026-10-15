@@ -334,9 +334,73 @@ fn admin_curl_auth(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
     }
 }
 
+/// The panel's error message in a response body (`{ "error": ... }`),
+/// followed by what a failed validation found (`details.issues`, as
+/// `field: message; ...`) — "Validation failed" alone tells the
+/// administrator nothing about what to correct. None when the body is not
+/// an error.
+pub(crate) fn panel_error_text(body: &serde_json::Value) -> Option<String> {
+    let error = body.get("error")?.as_str()?;
+    let mut found: Vec<String> = Vec::new();
+    let issues = body
+        .get("details")
+        .and_then(|d| d.get("issues"))
+        .and_then(|i| i.as_array());
+    for issue in issues.into_iter().flatten() {
+        let Some(message) = issue.get("message").and_then(|m| m.as_str()) else {
+            continue;
+        };
+        let path: Vec<String> = issue
+            .get("path")
+            .and_then(|p| p.as_array())
+            .map(|segments| {
+                segments
+                    .iter()
+                    .map(|s| s.as_str().map(str::to_string).unwrap_or_else(|| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let line = if path.is_empty() {
+            message.to_string()
+        } else {
+            format!("{}: {}", path.join("."), message)
+        };
+        if !found.contains(&line) {
+            found.push(line);
+        }
+    }
+    Some(if found.is_empty() {
+        error.to_string()
+    } else {
+        format!("{}: {}", error, found.join("; "))
+    })
+}
+
 /// Make an admin API request to the panel.
 /// Includes the 2FA session cookie if one is stored for the active server.
 pub(crate) fn curl_panel_admin(
+    cfg: &config::AdminApiConfig,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let body = curl_panel_admin_response(cfg, method, path, body)?;
+
+    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(error) = panel_error_text(&err_obj) {
+            return Err(error);
+        }
+    }
+
+    Ok(body)
+}
+
+/// Make an admin API request to the panel and return its body as it came,
+/// a refusal (`{ "error": ... }` with whatever else the panel said) included:
+/// only a request that did not complete is an error. For callers that need
+/// more of a refusal than its message.
+/// Includes the 2FA session cookie if one is stored for the active server.
+pub(crate) fn curl_panel_admin_response(
     cfg: &config::AdminApiConfig,
     method: &str,
     path: &str,
@@ -382,15 +446,7 @@ pub(crate) fn curl_panel_admin(
         return Err(format!("Request failed: {}", stderr));
     }
 
-    let body = String::from_utf8_lossy(&output.stdout).to_string();
-
-    if let Ok(err_obj) = serde_json::from_str::<serde_json::Value>(&body) {
-        if let Some(error) = err_obj.get("error").and_then(|e| e.as_str()) {
-            return Err(error.to_string());
-        }
-    }
-
-    Ok(body)
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// Make an admin API request that captures response headers (for 2FA cookie extraction).

@@ -25,6 +25,7 @@ import { createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
 import {
   agentForwarderPlugin,
   agentHalfPath,
+  isAgentHalfHooksPath,
   forwardedRequestHeaders,
   forwardedResponseHeaders,
   createPluginHosting,
@@ -223,6 +224,7 @@ test('store: create, rotate with overlap, acknowledge, remove', async () => {
   try {
     const created = await createPluginHosting(dir, {
       plugin: 'app',
+      pluginName: 'app',
       agentLabel: 'vm1',
       port: 21000,
       tunnelId: 'tunnel-1',
@@ -233,7 +235,13 @@ test('store: create, rotate with overlap, acknowledge, remove', async () => {
     assert.equal(signingSecretFor(created), created.current.secret);
     assert.equal(pluginHostingView(created).secretAcknowledged, false);
     await assert.rejects(
-      createPluginHosting(dir, { plugin: 'app', agentLabel: 'vm2', port: 21001, tunnelId: 't' }),
+      createPluginHosting(dir, {
+        plugin: 'app',
+        pluginName: 'app',
+        agentLabel: 'vm2',
+        port: 21001,
+        tunnelId: 't',
+      }),
       /already hosted/,
     );
 
@@ -256,6 +264,8 @@ test('store: create, rotate with overlap, acknowledge, remove', async () => {
         port: 21000,
         secretIssuedAt: rotated.current.issuedAt,
         secretAcknowledged: false,
+        phase: 'active',
+        health: rotated.health,
       },
     ]);
     assert.deepEqual(agentPluginAssignments(await readPluginHostings(dir), 'vm2'), []);
@@ -304,7 +314,22 @@ test('forwarder: path mapping confines requests to /admin', () => {
   assert.equal(agentHalfPath('/api/fxx/ping', '/api', 'fx'), null);
   assert.equal(agentHalfPath('/api/fx/../tunnels', '/api', 'fx'), null);
   assert.equal(agentHalfPath('/api/fx/%2e%2e/tunnels', '/api', 'fx'), null);
-  assert.equal(agentHalfPath('/api/fx/a%2Fb', '/api', 'fx'), '/admin/a%2Fb');
+  // An encoded slash would make one segment look like two to the agent half
+  // and like one to a request hook's route pattern — refused (slice 2b).
+  assert.equal(agentHalfPath('/api/fx/a%2Fb', '/api', 'fx'), null);
+  assert.equal(agentHalfPath('/api/fx/a%5Cb', '/api', 'fx'), null);
+  assert.equal(agentHalfPath('/api/fx/a%20b', '/api', 'fx'), '/admin/a%20b');
+});
+
+test('forwarder: /admin/hooks is Lamaste-only, however it is spelled', () => {
+  assert.equal(isAgentHalfHooksPath('/admin/hooks'), true);
+  assert.equal(isAgentHalfHooksPath('/admin/hooks/install:pre-tunnel'), true);
+  assert.equal(isAgentHalfHooksPath('/admin/HOOKS/tunnel:down?x=1'), true);
+  assert.equal(isAgentHalfHooksPath('/admin/%68ooks/tunnel:up'), true);
+  assert.equal(isAgentHalfHooksPath('/admin//hooks/x'), true);
+  assert.equal(isAgentHalfHooksPath('/admin/hooksx'), false);
+  assert.equal(isAgentHalfHooksPath('/admin/jobs/hooks'), false);
+  assert.equal(isAgentHalfHooksPath('/admin'), false);
 });
 
 test('forwarder: credentials and proxy verdicts are stripped, cookies never pass back', () => {
@@ -799,6 +824,7 @@ test('routes: only the hosting agent with the host capability reads and acknowle
   const { default: agentsRoutes } = await import('../src/routes/management/agents.js');
   const record = await createPluginHosting(stateDir, {
     plugin: 'hosted',
+    pluginName: 'hosted',
     agentLabel: 'vm1',
     port: 21000,
     tunnelId: 'tunnel-x',

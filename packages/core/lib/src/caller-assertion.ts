@@ -39,10 +39,16 @@ const HOSTING_SECRET_RE = /^[a-f0-9]{64}$/;
 const NONCE_BYTES = 16;
 const NONCE_RE = /^[a-f0-9]{32}$/;
 
-/** Who made the request the panel forwards. */
+/**
+ * Who made the request. `admin` and `agent` are callers the panel admitted
+ * and forwards; `lamaste` is Lamaste itself — its health probes and the
+ * lifecycle hook calls (`/admin/hooks/*`), which no forwarded caller can
+ * reach.
+ */
 export type CallerIdentity =
   | { readonly type: 'admin' }
-  | { readonly type: 'agent'; readonly label: string };
+  | { readonly type: 'agent'; readonly label: string }
+  | { readonly type: 'lamaste' };
 
 export interface CallerAssertionPayload {
   readonly v: typeof CALLER_ASSERTION_VERSION;
@@ -177,6 +183,8 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
     identity = { type: 'admin' };
   } else if (caller['type'] === 'agent' && typeof caller['label'] === 'string') {
     identity = { type: 'agent', label: caller['label'] };
+  } else if (caller['type'] === 'lamaste') {
+    identity = { type: 'lamaste' };
   } else {
     return null;
   }

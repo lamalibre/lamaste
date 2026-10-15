@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./tsconfig.hooks.json" },
     { "path": "./tsconfig.shared.json" },
     { "path": "./tsconfig.agent.json" },
     { "path": "./tsconfig.server.json" }

@@ -31,9 +31,11 @@ export function emitStep(step, status, detail) {
  * Emit an error event.
  * @param {string} message
  * @param {boolean} [recoverable]
+ * @param {Record<string, unknown>} [details]  what a consumer acts on beyond
+ *   the message — a refused plugin operation's `code` and `reasons`
  */
-export function emitError(message, recoverable = false) {
-  emit({ event: 'error', message, recoverable });
+export function emitError(message, recoverable = false, details = {}) {
+  emit({ event: 'error', message, recoverable, ...details });
 }
 
 /**

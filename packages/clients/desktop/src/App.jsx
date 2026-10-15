@@ -46,6 +46,7 @@ import {
   TunnelsPage,
   SettingsPage as AdminSettingsPage,
   StoragePage,
+  AuditPage,
   UserPluginAccessPage,
   GatekeeperDashboardPage,
   GatekeeperGroupsPage,
@@ -95,6 +96,7 @@ const SERVER_ADMIN_TABS = [
   { id: 'server-tickets', label: 'Tickets', icon: Ticket },
   { id: 'server-plugins', label: 'Plugins', icon: Package },
   { id: 'server-storage', label: 'Storage', icon: HardDrive },
+  { id: 'server-audit', label: 'Audit', icon: ScrollText },
   { id: 'server-user-access', label: 'User Plugin Access', icon: UserCheck },
   { id: 'server-gatekeeper', label: 'GK Dashboard', icon: Shield, section: 'Gatekeeper' },
   { id: 'server-gatekeeper-groups', label: 'Groups', icon: Users, section: 'Gatekeeper' },
@@ -352,6 +354,8 @@ export default function App() {
         return <PluginsPage />;
       case 'server-storage':
         return <StoragePage />;
+      case 'server-audit':
+        return <AuditPage />;
       case 'server-user-access':
         return <UserPluginAccessPage />;
       case 'server-gatekeeper':

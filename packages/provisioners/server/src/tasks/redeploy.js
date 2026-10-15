@@ -12,6 +12,15 @@ import { generateCertHelpPage } from '../lib/cert-help-page.js';
 import { ensureRootOwnedInstallDir, removeTree, writeFileNoFollow } from '../lib/ownership.js';
 import { provisionRelayServices } from '../lib/relay-services.js';
 import { installSudoersFile, installSudoersWrappers } from '../lib/wrappers.js';
+import {
+  MIN_NODE_VERSION,
+  NODE_BIN,
+  installNodeFromNodeSource,
+  installedNodeVersion,
+  nodeTooNewError,
+  nodeVersionSupported,
+  nodeVersionTooNew,
+} from '../lib/node-version.js';
 import { deployGatekeeperPackage } from './gatekeeper.js';
 
 const GATEKEEPER_SERVICE = 'lamalibre-lamaste-gatekeeper';
@@ -112,6 +121,33 @@ export function redeployTasks(ctx, task) {
         subtask.output = previous
           ? `Moved the lamaste-owned tree aside (${previous}); redeploying into a root-owned directory`
           : 'Install directory is root-owned';
+      },
+      rendererOptions: { persistentOutput: true },
+    },
+    {
+      title: 'Checking Node.js',
+      task: async (_ctx, subtask) => {
+        // NodeSource's 22.x line moves on its own; the relay needs at least
+        // MIN_NODE_VERSION (the hook runner's sandbox uses the stable
+        // permission model). A full install checks this too; a redeploy is
+        // where an existing relay gets the upgrade.
+        const version = await installedNodeVersion();
+        if (version !== null && nodeVersionSupported(version)) {
+          subtask.output = `Node.js ${version}`;
+          return;
+        }
+        if (version !== null && nodeVersionTooNew(version)) throw nodeTooNewError(version);
+        await execa('apt-get', ['update']);
+        await installNodeFromNodeSource((line) => {
+          subtask.output = line;
+        });
+        const upgraded = await installedNodeVersion();
+        if (upgraded === null || !nodeVersionSupported(upgraded)) {
+          throw new Error(
+            `Expected Node.js ${MIN_NODE_VERSION}+ at ${NODE_BIN} after the upgrade, got ${upgraded ?? 'none'}`,
+          );
+        }
+        subtask.output = `Node.js upgraded to ${upgraded}`;
       },
       rendererOptions: { persistentOutput: true },
     },

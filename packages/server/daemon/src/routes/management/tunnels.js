@@ -28,6 +28,7 @@ import { loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
 import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
+import { pendingAgentJobs } from '../../lib/agent-jobs.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -278,6 +279,12 @@ export default async function tunnelRoutes(fastify, _opts) {
           // plugin's config when it does not hold the secret issued at
           // `secretIssuedAt`, and acknowledges it (see converge).
           appPlugins: AGENT_LABEL_REGEX.test(label) ? await listAgentPluginAssignments(label) : [],
+          // Work for the agent's sync, reported to /agents/me/jobs/:id/result:
+          // lifecycle hook calls to its agent halves on its own loopback
+          // (`hook`), and installing, switching or removing an agent half
+          // through its app host helper (`app-install`, `app-activate`,
+          // `app-remove`) — see lib/agent-jobs.js for each job's fields.
+          agentJobs: AGENT_LABEL_REGEX.test(label) ? await pendingAgentJobs(label) : [],
         };
       } catch (err) {
         request.log.error(err, 'Failed to generate agent config');

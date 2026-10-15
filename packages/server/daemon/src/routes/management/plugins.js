@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import {
   readPlugins,
   installPlugin,
-  uninstallPlugin,
   enablePlugin,
   disablePlugin,
   getPluginCapabilities,
+  findPlugin,
 } from '../../lib/plugins.js';
 import { setPluginCapabilities, loadAgentRegistry } from '../../lib/mtls.js';
 import { listPluginOidcClients, rotatePluginOidcClientSecret } from '../../lib/plugin-oidc.js';
@@ -15,7 +16,22 @@ import {
   getHostingView,
   attachHostings,
   rotateHostingSecret,
+  hostingEligibility,
+  retainedDataOf,
+  purgeRetainedData,
 } from '../../lib/plugin-hosting.js';
+import { listRetainedData } from '../../lib/retained-data.js';
+import {
+  hookStatus,
+  approveHookSet,
+  setAutoApprove,
+  setPendingUpdate,
+  readHookState,
+} from '../../lib/plugin-hooks.js';
+import { uninstallPluginWithHosting, updatePlugin } from '../../lib/plugin-lifecycle.js';
+import { getPluginOperation, listPluginOperations } from '../../lib/plugin-operations.js';
+import { actorFromRequest, certSerialFromRequest } from '../../lib/actor.js';
+import { recordAudit } from '../../lib/audit.js';
 import {
   readPushInstallConfig,
   readPushInstallSessions,
@@ -27,6 +43,9 @@ import {
   disableAgentPushInstall,
   logPushInstallSession,
   validatePushInstallAccess,
+  pushInstallPolicyRefusal,
+  PUSH_INSTALL_ACTIONS,
+  PUSH_INSTALL_WINDOW_MINUTES,
 } from '../../lib/push-install.js';
 
 // --- Zod schemas ---
@@ -47,13 +66,65 @@ const OidcClientIdParamSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
 });
 
+const AgentLabelSchema = z
+  .string()
+  .min(1)
+  .max(63)
+  .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Invalid agent label');
+
 const HostingBodySchema = z.object({
-  agentLabel: z
-    .string()
-    .min(1)
-    .max(63)
-    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Invalid agent label'),
+  agentLabel: AgentLabelSchema,
 });
+
+const RetainedDataQuerySchema = z.object({
+  agentLabel: AgentLabelSchema,
+  // Drop the relay's record only; the agent is not touched.
+  forget: z.enum(['true', 'false']).optional(),
+});
+
+const ForceQuerySchema = z.object({
+  force: z.enum(['true', 'false']).optional(),
+  // Remove the data directory and service account of an agent half Lamaste installed.
+  purge: z.enum(['true', 'false']).optional(),
+});
+
+/**
+ * The error body of a refused plugin operation: the message, and what a
+ * client acts on — `code` (`hooks_not_approved`, `agent_not_eligible` with
+ * its `reasons`, `push_install_refused`, `route_taken`, `route_conflict`,
+ * `hosting_owner_mismatch`, `retained_data_conflict` with the `retained`
+ * record, `retained_data_in_use`, `agent_not_enrolled`) and a running
+ * operation's id.
+ */
+function operationErrorBody(err, fallback) {
+  return {
+    error: err.message || fallback,
+    ...(err.code ? { code: err.code } : {}),
+    ...(Array.isArray(err.reasons) ? { reasons: err.reasons } : {}),
+    ...(err.retained ? { retained: err.retained } : {}),
+    ...(err.owner ? { route: err.route, owner: err.owner } : {}),
+    ...(err.operationId ? { operationId: err.operationId } : {}),
+  };
+}
+
+const OperationParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
+const ApproveHooksBodySchema = z
+  .object({ digest: z.string().regex(/^[a-f0-9]{64}$/, 'digest is a SHA-256 hex string') })
+  .strict();
+
+const AutoApproveBodySchema = z.object({ enabled: z.boolean() }).strict();
+
+const UpdateBodySchema = z
+  .object({
+    version: z
+      .string()
+      .regex(/^[0-9A-Za-z.+-]{1,64}$/, 'version is an exact version or a dist-tag')
+      .optional(),
+  })
+  .strict();
 
 const InstallBodySchema = z.object({
   packageName: z
@@ -103,9 +174,9 @@ const CreatePolicySchema = z.object({
   deniedIps: z.array(IpEntrySchema).optional().default([]),
   allowedPlugins: z.array(ScopedPackageSchema).optional().default([]),
   allowedActions: z
-    .array(z.enum(['install', 'update', 'uninstall', 'check-prerequisites']))
+    .array(z.enum(PUSH_INSTALL_ACTIONS))
     .optional()
-    .default(['install', 'update', 'check-prerequisites']),
+    .default([...PUSH_INSTALL_ACTIONS]),
 });
 
 const UpdatePolicySchema = z.object({
@@ -114,9 +185,7 @@ const UpdatePolicySchema = z.object({
   allowedIps: z.array(IpEntrySchema).optional(),
   deniedIps: z.array(IpEntrySchema).optional(),
   allowedPlugins: z.array(ScopedPackageSchema).optional(),
-  allowedActions: z
-    .array(z.enum(['install', 'update', 'uninstall', 'check-prerequisites']))
-    .optional(),
+  allowedActions: z.array(z.enum(PUSH_INSTALL_ACTIONS)).optional(),
 });
 
 const UpdatePushInstallConfigSchema = z.object({
@@ -124,22 +193,30 @@ const UpdatePushInstallConfigSchema = z.object({
   defaultPolicy: PolicyIdSchema.optional(),
 });
 
+const WINDOW_BOUNDS = `A push-install window is open ${PUSH_INSTALL_WINDOW_MINUTES.min} to ${PUSH_INSTALL_WINDOW_MINUTES.max} minutes`;
+
 const EnablePushInstallSchema = z.object({
-  durationMinutes: z.number().int().min(5).max(480),
+  durationMinutes: z
+    .number({ invalid_type_error: WINDOW_BOUNDS, required_error: WINDOW_BOUNDS })
+    .int(WINDOW_BOUNDS)
+    .min(PUSH_INSTALL_WINDOW_MINUTES.min, WINDOW_BOUNDS)
+    .max(PUSH_INSTALL_WINDOW_MINUTES.max, WINDOW_BOUNDS),
   policyId: PolicyIdSchema.optional(),
 });
 
+/** A machine agent's label (a DNS label of up to 63 characters, as enrolment allows). */
 const AgentLabelParamSchema = z.object({
-  label: z
-    .string()
-    .min(1)
-    .max(50)
-    .regex(/^[a-z0-9-]+$/, 'Invalid agent label'),
+  label: z.string().regex(AGENT_LABEL_REGEX, 'Invalid agent label'),
 });
+
+/** The push-install config as the panel shows it, with the window bounds. */
+function pushInstallConfigView(config) {
+  return { ...config, windowMinutes: PUSH_INSTALL_WINDOW_MINUTES };
+}
 
 const PushInstallCommandSchema = z
   .object({
-    action: z.enum(['install', 'update', 'uninstall', 'check-prerequisites']),
+    action: z.enum(PUSH_INSTALL_ACTIONS),
     packageName: z
       .string()
       .min(1)
@@ -160,6 +237,26 @@ const PushInstallCommandSchema = z
     },
   );
 
+/** A plugin entry with a summary of its hooks for list views. */
+async function withHooks(plugin) {
+  const status = await hookStatus(plugin);
+  return {
+    ...plugin,
+    hooks: {
+      relay: status.relay !== null,
+      agent: status.agent !== null,
+      // Lamaste installs the agent half (agent.package); false: none, or installed by hand.
+      agentHalf: status.agentHalf !== null,
+      approval: status.approval.state,
+      autoApprove: status.autoApprove,
+      failOpenCount: status.relay?.failOpenCount ?? 0,
+      pendingUpdate: status.pendingUpdate
+        ? { version: status.pendingUpdate.version, digest: status.pendingUpdate.digest }
+        : null,
+    },
+  };
+}
+
 export default async function pluginRoutes(fastify, _opts) {
   // ===========================================================================
   // Plugin management routes
@@ -176,7 +273,16 @@ export default async function pluginRoutes(fastify, _opts) {
     async (_request, _reply) => {
       const registry = await readPlugins();
       // `agentHosting`: where an agent-hosted plugin's agent half runs, or null.
-      return { plugins: await attachHostings(registry.plugins) };
+      // `retainedData`: what agents keep of its agent half after it was
+      // removed without purge. `hooks`: its lifecycle hooks and their
+      // approval (see GET /plugins/:name/hooks).
+      const plugins = await attachHostings(registry.plugins);
+      return {
+        plugins: await Promise.all(plugins.map(withHooks)),
+        // Every agent's retained data — of uninstalled plugins too, which
+        // no entry of `plugins` lists any more.
+        retainedData: await listRetainedData(),
+      };
     },
   );
 
@@ -198,7 +304,7 @@ export default async function pluginRoutes(fastify, _opts) {
       }
 
       const [withHosting] = await attachHostings([plugin]);
-      return { plugin: withHosting };
+      return { plugin: await withHooks(withHosting) };
     },
   );
 
@@ -230,7 +336,10 @@ export default async function pluginRoutes(fastify, _opts) {
 
   // ------------------------------------------------------------------
   // POST /plugins/:name/hosting — host the plugin on an agent: internal
-  // tunnel (port assigned), installation secret, host capability
+  // tunnel (port assigned), installation secret, host capability, and the
+  // agent half when Lamaste installs it (the agent must be eligible —
+  // 409 agent_not_eligible with reasons — and the push-install gates must
+  // allow `install` of the agent package — push_install_refused)
   // ------------------------------------------------------------------
   fastify.post(
     '/plugins/:name/hosting',
@@ -241,18 +350,47 @@ export default async function pluginRoutes(fastify, _opts) {
       const params = PluginNameParamSchema.parse(request.params);
       const body = HostingBodySchema.parse(request.body);
       try {
-        const hosting = await hostPlugin(params.name, body.agentLabel, request.log);
-        setPluginCapabilities(await getPluginCapabilities());
-        return reply.code(201).send({ ok: true, hosting });
+        const operation = await hostPlugin(params.name, body.agentLabel, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+          sourceIp: request.ip,
+        });
+        return reply.code(202).send({ ok: true, operation });
       } catch (err) {
         const statusCode = err.statusCode || 500;
-        return reply.code(statusCode).send({ error: err.message || 'Failed to host plugin' });
+        return reply.code(statusCode).send(operationErrorBody(err, 'Failed to host plugin'));
       }
     },
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name/hosting — remove tunnel, secret and capability
+  // GET /plugins/:name/hosting/eligibility — which enrolled agents can host
+  // the plugin, and why the others cannot (the host dialog). For a plugin
+  // whose agent half Lamaste installs: `agent.requires` and what installing
+  // it needs, against the host facts each agent reported.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/hosting/eligibility',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      try {
+        return { agents: await hostingEligibility(params.name) };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply
+          .code(statusCode)
+          .send({ error: err.message || 'Failed to check which agents can host the plugin' });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // DELETE /plugins/:name/hosting?force=&purge= — remove tunnel, secret,
+  // capability and the agent half Lamaste installed (a push: `uninstall`);
+  // `purge=true` removes the agent half's data and service account too
   // ------------------------------------------------------------------
   fastify.delete(
     '/plugins/:name/hosting',
@@ -261,13 +399,21 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const params = PluginNameParamSchema.parse(request.params);
+      const query = ForceQuerySchema.parse(request.query);
       try {
-        return await unhostPlugin(params.name, request.log);
+        const operation = await unhostPlugin(params.name, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+          force: query.force === 'true',
+          purge: query.purge === 'true',
+          sourceIp: request.ip,
+        });
+        return reply.code(202).send({ ok: true, operation });
       } catch (err) {
         const statusCode = err.statusCode || 500;
         return reply
           .code(statusCode)
-          .send({ error: err.message || 'Failed to remove plugin hosting' });
+          .send(operationErrorBody(err, 'Failed to remove plugin hosting'));
       }
     },
   );
@@ -298,6 +444,242 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
+  // GET /plugins/:name/retained-data — the data agents keep of the plugin's
+  // agent half after it was removed without purge (an unhost, an uninstall,
+  // a rolled-back install): [{ agentLabel, route, plugin, package, since,
+  // operation }]. By the plugin's name, so it answers after the plugin is
+  // uninstalled too.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/retained-data',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      return { retainedData: await retainedDataOf(params.name) };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // DELETE /plugins/:name/retained-data?agentLabel=<label>[&forget=true] —
+  // purge the data agent <label> keeps of the plugin's agent half (its data
+  // directory and service account): 202 with the operation (kind
+  // `purge-data`), an app-remove job with purge, push-install gated as
+  // `uninstall` of the agent package. `forget=true` drops the record only
+  // (the agent is not touched — it is gone, or was cleaned by hand): 200.
+  // ------------------------------------------------------------------
+  fastify.delete(
+    '/plugins/:name/retained-data',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const query = RetainedDataQuerySchema.parse(request.query);
+      try {
+        const result = await purgeRetainedData(params.name, query.agentLabel, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+          sourceIp: request.ip,
+          forget: query.forget === 'true',
+        });
+        if (result.forgotten) return { ok: true, forgotten: result.forgotten };
+        return reply.code(202).send({ ok: true, operation: result.operation });
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply
+          .code(statusCode)
+          .send(operationErrorBody(err, 'Failed to purge the retained data'));
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /plugins/:name/operations — the plugin's recent operations
+  // (hosting, unhosting, update, uninstall), newest first
+  // GET /plugins/:name/operations/:id — one of them
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/operations',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      return { operations: await listPluginOperations(params.name) };
+    },
+  );
+
+  fastify.get(
+    '/plugins/:name/operations/:id',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.merge(OperationParamSchema).parse(request.params);
+      const operation = await getPluginOperation(params.name, params.id);
+      if (!operation) return reply.code(404).send({ error: 'Operation not found' });
+      return { operation };
+    },
+  );
+
+  // ===========================================================================
+  // Lifecycle hooks: review, approval, auto-approve
+  // ===========================================================================
+
+  // ------------------------------------------------------------------
+  // GET /plugins/:name/hooks — the relay hook set (entry, stages, routes,
+  // fail-open flags, effects, digest), the agent hooks, the agent half
+  // Lamaste installs (package, version, integrity, service, system
+  // packages), the approval (`approval.digest` is what to approve) and a
+  // pending update's relay hook set and agent half
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/hooks',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const plugin = await findPlugin(params.name);
+      if (!plugin) return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      return { hooks: await hookStatus(plugin) };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /plugins/:name/hooks/approve — approve what the plugin brings
+  // (relay hooks, an agent half Lamaste installs) with the digest that was
+  // shown. Approving a pending update's digest applies the update (202
+  // with its operation).
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/plugins/:name/hooks/approve',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const body = ApproveHooksBodySchema.parse(request.body);
+      const plugin = await findPlugin(params.name);
+      if (!plugin) return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      const actor = actorFromRequest(request);
+      const certSerial = certSerialFromRequest(request);
+      try {
+        const approved = await approveHookSet(plugin, body.digest, {
+          actor,
+          certSerial,
+          logger: request.log,
+        });
+        if (approved.target === 'update') {
+          const state = await readHookState(plugin.name);
+          const result = await updatePlugin(plugin.name, state.pendingUpdate.version, {
+            actor,
+            certSerial,
+            logger: request.log,
+            approvedDigest: body.digest,
+            sourceIp: request.ip,
+          });
+          return reply.code(202).send({ ok: true, ...result });
+        }
+        return { ok: true, hooks: await hookStatus(plugin) };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send({
+          ...operationErrorBody(err, 'Failed to approve the hook set'),
+          ...(err.currentDigest ? { currentDigest: err.currentDigest } : {}),
+        });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // PUT /plugins/:name/hooks/auto-approve — approve later hook-set changes
+  // of this plugin automatically (off by default; every use is audited)
+  // ------------------------------------------------------------------
+  fastify.put(
+    '/plugins/:name/hooks/auto-approve',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const body = AutoApproveBodySchema.parse(request.body);
+      const plugin = await findPlugin(params.name);
+      if (!plugin) return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      const result = await setAutoApprove(plugin.name, body.enabled, {
+        actor: actorFromRequest(request),
+        certSerial: certSerialFromRequest(request),
+      });
+      return { ok: true, ...result };
+    },
+  );
+
+  // ===========================================================================
+  // Updating an agent-hosted plugin in place
+  // ===========================================================================
+
+  // ------------------------------------------------------------------
+  // POST /plugins/:name/update { version? } — fetch the version (default
+  // latest) and read it without installing it; pin its agent half. A
+  // changed relay hook set or agent half waits for approval
+  // (202 { pendingUpdate }); otherwise the update runs as an operation
+  // (202 { operation }). 200 { upToDate } when there is nothing to do.
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/plugins/:name/update',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const body = UpdateBodySchema.parse(request.body ?? {});
+      try {
+        const result = await updatePlugin(params.name, body.version ?? 'latest', {
+          actor: actorFromRequest(request),
+          certSerial: certSerialFromRequest(request),
+          logger: request.log,
+          sourceIp: request.ip,
+        });
+        if (result.upToDate) return { ok: true, ...result };
+        return reply.code(202).send({ ok: true, ...result });
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send(operationErrorBody(err, 'Plugin update failed'));
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // DELETE /plugins/:name/update — discard an update that waits for approval
+  // ------------------------------------------------------------------
+  fastify.delete(
+    '/plugins/:name/update',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const state = await readHookState(params.name);
+      if (!state?.pendingUpdate) {
+        return reply.code(404).send({ error: `Plugin "${params.name}" has no pending update` });
+      }
+      await setPendingUpdate(params.name, null);
+      await recordAudit({
+        actor: actorFromRequest(request),
+        action: 'plugin.update.discarded',
+        plugin: params.name,
+        details: { version: state.pendingUpdate.version },
+      });
+      return { ok: true };
+    },
+  );
+
+  // ------------------------------------------------------------------
   // POST /plugins/install — install a plugin
   // ------------------------------------------------------------------
   fastify.post(
@@ -314,12 +696,18 @@ export default async function pluginRoutes(fastify, _opts) {
         const { oidcClients, ...plugin } = await installPlugin(body.packageName, request.log);
         // Refresh in-memory capability list so new plugin caps are valid immediately
         setPluginCapabilities(await getPluginCapabilities());
-        return { ok: true, plugin, oidcClients };
+        await recordAudit({
+          actor: actorFromRequest(request),
+          action: 'plugin.installed',
+          plugin: plugin.name,
+          details: { packageName: plugin.packageName, version: plugin.version },
+        });
+        // `hooks`: the relay hook set to review (and approve) before hosting.
+        return { ok: true, plugin, oidcClients, hooks: await hookStatus(plugin) };
       } catch (err) {
         const statusCode = err.statusCode || 500;
-        return reply.code(statusCode).send({
-          error: err.message || 'Plugin installation failed',
-        });
+        // `route_taken`: another installed plugin holds the route (`route`, `owner`).
+        return reply.code(statusCode).send(operationErrorBody(err, 'Plugin installation failed'));
       }
     },
   );
@@ -373,7 +761,9 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // DELETE /plugins/:name — uninstall a plugin (must be disabled)
+  // DELETE /plugins/:name?force=&purge= — uninstall a plugin (must be
+  // disabled); a hosted one's hosting is removed first (see
+  // DELETE /plugins/:name/hosting)
   // ------------------------------------------------------------------
   fastify.delete(
     '/plugins/:name',
@@ -382,16 +772,24 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request, reply) => {
       const params = PluginNameParamSchema.parse(request.params);
+      const query = ForceQuerySchema.parse(request.query);
 
       try {
-        const result = await uninstallPlugin(params.name, request.log);
-        setPluginCapabilities(await getPluginCapabilities());
-        return result;
+        // A hosted plugin's hosting is removed first, by an operation
+        // (its uninstall pipeline); any other plugin goes at once.
+        const result = await uninstallPluginWithHosting(params.name, {
+          actor: actorFromRequest(request),
+          logger: request.log,
+          force: query.force === 'true',
+          purge: query.purge === 'true',
+          sourceIp: request.ip,
+        });
+        if (result.operation)
+          return reply.code(202).send({ ok: true, operation: result.operation });
+        return result.removed;
       } catch (err) {
         const statusCode = err.statusCode || 500;
-        return reply.code(statusCode).send({
-          error: err.message || 'Plugin uninstall failed',
-        });
+        return reply.code(statusCode).send(operationErrorBody(err, 'Plugin uninstall failed'));
       }
     },
   );
@@ -453,7 +851,9 @@ export default async function pluginRoutes(fastify, _opts) {
   // ===========================================================================
 
   // ------------------------------------------------------------------
-  // GET /plugins/push-install/config — get push install config
+  // GET /plugins/push-install/config — get push install config: the
+  // global switch, the policies, the default policy and the bounds of an
+  // agent's window (`windowMinutes`)
   // ------------------------------------------------------------------
   fastify.get(
     '/plugins/push-install/config',
@@ -462,7 +862,7 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (_request, _reply) => {
       const config = await readPushInstallConfig();
-      return config;
+      return pushInstallConfigView(config);
     },
   );
 
@@ -479,7 +879,7 @@ export default async function pluginRoutes(fastify, _opts) {
 
       try {
         const config = await updatePushInstallConfigFields(body);
-        return { ok: true, ...config };
+        return { ok: true, ...pushInstallConfigView(config) };
       } catch (err) {
         const statusCode = err.statusCode || 500;
         return reply.code(statusCode).send({
@@ -642,27 +1042,14 @@ export default async function pluginRoutes(fastify, _opts) {
         return reply.code(access.statusCode).send({ error: access.error });
       }
 
-      // Check if the action is allowed by the policy
-      if (
-        access.policy.allowedActions &&
-        access.policy.allowedActions.length > 0 &&
-        !access.policy.allowedActions.includes(body.action)
-      ) {
-        return reply.code(403).send({
-          error: `Action "${body.action}" is not allowed by the assigned policy`,
-        });
-      }
-
-      // Check if the package is allowed by the policy
-      if (
-        body.packageName &&
-        access.policy.allowedPlugins &&
-        access.policy.allowedPlugins.length > 0 &&
-        !access.policy.allowedPlugins.includes(body.packageName)
-      ) {
-        return reply.code(403).send({
-          error: `Package "${body.packageName}" is not allowed by the assigned policy`,
-        });
+      // Check the action and the package against the policy
+      const refusal = pushInstallPolicyRefusal(
+        access.policy,
+        body.action,
+        body.packageName ?? null,
+      );
+      if (refusal) {
+        return reply.code(refusal.statusCode).send({ error: refusal.error });
       }
 
       // Log the session

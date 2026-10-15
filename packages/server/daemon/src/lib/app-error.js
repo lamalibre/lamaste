@@ -12,3 +12,13 @@ export class AppError extends Error {
     this.isOperational = true;
   }
 }
+
+/**
+ * A plain Error carrying the HTTP `statusCode` a route answers with, and
+ * whatever `extra` names beyond the message (a refusal's `code`,
+ * `reasons`, …). Not an {@link AppError}: the error middleware treats those
+ * as operational.
+ */
+export function httpError(message, statusCode, extra = {}) {
+  return Object.assign(new Error(message), { statusCode, ...extra });
+}

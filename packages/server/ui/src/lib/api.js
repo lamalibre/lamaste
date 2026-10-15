@@ -8,7 +8,31 @@
 export const TWO_FA_REQUIRED_EVENT = 'lamaste:2fa-required';
 
 /**
+ * The panel's error message, followed by what a failed validation found
+ * (`details.issues`: `field: message`) — "Validation failed" alone tells an
+ * administrator nothing about what to correct.
+ */
+function errorText(data, status) {
+  const message = data.error || `Request failed with status ${status}`;
+  const issues = Array.isArray(data.details?.issues) ? data.details.issues : [];
+  const found = issues
+    .filter((issue) => typeof issue?.message === 'string')
+    .map((issue) =>
+      Array.isArray(issue.path) && issue.path.length > 0
+        ? `${issue.path.join('.')}: ${issue.message}`
+        : issue.message,
+    );
+  return found.length > 0 ? `${message}: ${[...new Set(found)].join('; ')}` : message;
+}
+
+/**
  * Fetch a JSON API endpoint. Throws on non-OK responses (after 2FA detection).
+ *
+ * The Error thrown for a refused request carries the panel's `error` (and
+ * what a failed validation found) as its message, the HTTP `status`, and
+ * what a client acts on beyond the message
+ * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons` and
+ * a running operation's `operationId`.
  *
  * @param {string} url - The API URL (e.g., '/api/settings/2fa')
  * @param {RequestInit} [opts] - Fetch options
@@ -32,8 +56,14 @@ export async function apiFetch(url, opts) {
   }
 
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || `Request failed with status ${res.status}`);
+    const body = await res.json().catch(() => null);
+    const data = body !== null && typeof body === 'object' ? body : {};
+    throw Object.assign(new Error(errorText(data, res.status)), {
+      status: res.status,
+      ...(typeof data.code === 'string' ? { code: data.code } : {}),
+      ...(Array.isArray(data.reasons) ? { reasons: data.reasons } : {}),
+      ...(typeof data.operationId === 'string' ? { operationId: data.operationId } : {}),
+    });
   }
 
   return res.json();

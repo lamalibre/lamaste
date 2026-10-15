@@ -5,10 +5,12 @@
 # Hosts an agent-hosted plugin that has an agent half (fixture
 # @lamalibre/e2e-app-plugin-server, served by a stand-in registry on the VM)
 # on an agent, and verifies on one VM:
-# - hosting creates an internal plugin tunnel (port assigned from
-#   21000–21999, no hostname, no access mode, not editable as a tunnel) and
-#   grants the agent `plugin:<route>:host`; a manual tunnel on such a port
-#   is refused
+# - hosting is an operation (4.3): it reserves an internal plugin tunnel
+#   (port assigned from 21000–21999, no hostname, no access mode, not
+#   editable as a tunnel) and grants the agent `plugin:<route>:host`; with no
+#   agent hook to run first it grants the tunnel at once, and it succeeds
+#   once the agent half (started with the config the agent fetched) answers
+#   through it; a manual tunnel on such a port is refused
 # - only the hosting agent's certificate fetches the plugin config (port and
 #   secret) and acknowledges it
 # - the panel forwards /api/<route>/* to the agent half's /admin/* with a
@@ -73,9 +75,14 @@ PORT=""
 cleanup() {
   pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true
   pkill -f "[h]ttp.server ${PORT:-0}" 2>/dev/null || true
-  api_delete "plugins/${PLUGIN_NAME}/hosting" > /dev/null 2>&1 || true
+  # Uninstalling tears a hosting down first (an operation); one still
+  # running refuses it until it ends.
   api_post "plugins/${PLUGIN_NAME}/disable" > /dev/null 2>&1 || true
-  api_delete "plugins/${PLUGIN_NAME}" > /dev/null 2>&1 || true
+  local deadline=$((SECONDS + 180))
+  while [ "$SECONDS" -lt "$deadline" ] && [ "$(api_get_status "plugins/${PLUGIN_NAME}")" != "404" ]; do
+    api_delete "plugins/${PLUGIN_NAME}?force=true" > /dev/null 2>&1 || true
+    sleep 3
+  done
   api_delete "certs/agent/${AGENT_LABEL}" > /dev/null 2>&1 || true
   rm -f "${STATE_DIR}/.npmrc"
   pkill -f '[s]tub-registry.mjs' 2>/dev/null || true
@@ -97,6 +104,34 @@ agent_api_post() {
 # hosting_field jq-expr — a field of GET /api/plugins/<name>/hosting
 hosting_field() {
   api_get "plugins/${PLUGIN_NAME}/hosting" | jq -r "$1" 2>/dev/null || echo ""
+}
+
+# wait_operation <operation id> <seconds> — prints the operation once it ended
+# (still running after <seconds>: printed as is; the caller asserts its status)
+wait_operation() {
+  local id="$1" deadline=$((SECONDS + $2)) op
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    op=$(api_get "plugins/${PLUGIN_NAME}/operations/${id}" | jq -c '.operation' 2>/dev/null || echo '{}')
+    if [ "$(echo "$op" | jq -r '.status' 2>/dev/null)" != "running" ]; then
+      echo "$op"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "$op"
+  return 0
+}
+
+# wait_phase <phase> <seconds> — until the hosting is in <phase>
+wait_phase() {
+  local deadline=$((SECONDS + $2))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ "$(hosting_field '.hosting.phase')" = "$1" ]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 # wait_health <state> <seconds> — until the hosting's health.state is <state>
@@ -196,16 +231,25 @@ MISSING_AGENT_STATUS=$(api_post_status "plugins/${PLUGIN_NAME}/hosting" '{"agent
 assert_eq "$MISSING_AGENT_STATUS" "400" "Hosting on an unknown agent is refused" || true
 
 HOST_RESPONSE=$(api_post "plugins/${PLUGIN_NAME}/hosting" "{\"agentLabel\":\"${AGENT_LABEL}\"}")
-assert_json_field "$HOST_RESPONSE" '.ok' 'true' "Plugin hosted on ${AGENT_LABEL}" || true
-PORT=$(echo "$HOST_RESPONSE" | jq -r '.hosting.port' 2>/dev/null || echo "0")
+assert_json_field "$HOST_RESPONSE" '.ok' 'true' "Hosting on ${AGENT_LABEL} started" || true
+assert_json_field "$HOST_RESPONSE" '.operation.kind' 'host' "…as an operation" || true
+HOST_OP_ID=$(echo "$HOST_RESPONSE" | jq -r '.operation.id' 2>/dev/null || echo "")
+
+if wait_phase installing 30; then
+  log_pass "The hosting is reserved (phase installing)"
+else
+  log_fail "The hosting was not reserved: $(api_get "plugins/${PLUGIN_NAME}/hosting")"
+fi
+HOSTING=$(api_get "plugins/${PLUGIN_NAME}/hosting")
+PORT=$(echo "$HOSTING" | jq -r '.hosting.port' 2>/dev/null || echo "0")
 if [ "$PORT" -ge 21000 ] 2>/dev/null && [ "$PORT" -le 21999 ] 2>/dev/null; then
   log_pass "Port ${PORT} assigned from the internal range"
 else
   log_fail "Port ${PORT} is not in 21000–21999"
 fi
-assert_json_field "$HOST_RESPONSE" '.hosting.secretAcknowledged' 'false' "The secret is not yet fetched" || true
-assert_json_field "$HOST_RESPONSE" '.hosting.health.state' 'unknown' "Health starts unknown" || true
-TUNNEL_ID=$(echo "$HOST_RESPONSE" | jq -r '.hosting.tunnelId' 2>/dev/null || echo "")
+assert_json_field "$HOSTING" '.hosting.secretAcknowledged' 'false' "The secret is not yet fetched" || true
+assert_json_field "$HOSTING" '.hosting.health.state' 'unknown' "Health starts unknown" || true
+TUNNEL_ID=$(echo "$HOSTING" | jq -r '.hosting.tunnelId' 2>/dev/null || echo "")
 
 TWICE_STATUS=$(api_post_status "plugins/${PLUGIN_NAME}/hosting" "{\"agentLabel\":\"${AGENT_LABEL}\"}")
 assert_eq "$TWICE_STATUS" "409" "A plugin has one hosting" || true
@@ -219,9 +263,15 @@ assert_json_field "$TUNNEL" '.agentLabel' "${AGENT_LABEL}" "The hosting agent ca
 assert_json_field "$TUNNEL" '.pluginRoute' "${PLUGIN_NAME}" "The tunnel names the plugin" || true
 VHOST_PRESENT=$(ls /etc/nginx/sites-available 2>/dev/null | grep -c "${PLUGIN_NAME}" || true)
 assert_eq "$VHOST_PRESENT" "0" "No nginx vhost was written for it" || true
+# Nothing to run on the agent before the tunnel (no install:pre-tunnel hook):
+# the grant follows the reservation, and the operation waits for the agent half.
+granted() { [ "$(api_get "tunnels?limit=500" | jq -r ".tunnels[] | select(.id == \"${TUNNEL_ID}\") | .enabled" 2>/dev/null)" = "true" ]; }
+for _ in $(seq 1 20); do granted && break; sleep 1; done
+if granted; then log_pass "The tunnel is granted"; else log_fail "The tunnel was not granted"; fi
 # The authfile is JSON: the pattern's backslashes are doubled in it.
 GRANT=$(grep -cF "R:127\\\\.0\\\\.0\\\\.1:${PORT}\$" "${STATE_DIR}/chisel-users" 2>/dev/null || true)
 assert_eq "$GRANT" "1" "The chisel authfile grants the agent port ${PORT}" || true
+assert_eq "$(hosting_field '.hosting.phase')" "installing" "…while the operation waits for the agent half (phase installing)" || true
 
 CAPS=$(api_get "certs/agent" | jq -c ".agents[] | select(.label == \"${AGENT_LABEL}\") | .capabilities" 2>/dev/null || echo "[]")
 assert_contains "$CAPS" "plugin:${PLUGIN_NAME}:host" "The agent holds plugin:${PLUGIN_NAME}:host" || true
@@ -245,6 +295,7 @@ assert_eq "$ADMIN_CONFIG_STATUS" "403" "The admin certificate has no agent ident
 AGENT_CONFIG=$(agent_api_get "tunnels/agent-config")
 assert_json_field "$AGENT_CONFIG" ".appPlugins[0].route" "${PLUGIN_NAME}" "agent-config lists the hosted plugin" || true
 assert_json_field "$AGENT_CONFIG" ".appPlugins[0].port" "${PORT}" "agent-config carries its port" || true
+assert_json_field "$AGENT_CONFIG" ".appPlugins[0].phase" "installing" "agent-config carries its phase" || true
 assert_json_field "$AGENT_CONFIG" ".appPlugins[0].secretAcknowledged" "false" "agent-config says the secret is not acknowledged" || true
 
 PLUGIN_CONFIG=$(agent_api_get "agents/me/plugin-config/${PLUGIN_NAME}")
@@ -259,17 +310,21 @@ ACK=$(agent_api_post "agents/me/plugin-config/${PLUGIN_NAME}/ack" "{\"issuedAt\"
 assert_json_field "$ACK" '.acknowledged' 'true' "The agent acknowledges the secret" || true
 assert_eq "$(hosting_field '.hosting.secretAcknowledged')" "true" "The hosting records the acknowledgement" || true
 
+if start_half; then
+  log_pass "Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)"
+else
+  log_fail "Agent half did not start: $(cat "${WORK_DIR}/half.out" 2>/dev/null)"
+fi
+HOST_OP=$(wait_operation "${HOST_OP_ID}" 180)
+assert_json_field "$HOST_OP" '.status' 'succeeded' "The hosting operation succeeded once the agent half answered" || true
+assert_eq "$(hosting_field '.hosting.phase')" "active" "The hosting is active" || true
+
 # ===========================================================================
 # 5. Forwarding
 # ===========================================================================
 
 log_section "Forwarding through /api/${PLUGIN_NAME}/*"
 
-if start_half; then
-  log_pass "Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)"
-else
-  log_fail "Agent half did not start: $(cat "${WORK_DIR}/half.out" 2>/dev/null)"
-fi
 BARE=$(curl -s --max-time 5 "http://127.0.0.1:${PORT}/admin/ping" 2>/dev/null || echo "{}")
 assert_json_field "$BARE" '.reason' 'malformed' "A loopback call without an assertion is refused" || true
 
@@ -423,7 +478,9 @@ fi
 log_section "Clear hosting and uninstall"
 
 UNHOST=$(api_delete "plugins/${PLUGIN_NAME}/hosting")
-assert_json_field "$UNHOST" '.ok' 'true' "Hosting removed" || true
+assert_json_field "$UNHOST" '.operation.kind' 'unhost' "Removing the hosting is an operation" || true
+UNHOST_OP=$(wait_operation "$(echo "$UNHOST" | jq -r '.operation.id' 2>/dev/null)" 120)
+assert_json_field "$UNHOST_OP" '.status' 'succeeded' "Hosting removed" || true
 assert_eq "$(api_get_status "plugins/${PLUGIN_NAME}/hosting")" "404" "GET hosting answers 404 afterwards" || true
 TUNNEL_LEFT=$(api_get "tunnels?limit=500" | jq "[.tunnels[] | select(.id == \"${TUNNEL_ID}\")] | length" 2>/dev/null || echo "-1")
 assert_eq "$TUNNEL_LEFT" "0" "The internal tunnel is gone" || true
@@ -434,8 +491,29 @@ assert_eq "$GRANT_AFTER" "0" "The chisel grant is withdrawn" || true
 assert_eq "$(api_get_status "${PLUGIN_NAME}/ping")" "503" "The route answers 503 (not hosted) again" || true
 assert_eq "$(agent_api_get_status "agents/me/plugin-config/${PLUGIN_NAME}")" "403" "The agent can no longer fetch the config" || true
 
-CLI_HOST=$(lamaste-server plugins host "${PLUGIN_NAME}" --agent "${AGENT_LABEL}" --json 2>/dev/null | tail -1 || echo '{}')
+# The CLI follows the operation, which waits for the agent half: play the
+# agent's sync (fetch the new config, restart the half) while it runs.
+lamaste-server plugins host "${PLUGIN_NAME}" --agent "${AGENT_LABEL}" --json > "${WORK_DIR}/cli-host.ndjson" 2> /dev/null &
+CLI_PID=$!
+CLI_CONFIG="{}"
+for _ in $(seq 1 60); do
+  CLI_CONFIG=$(agent_api_get "agents/me/plugin-config/${PLUGIN_NAME}" 2>/dev/null || echo '{}')
+  if [ -n "$(echo "$CLI_CONFIG" | jq -r '.port // empty' 2>/dev/null)" ]; then break; fi
+  sleep 1
+done
+PORT=$(echo "$CLI_CONFIG" | jq -r '.port' 2>/dev/null || echo "0")
+write_half_config "$CLI_CONFIG"
+start_half || log_fail "Agent half did not start for the CLI hosting"
+wait "$CLI_PID" || true
+CLI_HOST=$(tail -1 "${WORK_DIR}/cli-host.ndjson" 2>/dev/null || echo '{}')
+assert_json_field "$CLI_HOST" '.operation.status' 'succeeded' "lamaste-server plugins host follows the operation to its end" || true
 assert_json_field "$CLI_HOST" '.hosting.agentLabel' "${AGENT_LABEL}" "lamaste-server plugins host hosts the plugin" || true
+CLI_STEPS=$(grep -c '"event":"step"' "${WORK_DIR}/cli-host.ndjson" 2>/dev/null || true)
+if [ "${CLI_STEPS:-0}" -ge 3 ] 2>/dev/null; then
+  log_pass "…reporting its steps (${CLI_STEPS})"
+else
+  log_fail "The CLI reported ${CLI_STEPS} steps"
+fi
 CLI_SHOW=$(lamaste-server plugins hosting "${PLUGIN_NAME}" 2>&1 || true)
 assert_contains "$CLI_SHOW" "${AGENT_LABEL}" "lamaste-server plugins hosting shows the agent" || true
 CLI_LIST=$(lamaste-server plugins list 2>&1 || true)
@@ -445,7 +523,10 @@ DISABLE=$(api_post "plugins/${PLUGIN_NAME}/disable")
 assert_json_field "$DISABLE" '.status' 'disabled' "Plugin disabled" || true
 assert_eq "$(api_get_status "plugins/${PLUGIN_NAME}/hosting")" "200" "Disabling keeps the hosting" || true
 UNINSTALL=$(api_delete "plugins/${PLUGIN_NAME}")
-assert_json_field "$UNINSTALL" '.ok' 'true' "Plugin uninstalled" || true
+assert_json_field "$UNINSTALL" '.operation.kind' 'uninstall' "Uninstalling a hosted plugin is an operation" || true
+UNINSTALL_OP=$(wait_operation "$(echo "$UNINSTALL" | jq -r '.operation.id' 2>/dev/null)" 120)
+assert_json_field "$UNINSTALL_OP" '.status' 'succeeded' "Plugin uninstalled" || true
+assert_eq "$(api_get_status "plugins/${PLUGIN_NAME}")" "404" "The plugin is gone" || true
 INTERNAL_LEFT=$(api_get "tunnels?limit=500" | jq "[.tunnels[] | select(.exposure == \"internal\" and .pluginRoute == \"${PLUGIN_NAME}\")] | length" 2>/dev/null || echo "-1")
 assert_eq "$INTERNAL_LEFT" "0" "Uninstalling removed the internal tunnel" || true
 CAPS_FINAL=$(api_get "certs/agent" | jq -c ".agents[] | select(.label == \"${AGENT_LABEL}\") | .capabilities" 2>/dev/null || echo "[]")

@@ -15,10 +15,11 @@ import crypto from 'node:crypto';
 import { access, constants, mkdir } from 'node:fs/promises';
 import {
   BASE_CAPABILITIES as CORE_BASE_CAPABILITIES,
+  HostFactsSchema,
   PLUGIN_AGENT_CN_PREFIX as CORE_PLUGIN_AGENT_CN_PREFIX,
 } from '@lamalibre/lamaste';
 import { addToRevocationList } from './revocation.js';
-import { releaseAgentTunnels } from '@lamalibre/lamaste/server';
+import { releaseAgentTunnels, stripPluginCapabilities } from '@lamalibre/lamaste/server';
 import { tunnelNginxDeps, tunnelChiselDeps, tunnelStateDeps } from './tunnel-deps.js';
 import {
   addChiselCredential,
@@ -241,8 +242,9 @@ async function getStmts() {
     insert: db.prepare(`
       INSERT INTO agents
         (label, serial, capabilities, allowed_sites, enrollment_method,
-         delegated_by, created_at, expires_at, revoked, revoked_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         delegated_by, created_at, expires_at, revoked, revoked_at,
+         host_facts, host_facts_at, push_install_enabled_until, push_install_policy)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
 
     deleteAll: db.prepare('DELETE FROM agents'),
@@ -276,11 +278,49 @@ function rowToAgent(row) {
   };
   if (row.revoked_at != null) agent.revokedAt = row.revoked_at;
   if (row.delegated_by != null) agent.delegatedBy = row.delegated_by;
+  if (row.host_facts != null) agent.hostFacts = parseHostFacts(row.host_facts);
+  if (row.host_facts_at != null) agent.hostFactsAt = row.host_facts_at;
+  if (row.push_install_enabled_until != null) {
+    agent.pushInstallEnabledUntil = row.push_install_enabled_until;
+  }
+  if (row.push_install_policy != null) agent.pushInstallPolicy = row.push_install_policy;
   return agent;
+}
+
+/**
+ * Stored host facts, re-validated on the way out: a row that no longer
+ * parses as HostFacts (written by another version) reads as none, so
+ * eligibility asks the agent to report again instead of trusting it.
+ */
+function parseHostFacts(text) {
+  try {
+    const parsed = HostFactsSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 function nullableString(value) {
   return value === undefined || value === null ? null : value;
+}
+
+/**
+ * Remove every `plugin:<route>:*` capability from every agent's stored
+ * record, under the registry lock — run when a plugin is uninstalled, so
+ * installing it again later does not silently re-grant what an admin gave
+ * the old installation. Returns the per-agent diff for the audit log.
+ *
+ * @param {string} route
+ * @returns {Promise<Array<{ label: string, removed: string[] }>>}
+ */
+export function revokePluginCapabilitiesFromAgents(route) {
+  return withRegistryLock(async () => {
+    const registry = await loadAgentRegistry();
+    const diffs = stripPluginCapabilities(registry.agents, route);
+    if (diffs.length > 0) await saveAgentRegistry(registry);
+    return diffs;
+  });
 }
 
 /**
@@ -340,6 +380,10 @@ export async function saveAgentRegistry(data) {
         a.expiresAt,
         a.revoked ? 1 : 0,
         nullableString(a.revokedAt),
+        a.hostFacts ? JSON.stringify(a.hostFacts) : null,
+        nullableString(a.hostFactsAt),
+        nullableString(a.pushInstallEnabledUntil),
+        nullableString(a.pushInstallPolicy),
       );
     }
     s.commit.run();
@@ -533,20 +577,24 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
 }
 
 /**
- * List all agent certificates with expiry status.
+ * List all agent certificates with expiry status and the host facts each
+ * agent last reported. `status` sums a certificate up for the panel:
+ * `revoked`, `expired`, `expiring-soon` (within 30 days) or `active`.
  *
- * @returns {Promise<Array<{ label: string, serial: string, createdAt: string, expiresAt: string, revoked: boolean, expiringSoon: boolean }>>}
+ * @returns {Promise<Array<{ label: string, serial: string, createdAt: string, expiresAt: string, revoked: boolean, expiringSoon: boolean, status: 'active' | 'expiring-soon' | 'expired' | 'revoked', hostFacts: object | null, hostFactsAt: string | null }>>}
  */
 export async function listAgentCerts() {
   const registry = await loadAgentRegistry();
+  const now = Date.now();
 
   return registry.agents.map((agent) => {
     let expiringSoon = false;
+    let expired = false;
     if (!agent.revoked && agent.expiresAt) {
-      const daysUntilExpiry = Math.floor(
-        (new Date(agent.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
-      );
+      const expiresAt = new Date(agent.expiresAt).getTime();
+      const daysUntilExpiry = Math.floor((expiresAt - now) / (1000 * 60 * 60 * 24));
       expiringSoon = daysUntilExpiry <= 30;
+      expired = expiresAt <= now;
     }
     const isPluginAgent = agent.label.startsWith(PLUGIN_AGENT_CN_PREFIX);
     const entry = {
@@ -554,6 +602,16 @@ export async function listAgentCerts() {
       capabilities: agent.capabilities || (isPluginAgent ? [] : ['tunnels:read']),
       enrollmentMethod: agent.enrollmentMethod || 'p12',
       expiringSoon,
+      status: agent.revoked
+        ? 'revoked'
+        : expired
+          ? 'expired'
+          : expiringSoon
+            ? 'expiring-soon'
+            : 'active',
+      // What the agent last reported about its host (null until it has).
+      hostFacts: agent.hostFacts ?? null,
+      hostFactsAt: agent.hostFactsAt ?? null,
     };
     if (isPluginAgent) {
       entry.certType = 'plugin-agent';
@@ -654,6 +712,29 @@ export async function updateAgentAllowedSites(label, allowedSites) {
     agent.allowedSites = allowedSites || [];
     await saveAgentRegistry(registry);
     return { ok: true, label, allowedSites: agent.allowedSites };
+  });
+}
+
+/**
+ * Record what agent `label` reports about its host (validated
+ * `HostFacts`), under the registry lock. Only an enrolled, unrevoked
+ * agent has a record to keep them on.
+ *
+ * @param {string} label
+ * @param {import('@lamalibre/lamaste').HostFacts} hostFacts
+ * @returns {Promise<{ hostFactsAt: string }>}
+ */
+export function setAgentHostFacts(label, hostFacts) {
+  return withRegistryLock(async () => {
+    const registry = await loadAgentRegistry();
+    const agent = registry.agents.find((a) => a.label === label && !a.revoked);
+    if (!agent) {
+      throw Object.assign(new Error(`Agent certificate "${label}" not found`), { statusCode: 404 });
+    }
+    agent.hostFacts = hostFacts;
+    agent.hostFactsAt = new Date().toISOString();
+    await saveAgentRegistry(registry);
+    return { hostFactsAt: agent.hostFactsAt };
   });
 }
 

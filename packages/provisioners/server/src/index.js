@@ -85,7 +85,7 @@ ${b('SYSTEM MODIFICATIONS')}
     • Hardens SSH (disables password authentication)
 
   ${y('Packages')}
-    • Installs Node.js 20, nginx, certbot
+    • Installs Node.js 22, nginx, certbot
 
   ${y('Certificates')}
     • Generates mTLS CA, server, and client certificates
@@ -330,7 +330,7 @@ ${chalk.cyan.bold('│')}  The following changes will be made:                  
 ${chalk.cyan.bold('│')}                                                             ${chalk.cyan.bold('│')}
 ${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Reset UFW firewall (allow ports 22, 80, 443, 9292)     ${chalk.cyan.bold('│')}
 ${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Harden SSH (disable password authentication)           ${chalk.cyan.bold('│')}
-${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Install fail2ban, Node.js 20, nginx, certbot           ${chalk.cyan.bold('│')}
+${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Install fail2ban, Node.js 22, nginx, certbot           ${chalk.cyan.bold('│')}
 ${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Generate mTLS certificates for browser access          ${chalk.cyan.bold('│')}
 ${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Create lamaste user and systemd service               ${chalk.cyan.bold('│')}
 ${chalk.cyan.bold('│')}    ${chalk.yellow('•')} Deploy panel to /opt/lamalibre/lamaste/               ${chalk.cyan.bold('│')}
@@ -556,7 +556,7 @@ export async function main() {
         // nginx, certbot and openssl. Its hardening subtasks (UFW, fail2ban,
         // SSH) skip themselves — the same as the interactive install.
         { key: 'harden_system', title: 'Hardening operating system', fn: hardenTasks },
-        { key: 'install_node', title: 'Installing Node.js 20', fn: nodeTasks },
+        { key: 'install_node', title: 'Installing Node.js 22', fn: nodeTasks },
         { key: 'generate_certs', title: 'Generating mTLS certificates', fn: mtlsTasks },
         { key: 'configure_nginx', title: 'Configuring nginx', fn: nginxTasks },
         { key: 'deploy_panel', title: 'Deploying Lamaste panel', fn: panelTasks },
@@ -574,7 +574,7 @@ export async function main() {
             task: (_ctx, task) => hardenTasks(ctx, task),
           },
           {
-            title: 'Installing Node.js 20',
+            title: 'Installing Node.js 22',
             task: (_ctx, task) => nodeTasks(ctx, task),
           },
           {

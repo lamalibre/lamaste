@@ -92,20 +92,98 @@ export {
   validateManifest,
   AgentRequiresSchema,
   AgentBlockSchema,
+  AgentServiceSchema,
   AGENT_HALF_OS,
+  HostFactsSchema,
   OidcClientSchema,
   OIDC_GRANT_TYPES,
   OIDC_ACCESS_TOKEN_CLAIMS,
   OIDC_ACCESS_TOKEN_CLAIM_SCOPES,
+  HooksBlockSchema,
+  RequestHookSchema,
+  RoutePatternSchema,
+  SecretScanConfigSchema,
 } from './schemas.js';
 
 export type {
   ParsedManifest,
   AgentBlock,
+  AgentRequires,
+  HostFacts,
+  HooksBlock,
+  RequestHookDeclaration,
   OidcClientDeclaration,
   OidcGrantType,
   OidcAccessTokenClaim,
 } from './schemas.js';
+
+// Hook sets (lifecycle hooks of agent-hosted plugins; the contract itself is
+// `@lamalibre/lamaste/hooks`)
+export {
+  HOOK_SET_DIGEST_VERSION,
+  approvalDigest,
+  agentHookSetOf,
+  hookEntrySha256,
+  relayHookSetDigest,
+  relayHookSetNeedsEntry,
+  relayHookSetOf,
+  relayHookSetPackVersions,
+  relayHookSetPreview,
+} from './hook-set.js';
+
+export type {
+  AgentHookSet,
+  AgentStageHook,
+  ApprovalSubject,
+  RelayHookSet,
+  RelayHookSetPreview,
+  RelayStageHook,
+  RequestHook,
+} from './hook-set.js';
+
+// Agent halves Lamaste installs onto an agent (slice 3): the manifest's
+// declaration, the pinned spec, the names and paths the agent's root helper
+// derives, and which agents can host a plugin
+export {
+  APPHOST_PATHS,
+  APPHOST_PROTOCOL_VERSION,
+  APPHOST_ROUTE_RE,
+  APP_SERVICE_USER_MAX,
+  AGENT_HALF_INTEGRITY_RE,
+  AgentHalfPackageNameSchema,
+  AgentHalfSpecSchema,
+  AgentHalfVersionSchema,
+  AgentServiceEntrySchema,
+  AgentServiceMemoryMaxSchema,
+  SystemPackageNameSchema,
+  agentHalfOf,
+  agentHalfPreview,
+  appServiceUser,
+  appUnitName,
+} from './agent-half.js';
+
+export type { AgentHalfDeclaration, AgentHalfPreview, AgentHalfSpec } from './agent-half.js';
+
+export { hostEligibility } from './host-eligibility.js';
+export type { HostEligibility } from './host-eligibility.js';
+
+// Agent jobs (relay -> agent work through agent-config; results both ends validate)
+export {
+  AGENT_APP_JOB_TIMEOUTS,
+  AGENT_JOB_ERROR_MAX_CHARS,
+  APP_UNIT_STATES,
+  AgentAppJobResultSchema,
+  AgentHookJobResultSchema,
+  AgentJobResultSchema,
+  agentJobError,
+} from './agent-jobs.js';
+
+export type {
+  AgentAppJobResult,
+  AgentHookJobResult,
+  AgentJobResult,
+  AppUnitState,
+} from './agent-jobs.js';
 
 // File helpers
 export {
@@ -138,6 +216,14 @@ export type {
   VerifyCallerAssertionResult,
   VerifyCallerAssertionOptions,
 } from './caller-assertion.js';
+
+// Agent hook calls (relay through the tunnel; agent sync on its loopback)
+export { callAgentHalfHook } from './agent-hook-call.js';
+export type {
+  AgentHookCallFailure,
+  AgentHookCallOptions,
+  AgentHookCallResult,
+} from './agent-hook-call.js';
 
 // Plugin host
 export { pluginHostPlugin, invalidatePluginHostCache } from './plugin-host.js';

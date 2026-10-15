@@ -265,31 +265,48 @@ export function revokePluginCapabilitiesFromAgents(
   pkiDir: string,
   pluginRoute: string,
 ): Promise<Array<{ label: string; removed: string[] }>> {
+  return withRegistryLock(async () => {
+    const registry = await loadAgentRegistry(pkiDir);
+    const diffs = stripPluginCapabilities(registry.agents, pluginRoute);
+    if (diffs.length > 0) await saveAgentRegistry(pkiDir, registry);
+    return diffs;
+  });
+}
+
+/**
+ * Remove every `plugin:<route>:*` capability from the given agent records
+ * (in place) and return what was removed per agent. Revoked agents are left
+ * as they are. The storage-independent half of
+ * {@link revokePluginCapabilitiesFromAgents}: serverd keeps its registry in
+ * SQLite and calls this under its own registry lock.
+ */
+export function stripPluginCapabilities(
+  agents: Array<{
+    label: string;
+    revoked?: boolean | undefined;
+    capabilities?: string[] | undefined;
+  }>,
+  pluginRoute: string,
+): Array<{ label: string; removed: string[] }> {
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(pluginRoute)) {
     throw new MtlsError(`Invalid plugin route: ${pluginRoute}`, 'INVALID_CAPABILITY');
   }
   const prefix = `plugin:${pluginRoute}:`;
-  return withRegistryLock(async () => {
-    const registry = await loadAgentRegistry(pkiDir);
-    const diffs: Array<{ label: string; removed: string[] }> = [];
-    let changed = false;
-    for (const agent of registry.agents) {
-      if (agent.revoked || !Array.isArray(agent.capabilities)) continue;
-      const removed: string[] = [];
-      const kept: string[] = [];
-      for (const cap of agent.capabilities) {
-        if (cap.startsWith(prefix)) removed.push(cap);
-        else kept.push(cap);
-      }
-      if (removed.length > 0) {
-        agent.capabilities = kept;
-        diffs.push({ label: agent.label, removed });
-        changed = true;
-      }
+  const diffs: Array<{ label: string; removed: string[] }> = [];
+  for (const agent of agents) {
+    if (agent.revoked || !Array.isArray(agent.capabilities)) continue;
+    const removed: string[] = [];
+    const kept: string[] = [];
+    for (const cap of agent.capabilities) {
+      if (cap.startsWith(prefix)) removed.push(cap);
+      else kept.push(cap);
     }
-    if (changed) await saveAgentRegistry(pkiDir, registry);
-    return diffs;
-  });
+    if (removed.length > 0) {
+      agent.capabilities = kept;
+      diffs.push({ label: agent.label, removed });
+    }
+  }
+  return diffs;
 }
 
 /**

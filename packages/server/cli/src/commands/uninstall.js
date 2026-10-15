@@ -16,7 +16,7 @@
  * Requires root access. Interactive confirmation unless --force is passed.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 import { execa } from 'execa';
@@ -117,7 +117,32 @@ export async function runUninstall(args, { json }) {
   }
 }
 
+/** Relay hook runner instances (`lamalibre-lamaste-hooks@<route>`), one per plugin with relay hooks. */
+const HOOKS_UNIT_PREFIX = 'lamalibre-lamaste-hooks';
+
+async function stopHookRunners() {
+  let enabled = [];
+  try {
+    enabled = (await readdir('/etc/systemd/system/sockets.target.wants')).filter((name) =>
+      /^lamalibre-lamaste-hooks@[a-z0-9-]+\.socket$/.test(name),
+    );
+  } catch {
+    // No socket units enabled
+  }
+  for (const socket of enabled) {
+    await execa('systemctl', ['disable', '--now', socket], { timeout: 15000 }).catch(() => {});
+  }
+  await execa(
+    'systemctl',
+    ['stop', `${HOOKS_UNIT_PREFIX}@*.service`, `${HOOKS_UNIT_PREFIX}@*.socket`],
+    {
+      timeout: 15000,
+    },
+  ).catch(() => {});
+}
+
 async function stopServices() {
+  await stopHookRunners();
   for (const service of [PANEL_SERVICE, GATEKEEPER_SERVICE, 'chisel']) {
     try {
       await execa('systemctl', ['stop', service], { timeout: 15000 });
@@ -138,6 +163,8 @@ async function removeServices() {
     `/etc/systemd/system/${GATEKEEPER_SERVICE}.service`,
     '/etc/systemd/system/chisel.service',
     '/etc/systemd/system/authelia.service',
+    `/etc/systemd/system/${HOOKS_UNIT_PREFIX}@.socket`,
+    `/etc/systemd/system/${HOOKS_UNIT_PREFIX}@.service`,
   ];
 
   for (const file of serviceFiles) {

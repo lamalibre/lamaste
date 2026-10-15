@@ -21,6 +21,7 @@ import {
   Link2,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
+import { HostFactsSummary } from '../components/HostFacts.jsx';
 
 // --- Sub-components ---
 
@@ -266,15 +267,18 @@ function MtlsSection({ certs, onRotate, adminAuthMode }) {
   );
 }
 
+/** An agent certificate's `status` as GET /api/certs/agent sums it up. */
 function AgentStatusBadge({ status }) {
   const styles = {
     active: 'text-green-400 bg-green-500/10 border-green-500/20',
     'expiring-soon': 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+    expired: 'text-red-400 bg-red-500/10 border-red-500/20',
     revoked: 'text-red-400 bg-red-500/10 border-red-500/20',
   };
   const labels = {
     active: 'active',
     'expiring-soon': 'expiring soon',
+    expired: 'expired',
     revoked: 'revoked',
   };
 
@@ -1290,6 +1294,12 @@ function AgentCertsSection() {
                   <tr key={cert.label} className="border-b border-zinc-700 bg-zinc-800">
                     <td className="px-4 py-3">
                       <AgentLabelCell label={cert.label} />
+                      {/* What a machine agent reported about its host on its last sync. */}
+                      {!cert.revoked && !parsePluginAgentLabel(cert.label) && (
+                        <div className="mt-0.5 min-w-[16rem]">
+                          <HostFactsSummary facts={cert.hostFacts} at={cert.hostFactsAt} />
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-zinc-600">
                       {cert.serial ? cert.serial.slice(0, 16) : 'N/A'}
@@ -1351,7 +1361,9 @@ function AgentCertsSection() {
                             <Globe size={12} />
                           </button>
                         )}
+                        {/* A revoked or expired certificate is of no use to download. */}
                         {cert.status !== 'revoked' &&
+                          cert.status !== 'expired' &&
                           cert.enrollmentMethod !== 'hardware-bound' && (
                             <button
                               type="button"

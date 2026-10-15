@@ -209,6 +209,13 @@ ${args}
 `;
 }
 
+/**
+ * How long one sync may run before systemd stops it: converge (a chisel
+ * download takes at most 5 minutes) and the relay's agent jobs, the longest
+ * of which installs an agent half (10 minutes, `AGENT_APP_JOB_TIMEOUTS`).
+ */
+const SYNC_RUN_TIMEOUT = '20min';
+
 export function renderSyncSystemdService(label: string, program: AgentCliProgram): string {
   const execStart = syncArgs(program, label).map(systemdQuote).join(' ');
   return `[Unit]
@@ -219,7 +226,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=${execStart}
-TimeoutStartSec=5min
+TimeoutStartSec=${SYNC_RUN_TIMEOUT}
 StandardOutput=append:${syncLogFile(label)}
 StandardError=append:${syncLogFile(label)}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin

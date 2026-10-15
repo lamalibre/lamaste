@@ -201,6 +201,16 @@
           "title": "Agent-Hosted Plugins",
           "slug": "api-agent-hosted-plugins",
           "file": "04-api-reference/agent-hosted-plugins.md"
+        },
+        {
+          "title": "Lifecycle Hooks",
+          "slug": "api-lifecycle-hooks",
+          "file": "04-api-reference/lifecycle-hooks.md"
+        },
+        {
+          "title": "Audit Log & Notifications",
+          "slug": "api-audit-and-notifications",
+          "file": "04-api-reference/audit-and-notifications.md"
         }
       ]
     },

@@ -8,7 +8,9 @@ import { createContext, useContext } from 'react';
  * - Desktop app: uses Tauri invoke() → Rust → curl + P12
  *
  * All methods return promises. The page components call useAdminClient()
- * and are completely host-agnostic.
+ * and are completely host-agnostic. A refused plugin operation rejects with
+ * an Error carrying the panel's message and, when the panel sent them, its
+ * `code`, `reasons` and `operationId` (see `lib/errorMessage.js` refusalOf).
  */
 const AdminClientContext = createContext(null);
 
@@ -84,15 +86,27 @@ const AdminClientContext = createContext(null);
  * @property {(packageName: string) => Promise<any>} installPlugin
  * @property {(name: string) => Promise<{ok}>} enablePlugin
  * @property {(name: string) => Promise<{ok}>} disablePlugin
- * @property {(name: string) => Promise<{ok}>} uninstallPlugin
+ * @property {(name: string, options?: {force?: boolean, purge?: boolean}) => Promise<{ok, operation?}>} uninstallPlugin — a hosted plugin's hosting goes first (an operation); `purge` deletes the data of an agent half Lamaste installed
  * @property {(name: string) => Promise<string>} fetchPluginBundle — returns JS source text
- * @property {() => Promise<Object>} getPushInstallConfig
- * @property {(data: Object) => Promise<any>} updatePushInstallConfig
+ * @property {(name: string) => Promise<{hosting}>} getPluginHosting
+ * @property {(name: string) => Promise<{agents: Array<{label, eligible, reasons}>}>} getPluginHostingEligibility — which machine agents can host the plugin, and why the others cannot
+ * @property {(name: string, agentLabel: string) => Promise<{ok, operation}>} setPluginHosting — refused with `code` agent_not_eligible (`reasons`), push_install_refused or hooks_not_approved
+ * @property {(name: string, options?: {force?: boolean, purge?: boolean}) => Promise<{ok, operation}>} clearPluginHosting
+ * @property {(name: string) => Promise<{ok, hosting}>} rotatePluginHostingSecret
+ * @property {(name: string) => Promise<{operations: Array}>} getPluginOperations
+ * @property {(name: string, id: string) => Promise<{operation}>} getPluginOperation
+ * @property {(name: string) => Promise<{hooks}>} getPluginHooks — relay hook set, agent hooks, agent half, approval (`approval.digest` is what to approve), pending update
+ * @property {(name: string, digest: string) => Promise<{ok, hooks?, operation?}>} approvePluginHooks
+ * @property {(name: string, enabled: boolean) => Promise<{ok, autoApprove}>} setPluginHooksAutoApprove
+ * @property {(name: string, version?: string) => Promise<{ok, upToDate?, pendingUpdate?, operation?}>} updatePlugin
+ * @property {(name: string) => Promise<{ok}>} discardPluginUpdate
+ * @property {() => Promise<{enabled, defaultPolicy, policies, windowMinutes: {min, max}}>} getPushInstallConfig
+ * @property {(data: {enabled?, defaultPolicy?}) => Promise<any>} updatePushInstallConfig
  * @property {() => Promise<{policies: Array}>} getPushInstallPolicies
  * @property {(data: Object) => Promise<any>} createPushInstallPolicy
  * @property {(id: string) => Promise<{ok}>} deletePushInstallPolicy
  * @property {(id: string, data: {name?, description?, allowedIps?, deniedIps?, allowedPlugins?, allowedActions?}) => Promise<{ok, policy}>} updatePushInstallPolicy
- * @property {(label: string, data: {durationMinutes, policyId?}) => Promise<any>} enablePushInstall
+ * @property {(label: string, data: {durationMinutes, policyId?}) => Promise<{ok, label, pushInstallEnabledUntil, pushInstallPolicy}>} enablePushInstall — durationMinutes within the config's windowMinutes
  * @property {(label: string) => Promise<{ok}>} disablePushInstall
  * @property {(label: string, data: {action, packageName?}) => Promise<any>} pushInstallCommand
  * @property {() => Promise<{sessions: Array}>} getPushInstallSessions

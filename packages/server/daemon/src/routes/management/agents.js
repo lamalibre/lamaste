@@ -11,12 +11,23 @@ import {
   rotateAgentChiselCredential,
   getAgentCapabilities,
   getAgentAllowedSites,
+  setAgentHostFacts,
 } from '../../lib/mtls.js';
 import { z } from 'zod';
-import { AGENT_LABEL_REGEX, pluginHostCapability } from '@lamalibre/lamaste';
+import {
+  AGENT_LABEL_REGEX,
+  AgentJobResultSchema,
+  HostFactsSchema,
+  pluginHostCapability,
+} from '@lamalibre/lamaste';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import { acquireAgentToken } from '../../lib/registry-credential.js';
 import { agentPluginConfig, acknowledgeAgentPluginConfig } from '../../lib/plugin-hosting.js';
+import {
+  AGENT_JOB_RESULT_MAX_BYTES,
+  completeAgentJob,
+  findAgentJob,
+} from '../../lib/agent-jobs.js';
 
 /**
  * An agent may rotate its own chisel credential at most this often. Every
@@ -36,6 +47,8 @@ const PluginRouteParamSchema = z.object({
 const AckBodySchema = z.object({
   issuedAt: z.string().min(1).max(64),
 });
+
+const JobIdParamSchema = z.object({ id: z.string().uuid() });
 
 const LabelParamSchema = z.object({
   label: z
@@ -292,6 +305,115 @@ export default async function agentsRoutes(fastify, _opts) {
         'Plugin config acknowledgement',
       );
       return { ok: true, ...result };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /agents/me/jobs/:id/result
+  //
+  // The calling agent reports a job agent-config gave it. A hook job (a
+  // lifecycle hook call to its agent half): `{ ok: true, decision }`; an
+  // app job (install, activate or remove its agent half through the app
+  // host helper): `{ ok: true, app: { version, unit } }`; either:
+  // `{ ok: false, error }` (one line). The result must fit the job's kind
+  // (core `AgentJobResultSchema`). Only the machine agent the job is for,
+  // and only once. A hook job's agent must also hold the host capability of
+  // the job's plugin (it calls the hosted agent half); an app job's need
+  // not — purging the data an agent half left runs after the hosting, and
+  // the capability, are gone.
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/agents/me/jobs/:id/result',
+    {
+      preHandler: fastify.requireRole(['agent']),
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      bodyLimit: AGENT_JOB_RESULT_MAX_BYTES,
+    },
+    async (request, reply) => {
+      const { id } = JobIdParamSchema.parse(request.params);
+      const result = AgentJobResultSchema.parse(request.body);
+      const job = await findAgentJob(id);
+      if (!job || job.agentLabel !== request.certLabel) {
+        return reply.code(404).send({ error: 'Job not found' });
+      }
+      if (job.kind === 'hook') {
+        const refused = refuseUnlessHostingAgent(request, reply, job.route);
+        if (refused) return refused;
+      } else if (request.certRole !== 'agent') {
+        return reply
+          .code(403)
+          .send({ error: 'Only the agent certificate the job is for can report it' });
+      }
+      const outcome = await completeAgentJob(request.certLabel, id, result);
+      if (outcome === 'not_found') return reply.code(404).send({ error: 'Job not found' });
+      if (outcome === 'not_pending') {
+        return reply.code(409).send({ error: 'The job is no longer pending' });
+      }
+      if (outcome === 'invalid') {
+        return reply.code(400).send({
+          error:
+            job.kind === 'hook'
+              ? 'A hook job reports { ok: true, decision } or { ok: false, error }'
+              : 'An app job reports { ok: true, app: { version, unit } } or { ok: false, error }',
+        });
+      }
+      request.log.info(
+        {
+          label: request.certLabel,
+          plugin: job.route,
+          kind: job.kind,
+          ...(job.stage ? { stage: job.stage } : {}),
+          ok: result.ok,
+        },
+        'Agent job reported',
+      );
+      return { ok: true };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // PUT /agents/me/host-facts
+  //
+  // The calling agent reports what the relay needs to know about its host
+  // to tell which plugins it can host (`agent.requires`, and whether
+  // Lamaste can install an agent half there): OS, distribution,
+  // architecture, Node.js, systemd and its app host helper — core
+  // `HostFactsSchema`. Its sync sends them when they change. Kept on the
+  // agent's registry record (`hostFacts`, `hostFactsAt`); identity comes
+  // strictly from the mTLS certificate.
+  // ------------------------------------------------------------------
+  fastify.put(
+    '/agents/me/host-facts',
+    {
+      preHandler: fastify.requireRole(['agent']),
+      // Sent on change (and once a day); this only stops a loop.
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+      bodyLimit: 4 * 1024,
+    },
+    async (request, reply) => {
+      // requireRole lets the admin master role through every guard; an admin
+      // certificate has no host to report. A plugin-agent hosts nothing.
+      if (request.certRole !== 'agent') {
+        return reply.code(403).send({ error: 'Only an agent certificate can report host facts' });
+      }
+      const label = request.certLabel;
+      if (!label || !AGENT_LABEL_REGEX.test(label)) {
+        return reply
+          .code(400)
+          .send({ error: 'Agent label could not be determined from client certificate' });
+      }
+      const facts = HostFactsSchema.parse(request.body);
+      try {
+        await setAgentHostFacts(label, facts);
+      } catch (err) {
+        const status = err.statusCode || 500;
+        return reply.code(status).send({ error: err.message || 'Failed to store host facts' });
+      }
+      request.log.info(
+        { label, os: facts.os, arch: facts.arch, apphost: facts.apphost?.version ?? null },
+        'Agent reported host facts',
+      );
+      return { ok: true };
     },
   );
 

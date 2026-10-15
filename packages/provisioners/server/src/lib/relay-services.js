@@ -17,9 +17,14 @@ import {
   AUTHELIA_USER,
   CHISEL_GROUP,
   CHISEL_UNIT_PATH,
+  HOOKS_DIR,
+  HOOKS_SERVICE_UNIT_PATH,
+  HOOKS_SOCKET_UNIT_PATH,
   WEB_ROOT,
   generateAutheliaUnit,
   generateChiselUnit,
+  generateHooksServiceUnit,
+  generateHooksSocketUnit,
 } from './service-config.js';
 
 async function writeIfChanged(path, content) {
@@ -44,7 +49,7 @@ async function writeIfChanged(path, content) {
  * `systemctl daemon-reload` and restarts what changed. Onboarding enables
  * and starts chisel and Authelia on a fresh install.
  *
- * @param {{ configDir: string, pkiDir: string }} ctx
+ * @param {{ configDir: string, pkiDir: string, installDir: string }} ctx
  * @param {(line: string) => void} report
  * @returns {Promise<{ chiselChanged: boolean, autheliaChanged: boolean }>}
  *   whether the binary or unit of each changed (a running service needs a
@@ -99,6 +104,15 @@ export async function provisionRelayServices(ctx, report) {
   report('Writing the chisel and Authelia units...');
   const chiselUnitChanged = await writeIfChanged(CHISEL_UNIT_PATH, generateChiselUnit(ctx));
   const autheliaUnitChanged = await writeIfChanged(AUTHELIA_UNIT_PATH, generateAutheliaUnit());
+
+  // Relay hook runners: template units only. lamaste-priv enables an
+  // instance per plugin and places its approved module under HOOKS_DIR,
+  // which stays root's; a running runner picks a new unit up when it next
+  // starts (it exits when idle).
+  report('Writing the relay hook runner units...');
+  await ensureDirectory(HOOKS_DIR, { uid: 0, gid: 0, mode: 0o755 });
+  await writeIfChanged(HOOKS_SOCKET_UNIT_PATH, generateHooksSocketUnit());
+  await writeIfChanged(HOOKS_SERVICE_UNIT_PATH, generateHooksServiceUnit(ctx));
 
   return {
     chiselChanged: chisel.changed || chiselUnitChanged,

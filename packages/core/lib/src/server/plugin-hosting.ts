@@ -30,6 +30,28 @@ export interface PluginHostingSecret {
 
 export type PluginHostingHealthState = 'unknown' | 'up' | 'down';
 
+/**
+ * Where a hosting is in its life. The installation secret is delivered
+ * before the tunnel is granted and outlives it at teardown, so the agent's
+ * own lifecycle hooks — which it signs with that secret — can run on both
+ * sides of the tunnel:
+ *
+ * - `installing` — record and secret exist, the internal tunnel is not yet
+ *   granted (the install pipeline runs);
+ * - `active`     — the forwarder and the health monitor use it;
+ * - `removing`   — the tunnel is gone, the secret not yet (the uninstall
+ *   pipeline runs the agent's post-teardown stage).
+ *
+ * A record written before 4.3 has no phase and is active.
+ */
+export type PluginHostingPhase = 'installing' | 'active' | 'removing';
+
+export const PLUGIN_HOSTING_PHASES: readonly PluginHostingPhase[] = [
+  'installing',
+  'active',
+  'removing',
+];
+
 export interface PluginHostingHealth {
   readonly state: PluginHostingHealthState;
   /** When down: `tunnel` (the loopback port refuses) or `app` (the port answers, the agent half does not). */
@@ -39,9 +61,33 @@ export interface PluginHostingHealth {
   readonly lastError?: string | undefined;
 }
 
+/**
+ * The agent half Lamaste installed on the hosting agent (slice 3): the
+ * version the agent's app host helper points `current` at. Absent when the
+ * agent half was installed by hand, or before Lamaste's install of it
+ * finished.
+ */
+export interface PluginHostingAgentHalf {
+  /** The agent package — the owner of the agent half's data on the agent. */
+  readonly package: string;
+  readonly version: string;
+  /** When Lamaste installed or activated this version (ISO 8601). */
+  readonly installedAt: string;
+}
+
 export interface PluginHostingRecord {
-  /** The plugin's route (manifest `name`). */
+  /**
+   * The plugin's route (`derivePluginRoute` of its name) — the key of the
+   * store, and of everything the hosting creates on the agent.
+   */
   readonly plugin: string;
+  /**
+   * The name of the installed plugin that owns this hosting. Lamaste checks
+   * it on every lookup, so an operation of one plugin never acts on another
+   * plugin's hosting. Absent on records from before it was kept: the owner
+   * is then the plugin named like the route (see {@link pluginHostingOwner}).
+   */
+  readonly pluginName?: string | undefined;
   readonly agentLabel: string;
   /** The relay-loopback port of the internal tunnel; the agent half listens on the same port. */
   readonly port: number;
@@ -53,6 +99,20 @@ export interface PluginHostingRecord {
   /** `issuedAt` of the last secret the hosting agent confirmed it holds. */
   readonly acknowledgedIssuedAt?: string | undefined;
   readonly health: PluginHostingHealth;
+  /** Absent on records from before 4.3: active. */
+  readonly phase?: PluginHostingPhase | undefined;
+  /** The agent half Lamaste installed there; absent when it installed none. */
+  readonly agentHalf?: PluginHostingAgentHalf | undefined;
+}
+
+/** The phase of a record (`active` when it has none). */
+export function pluginHostingPhase(record: PluginHostingRecord): PluginHostingPhase {
+  return record.phase ?? 'active';
+}
+
+/** The name of the plugin that owns a hosting (`pluginName`, or the route on older records). */
+export function pluginHostingOwner(record: PluginHostingRecord): string {
+  return record.pluginName ?? record.plugin;
 }
 
 export type PluginHostingStore = Record<string, PluginHostingRecord>;
@@ -70,6 +130,11 @@ export interface PluginHostingView {
   /** A rotation is in progress: the previous secret is still accepted. */
   readonly rotationPending: boolean;
   readonly health: PluginHostingHealth;
+  readonly phase: PluginHostingPhase;
+  /** The agent half Lamaste installed on the agent, or null (installed by hand, or not yet). */
+  readonly agentHalf: PluginHostingAgentHalf | null;
+  /** The plugin that owns the hosting. */
+  readonly pluginName: string;
 }
 
 /** What the hosting agent fetches for its agent half. */
@@ -88,6 +153,13 @@ export interface AgentPluginAssignment {
   readonly port: number;
   readonly secretIssuedAt: string;
   readonly secretAcknowledged: boolean;
+  readonly phase: PluginHostingPhase;
+  /**
+   * The tunnel's health as the relay sees it — the agent cannot see its
+   * own chisel session, so this is what its `tunnel:down` / `tunnel:up`
+   * hooks follow.
+   */
+  readonly health: PluginHostingHealth;
 }
 
 export class PluginHostingError extends Error {
@@ -101,6 +173,9 @@ export class PluginHostingError extends Error {
 }
 
 const ROUTE_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+
+/** A plugin's manifest `name`. */
+const PLUGIN_NAME_RE = /^[a-z0-9-]{1,100}$/;
 
 function assertRoute(plugin: string): void {
   if (typeof plugin !== 'string' || !ROUTE_RE.test(plugin)) {
@@ -160,10 +235,15 @@ export async function getPluginHosting(
 }
 
 export interface CreatePluginHostingInput {
+  /** The plugin's route. */
   readonly plugin: string;
+  /** The name of the installed plugin that owns the hosting. */
+  readonly pluginName: string;
   readonly agentLabel: string;
   readonly port: number;
   readonly tunnelId: string;
+  /** Default `active` (a hosting created in one step). */
+  readonly phase?: PluginHostingPhase | undefined;
 }
 
 /**
@@ -175,6 +255,12 @@ export function createPluginHosting(
   input: CreatePluginHostingInput,
 ): Promise<PluginHostingRecord> {
   assertRoute(input.plugin);
+  if (typeof input.pluginName !== 'string' || !PLUGIN_NAME_RE.test(input.pluginName)) {
+    throw new PluginHostingError(
+      `Invalid owning plugin name "${String(input.pluginName)}"`,
+      'INVALID',
+    );
+  }
   return mutex.run(async () => {
     const store = await readPluginHostings(stateDir);
     if (store[input.plugin]) {
@@ -186,12 +272,14 @@ export function createPluginHosting(
     const now = new Date().toISOString();
     const record: PluginHostingRecord = {
       plugin: input.plugin,
+      pluginName: input.pluginName,
       agentLabel: input.agentLabel,
       port: input.port,
       tunnelId: input.tunnelId,
       createdAt: now,
       current: { secret: generateHostingSecret(), issuedAt: now },
       health: { state: 'unknown', since: now },
+      phase: input.phase ?? 'active',
     };
     store[input.plugin] = record;
     await writePluginHostings(stateDir, store);
@@ -292,6 +380,70 @@ export function updatePluginHostingHealth(
   });
 }
 
+/** Move a hosting to another phase. Returns the record, or null when the plugin is not hosted. */
+export function setPluginHostingPhase(
+  stateDir: string,
+  plugin: string,
+  phase: PluginHostingPhase,
+): Promise<PluginHostingRecord | null> {
+  assertRoute(plugin);
+  return mutex.run(async () => {
+    const store = await readPluginHostings(stateDir);
+    const record = store[plugin];
+    if (!record) return null;
+    if (pluginHostingPhase(record) === phase) return record;
+    const next: PluginHostingRecord = { ...record, phase };
+    store[plugin] = next;
+    await writePluginHostings(stateDir, store);
+    return next;
+  });
+}
+
+/**
+ * Record which version of the agent half Lamaste installed on the hosting
+ * agent (`null`: it removed it). Returns the record, or null when the plugin
+ * is not hosted.
+ */
+export function setPluginHostingAgentHalf(
+  stateDir: string,
+  plugin: string,
+  agentHalf: PluginHostingAgentHalf | null,
+): Promise<PluginHostingRecord | null> {
+  assertRoute(plugin);
+  if (
+    agentHalf !== null &&
+    (typeof agentHalf.version !== 'string' ||
+      agentHalf.version === '' ||
+      typeof agentHalf.package !== 'string' ||
+      agentHalf.package === '')
+  ) {
+    throw new PluginHostingError(
+      'An installed agent half needs its package and version',
+      'INVALID',
+    );
+  }
+  return mutex.run(async () => {
+    const store = await readPluginHostings(stateDir);
+    const record = store[plugin];
+    if (!record) return null;
+    const { agentHalf: _previous, ...rest } = record;
+    const next: PluginHostingRecord =
+      agentHalf === null
+        ? rest
+        : {
+            ...rest,
+            agentHalf: {
+              package: agentHalf.package,
+              version: agentHalf.version,
+              installedAt: agentHalf.installedAt,
+            },
+          };
+    store[plugin] = next;
+    await writePluginHostings(stateDir, store);
+    return next;
+  });
+}
+
 /**
  * The secret the forwarder signs with: the current one once the agent has
  * acknowledged it, else the previous one the agent is known to hold. On a
@@ -318,6 +470,9 @@ export function pluginHostingView(record: PluginHostingRecord): PluginHostingVie
     secretAcknowledged: record.acknowledgedIssuedAt === record.current.issuedAt,
     rotationPending: record.previous !== undefined,
     health: record.health,
+    phase: pluginHostingPhase(record),
+    agentHalf: record.agentHalf ?? null,
+    pluginName: pluginHostingOwner(record),
   };
 }
 
@@ -346,5 +501,7 @@ export function agentPluginAssignments(
       port: r.port,
       secretIssuedAt: r.current.issuedAt,
       secretAcknowledged: r.acknowledgedIssuedAt === r.current.issuedAt,
+      phase: pluginHostingPhase(r),
+      health: r.health,
     }));
 }

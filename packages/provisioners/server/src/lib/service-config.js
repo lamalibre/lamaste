@@ -301,6 +301,119 @@ WantedBy=multi-user.target
 `;
 }
 
+/**
+ * Relay hook runners — one per plugin that brings relay lifecycle hooks
+ * (`lamalibre-lamaste-hooks@<route>`). The panel never imports plugin code;
+ * it calls the plugin's runner over a Unix socket, and the runner runs the
+ * plugin's approved hook module in the sandbox below. Template units, written
+ * by create-lamaste; `lamaste-priv hooks install|remove|restart <route>`
+ * enables an instance and places its approved module under
+ * {@link HOOKS_DIR}/<route>/ (root-owned). Must match the server subpath's
+ * `HOOK_RUNNER_SOCKET_DIR` in @lamalibre/lamaste.
+ */
+export const HOOKS_UNIT_PREFIX = 'lamalibre-lamaste-hooks';
+export const HOOKS_SOCKET_UNIT_PATH = `/etc/systemd/system/${HOOKS_UNIT_PREFIX}@.socket`;
+export const HOOKS_SERVICE_UNIT_PATH = `/etc/systemd/system/${HOOKS_UNIT_PREFIX}@.service`;
+export const HOOKS_SOCKET_DIR = '/run/lamalibre-lamaste-hooks';
+export const HOOKS_DIR = '/opt/lamalibre/lamaste/hooks';
+
+/**
+ * The hook runner's socket: created by systemd, reachable by the panel's
+ * group only. The first connection starts the runner (socket activation),
+ * which exits when idle.
+ *
+ * @returns {string}
+ */
+export function generateHooksSocketUnit() {
+  return `[Unit]
+Description=Lamaste relay hook runner socket (plugin %i)
+
+[Socket]
+ListenStream=${HOOKS_SOCKET_DIR}/%i.sock
+SocketUser=root
+SocketGroup=lamaste
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+Accept=no
+Backlog=64
+
+[Install]
+WantedBy=sockets.target
+`;
+}
+
+/**
+ * The hook runner: Lamaste's runner program and one plugin's approved hook
+ * module, in a sandbox — a dynamic user with nothing of the relay's, a
+ * read-only file system with the panel's state, Authelia, certificates and
+ * nginx out of reach, no network (Unix sockets only, its own network
+ * namespace), and Node's permission model allowing reads of the runner and
+ * the module only (no child processes, workers, addons or writes).
+ * Standard output and error are discarded so nothing a hook prints — it sees
+ * application data — reaches the journal. `runner.env`, written by
+ * lamaste-priv, names the module.
+ *
+ * @param {{ installDir: string }} ctx
+ * @returns {string}
+ */
+export function generateHooksServiceUnit(ctx) {
+  const lib = `${ctx.installDir}/serverd/node_modules/@lamalibre/lamaste/dist/hooks`;
+  return `[Unit]
+Description=Lamaste relay hook runner (plugin %i)
+Requires=${HOOKS_UNIT_PREFIX}@%i.socket
+After=${HOOKS_UNIT_PREFIX}@%i.socket
+ConditionPathExists=${HOOKS_DIR}/%i/runner.env
+
+[Service]
+Type=simple
+EnvironmentFile=${HOOKS_DIR}/%i/runner.env
+ExecStart=/usr/bin/node --permission --allow-fs-read=${lib}/* --max-old-space-size=160 $LAMASTE_HOOK_NODE_ARGS ${lib}/runner.js --plugin %i --listen-fd 3 $LAMASTE_HOOK_RUNNER_ARGS
+Restart=no
+TimeoutStopSec=2
+StandardOutput=null
+StandardError=null
+
+DynamicUser=yes
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateIPC=yes
+PrivateNetwork=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+TemporaryFileSystem=/run:ro /var:ro /srv:ro /mnt:ro /media:ro
+InaccessiblePaths=-/etc/lamalibre -/etc/authelia -/etc/letsencrypt -/etc/nginx -/etc/ssh -/etc/sudoers.d -/etc/sudoers -/etc/shadow -/etc/gshadow
+MemoryMax=256M
+MemorySwapMax=0
+CPUQuota=50%
+TasksMax=32
+LimitNOFILE=1024
+`;
+}
+
 /** sites-available name of the port-80 catch-all. */
 export const HTTP_REDIRECT_SITE = 'lamalibre-lamaste-http-redirect';
 

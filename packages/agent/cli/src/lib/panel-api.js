@@ -238,6 +238,31 @@ async function curlAuthenticated(config, extraArgs) {
 }
 
 /**
+ * Execute an authenticated curl command and return the HTTP status with the
+ * body — also for an error status, which `-f` turns into curl exit 22 with
+ * no body (the write-out still names the status).
+ *
+ * @param {object} config - Agent config
+ * @param {string[]} extraArgs - Curl arguments (must end with the URL)
+ * @returns {Promise<{ status: number, body: string }>}
+ */
+async function curlAuthenticatedStatus(config, extraArgs) {
+  const url = extraArgs[extraArgs.length - 1];
+  const args = [...extraArgs.slice(0, -1), '-w', '\n%{http_code}', url];
+  let stdout;
+  try {
+    ({ stdout } = await curlAuthenticated(config, args));
+  } catch (err) {
+    if (err?.exitCode !== 22 || typeof err.stdout !== 'string') throw err;
+    stdout = err.stdout;
+  }
+  const newline = stdout.lastIndexOf('\n');
+  const status = Number.parseInt(stdout.slice(newline + 1), 10);
+  if (!Number.isInteger(status)) throw new Error('curl reported no HTTP status');
+  return { status, body: newline === -1 ? '' : stdout.slice(0, newline) };
+}
+
+/**
  * Resolve and validate the panel URL from a config object.
  * Parses via `new URL()` to break any taint chain from unvalidated
  * config values, and enforces HTTPS to prevent SSRF.
@@ -439,6 +464,94 @@ export async function acknowledgePluginConfig(config, route, issuedAt) {
       `Failed to acknowledge the plugin config for "${route}". Details: ${err.stderr || err.message}`,
     );
   }
+}
+
+/**
+ * Ask the panel to broker a registry credential for an install on this
+ * agent: a one-hour, read-only token owned by `agent:<label>`. `null` when
+ * the panel has none configured (404) — the install then uses the public
+ * registry. The token is for an isolated, throw-away npm userconfig only.
+ *
+ * @param {object} config - Agent config
+ * @returns {Promise<{ registryUrl: string, scope: string, token: string, expiresAt: string, tokenId: string } | null>}
+ */
+export async function fetchRegistryCredential(config) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/registry-credential`;
+  let response;
+  try {
+    response = await curlAuthenticatedStatus(config, [url]);
+  } catch (err) {
+    throw new Error(
+      `Failed to fetch a registry credential from the panel. Details: ${err.stderr || err.message}`,
+    );
+  }
+  if (response.status === 404) return null;
+  if (response.status !== 200) {
+    throw new Error(`The panel refused to broker a registry credential (HTTP ${response.status})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(response.body);
+  } catch {
+    throw new Error('The panel returned a malformed registry credential');
+  }
+  if (
+    !parsed ||
+    typeof parsed.registryUrl !== 'string' ||
+    typeof parsed.token !== 'string' ||
+    typeof parsed.expiresAt !== 'string'
+  ) {
+    throw new Error('The panel returned a malformed registry credential');
+  }
+  return {
+    registryUrl: parsed.registryUrl,
+    scope: typeof parsed.scope === 'string' ? parsed.scope : '@lamalibre',
+    token: parsed.token,
+    expiresAt: parsed.expiresAt,
+    tokenId: typeof parsed.tokenId === 'string' ? parsed.tokenId : '',
+  };
+}
+
+/**
+ * Report this agent's host facts (OS, distribution, architecture, Node.js,
+ * systemd, app host helper) — what the panel checks a plugin's
+ * requirements against when it is hosted here. `'unsupported'` when the
+ * panel has no such endpoint yet (404, a relay before 4.3).
+ *
+ * @param {object} config - Agent config
+ * @param {import('@lamalibre/lamaste').HostFacts} facts
+ * @returns {Promise<'ok' | 'unsupported'>}
+ */
+export async function putHostFacts(config, facts) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/host-facts`;
+  let response;
+  try {
+    response = await curlAuthenticatedStatus(config, [
+      '-X',
+      'PUT',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify(facts),
+      url,
+    ]);
+  } catch (err) {
+    throw new Error(`Failed to report host facts. Details: ${err.stderr || err.message}`);
+  }
+  if (response.status === 404) return 'unsupported';
+  if (response.status !== 200) {
+    throw new Error(`The panel refused the host facts (HTTP ${response.status})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(response.body);
+  } catch {
+    parsed = null;
+  }
+  if (parsed?.ok !== true) throw new Error('The panel answered the host facts unexpectedly');
+  return 'ok';
 }
 
 /**
@@ -906,5 +1019,34 @@ export async function fetchPanelTunnelStatus(config) {
     return JSON.parse(stdout);
   } catch (err) {
     throw new Error(`Failed to fetch panel tunnel status. Details: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * Report the result of an agent job (a lifecycle hook call this agent made
+ * to its agent half, or an app job run through the app host helper) to the
+ * panel. Hosting-agent certificate only.
+ *
+ * @param {object} config - Agent config
+ * @param {string} id - The job id from agent-config `agentJobs`
+ * @param {import('@lamalibre/lamaste').AgentJobResult} result
+ */
+export async function reportJobResult(config, id, result) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/jobs/${encodeURIComponent(id)}/result`;
+  try {
+    const { stdout } = await curlAuthenticated(config, [
+      '-X',
+      'POST',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify(result),
+      url,
+    ]);
+    const parsed = JSON.parse(stdout);
+    if (parsed?.ok !== true) throw new Error(parsed?.error ?? 'the panel refused the result');
+  } catch (err) {
+    throw new Error(`Failed to report job ${id}. Details: ${err.stderr || err.message}`);
   }
 }

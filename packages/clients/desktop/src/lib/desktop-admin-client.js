@@ -6,6 +6,43 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
+/**
+ * Invoke a command that starts a plugin operation (hosting, removing a
+ * hosting, uninstalling, updating, approving an update). It rejects with
+ * the panel's refusal — `{ error, code?, reasons?, operationId? }` — which
+ * is rethrown as the Error the web client throws for it, so the panel UI
+ * can explain it (an ineligible agent's reasons, closed push install).
+ */
+async function invokeOperation(command, args) {
+  try {
+    return await invoke(command, args);
+  } catch (rejection) {
+    if (
+      rejection !== null &&
+      typeof rejection === 'object' &&
+      typeof rejection.error === 'string'
+    ) {
+      throw Object.assign(new Error(rejection.error), {
+        ...(typeof rejection.code === 'string' ? { code: rejection.code } : {}),
+        ...(Array.isArray(rejection.reasons) ? { reasons: rejection.reasons } : {}),
+        ...(typeof rejection.operationId === 'string'
+          ? { operationId: rejection.operationId }
+          : {}),
+      });
+    }
+    throw rejection;
+  }
+}
+
+/**
+ * The arguments of uninstalling a plugin or removing its hosting: `force`
+ * lets failing pre-teardown hooks pass, `purge` deletes the data and service
+ * account of an agent half Lamaste installed.
+ */
+function removalArgs(name, options) {
+  return { name, force: options.force === true, purge: options.purge === true };
+}
+
 export const desktopAdminClient = {
   // --- Users ---
   getUsers: () => invoke('admin_get_users'),
@@ -101,11 +138,25 @@ export const desktopAdminClient = {
   installPlugin: (packageName) => invoke('admin_install_plugin', { packageName }),
   enablePlugin: (name) => invoke('admin_enable_plugin', { name }),
   disablePlugin: (name) => invoke('admin_disable_plugin', { name }),
-  uninstallPlugin: (name) => invoke('admin_uninstall_plugin', { name }),
+  uninstallPlugin: (name, options = {}) =>
+    invokeOperation('admin_uninstall_plugin', removalArgs(name, options)),
   getPluginHosting: (name) => invoke('admin_get_plugin_hosting', { name }),
-  setPluginHosting: (name, agentLabel) => invoke('admin_set_plugin_hosting', { name, agentLabel }),
-  clearPluginHosting: (name) => invoke('admin_clear_plugin_hosting', { name }),
+  getPluginHostingEligibility: (name) => invoke('admin_get_plugin_hosting_eligibility', { name }),
+  setPluginHosting: (name, agentLabel) =>
+    invokeOperation('admin_set_plugin_hosting', { name, agentLabel }),
+  clearPluginHosting: (name, options = {}) =>
+    invokeOperation('admin_clear_plugin_hosting', removalArgs(name, options)),
   rotatePluginHostingSecret: (name) => invoke('admin_rotate_plugin_hosting_secret', { name }),
+  getPluginOperations: (name) => invoke('admin_get_plugin_operations', { name }),
+  getPluginOperation: (name, id) => invoke('admin_get_plugin_operation', { name, id }),
+  getPluginHooks: (name) => invoke('admin_get_plugin_hooks', { name }),
+  approvePluginHooks: (name, digest) =>
+    invokeOperation('admin_approve_plugin_hooks', { name, digest }),
+  setPluginHooksAutoApprove: (name, enabled) =>
+    invoke('admin_set_plugin_hooks_auto_approve', { name, enabled }),
+  updatePlugin: (name, version) =>
+    invokeOperation('admin_update_plugin', { name, version: version ?? null }),
+  discardPluginUpdate: (name) => invoke('admin_discard_plugin_update', { name }),
   fetchPluginBundle: (name) => invoke('admin_fetch_plugin_bundle', { name }),
   getPushInstallConfig: () => invoke('admin_get_push_install_config'),
   updatePushInstallConfig: (data) => invoke('admin_update_push_install_config', { data }),
@@ -117,6 +168,11 @@ export const desktopAdminClient = {
   disablePushInstall: (label) => invoke('admin_disable_push_install', { label }),
   pushInstallCommand: (label, data) => invoke('admin_push_install_command', { label, data }),
   getPushInstallSessions: () => invoke('admin_get_push_install_sessions'),
+
+  // --- Audit log and notifications ---
+  getAuditLog: (query = {}) => invoke('admin_get_audit_log', { query }),
+  getNotifications: (query = {}) => invoke('admin_get_notifications', { query }),
+  markNotificationsRead: (target) => invoke('admin_mark_notifications_read', { target }),
 
   // --- Storage ---
   registerStorageServer: (data) => invoke('admin_register_storage_server', { data }),

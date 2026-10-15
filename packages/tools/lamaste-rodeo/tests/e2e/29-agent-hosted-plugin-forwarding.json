@@ -13,17 +13,6 @@
   "cleanup": [
     {
       "id": "cleanup-0",
-      "label": "DELETE plugins/${PLUGIN_NAME}/hosting",
-      "target": "host",
-      "continueOnError": true,
-      "op": {
-        "type": "api",
-        "method": "DELETE",
-        "path": "plugins/${PLUGIN_NAME}/hosting"
-      }
-    },
-    {
-      "id": "cleanup-1",
       "label": "POST plugins/${PLUGIN_NAME}/disable",
       "target": "host",
       "continueOnError": true,
@@ -34,18 +23,18 @@
       }
     },
     {
-      "id": "cleanup-2",
-      "label": "DELETE plugins/${PLUGIN_NAME}",
+      "id": "cleanup-1",
+      "label": "DELETE plugins/${PLUGIN_NAME}?force=true",
       "target": "host",
       "continueOnError": true,
       "op": {
         "type": "api",
         "method": "DELETE",
-        "path": "plugins/${PLUGIN_NAME}"
+        "path": "plugins/${PLUGIN_NAME}?force=true"
       }
     },
     {
-      "id": "cleanup-3",
+      "id": "cleanup-2",
       "label": "DELETE certs/agent/${AGENT_LABEL}",
       "target": "host",
       "continueOnError": true,
@@ -130,7 +119,25 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-35",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-52",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -139,7 +146,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-67",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -162,14 +169,14 @@
           }
         ]
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent-hosted plugin forwarding tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-app-plugin\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_appplugin_000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-apphost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nPORT=\"\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  pkill -f \"[h]ttp.server ${PORT:-0}\" 2>/dev/null || true\n  api_delete \"plugins/${PLUGIN_NAME}/hosting\" > /dev/null 2>&1 || true\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# agent_api_get path — GET as the test agent (its own certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_get_status() {\n  curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<name>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN_NAME}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_health <state> <seconds> — until the hosting's health.state is <state>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# write_half_config <plugin-config json> — the file the agent would write\nwrite_half_config() {\n  echo \"$1\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\n  chmod 600 \"${HALF_CONFIG}.tmp\"\n  mv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\n}\n\nstart_half() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN_NAME}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" &> \"${WORK_DIR}/half.out\" &\n  local deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# ===========================================================================\n# 1. Stand-in registry, install, enable\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent-hosted plugin forwarding tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-app-plugin\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_appplugin_000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-apphost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nPORT=\"\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  pkill -f \"[h]ttp.server ${PORT:-0}\" 2>/dev/null || true\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180))\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN_NAME}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN_NAME}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# agent_api_get path — GET as the test agent (its own certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_get_status() {\n  curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<name>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN_NAME}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN_NAME}/operations/${id}\" | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# wait_phase <phase> <seconds> — until the hosting is in <phase>\nwait_phase() {\n  local deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.phase')\" = \"$1\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# wait_health <state> <seconds> — until the hosting's health.state is <state>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# write_half_config <plugin-config json> — the file the agent would write\nwrite_half_config() {\n  echo \"$1\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\n  chmod 600 \"${HALF_CONFIG}.tmp\"\n  mv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\n}\n\nstart_half() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN_NAME}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" &> \"${WORK_DIR}/half.out\" &\n  local deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# ===========================================================================\n# 1. Stand-in registry, install, enable\n# ==========================================================================="
     },
     {
       "id": "install-and-enable-the-app-plugin-fixture",
       "label": "Install and enable the app plugin fixture",
       "steps": [
         {
-          "id": "step-60",
+          "id": "step-79",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -179,7 +186,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-80",
           "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -189,7 +196,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-83",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -208,7 +215,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-84",
           "label": "App plugin fixture installed",
           "target": "local",
           "continueOnError": true,
@@ -230,7 +237,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-85",
           "label": "Install records hosting agent",
           "target": "local",
           "continueOnError": true,
@@ -252,7 +259,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-86",
           "label": "Install records the agent block",
           "target": "local",
           "continueOnError": true,
@@ -274,7 +281,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-87",
           "label": "A plugin with an agent half may declare panel pages",
           "target": "local",
           "continueOnError": true,
@@ -296,7 +303,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-88",
           "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
           "target": "host",
           "op": {
@@ -314,7 +321,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-89",
           "label": "Plugin enabled",
           "target": "local",
           "continueOnError": true,
@@ -336,7 +343,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-90",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -354,7 +361,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-91",
           "label": "GET /api/plugins shows the plugin as not hosted",
           "target": "local",
           "continueOnError": true,
@@ -375,7 +382,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-92",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -394,7 +401,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-93",
           "label": "An enabled but unhosted plugin's route answers 503",
           "target": "local",
           "continueOnError": true,
@@ -422,7 +429,7 @@
       "label": "Enroll the hosting agent",
       "steps": [
         {
-          "id": "step-75",
+          "id": "step-94",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
@@ -441,7 +448,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-95",
           "label": "Agent certificate issued for ${AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -463,7 +470,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-96",
           "label": "Extract P12_PASS",
           "target": "local",
           "op": {
@@ -480,7 +487,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-101",
           "label": "GET /api/agents/me/capabilities",
           "target": "agent",
           "op": {
@@ -498,7 +505,7 @@
           ]
         },
         {
-          "id": "step-83",
+          "id": "step-102",
           "label": "The agent certificate authenticates",
           "target": "local",
           "continueOnError": true,
@@ -520,7 +527,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-103",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "agent",
           "op": {
@@ -539,7 +546,7 @@
           ]
         },
         {
-          "id": "step-85",
+          "id": "step-104",
           "label": "Without the host capability the plugin config is refused",
           "target": "local",
           "continueOnError": true,
@@ -567,7 +574,7 @@
       "label": "Host the plugin on the agent",
       "steps": [
         {
-          "id": "step-86",
+          "id": "step-105",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -589,7 +596,7 @@
           ]
         },
         {
-          "id": "step-87",
+          "id": "step-106",
           "label": "Hosting on an unknown agent is refused",
           "target": "local",
           "continueOnError": true,
@@ -610,7 +617,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-107",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -629,8 +636,8 @@
           ]
         },
         {
-          "id": "step-89",
-          "label": "Plugin hosted on ${AGENT_LABEL}",
+          "id": "step-108",
+          "label": "Hosting on ${AGENT_LABEL} started",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -646,12 +653,89 @@
                 "kind": "literal",
                 "value": "true"
               },
-              "message": "Plugin hosted on ${AGENT_LABEL}"
+              "message": "Hosting on ${AGENT_LABEL} started"
             }
           }
         },
         {
-          "id": "step-90",
+          "id": "step-109",
+          "label": "…as an operation",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".operation.kind",
+              "expected": {
+                "kind": "literal",
+                "value": "host"
+              },
+              "message": "…as an operation"
+            }
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Extract HOST_OP_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "HOST_OP_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "expression": ".operation.id"
+            }
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "The hosting is reserved (phase installing)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The hosting is reserved (phase installing)"
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "The hosting was not reserved: $(api_get \"plugins/${PLUGIN_NAME}/hosting\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The hosting was not reserved: $(api_get \"plugins/${PLUGIN_NAME}/hosting\")"
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "GET /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN_NAME}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "HOSTING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
           "label": "Extract PORT",
           "target": "local",
           "op": {
@@ -661,14 +745,14 @@
               "kind": "jq",
               "input": {
                 "kind": "var",
-                "name": "HOST_RESPONSE"
+                "name": "HOSTING"
               },
               "expression": ".hosting.port"
             }
           }
         },
         {
-          "id": "step-91",
+          "id": "step-115",
           "label": "Port ${PORT} assigned from the internal range",
           "target": "local",
           "op": {
@@ -683,7 +767,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-116",
           "label": "Port ${PORT} is not in 21000–21999",
           "target": "local",
           "op": {
@@ -698,7 +782,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-117",
           "label": "The secret is not yet fetched",
           "target": "local",
           "continueOnError": true,
@@ -708,7 +792,7 @@
               "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "HOST_RESPONSE"
+                "name": "HOSTING"
               },
               "path": ".hosting.secretAcknowledged",
               "expected": {
@@ -720,7 +804,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-118",
           "label": "Health starts unknown",
           "target": "local",
           "continueOnError": true,
@@ -730,7 +814,7 @@
               "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "HOST_RESPONSE"
+                "name": "HOSTING"
               },
               "path": ".hosting.health.state",
               "expected": {
@@ -742,7 +826,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-119",
           "label": "Extract TUNNEL_ID",
           "target": "local",
           "op": {
@@ -752,14 +836,14 @@
               "kind": "jq",
               "input": {
                 "kind": "var",
-                "name": "HOST_RESPONSE"
+                "name": "HOSTING"
               },
               "expression": ".hosting.tunnelId"
             }
           }
         },
         {
-          "id": "step-96",
+          "id": "step-120",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -779,7 +863,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-121",
           "label": "A plugin has one hosting",
           "target": "local",
           "continueOnError": true,
@@ -800,7 +884,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-122",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -818,7 +902,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-123",
           "label": "The tunnel is internal",
           "target": "local",
           "continueOnError": true,
@@ -840,7 +924,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-124",
           "label": "An internal tunnel has no subdomain",
           "target": "local",
           "continueOnError": true,
@@ -862,7 +946,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-125",
           "label": "An internal tunnel has no hostname",
           "target": "local",
           "continueOnError": true,
@@ -884,7 +968,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-126",
           "label": "An internal tunnel has no access mode",
           "target": "local",
           "continueOnError": true,
@@ -906,7 +990,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-127",
           "label": "The hosting agent carries it",
           "target": "local",
           "continueOnError": true,
@@ -928,7 +1012,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-128",
           "label": "The tunnel names the plugin",
           "target": "local",
           "continueOnError": true,
@@ -950,7 +1034,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-129",
           "label": "Set VHOST_PRESENT",
           "target": "local",
           "op": {
@@ -967,7 +1051,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-130",
           "label": "No nginx vhost was written for it",
           "target": "local",
           "continueOnError": true,
@@ -988,7 +1072,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-133",
           "label": "Set GRANT",
           "target": "local",
           "op": {
@@ -1005,7 +1089,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-134",
           "label": "The chisel authfile grants the agent port ${PORT}",
           "target": "local",
           "continueOnError": true,
@@ -1026,7 +1110,28 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-135",
+          "label": "…while the operation waits for the agent half (phase installing)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.phase')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "installing"
+              },
+              "message": "…while the operation waits for the agent half (phase installing)"
+            }
+          }
+        },
+        {
+          "id": "step-136",
           "label": "GET /api/certs/agent",
           "target": "host",
           "op": {
@@ -1044,7 +1149,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-137",
           "label": "The agent holds plugin:${PLUGIN_NAME}:host",
           "target": "local",
           "continueOnError": true,
@@ -1065,7 +1170,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-138",
           "label": "POST /api/tunnels",
           "target": "host",
           "op": {
@@ -1085,7 +1190,7 @@
           ]
         },
         {
-          "id": "step-112",
+          "id": "step-139",
           "label": "A manual tunnel on a port of the internal range is refused",
           "target": "local",
           "continueOnError": true,
@@ -1106,7 +1211,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-140",
           "label": "PATCH /api/tunnels/${TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -1128,7 +1233,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-141",
           "label": "The internal tunnel cannot be changed through the tunnels API",
           "target": "local",
           "continueOnError": true,
@@ -1149,7 +1254,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-142",
           "label": "DELETE /api/tunnels/${TUNNEL_ID}",
           "target": "host",
           "op": {
@@ -1168,7 +1273,7 @@
           ]
         },
         {
-          "id": "step-116",
+          "id": "step-143",
           "label": "The internal tunnel cannot be deleted through the tunnels API",
           "target": "local",
           "continueOnError": true,
@@ -1189,14 +1294,14 @@
           }
         }
       ],
-      "bash": "log_section \"Host the plugin on the agent\"\n\nMISSING_AGENT_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" '{\"agentLabel\":\"no-such-agent\"}')\nassert_eq \"$MISSING_AGENT_STATUS\" \"400\" \"Hosting on an unknown agent is refused\" || true\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.ok' 'true' \"Plugin hosted on ${AGENT_LABEL}\" || true\nPORT=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.port' 2>/dev/null || echo \"0\")\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nassert_json_field \"$HOST_RESPONSE\" '.hosting.secretAcknowledged' 'false' \"The secret is not yet fetched\" || true\nassert_json_field \"$HOST_RESPONSE\" '.hosting.health.state' 'unknown' \"Health starts unknown\" || true\nTUNNEL_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.tunnelId' 2>/dev/null || echo \"\")\n\nTWICE_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$TWICE_STATUS\" \"409\" \"A plugin has one hosting\" || true\n\nTUNNEL=$(api_get \"tunnels?limit=500\" | jq \".tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$TUNNEL\" '.exposure' 'internal' \"The tunnel is internal\" || true\nassert_json_field \"$TUNNEL\" '.subdomain' 'null' \"An internal tunnel has no subdomain\" || true\nassert_json_field \"$TUNNEL\" '.fqdn' 'null' \"An internal tunnel has no hostname\" || true\nassert_json_field \"$TUNNEL\" '.accessMode' 'null' \"An internal tunnel has no access mode\" || true\nassert_json_field \"$TUNNEL\" '.agentLabel' \"${AGENT_LABEL}\" \"The hosting agent carries it\" || true\nassert_json_field \"$TUNNEL\" '.pluginRoute' \"${PLUGIN_NAME}\" \"The tunnel names the plugin\" || true\nVHOST_PRESENT=$(ls /etc/nginx/sites-available 2>/dev/null | grep -c \"${PLUGIN_NAME}\" || true)\nassert_eq \"$VHOST_PRESENT\" \"0\" \"No nginx vhost was written for it\" || true\n# The authfile is JSON: the pattern's backslashes are doubled in it.\nGRANT=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT\" \"1\" \"The chisel authfile grants the agent port ${PORT}\" || true\n\nCAPS=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_contains \"$CAPS\" \"plugin:${PLUGIN_NAME}:host\" \"The agent holds plugin:${PLUGIN_NAME}:host\" || true\n\nMANUAL_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2e29manual\\\",\\\"port\\\":21005,\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$MANUAL_STATUS\" \"400\" \"A manual tunnel on a port of the internal range is refused\" || true\nPATCH_STATUS=$(api_patch_status \"tunnels/${TUNNEL_ID}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$PATCH_STATUS\" \"403\" \"The internal tunnel cannot be changed through the tunnels API\" || true\nDELETE_STATUS=$(api_delete_status \"tunnels/${TUNNEL_ID}\")\nassert_eq \"$DELETE_STATUS\" \"403\" \"The internal tunnel cannot be deleted through the tunnels API\" || true\n\n# ===========================================================================\n# 4. The hosting agent fetches and acknowledges the plugin config\n# ==========================================================================="
+      "bash": "log_section \"Host the plugin on the agent\"\n\nMISSING_AGENT_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" '{\"agentLabel\":\"no-such-agent\"}')\nassert_eq \"$MISSING_AGENT_STATUS\" \"400\" \"Hosting on an unknown agent is refused\" || true\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.ok' 'true' \"Hosting on ${AGENT_LABEL} started\" || true\nassert_json_field \"$HOST_RESPONSE\" '.operation.kind' 'host' \"…as an operation\" || true\nHOST_OP_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.operation.id' 2>/dev/null || echo \"\")\n\nif wait_phase installing 30; then\n  log_pass \"The hosting is reserved (phase installing)\"\nelse\n  log_fail \"The hosting was not reserved: $(api_get \"plugins/${PLUGIN_NAME}/hosting\")\"\nfi\nHOSTING=$(api_get \"plugins/${PLUGIN_NAME}/hosting\")\nPORT=$(echo \"$HOSTING\" | jq -r '.hosting.port' 2>/dev/null || echo \"0\")\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nassert_json_field \"$HOSTING\" '.hosting.secretAcknowledged' 'false' \"The secret is not yet fetched\" || true\nassert_json_field \"$HOSTING\" '.hosting.health.state' 'unknown' \"Health starts unknown\" || true\nTUNNEL_ID=$(echo \"$HOSTING\" | jq -r '.hosting.tunnelId' 2>/dev/null || echo \"\")\n\nTWICE_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$TWICE_STATUS\" \"409\" \"A plugin has one hosting\" || true\n\nTUNNEL=$(api_get \"tunnels?limit=500\" | jq \".tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$TUNNEL\" '.exposure' 'internal' \"The tunnel is internal\" || true\nassert_json_field \"$TUNNEL\" '.subdomain' 'null' \"An internal tunnel has no subdomain\" || true\nassert_json_field \"$TUNNEL\" '.fqdn' 'null' \"An internal tunnel has no hostname\" || true\nassert_json_field \"$TUNNEL\" '.accessMode' 'null' \"An internal tunnel has no access mode\" || true\nassert_json_field \"$TUNNEL\" '.agentLabel' \"${AGENT_LABEL}\" \"The hosting agent carries it\" || true\nassert_json_field \"$TUNNEL\" '.pluginRoute' \"${PLUGIN_NAME}\" \"The tunnel names the plugin\" || true\nVHOST_PRESENT=$(ls /etc/nginx/sites-available 2>/dev/null | grep -c \"${PLUGIN_NAME}\" || true)\nassert_eq \"$VHOST_PRESENT\" \"0\" \"No nginx vhost was written for it\" || true\n# Nothing to run on the agent before the tunnel (no install:pre-tunnel hook):\n# the grant follows the reservation, and the operation waits for the agent half.\ngranted() { [ \"$(api_get \"tunnels?limit=500\" | jq -r \".tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\") | .enabled\" 2>/dev/null)\" = \"true\" ]; }\nfor _ in $(seq 1 20); do granted && break; sleep 1; done\nif granted; then log_pass \"The tunnel is granted\"; else log_fail \"The tunnel was not granted\"; fi\n# The authfile is JSON: the pattern's backslashes are doubled in it.\nGRANT=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT\" \"1\" \"The chisel authfile grants the agent port ${PORT}\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"installing\" \"…while the operation waits for the agent half (phase installing)\" || true\n\nCAPS=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_contains \"$CAPS\" \"plugin:${PLUGIN_NAME}:host\" \"The agent holds plugin:${PLUGIN_NAME}:host\" || true\n\nMANUAL_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2e29manual\\\",\\\"port\\\":21005,\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$MANUAL_STATUS\" \"400\" \"A manual tunnel on a port of the internal range is refused\" || true\nPATCH_STATUS=$(api_patch_status \"tunnels/${TUNNEL_ID}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$PATCH_STATUS\" \"403\" \"The internal tunnel cannot be changed through the tunnels API\" || true\nDELETE_STATUS=$(api_delete_status \"tunnels/${TUNNEL_ID}\")\nassert_eq \"$DELETE_STATUS\" \"403\" \"The internal tunnel cannot be deleted through the tunnels API\" || true\n\n# ===========================================================================\n# 4. The hosting agent fetches and acknowledges the plugin config\n# ==========================================================================="
     },
     {
       "id": "plugin-config-hosting-agent-only",
       "label": "Plugin config: hosting agent only",
       "steps": [
         {
-          "id": "step-117",
+          "id": "step-144",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -1215,7 +1320,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-145",
           "label": "The admin certificate has no agent identity to read a plugin config",
           "target": "local",
           "continueOnError": true,
@@ -1236,7 +1341,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-146",
           "label": "GET /api/tunnels/agent-config",
           "target": "agent",
           "op": {
@@ -1254,7 +1359,7 @@
           ]
         },
         {
-          "id": "step-120",
+          "id": "step-147",
           "label": "agent-config lists the hosted plugin",
           "target": "local",
           "continueOnError": true,
@@ -1276,7 +1381,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-148",
           "label": "agent-config carries its port",
           "target": "local",
           "continueOnError": true,
@@ -1298,7 +1403,29 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-149",
+          "label": "agent-config carries its phase",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "path": ".appPlugins[0].phase",
+              "expected": {
+                "kind": "literal",
+                "value": "installing"
+              },
+              "message": "agent-config carries its phase"
+            }
+          }
+        },
+        {
+          "id": "step-150",
           "label": "agent-config says the secret is not acknowledged",
           "target": "local",
           "continueOnError": true,
@@ -1320,7 +1447,7 @@
           }
         },
         {
-          "id": "step-123",
+          "id": "step-151",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "agent",
           "op": {
@@ -1338,7 +1465,7 @@
           ]
         },
         {
-          "id": "step-124",
+          "id": "step-152",
           "label": "The hosting agent fetches its plugin config",
           "target": "local",
           "continueOnError": true,
@@ -1360,7 +1487,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-153",
           "label": "The config carries the port",
           "target": "local",
           "continueOnError": true,
@@ -1382,7 +1509,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-154",
           "label": "Extract SECRET_SHAPE",
           "target": "local",
           "op": {
@@ -1399,7 +1526,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-155",
           "label": "The secret is 32 random bytes, hex",
           "target": "local",
           "continueOnError": true,
@@ -1420,7 +1547,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-156",
           "label": "Extract ISSUED_AT",
           "target": "local",
           "op": {
@@ -1437,7 +1564,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-158",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
           "target": "agent",
           "op": {
@@ -1456,7 +1583,7 @@
           ]
         },
         {
-          "id": "step-131",
+          "id": "step-159",
           "label": "The agent acknowledges the secret",
           "target": "local",
           "continueOnError": true,
@@ -1478,7 +1605,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-160",
           "label": "The hosting records the acknowledgement",
           "target": "local",
           "continueOnError": true,
@@ -1497,16 +1624,9 @@
               "message": "The hosting records the acknowledgement"
             }
           }
-        }
-      ],
-      "bash": "log_section \"Plugin config: hosting agent only\"\n\nADMIN_CONFIG_STATUS=$(api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_eq \"$ADMIN_CONFIG_STATUS\" \"403\" \"The admin certificate has no agent identity to read a plugin config\" || true\n\nAGENT_CONFIG=$(agent_api_get \"tunnels/agent-config\")\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].route\" \"${PLUGIN_NAME}\" \"agent-config lists the hosted plugin\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].port\" \"${PORT}\" \"agent-config carries its port\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].secretAcknowledged\" \"false\" \"agent-config says the secret is not acknowledged\" || true\n\nPLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_json_field \"$PLUGIN_CONFIG\" '.plugin' \"${PLUGIN_NAME}\" \"The hosting agent fetches its plugin config\" || true\nassert_json_field \"$PLUGIN_CONFIG\" '.port' \"${PORT}\" \"The config carries the port\" || true\nSECRET_SHAPE=$(echo \"$PLUGIN_CONFIG\" | jq -r '.secret | test(\"^[a-f0-9]{64}$\")' 2>/dev/null || echo \"false\")\nassert_eq \"$SECRET_SHAPE\" \"true\" \"The secret is 32 random bytes, hex\" || true\nISSUED_AT=$(echo \"$PLUGIN_CONFIG\" | jq -r '.issuedAt' 2>/dev/null || echo \"\")\nwrite_half_config \"$PLUGIN_CONFIG\"\n\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN_NAME}/ack\" \"{\\\"issuedAt\\\":\\\"${ISSUED_AT}\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent acknowledges the secret\" || true\nassert_eq \"$(hosting_field '.hosting.secretAcknowledged')\" \"true\" \"The hosting records the acknowledgement\" || true\n\n# ===========================================================================\n# 5. Forwarding\n# ==========================================================================="
-    },
-    {
-      "id": "forwarding-through-api-plugin-name",
-      "label": "Forwarding through /api/${PLUGIN_NAME}/*",
-      "steps": [
+        },
         {
-          "id": "step-133",
+          "id": "step-161",
           "label": "Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)",
           "target": "local",
           "op": {
@@ -1516,7 +1636,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-162",
           "label": "Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -1526,7 +1646,74 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-163",
+          "label": "Set HOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${HOST_OP_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "The hosting operation succeeded once the agent half answered",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded once the agent half answered"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "The hosting is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.phase')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The hosting is active"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Plugin config: hosting agent only\"\n\nADMIN_CONFIG_STATUS=$(api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_eq \"$ADMIN_CONFIG_STATUS\" \"403\" \"The admin certificate has no agent identity to read a plugin config\" || true\n\nAGENT_CONFIG=$(agent_api_get \"tunnels/agent-config\")\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].route\" \"${PLUGIN_NAME}\" \"agent-config lists the hosted plugin\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].port\" \"${PORT}\" \"agent-config carries its port\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].phase\" \"installing\" \"agent-config carries its phase\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].secretAcknowledged\" \"false\" \"agent-config says the secret is not acknowledged\" || true\n\nPLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_json_field \"$PLUGIN_CONFIG\" '.plugin' \"${PLUGIN_NAME}\" \"The hosting agent fetches its plugin config\" || true\nassert_json_field \"$PLUGIN_CONFIG\" '.port' \"${PORT}\" \"The config carries the port\" || true\nSECRET_SHAPE=$(echo \"$PLUGIN_CONFIG\" | jq -r '.secret | test(\"^[a-f0-9]{64}$\")' 2>/dev/null || echo \"false\")\nassert_eq \"$SECRET_SHAPE\" \"true\" \"The secret is 32 random bytes, hex\" || true\nISSUED_AT=$(echo \"$PLUGIN_CONFIG\" | jq -r '.issuedAt' 2>/dev/null || echo \"\")\nwrite_half_config \"$PLUGIN_CONFIG\"\n\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN_NAME}/ack\" \"{\\\"issuedAt\\\":\\\"${ISSUED_AT}\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent acknowledges the secret\" || true\nassert_eq \"$(hosting_field '.hosting.secretAcknowledged')\" \"true\" \"The hosting records the acknowledgement\" || true\n\nif start_half; then\n  log_pass \"Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)\"\nelse\n  log_fail \"Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)\"\nfi\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded once the agent half answered\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"active\" \"The hosting is active\" || true\n\n# ===========================================================================\n# 5. Forwarding\n# ==========================================================================="
+    },
+    {
+      "id": "forwarding-through-api-plugin-name",
+      "label": "Forwarding through /api/${PLUGIN_NAME}/*",
+      "steps": [
+        {
+          "id": "step-166",
           "label": "Set BARE",
           "target": "local",
           "op": {
@@ -1543,7 +1730,7 @@
           ]
         },
         {
-          "id": "step-136",
+          "id": "step-167",
           "label": "A loopback call without an assertion is refused",
           "target": "local",
           "continueOnError": true,
@@ -1565,7 +1752,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-168",
           "label": "GET /api/${PLUGIN_NAME}/ping?x=1",
           "target": "host",
           "op": {
@@ -1583,7 +1770,7 @@
           ]
         },
         {
-          "id": "step-138",
+          "id": "step-169",
           "label": "GET /api/${PLUGIN_NAME}/ping reaches the agent half",
           "target": "local",
           "continueOnError": true,
@@ -1605,7 +1792,7 @@
           }
         },
         {
-          "id": "step-139",
+          "id": "step-170",
           "label": "The assertion names the admin caller",
           "target": "local",
           "continueOnError": true,
@@ -1627,7 +1814,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-171",
           "label": "The path is mapped under /admin with its query",
           "target": "local",
           "continueOnError": true,
@@ -1649,7 +1836,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-172",
           "label": "nginx's client-certificate headers do not pass",
           "target": "local",
           "continueOnError": true,
@@ -1671,7 +1858,7 @@
           }
         },
         {
-          "id": "step-142",
+          "id": "step-173",
           "label": "GET /api/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -1689,7 +1876,7 @@
           ]
         },
         {
-          "id": "step-143",
+          "id": "step-174",
           "label": "GET /api/${PLUGIN_NAME} maps to /admin",
           "target": "local",
           "continueOnError": true,
@@ -1711,7 +1898,7 @@
           }
         },
         {
-          "id": "step-144",
+          "id": "step-175",
           "label": "Set COOKIE_PING",
           "target": "local",
           "op": {
@@ -1728,7 +1915,7 @@
           ]
         },
         {
-          "id": "step-145",
+          "id": "step-176",
           "label": "The panel's cookie never reaches the agent half",
           "target": "local",
           "continueOnError": true,
@@ -1750,7 +1937,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-177",
           "label": "An Authorization header never reaches the agent half",
           "target": "local",
           "continueOnError": true,
@@ -1772,7 +1959,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-178",
           "label": "GET /api/${PLUGIN_NAME}/app/secret",
           "target": "host",
           "op": {
@@ -1791,7 +1978,7 @@
           ]
         },
         {
-          "id": "step-148",
+          "id": "step-179",
           "label": "The agent half's /app is out of the forwarder's reach",
           "target": "local",
           "continueOnError": true,
@@ -1812,7 +1999,7 @@
           }
         },
         {
-          "id": "step-149",
+          "id": "step-180",
           "label": "Set DIRECT_APP",
           "target": "local",
           "op": {
@@ -1829,7 +2016,7 @@
           ]
         },
         {
-          "id": "step-150",
+          "id": "step-181",
           "label": "(the agent half does serve /app directly)",
           "target": "local",
           "continueOnError": true,
@@ -1850,7 +2037,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-182",
           "label": "GET /api/${PLUGIN_NAME}/panel.js",
           "target": "host",
           "op": {
@@ -1868,7 +2055,7 @@
           ]
         },
         {
-          "id": "step-152",
+          "id": "step-183",
           "label": "The admin bundle is served through the forwarder",
           "target": "local",
           "continueOnError": true,
@@ -1889,7 +2076,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-184",
           "label": "Set BUNDLE_TYPE",
           "target": "local",
           "op": {
@@ -1906,7 +2093,7 @@
           ]
         },
         {
-          "id": "step-154",
+          "id": "step-185",
           "label": "The bundle keeps its content type",
           "target": "local",
           "continueOnError": true,
@@ -1927,7 +2114,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-186",
           "label": "GET /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -1946,7 +2133,7 @@
           ]
         },
         {
-          "id": "step-156",
+          "id": "step-187",
           "label": "The panel lists the plugin's page",
           "target": "local",
           "continueOnError": true,
@@ -1967,7 +2154,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-189",
           "label": "Set ECHO",
           "target": "local",
           "op": {
@@ -1984,7 +2171,7 @@
           ]
         },
         {
-          "id": "step-159",
+          "id": "step-190",
           "label": "A request body streams through",
           "target": "local",
           "continueOnError": true,
@@ -2006,7 +2193,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-191",
           "label": "Set ECHO_HEADERS",
           "target": "local",
           "op": {
@@ -2023,7 +2210,7 @@
           ]
         },
         {
-          "id": "step-161",
+          "id": "step-192",
           "label": "Set-Cookie from the application never passes back",
           "target": "local",
           "continueOnError": true,
@@ -2044,7 +2231,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-194",
           "label": "Set BIG_STATUS",
           "target": "local",
           "op": {
@@ -2061,7 +2248,7 @@
           ]
         },
         {
-          "id": "step-164",
+          "id": "step-195",
           "label": "A body above the tunnel's 10 MiB limit is refused with 413",
           "target": "local",
           "continueOnError": true,
@@ -2082,7 +2269,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-196",
           "label": "Set SSE",
           "target": "local",
           "op": {
@@ -2099,7 +2286,7 @@
           ]
         },
         {
-          "id": "step-166",
+          "id": "step-197",
           "label": "Server-sent events pass through nginx and the forwarder",
           "target": "local",
           "continueOnError": true,
@@ -2120,7 +2307,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-198",
           "label": "Set SSE_HEADERS",
           "target": "local",
           "op": {
@@ -2137,7 +2324,7 @@
           ]
         },
         {
-          "id": "step-168",
+          "id": "step-199",
           "label": "The panel marks the event stream unbuffered for nginx",
           "target": "local",
           "continueOnError": true,
@@ -2158,7 +2345,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-200",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "agent",
           "op": {
@@ -2177,7 +2364,7 @@
           ]
         },
         {
-          "id": "step-170",
+          "id": "step-201",
           "label": "The host capability alone does not admit calls to the plugin's API",
           "target": "local",
           "continueOnError": true,
@@ -2198,7 +2385,7 @@
           }
         },
         {
-          "id": "step-171",
+          "id": "step-202",
           "label": "Set HALF_LINES",
           "target": "local",
           "op": {
@@ -2215,7 +2402,7 @@
           ]
         },
         {
-          "id": "step-172",
+          "id": "step-203",
           "label": "The agent half verified every forwarded call (${HALF_LINES} admin calls logged)",
           "target": "local",
           "op": {
@@ -2225,7 +2412,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-204",
           "label": "The agent half logged ${HALF_LINES} verified admin calls",
           "target": "local",
           "op": {
@@ -2235,14 +2422,14 @@
           }
         }
       ],
-      "bash": "log_section \"Forwarding through /api/${PLUGIN_NAME}/*\"\n\nif start_half; then\n  log_pass \"Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)\"\nelse\n  log_fail \"Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)\"\nfi\nBARE=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$BARE\" '.reason' 'malformed' \"A loopback call without an assertion is refused\" || true\n\nPING=$(api_get \"${PLUGIN_NAME}/ping?x=1\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The assertion names the admin caller\" || true\nassert_json_field \"$PING\" '.path' '/admin/ping?x=1' \"The path is mapped under /admin with its query\" || true\nassert_json_field \"$PING\" '.sslClientDn' 'null' \"nginx's client-certificate headers do not pass\" || true\n\nROOT=$(api_get \"${PLUGIN_NAME}\")\nassert_json_field \"$ROOT\" '.path' '/admin' \"GET /api/${PLUGIN_NAME} maps to /admin\" || true\n\nCOOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$COOKIE_PING\" '.cookie' 'null' \"The panel's cookie never reaches the agent half\" || true\nassert_json_field \"$COOKIE_PING\" '.authorization' 'null' \"An Authorization header never reaches the agent half\" || true\n\nUSER_SURFACE_STATUS=$(api_get_status \"${PLUGIN_NAME}/app/secret\")\nassert_eq \"$USER_SURFACE_STATUS\" \"404\" \"The agent half's /app is out of the forwarder's reach\" || true\nDIRECT_APP=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\")\nassert_contains \"$DIRECT_APP\" \"USER SURFACE\" \"(the agent half does serve /app directly)\" || true\n\nBUNDLE=$(api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle is served through the forwarder\" || true\nBUNDLE_TYPE=$(_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\")\nassert_contains \"$BUNDLE_TYPE\" \"javascript\" \"The bundle keeps its content type\" || true\nPAGES=$(api_get \"plugins/${PLUGIN_NAME}\" | jq -r '.plugin.panel.pages[0].path' 2>/dev/null || echo \"\")\nassert_eq \"$PAGES\" \"/status\" \"The panel lists the plugin's page\" || true\n\nhead -c 4096 /dev/urandom > \"${WORK_DIR}/body.bin\"\nECHO=$(_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_json_field \"$ECHO\" '.bytes' '4096' \"A request body streams through\" || true\nECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_not_contains \"$ECHO_HEADERS\" \"app-session\" \"Set-Cookie from the application never passes back\" || true\n\nhead -c $((11 * 1024 * 1024)) /dev/zero > \"${WORK_DIR}/big.bin\"\nBIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\")\nassert_eq \"$BIG_STATUS\" \"413\" \"A body above the tunnel's 10 MiB limit is refused with 413\" || true\n\nSSE=$(_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\")\nassert_contains \"$SSE\" \"data: tick 3\" \"Server-sent events pass through nginx and the forwarder\" || true\n# nginx consumes X-Accel-Buffering, so look at the panel's own answer on :3100\n# with the headers nginx would set for the admin certificate.\nSSE_HEADERS=$(curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\")\nassert_contains \"$SSE_HEADERS\" \"x-accel-buffering: no\" \"The panel marks the event stream unbuffered for nginx\" || true\n\nAGENT_FORWARD_STATUS=$(agent_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$AGENT_FORWARD_STATUS\" \"403\" \"The host capability alone does not admit calls to the plugin's API\" || true\n\nHALF_LINES=$(grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true)\nif [ \"${HALF_LINES:-0}\" -ge 5 ] 2>/dev/null; then\n  log_pass \"The agent half verified every forwarded call (${HALF_LINES} admin calls logged)\"\nelse\n  log_fail \"The agent half logged ${HALF_LINES} verified admin calls\"\nfi\n\n# ===========================================================================\n# 6. Health\n# ==========================================================================="
+      "bash": "log_section \"Forwarding through /api/${PLUGIN_NAME}/*\"\n\nBARE=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$BARE\" '.reason' 'malformed' \"A loopback call without an assertion is refused\" || true\n\nPING=$(api_get \"${PLUGIN_NAME}/ping?x=1\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The assertion names the admin caller\" || true\nassert_json_field \"$PING\" '.path' '/admin/ping?x=1' \"The path is mapped under /admin with its query\" || true\nassert_json_field \"$PING\" '.sslClientDn' 'null' \"nginx's client-certificate headers do not pass\" || true\n\nROOT=$(api_get \"${PLUGIN_NAME}\")\nassert_json_field \"$ROOT\" '.path' '/admin' \"GET /api/${PLUGIN_NAME} maps to /admin\" || true\n\nCOOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$COOKIE_PING\" '.cookie' 'null' \"The panel's cookie never reaches the agent half\" || true\nassert_json_field \"$COOKIE_PING\" '.authorization' 'null' \"An Authorization header never reaches the agent half\" || true\n\nUSER_SURFACE_STATUS=$(api_get_status \"${PLUGIN_NAME}/app/secret\")\nassert_eq \"$USER_SURFACE_STATUS\" \"404\" \"The agent half's /app is out of the forwarder's reach\" || true\nDIRECT_APP=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\")\nassert_contains \"$DIRECT_APP\" \"USER SURFACE\" \"(the agent half does serve /app directly)\" || true\n\nBUNDLE=$(api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle is served through the forwarder\" || true\nBUNDLE_TYPE=$(_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\")\nassert_contains \"$BUNDLE_TYPE\" \"javascript\" \"The bundle keeps its content type\" || true\nPAGES=$(api_get \"plugins/${PLUGIN_NAME}\" | jq -r '.plugin.panel.pages[0].path' 2>/dev/null || echo \"\")\nassert_eq \"$PAGES\" \"/status\" \"The panel lists the plugin's page\" || true\n\nhead -c 4096 /dev/urandom > \"${WORK_DIR}/body.bin\"\nECHO=$(_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_json_field \"$ECHO\" '.bytes' '4096' \"A request body streams through\" || true\nECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_not_contains \"$ECHO_HEADERS\" \"app-session\" \"Set-Cookie from the application never passes back\" || true\n\nhead -c $((11 * 1024 * 1024)) /dev/zero > \"${WORK_DIR}/big.bin\"\nBIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\")\nassert_eq \"$BIG_STATUS\" \"413\" \"A body above the tunnel's 10 MiB limit is refused with 413\" || true\n\nSSE=$(_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\")\nassert_contains \"$SSE\" \"data: tick 3\" \"Server-sent events pass through nginx and the forwarder\" || true\n# nginx consumes X-Accel-Buffering, so look at the panel's own answer on :3100\n# with the headers nginx would set for the admin certificate.\nSSE_HEADERS=$(curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\")\nassert_contains \"$SSE_HEADERS\" \"x-accel-buffering: no\" \"The panel marks the event stream unbuffered for nginx\" || true\n\nAGENT_FORWARD_STATUS=$(agent_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$AGENT_FORWARD_STATUS\" \"403\" \"The host capability alone does not admit calls to the plugin's API\" || true\n\nHALF_LINES=$(grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true)\nif [ \"${HALF_LINES:-0}\" -ge 5 ] 2>/dev/null; then\n  log_pass \"The agent half verified every forwarded call (${HALF_LINES} admin calls logged)\"\nelse\n  log_fail \"The agent half logged ${HALF_LINES} verified admin calls\"\nfi\n\n# ===========================================================================\n# 6. Health\n# ==========================================================================="
     },
     {
       "id": "health-monitor",
       "label": "Health monitor",
       "steps": [
         {
-          "id": "step-174",
+          "id": "step-205",
           "label": "Health is up within 45 seconds",
           "target": "local",
           "op": {
@@ -2252,7 +2439,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-206",
           "label": "Health did not reach up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2262,7 +2449,7 @@
           }
         },
         {
-          "id": "step-176",
+          "id": "step-207",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -2280,7 +2467,7 @@
           ]
         },
         {
-          "id": "step-177",
+          "id": "step-208",
           "label": "GET /api/plugins carries the hosting's health",
           "target": "local",
           "continueOnError": true,
@@ -2308,7 +2495,7 @@
       "label": "Rotate the installation secret",
       "steps": [
         {
-          "id": "step-178",
+          "id": "step-209",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting/rotate-secret",
           "target": "host",
           "op": {
@@ -2326,7 +2513,7 @@
           ]
         },
         {
-          "id": "step-179",
+          "id": "step-210",
           "label": "Rotation pending until the agent acknowledges",
           "target": "local",
           "continueOnError": true,
@@ -2348,7 +2535,7 @@
           }
         },
         {
-          "id": "step-180",
+          "id": "step-211",
           "label": "The new secret is not acknowledged yet",
           "target": "local",
           "continueOnError": true,
@@ -2370,7 +2557,7 @@
           }
         },
         {
-          "id": "step-181",
+          "id": "step-212",
           "label": "Extract NEW_ISSUED_AT",
           "target": "local",
           "op": {
@@ -2387,7 +2574,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-213",
           "label": "A new secret was issued",
           "target": "local",
           "continueOnError": true,
@@ -2408,7 +2595,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-214",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2426,7 +2613,7 @@
           ]
         },
         {
-          "id": "step-184",
+          "id": "step-215",
           "label": "Calls keep working on the previous secret before the agent fetched the new one",
           "target": "local",
           "continueOnError": true,
@@ -2448,7 +2635,7 @@
           }
         },
         {
-          "id": "step-185",
+          "id": "step-216",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
           "target": "agent",
           "op": {
@@ -2467,7 +2654,7 @@
           ]
         },
         {
-          "id": "step-186",
+          "id": "step-217",
           "label": "Acknowledging the old secret changes nothing",
           "target": "local",
           "continueOnError": true,
@@ -2489,7 +2676,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-218",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
           "target": "agent",
           "op": {
@@ -2507,7 +2694,7 @@
           ]
         },
         {
-          "id": "step-188",
+          "id": "step-219",
           "label": "The agent fetches the new secret",
           "target": "local",
           "continueOnError": true,
@@ -2529,7 +2716,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-220",
           "label": "Extract NEW_PREVIOUS",
           "target": "local",
           "op": {
@@ -2546,7 +2733,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-221",
           "label": "The config carries the previous secret for the overlap",
           "target": "local",
           "continueOnError": true,
@@ -2567,7 +2754,7 @@
           }
         },
         {
-          "id": "step-192",
+          "id": "step-223",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
           "target": "agent",
           "op": {
@@ -2586,7 +2773,7 @@
           ]
         },
         {
-          "id": "step-193",
+          "id": "step-224",
           "label": "The agent acknowledges the new secret",
           "target": "local",
           "continueOnError": true,
@@ -2608,7 +2795,7 @@
           }
         },
         {
-          "id": "step-194",
+          "id": "step-225",
           "label": "The previous secret is dropped once acknowledged",
           "target": "local",
           "continueOnError": true,
@@ -2629,7 +2816,7 @@
           }
         },
         {
-          "id": "step-195",
+          "id": "step-226",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2647,7 +2834,7 @@
           ]
         },
         {
-          "id": "step-196",
+          "id": "step-227",
           "label": "Calls work on the new secret without restarting the agent half",
           "target": "local",
           "continueOnError": true,
@@ -2669,7 +2856,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-228",
           "label": "Health stays up across the rotation",
           "target": "local",
           "op": {
@@ -2679,7 +2866,7 @@
           }
         },
         {
-          "id": "step-198",
+          "id": "step-229",
           "label": "Health lost after the rotation: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2696,7 +2883,7 @@
       "label": "Agent half down",
       "steps": [
         {
-          "id": "step-200",
+          "id": "step-231",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -2705,7 +2892,7 @@
           }
         },
         {
-          "id": "step-201",
+          "id": "step-232",
           "label": "Set START",
           "target": "local",
           "op": {
@@ -2722,7 +2909,7 @@
           ]
         },
         {
-          "id": "step-202",
+          "id": "step-233",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2741,7 +2928,7 @@
           ]
         },
         {
-          "id": "step-203",
+          "id": "step-234",
           "label": "Set ELAPSED",
           "target": "local",
           "op": {
@@ -2758,7 +2945,7 @@
           ]
         },
         {
-          "id": "step-204",
+          "id": "step-235",
           "label": "A stopped agent half answers 502",
           "target": "local",
           "continueOnError": true,
@@ -2779,7 +2966,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-236",
           "label": "The 502 came in ${ELAPSED}s — no hang",
           "target": "local",
           "op": {
@@ -2789,7 +2976,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-237",
           "label": "The 502 took ${ELAPSED}s",
           "target": "local",
           "op": {
@@ -2799,7 +2986,7 @@
           }
         },
         {
-          "id": "step-207",
+          "id": "step-238",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -2817,7 +3004,7 @@
           ]
         },
         {
-          "id": "step-208",
+          "id": "step-239",
           "label": "Nothing on the loopback port reads as the tunnel being down",
           "target": "local",
           "continueOnError": true,
@@ -2839,7 +3026,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-241",
           "label": "Health reports down within 60 seconds",
           "target": "local",
           "op": {
@@ -2849,7 +3036,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-242",
           "label": "Health did not report down: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2859,7 +3046,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-243",
           "label": "An answering port with no agent half is reason app",
           "target": "local",
           "continueOnError": true,
@@ -2880,7 +3067,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-245",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -2889,7 +3076,7 @@
           }
         },
         {
-          "id": "step-216",
+          "id": "step-247",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -2898,7 +3085,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-249",
           "label": "A refused port is reason tunnel",
           "target": "local",
           "continueOnError": true,
@@ -2919,7 +3106,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-250",
           "label": "Health is up again once the agent half is back",
           "target": "local",
           "op": {
@@ -2929,7 +3116,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-251",
           "label": "Health did not recover: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2946,7 +3133,7 @@
       "label": "Clear hosting and uninstall",
       "steps": [
         {
-          "id": "step-221",
+          "id": "step-252",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -2964,8 +3151,8 @@
           ]
         },
         {
-          "id": "step-222",
-          "label": "Hosting removed",
+          "id": "step-253",
+          "label": "Removing the hosting is an operation",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -2976,17 +3163,56 @@
                 "kind": "var",
                 "name": "UNHOST"
               },
-              "path": ".ok",
+              "path": ".operation.kind",
               "expected": {
                 "kind": "literal",
-                "value": "true"
+                "value": "unhost"
+              },
+              "message": "Removing the hosting is an operation"
+            }
+          }
+        },
+        {
+          "id": "step-254",
+          "label": "Set UNHOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 120"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-255",
+          "label": "Hosting removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNHOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
               },
               "message": "Hosting removed"
             }
           }
         },
         {
-          "id": "step-223",
+          "id": "step-256",
           "label": "GET hosting answers 404 afterwards",
           "target": "local",
           "continueOnError": true,
@@ -3007,7 +3233,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-257",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -3025,7 +3251,7 @@
           ]
         },
         {
-          "id": "step-225",
+          "id": "step-258",
           "label": "The internal tunnel is gone",
           "target": "local",
           "continueOnError": true,
@@ -3046,7 +3272,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-259",
           "label": "GET /api/certs/agent",
           "target": "host",
           "op": {
@@ -3064,7 +3290,7 @@
           ]
         },
         {
-          "id": "step-227",
+          "id": "step-260",
           "label": "The host capability is revoked",
           "target": "local",
           "continueOnError": true,
@@ -3085,7 +3311,7 @@
           }
         },
         {
-          "id": "step-228",
+          "id": "step-261",
           "label": "Set GRANT_AFTER",
           "target": "local",
           "op": {
@@ -3102,7 +3328,7 @@
           ]
         },
         {
-          "id": "step-229",
+          "id": "step-262",
           "label": "The chisel grant is withdrawn",
           "target": "local",
           "continueOnError": true,
@@ -3123,7 +3349,7 @@
           }
         },
         {
-          "id": "step-230",
+          "id": "step-263",
           "label": "The route answers 503 (not hosted) again",
           "target": "local",
           "continueOnError": true,
@@ -3144,7 +3370,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-264",
           "label": "The agent can no longer fetch the config",
           "target": "local",
           "continueOnError": true,
@@ -3165,12 +3391,56 @@
           }
         },
         {
-          "id": "step-232",
+          "id": "step-269",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "CLI_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-270",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-272",
+          "label": "Extract PORT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PORT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CLI_CONFIG"
+              },
+              "expression": ".port"
+            }
+          }
+        },
+        {
+          "id": "step-276",
           "label": "Set CLI_HOST",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "lamaste-server plugins host \"${PLUGIN_NAME}\" --agent \"${AGENT_LABEL}\" --json 2>/dev/null | tail -1 || echo '{}'"
+            "command": "tail -1 \"${WORK_DIR}/cli-host.ndjson\" 2>/dev/null || echo '{}'"
           },
           "capture": [
             {
@@ -3182,7 +3452,29 @@
           ]
         },
         {
-          "id": "step-233",
+          "id": "step-277",
+          "label": "lamaste-server plugins host follows the operation to its end",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLI_HOST"
+              },
+              "path": ".operation.status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "lamaste-server plugins host follows the operation to its end"
+            }
+          }
+        },
+        {
+          "id": "step-278",
           "label": "lamaste-server plugins host hosts the plugin",
           "target": "local",
           "continueOnError": true,
@@ -3204,7 +3496,44 @@
           }
         },
         {
-          "id": "step-234",
+          "id": "step-279",
+          "label": "Set CLI_STEPS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c '\"event\":\"step\"' \"${WORK_DIR}/cli-host.ndjson\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_STEPS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-280",
+          "label": "…reporting its steps (${CLI_STEPS})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…reporting its steps (${CLI_STEPS})"
+          }
+        },
+        {
+          "id": "step-281",
+          "label": "The CLI reported ${CLI_STEPS} steps",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The CLI reported ${CLI_STEPS} steps"
+          }
+        },
+        {
+          "id": "step-282",
           "label": "Set CLI_SHOW",
           "target": "local",
           "op": {
@@ -3221,7 +3550,7 @@
           ]
         },
         {
-          "id": "step-235",
+          "id": "step-283",
           "label": "lamaste-server plugins hosting shows the agent",
           "target": "local",
           "continueOnError": true,
@@ -3242,7 +3571,7 @@
           }
         },
         {
-          "id": "step-236",
+          "id": "step-284",
           "label": "Set CLI_LIST",
           "target": "local",
           "op": {
@@ -3259,7 +3588,7 @@
           ]
         },
         {
-          "id": "step-237",
+          "id": "step-285",
           "label": "lamaste-server plugins list shows where it is hosted",
           "target": "local",
           "continueOnError": true,
@@ -3280,7 +3609,7 @@
           }
         },
         {
-          "id": "step-238",
+          "id": "step-286",
           "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
           "target": "host",
           "op": {
@@ -3298,7 +3627,7 @@
           ]
         },
         {
-          "id": "step-239",
+          "id": "step-287",
           "label": "Plugin disabled",
           "target": "local",
           "continueOnError": true,
@@ -3320,7 +3649,7 @@
           }
         },
         {
-          "id": "step-240",
+          "id": "step-288",
           "label": "Disabling keeps the hosting",
           "target": "local",
           "continueOnError": true,
@@ -3341,7 +3670,7 @@
           }
         },
         {
-          "id": "step-241",
+          "id": "step-289",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}",
           "target": "host",
           "op": {
@@ -3359,8 +3688,8 @@
           ]
         },
         {
-          "id": "step-242",
-          "label": "Plugin uninstalled",
+          "id": "step-290",
+          "label": "Uninstalling a hosted plugin is an operation",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -3371,17 +3700,77 @@
                 "kind": "var",
                 "name": "UNINSTALL"
               },
-              "path": ".ok",
+              "path": ".operation.kind",
               "expected": {
                 "kind": "literal",
-                "value": "true"
+                "value": "uninstall"
+              },
+              "message": "Uninstalling a hosted plugin is an operation"
+            }
+          }
+        },
+        {
+          "id": "step-291",
+          "label": "Set UNINSTALL_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$UNINSTALL\" | jq -r '.operation.id' 2>/dev/null)\" 120"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-292",
+          "label": "Plugin uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
               },
               "message": "Plugin uninstalled"
             }
           }
         },
         {
-          "id": "step-243",
+          "id": "step-293",
+          "label": "The plugin is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${PLUGIN_NAME}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The plugin is gone"
+            }
+          }
+        },
+        {
+          "id": "step-294",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -3399,7 +3788,7 @@
           ]
         },
         {
-          "id": "step-244",
+          "id": "step-295",
           "label": "Uninstalling removed the internal tunnel",
           "target": "local",
           "continueOnError": true,
@@ -3420,7 +3809,7 @@
           }
         },
         {
-          "id": "step-245",
+          "id": "step-296",
           "label": "GET /api/certs/agent",
           "target": "host",
           "op": {
@@ -3438,7 +3827,7 @@
           ]
         },
         {
-          "id": "step-246",
+          "id": "step-297",
           "label": "Uninstalling revoked the host capability",
           "target": "local",
           "continueOnError": true,
@@ -3459,7 +3848,7 @@
           }
         },
         {
-          "id": "step-247",
+          "id": "step-298",
           "label": "Set HOSTINGS_FILE",
           "target": "local",
           "op": {
@@ -3476,7 +3865,7 @@
           ]
         },
         {
-          "id": "step-248",
+          "id": "step-299",
           "label": "The hosting record is gone",
           "target": "local",
           "continueOnError": true,
@@ -3497,11 +3886,11 @@
           }
         }
       ],
-      "bash": "log_section \"Clear hosting and uninstall\"\n\nUNHOST=$(api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nassert_json_field \"$UNHOST\" '.ok' 'true' \"Hosting removed\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"404\" \"GET hosting answers 404 afterwards\" || true\nTUNNEL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nCAPS_AFTER=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_AFTER\" \"plugin:${PLUGIN_NAME}:host\" \"The host capability is revoked\" || true\nGRANT_AFTER=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT_AFTER\" \"0\" \"The chisel grant is withdrawn\" || true\nassert_eq \"$(api_get_status \"${PLUGIN_NAME}/ping\")\" \"503\" \"The route answers 503 (not hosted) again\" || true\nassert_eq \"$(agent_api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\" \"403\" \"The agent can no longer fetch the config\" || true\n\nCLI_HOST=$(lamaste-server plugins host \"${PLUGIN_NAME}\" --agent \"${AGENT_LABEL}\" --json 2>/dev/null | tail -1 || echo '{}')\nassert_json_field \"$CLI_HOST\" '.hosting.agentLabel' \"${AGENT_LABEL}\" \"lamaste-server plugins host hosts the plugin\" || true\nCLI_SHOW=$(lamaste-server plugins hosting \"${PLUGIN_NAME}\" 2>&1 || true)\nassert_contains \"$CLI_SHOW\" \"${AGENT_LABEL}\" \"lamaste-server plugins hosting shows the agent\" || true\nCLI_LIST=$(lamaste-server plugins list 2>&1 || true)\nassert_contains \"$CLI_LIST\" \"on ${AGENT_LABEL}\" \"lamaste-server plugins list shows where it is hosted\" || true\n\nDISABLE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE\" '.status' 'disabled' \"Plugin disabled\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"200\" \"Disabling keeps the hosting\" || true\nUNINSTALL=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL\" '.ok' 'true' \"Plugin uninstalled\" || true\nINTERNAL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.exposure == \\\"internal\\\" and .pluginRoute == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$INTERNAL_LEFT\" \"0\" \"Uninstalling removed the internal tunnel\" || true\nCAPS_FINAL=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_FINAL\" \"plugin:${PLUGIN_NAME}:host\" \"Uninstalling revoked the host capability\" || true\nHOSTINGS_FILE=$(jq -r \"has(\\\"${PLUGIN_NAME}\\\")\" \"${STATE_DIR}/plugin-hostings.json\" 2>/dev/null || echo \"false\")\nassert_eq \"$HOSTINGS_FILE\" \"false\" \"The hosting record is gone\" || true"
+      "bash": "log_section \"Clear hosting and uninstall\"\n\nUNHOST=$(api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nassert_json_field \"$UNHOST\" '.operation.kind' 'unhost' \"Removing the hosting is an operation\" || true\nUNHOST_OP=$(wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 120)\nassert_json_field \"$UNHOST_OP\" '.status' 'succeeded' \"Hosting removed\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"404\" \"GET hosting answers 404 afterwards\" || true\nTUNNEL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nCAPS_AFTER=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_AFTER\" \"plugin:${PLUGIN_NAME}:host\" \"The host capability is revoked\" || true\nGRANT_AFTER=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT_AFTER\" \"0\" \"The chisel grant is withdrawn\" || true\nassert_eq \"$(api_get_status \"${PLUGIN_NAME}/ping\")\" \"503\" \"The route answers 503 (not hosted) again\" || true\nassert_eq \"$(agent_api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\" \"403\" \"The agent can no longer fetch the config\" || true\n\n# The CLI follows the operation, which waits for the agent half: play the\n# agent's sync (fetch the new config, restart the half) while it runs.\nlamaste-server plugins host \"${PLUGIN_NAME}\" --agent \"${AGENT_LABEL}\" --json > \"${WORK_DIR}/cli-host.ndjson\" 2> /dev/null &\nCLI_PID=$!\nCLI_CONFIG=\"{}\"\nfor _ in $(seq 1 60); do\n  CLI_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN_NAME}\" 2>/dev/null || echo '{}')\n  if [ -n \"$(echo \"$CLI_CONFIG\" | jq -r '.port // empty' 2>/dev/null)\" ]; then break; fi\n  sleep 1\ndone\nPORT=$(echo \"$CLI_CONFIG\" | jq -r '.port' 2>/dev/null || echo \"0\")\nwrite_half_config \"$CLI_CONFIG\"\nstart_half || log_fail \"Agent half did not start for the CLI hosting\"\nwait \"$CLI_PID\" || true\nCLI_HOST=$(tail -1 \"${WORK_DIR}/cli-host.ndjson\" 2>/dev/null || echo '{}')\nassert_json_field \"$CLI_HOST\" '.operation.status' 'succeeded' \"lamaste-server plugins host follows the operation to its end\" || true\nassert_json_field \"$CLI_HOST\" '.hosting.agentLabel' \"${AGENT_LABEL}\" \"lamaste-server plugins host hosts the plugin\" || true\nCLI_STEPS=$(grep -c '\"event\":\"step\"' \"${WORK_DIR}/cli-host.ndjson\" 2>/dev/null || true)\nif [ \"${CLI_STEPS:-0}\" -ge 3 ] 2>/dev/null; then\n  log_pass \"…reporting its steps (${CLI_STEPS})\"\nelse\n  log_fail \"The CLI reported ${CLI_STEPS} steps\"\nfi\nCLI_SHOW=$(lamaste-server plugins hosting \"${PLUGIN_NAME}\" 2>&1 || true)\nassert_contains \"$CLI_SHOW\" \"${AGENT_LABEL}\" \"lamaste-server plugins hosting shows the agent\" || true\nCLI_LIST=$(lamaste-server plugins list 2>&1 || true)\nassert_contains \"$CLI_LIST\" \"on ${AGENT_LABEL}\" \"lamaste-server plugins list shows where it is hosted\" || true\n\nDISABLE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE\" '.status' 'disabled' \"Plugin disabled\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"200\" \"Disabling keeps the hosting\" || true\nUNINSTALL=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL\" '.operation.kind' 'uninstall' \"Uninstalling a hosted plugin is an operation\" || true\nUNINSTALL_OP=$(wait_operation \"$(echo \"$UNINSTALL\" | jq -r '.operation.id' 2>/dev/null)\" 120)\nassert_json_field \"$UNINSTALL_OP\" '.status' 'succeeded' \"Plugin uninstalled\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}\")\" \"404\" \"The plugin is gone\" || true\nINTERNAL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.exposure == \\\"internal\\\" and .pluginRoute == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$INTERNAL_LEFT\" \"0\" \"Uninstalling removed the internal tunnel\" || true\nCAPS_FINAL=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_FINAL\" \"plugin:${PLUGIN_NAME}:host\" \"Uninstalling revoked the host capability\" || true\nHOSTINGS_FILE=$(jq -r \"has(\\\"${PLUGIN_NAME}\\\")\" \"${STATE_DIR}/plugin-hostings.json\" 2>/dev/null || echo \"false\")\nassert_eq \"$HOSTINGS_FILE\" \"false\" \"The hosting record is gone\" || true"
     }
   ],
   "apiHelpers": ["agent_api_get", "agent_api_get_status", "agent_api_post"],
-  "headerRaw": "# ============================================================================\n# 29 — Agent-hosted plugin: hosting, forwarding, installation secret\n# ============================================================================\n# Hosts an agent-hosted plugin that has an agent half (fixture\n# @lamalibre/e2e-app-plugin-server, served by a stand-in registry on the VM)\n# on an agent, and verifies on one VM:\n# - hosting creates an internal plugin tunnel (port assigned from\n#   21000–21999, no hostname, no access mode, not editable as a tunnel) and\n#   grants the agent `plugin:<route>:host`; a manual tunnel on such a port\n#   is refused\n# - only the hosting agent's certificate fetches the plugin config (port and\n#   secret) and acknowledges it\n# - the panel forwards /api/<route>/* to the agent half's /admin/* with a\n#   caller assertion: pages and the bundle work, the user surface (/app) is\n#   out of reach, credentials never pass, bodies stream, the body limit\n#   holds, server-sent events pass through, a loopback call without an\n#   assertion is refused\n# - rotating the secret keeps calls working, before and after the agent\n#   acknowledges the new one\n# - a stopped agent half is a clean 502, and the health monitor reports\n#   down (app, then tunnel) and up again\n# - clearing the hosting and uninstalling the plugin remove tunnel, secret\n#   and capability; the same through lamaste-server plugins host|unhost\n#\n# The agent half listens on the relay loopback directly: on one VM the\n# chisel client cannot bind the assigned port (the chisel server holds it\n# when an agent connects), so the tunnel leg is proven by three-VM spec 31.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 29 — Agent-hosted plugin: hosting, forwarding, installation secret\n# ============================================================================\n# Hosts an agent-hosted plugin that has an agent half (fixture\n# @lamalibre/e2e-app-plugin-server, served by a stand-in registry on the VM)\n# on an agent, and verifies on one VM:\n# - hosting is an operation (4.3): it reserves an internal plugin tunnel\n#   (port assigned from 21000–21999, no hostname, no access mode, not\n#   editable as a tunnel) and grants the agent `plugin:<route>:host`; with no\n#   agent hook to run first it grants the tunnel at once, and it succeeds\n#   once the agent half (started with the config the agent fetched) answers\n#   through it; a manual tunnel on such a port is refused\n# - only the hosting agent's certificate fetches the plugin config (port and\n#   secret) and acknowledges it\n# - the panel forwards /api/<route>/* to the agent half's /admin/* with a\n#   caller assertion: pages and the bundle work, the user surface (/app) is\n#   out of reach, credentials never pass, bodies stream, the body limit\n#   holds, server-sent events pass through, a loopback call without an\n#   assertion is refused\n# - rotating the secret keeps calls working, before and after the agent\n#   acknowledges the new one\n# - a stopped agent half is a clean 502, and the health monitor reports\n#   down (app, then tunnel) and up again\n# - clearing the hosting and uninstalling the plugin remove tunnel, secret\n#   and capability; the same through lamaste-server plugins host|unhost\n#\n# The agent half listens on the relay loopback directly: on one VM the\n# chisel client cannot bind the assigned port (the chisel server holds it\n# when an agent connects), so the tunnel leg is proven by three-VM spec 31.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm\n\nbegin_test \"29 — Agent-hosted plugin: hosting, forwarding, installation secret\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

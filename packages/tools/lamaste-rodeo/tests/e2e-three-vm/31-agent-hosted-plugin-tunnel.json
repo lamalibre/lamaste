@@ -487,7 +487,7 @@
         },
         {
           "id": "step-40",
-          "label": "Plugin hosted on ${HOST_AGENT_LABEL}",
+          "label": "Hosting on ${HOST_AGENT_LABEL} started as an operation",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -498,51 +498,68 @@
                 "kind": "var",
                 "name": "HOST_RESPONSE"
               },
-              "path": ".ok",
+              "path": ".operation.kind",
               "expected": {
                 "kind": "literal",
-                "value": "true"
+                "value": "host"
               },
-              "message": "Plugin hosted on ${HOST_AGENT_LABEL}"
+              "message": "Hosting on ${HOST_AGENT_LABEL} started as an operation"
             }
           }
         },
         {
           "id": "step-41",
-          "label": "Extract PORT",
+          "label": "Extract HOST_OP_ID",
           "target": "local",
           "op": {
             "type": "set",
-            "variable": "PORT",
+            "variable": "HOST_OP_ID",
             "from": {
               "kind": "jq",
               "input": {
                 "kind": "var",
                 "name": "HOST_RESPONSE"
               },
-              "expression": ".hosting.port"
+              "expression": ".operation.id"
             }
           }
         },
         {
-          "id": "step-42",
-          "label": "Extract TUNNEL_ID",
+          "id": "step-44",
+          "label": "Set PORT",
           "target": "local",
           "op": {
-            "type": "set",
-            "variable": "TUNNEL_ID",
-            "from": {
-              "kind": "jq",
-              "input": {
-                "kind": "var",
-                "name": "HOST_RESPONSE"
-              },
-              "expression": ".hosting.tunnelId"
+            "type": "exec",
+            "command": "hosting_field '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
             }
-          }
+          ]
         },
         {
-          "id": "step-43",
+          "id": "step-45",
+          "label": "Set TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field '.hosting.tunnelId'"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_ID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
           "label": "Port ${PORT} assigned from the internal range",
           "target": "local",
           "op": {
@@ -557,7 +574,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-47",
           "label": "Port ${PORT} is not in 21000–21999",
           "target": "local",
           "op": {
@@ -572,14 +589,14 @@
           }
         }
       ],
-      "bash": "log_section \"Install, enable, host on ${HOST_AGENT_LABEL}\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-31-app-plugin-XXXXXXXX)\nwrite_stub_registry \"${LOCAL_TMP}/stub-registry.mjs\"\nwrite_app_plugin_fixture \"${LOCAL_TMP}/fixture\"\nwrite_app_plugin_half \"${LOCAL_TMP}/app-plugin-half.mjs\"\nhost_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/stub-registry.mjs\" \"lamaste-host:${REMOTE_DIR}/stub-registry.mjs\"\nmultipass transfer \"${LOCAL_TMP}/fixture/package.json\" \"lamaste-host:${REMOTE_DIR}/fixture/package.json\"\nmultipass transfer \"${LOCAL_TMP}/fixture/index.js\" \"lamaste-host:${REMOTE_DIR}/fixture/index.js\"\nmultipass transfer \"${LOCAL_TMP}/fixture/lamaste-plugin.json\" \"lamaste-host:${REMOTE_DIR}/fixture/lamaste-plugin.json\"\nagent_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/app-plugin-half.mjs\" \"lamaste-agent:${REMOTE_DIR}/app-plugin-half.mjs\"\n\nhost_exec \"pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\"\nhost_exec \"nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit\"\nSTUB_UP=\"no\"\nfor _ in $(seq 1 30); do\n  if host_exec \"curl -sf --max-time 3 ${STUB_URL}/-/ping > /dev/null 2>&1\"; then\n    STUB_UP=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$STUB_UP\" \"yes\" \"Stand-in registry is up on the host VM\" || true\nhost_exec \"printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc\"\n\nINSTALL_RESPONSE=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.hosting' 'agent' \"Fixture installed as agent-hosted\" || true\nENABLE_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/enable\" '{}')\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\n\n# sync.log outlives a run: count only the lines this run adds.\nSYNC_LOG_MARK=$(agent_exec \"cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l\" 2>/dev/null || echo \"0\")\nHOST_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.ok' 'true' \"Plugin hosted on ${HOST_AGENT_LABEL}\" || true\nPORT=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.port' 2>/dev/null || echo \"0\")\nTUNNEL_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.tunnelId' 2>/dev/null || echo \"\")\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\n\n# ===========================================================================\n# 2. The sync timer delivers the plugin config to the agent\n# ==========================================================================="
+      "bash": "log_section \"Install, enable, host on ${HOST_AGENT_LABEL}\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-31-app-plugin-XXXXXXXX)\nwrite_stub_registry \"${LOCAL_TMP}/stub-registry.mjs\"\nwrite_app_plugin_fixture \"${LOCAL_TMP}/fixture\"\nwrite_app_plugin_half \"${LOCAL_TMP}/app-plugin-half.mjs\"\nhost_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/stub-registry.mjs\" \"lamaste-host:${REMOTE_DIR}/stub-registry.mjs\"\nmultipass transfer \"${LOCAL_TMP}/fixture/package.json\" \"lamaste-host:${REMOTE_DIR}/fixture/package.json\"\nmultipass transfer \"${LOCAL_TMP}/fixture/index.js\" \"lamaste-host:${REMOTE_DIR}/fixture/index.js\"\nmultipass transfer \"${LOCAL_TMP}/fixture/lamaste-plugin.json\" \"lamaste-host:${REMOTE_DIR}/fixture/lamaste-plugin.json\"\nagent_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/app-plugin-half.mjs\" \"lamaste-agent:${REMOTE_DIR}/app-plugin-half.mjs\"\n\nhost_exec \"pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\"\nhost_exec \"nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit\"\nSTUB_UP=\"no\"\nfor _ in $(seq 1 30); do\n  if host_exec \"curl -sf --max-time 3 ${STUB_URL}/-/ping > /dev/null 2>&1\"; then\n    STUB_UP=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$STUB_UP\" \"yes\" \"Stand-in registry is up on the host VM\" || true\nhost_exec \"printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc\"\n\nINSTALL_RESPONSE=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.hosting' 'agent' \"Fixture installed as agent-hosted\" || true\nENABLE_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/enable\" '{}')\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\n\n# sync.log outlives a run: count only the lines this run adds.\nSYNC_LOG_MARK=$(agent_exec \"cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l\" 2>/dev/null || echo \"0\")\nHOST_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.operation.kind' 'host' \"Hosting on ${HOST_AGENT_LABEL} started as an operation\" || true\nHOST_OP_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.operation.id' 2>/dev/null || echo \"\")\nreserved() { [ -n \"$(hosting_field '.hosting.port // empty')\" ]; }\nwait_for 30 reserved || true\nPORT=$(hosting_field '.hosting.port')\nTUNNEL_ID=$(hosting_field '.hosting.tunnelId')\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\n\n# ===========================================================================\n# 2. The sync timer delivers the plugin config to the agent\n# ==========================================================================="
     },
     {
       "id": "the-agent-s-sync-timer-fetches-and-acknowledges-the-plugin-config",
       "label": "The agent's sync timer fetches and acknowledges the plugin config",
       "steps": [
         {
-          "id": "step-46",
+          "id": "step-49",
           "label": "Plugin config file appeared on the agent VM within 90 seconds",
           "target": "local",
           "op": {
@@ -589,7 +606,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-50",
           "label": "No plugin config at ${PLUGIN_CONFIG_FILE} after 90 seconds",
           "target": "local",
           "op": {
@@ -599,7 +616,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-51",
           "label": "The file names the plugin",
           "target": "local",
           "continueOnError": true,
@@ -620,7 +637,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-52",
           "label": "The file carries the assigned port",
           "target": "local",
           "continueOnError": true,
@@ -641,7 +658,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-53",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -658,7 +675,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-54",
           "label": "The file is 0600",
           "target": "local",
           "continueOnError": true,
@@ -679,7 +696,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-56",
           "label": "The agent acknowledged the secret",
           "target": "local",
           "op": {
@@ -689,7 +706,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-57",
           "label": "The agent did not acknowledge the secret",
           "target": "local",
           "op": {
@@ -699,7 +716,7 @@
           }
         },
         {
-          "id": "step-56",
+          "id": "step-59",
           "label": "The host records the acknowledgement",
           "target": "local",
           "op": {
@@ -709,7 +726,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-60",
           "label": "The host does not record the acknowledgement",
           "target": "local",
           "op": {
@@ -719,7 +736,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-61",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -736,7 +753,7 @@
           ]
         },
         {
-          "id": "step-59",
+          "id": "step-62",
           "label": "sync.log records the fetch",
           "target": "local",
           "continueOnError": true,
@@ -764,7 +781,7 @@
       "label": "Forwarding through the internal tunnel",
       "steps": [
         {
-          "id": "step-60",
+          "id": "step-63",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -773,7 +790,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-65",
           "label": "Agent half listens on the agent VM's 127.0.0.1:${PORT}",
           "target": "local",
           "op": {
@@ -783,7 +800,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-66",
           "label": "Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -793,7 +810,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-68",
           "label": "The host's loopback port ${PORT} reaches the agent half through chisel",
           "target": "local",
           "op": {
@@ -803,7 +820,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-69",
           "label": "The internal tunnel did not come up within 90 seconds",
           "target": "local",
           "op": {
@@ -813,7 +830,67 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-70",
+          "label": "Set HOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"${HOST_OP_ID}\" 180"
+          },
+          "capture": [
+            {
+              "variable": "HOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "The hosting operation succeeded once the agent half answered through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "The hosting operation succeeded once the agent half answered through the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "The hosting is active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.phase')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The hosting is active"
+            }
+          }
+        },
+        {
+          "id": "step-73",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -831,7 +908,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-74",
           "label": "GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs",
           "target": "local",
           "continueOnError": true,
@@ -853,7 +930,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-75",
           "label": "The caller assertion names the admin",
           "target": "local",
           "continueOnError": true,
@@ -875,7 +952,7 @@
           }
         },
         {
-          "id": "step-70",
+          "id": "step-76",
           "label": "No cookie crosses the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -897,7 +974,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-77",
           "label": "GET /api/${PLUGIN_NAME}/panel.js",
           "target": "host",
           "op": {
@@ -915,7 +992,7 @@
           ]
         },
         {
-          "id": "step-72",
+          "id": "step-78",
           "label": "The admin bundle comes from the agent half",
           "target": "local",
           "continueOnError": true,
@@ -936,7 +1013,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-79",
           "label": "The user surface is out of the forwarder's reach",
           "target": "local",
           "continueOnError": true,
@@ -957,7 +1034,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-80",
           "label": "Health is up",
           "target": "local",
           "op": {
@@ -967,7 +1044,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-81",
           "label": "Health did not reach up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -977,14 +1054,14 @@
           }
         }
       ],
-      "bash": "log_section \"Forwarding through the internal tunnel\"\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nhalf_up() { [ \"$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 30 half_up; then\n  log_pass \"Agent half listens on the agent VM's 127.0.0.1:${PORT}\"\nelse\n  log_fail \"Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)\"\nfi\n\n# The chisel client picks the new grant up on its next sync.\ntunnel_up() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 90 tunnel_up; then\n  log_pass \"The host's loopback port ${PORT} reaches the agent half through chisel\"\nelse\n  log_fail \"The internal tunnel did not come up within 90 seconds\"\nfi\n\nPING=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The caller assertion names the admin\" || true\nassert_json_field \"$PING\" '.cookie' 'null' \"No cookie crosses the tunnel\" || true\nBUNDLE=$(host_api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle comes from the agent half\" || true\nassert_eq \"$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")\" \"404\" \"The user surface is out of the forwarder's reach\" || true\n\nif wait_health up 60; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Rotation, picked up by the sync timer\n# ==========================================================================="
+      "bash": "log_section \"Forwarding through the internal tunnel\"\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nhalf_up() { [ \"$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 30 half_up; then\n  log_pass \"Agent half listens on the agent VM's 127.0.0.1:${PORT}\"\nelse\n  log_fail \"Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)\"\nfi\n\n# The chisel client picks the new grant up on its next sync.\ntunnel_up() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 90 tunnel_up; then\n  log_pass \"The host's loopback port ${PORT} reaches the agent half through chisel\"\nelse\n  log_fail \"The internal tunnel did not come up within 90 seconds\"\nfi\n\nHOST_OP=$(wait_operation \"${HOST_OP_ID}\" 180)\nassert_json_field \"$HOST_OP\" '.status' 'succeeded' \"The hosting operation succeeded once the agent half answered through the tunnel\" || true\nassert_eq \"$(hosting_field '.hosting.phase')\" \"active\" \"The hosting is active\" || true\n\nPING=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The caller assertion names the admin\" || true\nassert_json_field \"$PING\" '.cookie' 'null' \"No cookie crosses the tunnel\" || true\nBUNDLE=$(host_api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle comes from the agent half\" || true\nassert_eq \"$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")\" \"404\" \"The user surface is out of the forwarder's reach\" || true\n\nif wait_health up 60; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Rotation, picked up by the sync timer\n# ==========================================================================="
     },
     {
       "id": "secret-rotation-across-the-tunnel",
       "label": "Secret rotation across the tunnel",
       "steps": [
         {
-          "id": "step-76",
+          "id": "step-82",
           "label": "Set ISSUED_BEFORE",
           "target": "local",
           "op": {
@@ -1001,7 +1078,7 @@
           ]
         },
         {
-          "id": "step-77",
+          "id": "step-83",
           "label": "POST /api/plugins/${PLUGIN_NAME}/hosting/rotate-secret",
           "target": "host",
           "op": {
@@ -1020,7 +1097,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-84",
           "label": "Rotation pending",
           "target": "local",
           "continueOnError": true,
@@ -1042,7 +1119,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-85",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -1060,7 +1137,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-86",
           "label": "Calls keep working while the rotation is pending",
           "target": "local",
           "continueOnError": true,
@@ -1082,7 +1159,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-88",
           "label": "The sync timer fetched and acknowledged the new secret within 90 seconds",
           "target": "local",
           "op": {
@@ -1092,7 +1169,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-89",
           "label": "Rotation not completed: $(host_api_get \"plugins/${PLUGIN_NAME}/hosting\")",
           "target": "local",
           "op": {
@@ -1102,7 +1179,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-90",
           "label": "The agent's file carries the new secret",
           "target": "local",
           "continueOnError": true,
@@ -1123,7 +1200,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-91",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1140,7 +1217,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-92",
           "label": "sync.log records the rotation's fetch as well",
           "target": "local",
           "continueOnError": true,
@@ -1161,7 +1238,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-93",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -1179,7 +1256,7 @@
           ]
         },
         {
-          "id": "step-88",
+          "id": "step-94",
           "label": "Calls work on the new secret",
           "target": "local",
           "continueOnError": true,
@@ -1208,7 +1285,7 @@
       "label": "Health: application down",
       "steps": [
         {
-          "id": "step-89",
+          "id": "step-95",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1217,7 +1294,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-96",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -1226,7 +1303,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-97",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -1245,7 +1322,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-98",
           "label": "A stopped agent half behind a live tunnel is a 502",
           "target": "local",
           "continueOnError": true,
@@ -1266,7 +1343,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-99",
           "label": "Health reports down within 60 seconds",
           "target": "local",
           "op": {
@@ -1276,7 +1353,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-100",
           "label": "Health did not report down: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1286,7 +1363,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-101",
           "label": "The tunnel is up, the application is down: reason app",
           "target": "local",
           "continueOnError": true,
@@ -1307,7 +1384,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-102",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1316,7 +1393,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-103",
           "label": "Health is up again with the agent half back",
           "target": "local",
           "op": {
@@ -1326,7 +1403,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-104",
           "label": "Health did not recover: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1343,7 +1420,7 @@
       "label": "Health: tunnel down",
       "steps": [
         {
-          "id": "step-100",
+          "id": "step-106",
           "label": "Set CHISEL_STATE",
           "target": "local",
           "op": {
@@ -1360,7 +1437,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-107",
           "label": "The agent's tunnel client is stopped",
           "target": "local",
           "continueOnError": true,
@@ -1381,7 +1458,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-108",
           "label": "Health reports down within 75 seconds",
           "target": "local",
           "op": {
@@ -1391,7 +1468,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-109",
           "label": "Health did not report down: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1401,7 +1478,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-110",
           "label": "Nothing listens on the relay port: reason tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1422,7 +1499,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-111",
           "label": "GET /api/${PLUGIN_NAME}/ping",
           "target": "host",
           "op": {
@@ -1440,7 +1517,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-112",
           "label": "The forwarder answers 502 with reason tunnel",
           "target": "local",
           "continueOnError": true,
@@ -1462,7 +1539,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-114",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1471,7 +1548,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-115",
           "label": "Health is up again once the tunnel client runs",
           "target": "local",
           "op": {
@@ -1481,7 +1558,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-116",
           "label": "Health did not recover after the tunnel came back: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1498,7 +1575,7 @@
       "label": "Clear the hosting",
       "steps": [
         {
-          "id": "step-111",
+          "id": "step-117",
           "label": "DELETE /api/plugins/${PLUGIN_NAME}/hosting",
           "target": "host",
           "op": {
@@ -1516,7 +1593,24 @@
           ]
         },
         {
-          "id": "step-112",
+          "id": "step-118",
+          "label": "Set UNHOST_OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 120"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST_OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
           "label": "Hosting removed",
           "target": "local",
           "continueOnError": true,
@@ -1526,19 +1620,19 @@
               "kind": "json_field",
               "source": {
                 "kind": "var",
-                "name": "UNHOST"
+                "name": "UNHOST_OP"
               },
-              "path": ".ok",
+              "path": ".status",
               "expected": {
                 "kind": "literal",
-                "value": "true"
+                "value": "succeeded"
               },
               "message": "Hosting removed"
             }
           }
         },
         {
-          "id": "step-113",
+          "id": "step-120",
           "label": "GET /api/tunnels?limit=500",
           "target": "host",
           "op": {
@@ -1556,7 +1650,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-121",
           "label": "The internal tunnel is gone",
           "target": "local",
           "continueOnError": true,
@@ -1577,7 +1671,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-123",
           "label": "The sync timer removed the agent's plugin config file",
           "target": "local",
           "op": {
@@ -1587,7 +1681,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-124",
           "label": "The plugin config file is still on the agent VM",
           "target": "local",
           "op": {
@@ -1597,7 +1691,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-125",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1614,7 +1708,7 @@
           ]
         },
         {
-          "id": "step-119",
+          "id": "step-126",
           "label": "sync.log records the removal",
           "target": "local",
           "continueOnError": true,
@@ -1635,7 +1729,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-128",
           "label": "The relay port no longer reaches the agent half",
           "target": "local",
           "op": {
@@ -1645,7 +1739,7 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-129",
           "label": "The relay port still reaches the agent half after the grant was withdrawn",
           "target": "local",
           "op": {
@@ -1655,12 +1749,12 @@
           }
         }
       ],
-      "bash": "log_section \"Clear the hosting\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nassert_json_field \"$UNHOST\" '.ok' 'true' \"Hosting removed\" || true\nTUNNEL_LEFT=$(host_api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nconfig_gone() { ! agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\nif wait_for 90 config_gone; then\n  log_pass \"The sync timer removed the agent's plugin config file\"\nelse\n  log_fail \"The plugin config file is still on the agent VM\"\nfi\nSYNC_LOG=$(agent_exec \"tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_LOG\" \"plugin config removed: ${PLUGIN_NAME}\" \"sync.log records the removal\" || true\ntunnel_down() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" != \"401\" ]; }\nif wait_for 90 tunnel_down; then\n  log_pass \"The relay port no longer reaches the agent half\"\nelse\n  log_fail \"The relay port still reaches the agent half after the grant was withdrawn\"\nfi"
+      "bash": "log_section \"Clear the hosting\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nUNHOST_OP=$(wait_operation \"$(echo \"$UNHOST\" | jq -r '.operation.id' 2>/dev/null)\" 120)\nassert_json_field \"$UNHOST_OP\" '.status' 'succeeded' \"Hosting removed\" || true\nTUNNEL_LEFT=$(host_api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nconfig_gone() { ! agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\nif wait_for 90 config_gone; then\n  log_pass \"The sync timer removed the agent's plugin config file\"\nelse\n  log_fail \"The plugin config file is still on the agent VM\"\nfi\nSYNC_LOG=$(agent_exec \"tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_LOG\" \"plugin config removed: ${PLUGIN_NAME}\" \"sync.log records the removal\" || true\ntunnel_down() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" != \"401\" ]; }\nif wait_for 90 tunnel_down; then\n  log_pass \"The relay port no longer reaches the agent half\"\nelse\n  log_fail \"The relay port still reaches the agent half after the grant was withdrawn\"\nfi"
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_get_status", "host_api_post", "host_api_delete"],
-  "headerRaw": "# ============================================================================\n# 31 — Agent-hosted plugin through the internal tunnel (Three-VM)\n# ============================================================================\n# The whole path of an agent-hosted plugin with an agent half, across the\n# host and agent VMs:\n#\n# 1. The plugin (fixture @lamalibre/e2e-app-plugin-server) is installed and\n#    enabled on the host, then hosted on the agent VM's agent. The agent's\n#    sync timer fetches the plugin config (port and secret) and acknowledges\n#    it, without any command on the agent VM.\n# 2. The agent half starts on the agent VM on the assigned port; the chisel\n#    client binds the same port on the host (the internal tunnel's grant), and\n#    the panel's forwarder reaches the agent half through it.\n# 3. A secret rotation on the host is picked up by the sync timer: the\n#    forwarder keeps working throughout and the previous secret is dropped\n#    once the agent acknowledges the new one.\n# 4. Health: the agent half stopped is \"down (app)\"; the tunnel client stopped\n#    is \"down (tunnel)\"; both come back up.\n# 5. Clearing the hosting withdraws the tunnel and the sync timer removes the\n#    agent's config file.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nCURL_MTLS=\"curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n\nhost_api_get() {\n  host_exec \"${CURL_MTLS} -f -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_get_status() {\n  host_exec \"${CURL_MTLS} -o /dev/null -w '%{http_code}' https://127.0.0.1:9292/api/$1\" 2>/dev/null || echo \"000\"\n}\nhost_api_post() {\n  host_exec \"${CURL_MTLS} -f -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"${CURL_MTLS} -f -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# plugin_config_field <js expr> — a field of the agent's plugin config file\nplugin_config_field() {\n  agent_exec \"node -p \\\"(JSON.parse(require('fs').readFileSync('${PLUGIN_CONFIG_FILE}','utf8')))$1\\\"\" 2>/dev/null || echo \"\"\n}\n\n# hosting_field <jq expr> — a field of GET /api/plugins/<name>/hosting on the host\nhosting_field() {\n  host_api_get \"plugins/${PLUGIN_NAME}/hosting\" 2>/dev/null | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_health <state> <seconds>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# set_tunnels_stopped true|false — what the agent daemon's /stop and /start\n# do: remembered by the sync timer, which otherwise restarts the client\nset_tunnels_stopped() {\n  agent_exec \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', $1))\\\"\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nHOST_IP=\"${HOST_IP:-10.13.37.1}\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_threevm_appplugin_00000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-agent\"\nAGENT_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}\"\nAGENT_CONFIG=\"${AGENT_DIR}/config.json\"\nPLUGIN_CONFIG_FILE=\"${AGENT_DIR}/app-plugins/${PLUGIN_NAME}.json\"\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LABEL}.timer\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LABEL}.service\"\nREMOTE_DIR=\"/tmp/e2e-31-app-plugin\"\nHALF_LOG=\"${REMOTE_DIR}/half.log\"\nLOCAL_TMP=\"\"\nHOST_AGENT_LABEL=\"\"\nPORT=\"\"\nTUNNEL_ID=\"\"\n# Where the agent VM's global lamaste-agent install keeps @lamalibre/lamaste\nAGENT_LIB_DIR=\"\"\nAGENT_LIB_PARENT=\"\"\n\nbegin_test \"31 — Agent-hosted plugin through the internal tunnel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec lamaste-host -- sudo bash -c \"${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/hosting > /dev/null 2>&1; ${CURL_MTLS} -X POST https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/disable > /dev/null 2>&1; ${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME} > /dev/null 2>&1; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  if [ -n \"$AGENT_LIB_PARENT\" ]; then\n    timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', false))\\\" 2>/dev/null; lamaste-agent sync --label ${AGENT_LABEL} 2>/dev/null; true\" > /dev/null 2>&1\n  fi\n  if [ -n \"$LOCAL_TMP\" ]; then rm -rf \"$LOCAL_TMP\"; fi\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 31 — Agent-hosted plugin through the internal tunnel (Three-VM)\n# ============================================================================\n# The whole path of an agent-hosted plugin with an agent half, across the\n# host and agent VMs:\n#\n# 1. The plugin (fixture @lamalibre/e2e-app-plugin-server) is installed and\n#    enabled on the host, then hosted on the agent VM's agent — an operation\n#    (4.3) that reserves the hosting, grants the tunnel and waits for the\n#    agent half. The agent's sync timer fetches the plugin config (port and\n#    secret) and acknowledges it, without any command on the agent VM.\n# 2. The agent half starts on the agent VM on the assigned port; the chisel\n#    client binds the same port on the host (the internal tunnel's grant), the\n#    hosting operation succeeds, and the panel's forwarder reaches the agent\n#    half through it.\n# 3. A secret rotation on the host is picked up by the sync timer: the\n#    forwarder keeps working throughout and the previous secret is dropped\n#    once the agent acknowledges the new one.\n# 4. Health: the agent half stopped is \"down (app)\"; the tunnel client stopped\n#    is \"down (tunnel)\"; both come back up.\n# 5. Clearing the hosting withdraws the tunnel and the sync timer removes the\n#    agent's config file.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nCURL_MTLS=\"curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n\nhost_api_get() {\n  host_exec \"${CURL_MTLS} -f -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_get_status() {\n  host_exec \"${CURL_MTLS} -o /dev/null -w '%{http_code}' https://127.0.0.1:9292/api/$1\" 2>/dev/null || echo \"000\"\n}\nhost_api_post() {\n  host_exec \"${CURL_MTLS} -f -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"${CURL_MTLS} -f -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# plugin_config_field <js expr> — a field of the agent's plugin config file\nplugin_config_field() {\n  agent_exec \"node -p \\\"(JSON.parse(require('fs').readFileSync('${PLUGIN_CONFIG_FILE}','utf8')))$1\\\"\" 2>/dev/null || echo \"\"\n}\n\n# hosting_field <jq expr> — a field of GET /api/plugins/<name>/hosting on the host\nhosting_field() {\n  host_api_get \"plugins/${PLUGIN_NAME}/hosting\" 2>/dev/null | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(host_api_get \"plugins/${PLUGIN_NAME}/operations/${id}\" 2>/dev/null | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 3\n  done\n  echo \"$op\"\n  return 0\n}\n\n# wait_health <state> <seconds>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# set_tunnels_stopped true|false — what the agent daemon's /stop and /start\n# do: remembered by the sync timer, which otherwise restarts the client\nset_tunnels_stopped() {\n  agent_exec \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', $1))\\\"\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nHOST_IP=\"${HOST_IP:-10.13.37.1}\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_threevm_appplugin_00000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-agent\"\nAGENT_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}\"\nAGENT_CONFIG=\"${AGENT_DIR}/config.json\"\nPLUGIN_CONFIG_FILE=\"${AGENT_DIR}/app-plugins/${PLUGIN_NAME}.json\"\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LABEL}.timer\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LABEL}.service\"\nREMOTE_DIR=\"/tmp/e2e-31-app-plugin\"\nHALF_LOG=\"${REMOTE_DIR}/half.log\"\nLOCAL_TMP=\"\"\nHOST_AGENT_LABEL=\"\"\nPORT=\"\"\nTUNNEL_ID=\"\"\n# Where the agent VM's global lamaste-agent install keeps @lamalibre/lamaste\nAGENT_LIB_DIR=\"\"\nAGENT_LIB_PARENT=\"\"\n\nbegin_test \"31 — Agent-hosted plugin through the internal tunnel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Uninstalling tears a hosting down first (an operation); one still running\n  # refuses it until it ends.\n  timed_exec 240 multipass exec lamaste-host -- sudo bash -c \"${CURL_MTLS} -X POST https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/disable > /dev/null 2>&1; for _ in \\$(seq 1 70); do [ \\\"\\$(${CURL_MTLS} -o /dev/null -w '%{http_code}' https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME})\\\" = 404 ] && break; ${CURL_MTLS} -X DELETE 'https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}?force=true' > /dev/null 2>&1; sleep 3; done; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  if [ -n \"$AGENT_LIB_PARENT\" ]; then\n    timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', false))\\\" 2>/dev/null; lamaste-agent sync --label ${AGENT_LABEL} 2>/dev/null; true\" > /dev/null 2>&1\n  fi\n  if [ -n \"$LOCAL_TMP\" ]; then rm -rf \"$LOCAL_TMP\"; fi\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

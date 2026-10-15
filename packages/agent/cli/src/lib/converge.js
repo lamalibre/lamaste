@@ -1,4 +1,5 @@
 import { convergeChiselService, requireAgentConfig } from '@lamalibre/lamaste/agent';
+import { createPluginConfigDeliverer, repairAppHostRecord } from './app-host-jobs.js';
 import {
   acknowledgePluginConfig,
   fetchAgentConfig,
@@ -10,15 +11,21 @@ import {
 /**
  * Fetch this agent's configuration from its panel and converge the local
  * chisel client with it (see `convergeChiselService` in
- * @lamalibre/lamaste/agent). The one refresh path of every CLI command.
+ * @lamalibre/lamaste/agent). The one refresh path of every CLI command. A
+ * plugin config for an agent half the app host helper installed is handed
+ * to its service before it is acknowledged; `delivered` lists those routes.
  *
  * @param {string} label
  * @param {{ forceRestart?: boolean }} [options]
- * @returns {Promise<{ result: import('@lamalibre/lamaste/agent').ConvergeResult, response: object }>}
+ * @returns {Promise<{ result: import('@lamalibre/lamaste/agent').ConvergeResult, response: object, delivered: string[] }>}
  */
 export async function convergeWithPanel(label, options = {}) {
   const config = await requireAgentConfig(label);
   const response = await fetchAgentConfig(config);
+  // An unreadable record of the agent halves installed here is rebuilt from
+  // the helper's owner records; otherwise the config sync fails closed.
+  await repairAppHostRecord(label);
+  const deliverer = createPluginConfigDeliverer(label);
   const result = await convergeChiselService(
     label,
     response,
@@ -28,10 +35,11 @@ export async function convergeWithPanel(label, options = {}) {
       fetchPluginConfig: (route) => fetchPluginConfig(config, route),
       acknowledgePluginConfig: (route, issuedAt) =>
         acknowledgePluginConfig(config, route, issuedAt),
+      deliverPluginConfig: (route, pluginConfig) => deliverer.deliver(route, pluginConfig),
     },
     options,
   );
-  return { result, response };
+  return { result, response, delivered: deliverer.delivered };
 }
 
 /**

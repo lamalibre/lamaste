@@ -12,9 +12,8 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { validateVhost, assertSiteName } = require(
-  fileURLToPath(new URL('../scripts/lamaste-priv', import.meta.url)),
-);
+const priv = require(fileURLToPath(new URL('../scripts/lamaste-priv', import.meta.url)));
+const { validateVhost, assertSiteName } = priv;
 
 const server = (inner) => `server {\n listen 443 ssl;\n server_name a.example.com;\n${inner}\n}\n`;
 const location = (inner) => server(` location / {\n${inner}\n }`);
@@ -104,4 +103,29 @@ test('the IP vhost may only be switched on and off', () => {
   assert.doesNotThrow(() => assertSiteName('lamalibre-lamaste-panel-ip', 'enable'));
   assert.doesNotThrow(() => assertSiteName('lamalibre-lamaste-panel-ip', 'disable'));
   assert.throws(() => assertSiteName('lamalibre-lamaste-panel-ip', 'remove'));
+});
+
+test('hooks: plugin routes are validated before anything runs', () => {
+  for (const ok of ['fx', 'market-indicators', 'a1', 'x'.repeat(100)]) {
+    assert.doesNotThrow(() => priv.assertHookRoute(ok), ok);
+  }
+  for (const bad of [
+    '',
+    'FX',
+    '-fx',
+    'fx-',
+    'f/x',
+    '../etc',
+    'fx.sock',
+    'fx@1',
+    'x'.repeat(101),
+    'fx\n',
+  ]) {
+    assert.throws(() => priv.assertHookRoute(bad), priv.UsageError, JSON.stringify(bad));
+  }
+});
+
+test('hooks: refused unless run as root', () => {
+  if (process.getuid?.() === 0) return;
+  assert.throws(() => priv.main(['hooks', 'install', 'fx', 'none']), /must run as root/);
 });

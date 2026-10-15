@@ -53,6 +53,7 @@ export {
   updateAgentAllowedSites,
   revokeAgentCert,
   revokePluginCapabilitiesFromAgents,
+  stripPluginCapabilities,
 } from './mtls.js';
 export type {
   CertExpiry,
@@ -379,6 +380,11 @@ export {
   rotatePluginHostingSecret,
   acknowledgePluginHostingSecret,
   updatePluginHostingHealth,
+  setPluginHostingPhase,
+  setPluginHostingAgentHalf,
+  pluginHostingPhase,
+  pluginHostingOwner,
+  PLUGIN_HOSTING_PHASES,
   signingSecretFor,
   pluginHostingView,
   agentPluginConfigFor,
@@ -386,8 +392,10 @@ export {
 } from './plugin-hosting.js';
 export type {
   PluginHostingSecret,
+  PluginHostingAgentHalf,
   PluginHostingHealthState,
   PluginHostingHealth,
+  PluginHostingPhase,
   PluginHostingRecord,
   PluginHostingStore,
   PluginHostingView,
@@ -401,10 +409,13 @@ export {
   AGENT_HALF_ADMIN_PREFIX,
   AGENT_FORWARD_DEFAULTS,
   agentForwarderPlugin,
+  createHookedForwarder,
   forwardToAgentHalf,
   forwardedRequestHeaders,
   forwardedResponseHeaders,
   agentHalfPath,
+  isAgentHalfHooksPath,
+  callerLabel,
 } from './agent-forwarder.js';
 export type {
   AgentForwardTarget,
@@ -412,6 +423,9 @@ export type {
   AgentForwardResolution,
   AgentForwarderOptions,
   AgentForwarderLogger,
+  HookedForwarderOptions,
+  RequestHookRuntime,
+  RequestHookRun,
 } from './agent-forwarder.js';
 
 // --- Health monitor for hosted plugins ---
@@ -500,3 +514,28 @@ export type {
   AgentTokenBrokerOptions,
   AgentTokenAcquisition,
 } from './registry-credential.js';
+
+// Lifecycle hooks: the relay hook runner client and decision validation
+export {
+  HOOK_RUNNER_SOCKET_DIR,
+  HOOK_CALL_GRACE_MS,
+  hookRunnerSocketPath,
+  callRelayHook,
+} from './hook-client.js';
+export type { RelayHookCall, RelayHookOutcome, RelayHookFailureKind } from './hook-client.js';
+export {
+  HOOK_JSON_BODY_MAX_BYTES,
+  HOOK_OUTPUT_MAX_BYTES,
+  isHookEditableHeader,
+  validateHookDecision,
+  decisionEffects,
+} from './hook-decisions.js';
+export type { ValidatedDecision } from './hook-decisions.js';
+export { DEFAULT_TARBALL_LIMITS, readTarballFiles } from './tarball.js';
+export type { TarballLimits } from './tarball.js';
+export { callAgentHalfHook } from '../agent-hook-call.js';
+export type {
+  AgentHookCallFailure,
+  AgentHookCallOptions,
+  AgentHookCallResult,
+} from '../agent-hook-call.js';

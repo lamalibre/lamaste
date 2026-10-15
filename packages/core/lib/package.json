@@ -17,6 +17,10 @@
     "./server": {
       "types": "./dist/server/index.d.ts",
       "import": "./dist/server/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks/index.d.ts",
+      "import": "./dist/hooks/index.js"
     }
   },
   "files": [
@@ -44,10 +48,12 @@
   "dependencies": {
     "fastify": "^5.8.4",
     "js-yaml": "^4.1.1",
+    "semver": "^7.8.5",
     "zod": "^3.25.11"
   },
   "devDependencies": {
-    "@types/js-yaml": "^4.0.9"
+    "@types/js-yaml": "^4.0.9",
+    "@types/semver": "^7.8.0"
   },
   "peerDependencies": {
     "execa": "^9.0.0"

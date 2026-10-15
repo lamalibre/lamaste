@@ -6,6 +6,7 @@
  */
 
 import type { PluginHosting, PluginMode } from './constants.js';
+import type { HostEligibility } from './host-eligibility.js';
 import type { AgentBlock } from './schemas.js';
 
 // ---------------------------------------------------------------------------
@@ -219,15 +220,75 @@ export interface AdminClient {
   installPlugin(packageName: string): Promise<unknown>;
   enablePlugin(name: string): Promise<{ ok: boolean }>;
   disablePlugin(name: string): Promise<{ ok: boolean }>;
-  uninstallPlugin(name: string): Promise<{ ok: boolean }>;
+  /**
+   * Uninstall (the plugin must be disabled). A hosted plugin is removed by
+   * an operation (202 `{ operation }`) that runs its uninstall pipeline;
+   * `force` lets failing pre-teardown hooks pass, `purge` deletes the data
+   * directory and service account of the agent half Lamaste installed
+   * (kept by default; refused when it installed none).
+   */
+  uninstallPlugin(
+    name: string,
+    options?: { force?: boolean; purge?: boolean },
+  ): Promise<{ ok: boolean; operation?: unknown }>;
   fetchPluginBundle(name: string): Promise<string>;
-  // Agent-hosted plugins with an agent half: which agent hosts the plugin
+  // Agent-hosted plugins with an agent half: which agent hosts the plugin.
+  // Hosting and clearing it run the install / uninstall pipelines as
+  // operations (202 `{ operation }`). A refused operation rejects with an
+  // Error carrying the panel's message and, when it sent them, `code`
+  // (`agent_not_eligible`, `push_install_refused`, `hooks_not_approved`),
+  // `reasons` (why the agent cannot host the plugin) and `operationId`.
   getPluginHosting(name: string): Promise<{ hosting: unknown }>;
-  setPluginHosting(name: string, agentLabel: string): Promise<{ ok: boolean; hosting: unknown }>;
-  clearPluginHosting(name: string): Promise<{ ok: boolean }>;
+  /**
+   * The enrolled machine agents, each eligible to host the plugin or not
+   * with the reasons — its `agent.requires` and, when Lamaste installs the
+   * agent half, what installing it needs, against the agent's host facts.
+   */
+  getPluginHostingEligibility(
+    name: string,
+  ): Promise<{ agents: Array<HostEligibility & { readonly label: string }> }>;
+  setPluginHosting(name: string, agentLabel: string): Promise<{ ok: boolean; operation: unknown }>;
+  /** `force` and `purge` as for {@link AdminClient.uninstallPlugin}. */
+  clearPluginHosting(
+    name: string,
+    options?: { force?: boolean; purge?: boolean },
+  ): Promise<{ ok: boolean; operation: unknown }>;
   rotatePluginHostingSecret(name: string): Promise<{ ok: boolean; hosting: unknown }>;
-  getPushInstallConfig(): Promise<Record<string, unknown>>;
-  updatePushInstallConfig(data: Record<string, unknown>): Promise<unknown>;
+  getPluginOperations(name: string): Promise<{ operations: unknown[] }>;
+  getPluginOperation(name: string, id: string): Promise<{ operation: unknown }>;
+  // Lifecycle hooks and what needs approval — the relay hook set and the
+  // agent half Lamaste installs (`hooks.approval.digest` is what to approve)
+  // — auto-approve
+  getPluginHooks(name: string): Promise<{ hooks: unknown }>;
+  approvePluginHooks(
+    name: string,
+    digest: string,
+  ): Promise<{ ok: boolean; hooks?: unknown; operation?: unknown }>;
+  setPluginHooksAutoApprove(
+    name: string,
+    enabled: boolean,
+  ): Promise<{ ok: boolean; autoApprove: boolean }>;
+  // Updating an agent-hosted plugin in place
+  updatePlugin(
+    name: string,
+    version?: string,
+  ): Promise<{
+    ok: boolean;
+    upToDate?: boolean;
+    pendingUpdate?: unknown;
+    operation?: unknown;
+  }>;
+  discardPluginUpdate(name: string): Promise<{ ok: boolean }>;
+  // Push install: what lets the panel install, update and remove what
+  // Lamaste installs on an agent while that agent's window is open.
+  getPushInstallConfig(): Promise<{
+    enabled: boolean;
+    defaultPolicy: string;
+    policies: unknown[];
+    /** How long an agent's window may be opened for, in minutes. */
+    windowMinutes: { min: number; max: number };
+  }>;
+  updatePushInstallConfig(data: { enabled?: boolean; defaultPolicy?: string }): Promise<unknown>;
   getPushInstallPolicies(): Promise<{ policies: unknown[] }>;
   createPushInstallPolicy(data: Record<string, unknown>): Promise<unknown>;
   deletePushInstallPolicy(id: string): Promise<{ ok: boolean }>;
@@ -242,16 +303,38 @@ export interface AdminClient {
       allowedActions?: string[];
     },
   ): Promise<{ ok: boolean; policy: unknown }>;
+  /** Open (or reopen) agent `label`'s window for `durationMinutes`, within `windowMinutes`. */
   enablePushInstall(
     label: string,
     data: { durationMinutes: number; policyId?: string },
-  ): Promise<unknown>;
+  ): Promise<{
+    ok: boolean;
+    label: string;
+    pushInstallEnabledUntil: string;
+    pushInstallPolicy: string;
+  }>;
   disablePushInstall(label: string): Promise<{ ok: boolean }>;
   pushInstallCommand(
     label: string,
     data: { action: string; packageName?: string },
   ): Promise<unknown>;
   getPushInstallSessions(): Promise<{ sessions: unknown[] }>;
+
+  // Audit log and panel notifications
+  getAuditLog(query?: {
+    plugin?: string;
+    action?: string;
+    before?: number;
+    limit?: number;
+  }): Promise<{ entries: unknown[] }>;
+  getNotifications(query?: {
+    unread?: boolean;
+    before?: number;
+    limit?: number;
+  }): Promise<{ notifications: unknown[]; unread: number }>;
+  markNotificationsRead(
+    target: { ids: number[] } | { all: true },
+  ): Promise<{ ok: boolean; changed: number }>;
 
   // 2FA
   get2faStatus(): Promise<{ enabled: boolean; setupComplete: boolean }>;

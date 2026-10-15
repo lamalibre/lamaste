@@ -1,0 +1,1842 @@
+#!/usr/bin/node
+/**
+ * lamaste-apphost — the root half of a Lamaste agent that hosts the agent
+ * halves of agent-hosted plugins (protocol 1).
+ *
+ * The agent runs as an unprivileged user. Installing an agent half needs
+ * root — a system account, a system unit, directories under /opt, /var/lib
+ * and /etc, sometimes system packages — so it goes through this one program,
+ * which the agent's user may run through one sudoers rule
+ * (`/etc/sudoers.d/lamaste-apphost`, written by
+ * `sudo lamaste-agent apphost enable`). Plugin code never runs as root: it
+ * runs as the agent half's own account under a hardened unit generated here.
+ *
+ *   install <label> <route> <version> <integrity>
+ *                                  stdin: one line of JSON (the service spec),
+ *                                  "\n", then the package .tgz
+ *   config <label> <route>         stdin: the plugin config (port, secret)
+ *   activate <label> <route> <version>
+ *                                  point the agent half at a kept version
+ *   remove <label> <route> [--purge]
+ *                                  remove it; --purge also its data, its
+ *                                  account and its owner record
+ *   status [<route>]               the protocol, the Node.js this helper (and so
+ *                                  every agent half) runs on, and per agent
+ *                                  half: versions, unit state, owner (JSON)
+ *
+ * `<label>` is the agent's label on this machine. Several agents (of
+ * different relays) may share a machine; a route belongs to the agent that
+ * first installed it, recorded with the package in a root-owned owner
+ * record (/var/lib/lamalibre/apps/.owners/<route>.json). Another agent, or
+ * another package, is refused that route — and the data kept with it —
+ * until the owner purges it. The account an agent half runs as carries its
+ * route in its comment; an account that names another route (or none) is
+ * never reused, given files, or deleted.
+ *
+ * Every name and path is derived from validated arguments — the caller
+ * never names a path — and content arrives on stdin, so neither the
+ * tarball nor a secret is in the sudo log. Nothing read from stdin is ever
+ * echoed. The tarball is unpacked here, from the very entries checked, not
+ * by an external tar. The mutating commands print
+ * `{ "ok": true, "version", "unit" }`; errors go to stderr as one line
+ * starting with "lamaste-apphost: ". Exit status: 0 done, 1 failed,
+ * 2 refused (bad arguments or input), 3 that agent half is not installed
+ * (`config`, `activate`), 4 the route belongs to another agent or package.
+ *
+ * The names, paths and patterns below must equal those of
+ * `@lamalibre/lamaste` (`src/agent-half.ts`, `src/agent/registry.ts`); the
+ * agent CLI's tests compare them. This file is installed root-owned (0755)
+ * at /usr/local/sbin/lamaste-apphost and uses only Node.js built-ins, so it
+ * reads nothing the agent's user can write. It is CommonJS on purpose: an
+ * extension-less script outside any package is loaded as CommonJS by every
+ * supported Node.js version.
+ */
+
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const zlib = require('node:zlib');
+const { spawnSync } = require('node:child_process');
+
+const PROTOCOL_VERSION = 1;
+
+// ---------------------------------------------------------------------------
+// Names, paths and patterns (identical to @lamalibre/lamaste)
+// ---------------------------------------------------------------------------
+
+const ROUTE_RE = /^[a-z0-9]([a-z0-9-]{0,98}[a-z0-9])?$/;
+const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const VERSION_MAX = 100;
+const INTEGRITY_RE = /^sha512-[A-Za-z0-9+/]{86}==$/;
+const PACKAGE_RE = /^@lamalibre\/[a-z0-9][a-z0-9-]*$/;
+const PACKAGE_MAX = 214;
+const ENTRY_RE = /^(?!\/)(?!.*\.\.)(?!.*\/\/)(?!(?:.*\/)?\.\/)[A-Za-z0-9._/-]+\.(?:mjs|cjs|js)$/;
+const ENTRY_MAX = 200;
+const MEMORY_MAX_RE = /^[1-9][0-9]{0,5}[KMG]$/;
+const SYSTEM_PACKAGE_RE = /^[a-z0-9][a-z0-9+.-]*$/;
+const SYSTEM_PACKAGE_MAX = 100;
+const SYSTEM_PACKAGES_MAX = 50;
+/** systemd's strict limit for a user or group name. */
+const SERVICE_USER_MAX = 31;
+
+const APPS_CODE = '/opt/lamalibre/apps';
+const APPS_DATA = '/var/lib/lamalibre/apps';
+const APPS_CONFIG = '/etc/lamalibre/apps';
+/** Owner records: root 0755, beside the data directories (a route never starts with "."). */
+const OWNERS_DIR = `${APPS_DATA}/.owners`;
+/** Purged data waits here (root 0700) while it is deleted, out of its account's reach. */
+const TRASH_DIR = `${APPS_DATA}/.trash`;
+
+const PATHS = Object.freeze({
+  helper: '/usr/local/sbin/lamaste-apphost',
+  sudoers: '/etc/sudoers.d/lamaste-apphost',
+  codeDir: (route) => `${APPS_CODE}/${route}`,
+  dataDir: (route) => `${APPS_DATA}/${route}`,
+  configDir: (route) => `${APPS_CONFIG}/${route}`,
+  configFile: (route) => `${APPS_CONFIG}/${route}/plugin-config.json`,
+  ownerFile: (route) => `${OWNERS_DIR}/${route}.json`,
+});
+
+/**
+ * The account (user and group) an agent half runs as: `lamaste-app-<route>`
+ * while that is at most 30 characters, else `lamaste-app-<2 characters>-<16
+ * hex digits of SHA-256(route)>`, exactly 31 — the two forms never meet.
+ */
+function serviceUser(route) {
+  const name = `lamaste-app-${route}`;
+  if (name.length < SERVICE_USER_MAX) return name;
+  const hash = crypto.createHash('sha256').update(route).digest('hex').slice(0, 16);
+  return `lamaste-app-${route.slice(0, 2)}-${hash}`;
+}
+
+/** The comment (GECOS) of that account: the route that owns it. */
+function serviceAccountComment(route) {
+  return `lamaste-app route=${route}`;
+}
+
+/** The system unit an agent half runs as. */
+function unitName(route) {
+  return `lamalibre-app-${route}.service`;
+}
+
+const UNITS_DIR = '/etc/systemd/system';
+const LOCK_FILE = '/run/lamaste-apphost.lock';
+const SYSTEMD_RUNTIME = '/run/systemd/system';
+const OS_RELEASE = ['/etc/os-release', '/usr/lib/os-release'];
+
+/** The Node.js the units run, the same one this helper runs with (its shebang). */
+const NODE_BIN = '/usr/bin/node';
+
+const SYSTEMCTL = '/usr/bin/systemctl';
+const GETENT = '/usr/bin/getent';
+const USERADD = '/usr/sbin/useradd';
+const USERDEL = '/usr/sbin/userdel';
+const GROUPDEL = '/usr/sbin/groupdel';
+const APT_GET = '/usr/bin/apt-get';
+const DPKG_QUERY = '/usr/bin/dpkg-query';
+const NOLOGIN = '/usr/sbin/nologin';
+
+const BASE_ENV = Object.freeze({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LANG: 'C.UTF-8' });
+
+const SPEC_LINE_MAX = 64 * 1024;
+const TARBALL_MAX = 128 * 1024 * 1024;
+/** Largest unpacked archive; a 128 MiB tarball is already an outlier. */
+const UNPACKED_MAX = 512 * 1024 * 1024;
+const ENTRIES_MAX = 50_000;
+const PACKAGE_JSON_MAX = 1024 * 1024;
+const CONFIG_MAX = 64 * 1024;
+/** Agent halves one machine may hold. */
+const ROUTES_MAX = 50;
+/** Free space kept on top of what an unpacked package needs. */
+const FREE_SPACE_MARGIN = 64 * 1024 * 1024;
+/** What a file or directory costs beyond its bytes (a block, an inode). */
+const ENTRY_OVERHEAD = 4096;
+
+/** How long an operation waits for another one to finish. */
+const LOCK_WAIT_MS = Object.freeze({
+  install: 300_000,
+  config: 60_000,
+  activate: 60_000,
+  remove: 120_000,
+});
+/** A lock without a readable owner this young is being created, not stale. */
+const LOCK_YOUNG_MS = 10_000;
+
+class UsageError extends Error {}
+class NotInstalledError extends Error {}
+class NotOwnerError extends Error {}
+
+// ---------------------------------------------------------------------------
+// Argument validation
+// ---------------------------------------------------------------------------
+
+function assertRoute(route) {
+  if (typeof route !== 'string' || !ROUTE_RE.test(route)) {
+    throw new UsageError('invalid plugin route');
+  }
+}
+
+function assertLabel(label) {
+  if (typeof label !== 'string' || !LABEL_RE.test(label)) {
+    throw new UsageError('invalid agent label');
+  }
+}
+
+const SEMVER_NUMBER_RE = /^(?:0|[1-9]\d*)$/;
+
+/**
+ * A version as Lamaste's `AgentHalfVersionSchema` accepts it: x.y.z with an
+ * optional pre-release, valid semver (no leading zeros, no empty
+ * identifier, numbers within Number.MAX_SAFE_INTEGER).
+ */
+function isVersion(version) {
+  if (typeof version !== 'string' || version.length > VERSION_MAX || !VERSION_RE.test(version)) {
+    return false;
+  }
+  const dash = version.indexOf('-');
+  const core = (dash === -1 ? version : version.slice(0, dash)).split('.');
+  if (!core.every((n) => SEMVER_NUMBER_RE.test(n) && Number(n) <= Number.MAX_SAFE_INTEGER)) {
+    return false;
+  }
+  if (dash === -1) return true;
+  return version
+    .slice(dash + 1)
+    .split('.')
+    .every((id) => id.length > 0 && (!/^\d+$/.test(id) || SEMVER_NUMBER_RE.test(id)));
+}
+
+function assertVersion(version) {
+  if (!isVersion(version)) throw new UsageError('invalid version');
+}
+
+function assertIntegrity(integrity) {
+  if (typeof integrity !== 'string' || !INTEGRITY_RE.test(integrity)) {
+    throw new UsageError('integrity must be the sha512 SRI of the package tarball');
+  }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactly(object, keys) {
+  const own = Object.keys(object).sort();
+  return own.length === keys.length && [...keys].sort().every((k, i) => own[i] === k);
+}
+
+/** The service spec (first line of `install`'s stdin), checked field by field. */
+function parseSpecLine(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new UsageError('the service spec is not JSON');
+  }
+  if (!isRecord(raw) || !hasExactly(raw, ['package', 'service', 'systemPackages'])) {
+    throw new UsageError('the service spec has missing or unexpected fields');
+  }
+  const { package: pkg, service, systemPackages } = raw;
+  if (typeof pkg !== 'string' || pkg.length > PACKAGE_MAX || !PACKAGE_RE.test(pkg)) {
+    throw new UsageError('the service spec names an invalid package');
+  }
+  if (!isRecord(service) || !hasExactly(service, ['entry', 'memoryMax'])) {
+    throw new UsageError('the service spec has an invalid service');
+  }
+  const { entry, memoryMax } = service;
+  if (typeof entry !== 'string' || entry.length > ENTRY_MAX || !ENTRY_RE.test(entry)) {
+    throw new UsageError('the service entry is not a relative .js, .mjs or .cjs path');
+  }
+  if (memoryMax !== null && (typeof memoryMax !== 'string' || !MEMORY_MAX_RE.test(memoryMax))) {
+    throw new UsageError('memoryMax is not a size such as 512M');
+  }
+  if (
+    !Array.isArray(systemPackages) ||
+    systemPackages.length > SYSTEM_PACKAGES_MAX ||
+    !systemPackages.every(
+      (p) => typeof p === 'string' && p.length <= SYSTEM_PACKAGE_MAX && SYSTEM_PACKAGE_RE.test(p),
+    )
+  ) {
+    throw new UsageError('the service spec lists invalid system packages');
+  }
+  return {
+    package: pkg,
+    service: { entry, memoryMax },
+    systemPackages: [...new Set(systemPackages)].sort(),
+  };
+}
+
+const SECRET_RE = /^[a-f0-9]{64}$/;
+const STAMP_RE = /^[\x20-\x7e]{1,64}$/;
+const CONFIG_KEYS = new Set([
+  'plugin',
+  'port',
+  'secret',
+  'issuedAt',
+  'previousSecret',
+  'previousIssuedAt',
+  'fetchedAt',
+  'acknowledged',
+]);
+
+/**
+ * The plugin config (`config`'s stdin), in the shape the agent stores it
+ * and the agent half reads it (`readAppPluginConfigFile`). Errors never
+ * quote a value.
+ */
+function parsePluginConfig(bytes, route) {
+  let raw;
+  try {
+    raw = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new UsageError('the plugin config is not JSON');
+  }
+  if (!isRecord(raw) || !Object.keys(raw).every((k) => CONFIG_KEYS.has(k))) {
+    throw new UsageError('the plugin config has unexpected fields');
+  }
+  if (raw.plugin !== route) throw new UsageError('the plugin config is for another plugin');
+  if (!Number.isInteger(raw.port) || raw.port < 1 || raw.port > 65535) {
+    throw new UsageError('the plugin config has no valid port');
+  }
+  if (typeof raw.secret !== 'string' || !SECRET_RE.test(raw.secret)) {
+    throw new UsageError('the plugin config has no valid secret');
+  }
+  for (const key of ['issuedAt', 'fetchedAt']) {
+    if (typeof raw[key] !== 'string' || !STAMP_RE.test(raw[key])) {
+      throw new UsageError(`the plugin config has no valid ${key}`);
+    }
+  }
+  if (
+    raw.previousSecret !== undefined &&
+    (typeof raw.previousSecret !== 'string' || !SECRET_RE.test(raw.previousSecret))
+  ) {
+    throw new UsageError('the plugin config has an invalid previousSecret');
+  }
+  if (
+    raw.previousIssuedAt !== undefined &&
+    (typeof raw.previousIssuedAt !== 'string' || !STAMP_RE.test(raw.previousIssuedAt))
+  ) {
+    throw new UsageError('the plugin config has an invalid previousIssuedAt');
+  }
+  if (raw.acknowledged !== undefined && typeof raw.acknowledged !== 'boolean') {
+    throw new UsageError('the plugin config has an invalid acknowledged flag');
+  }
+  const config = {
+    plugin: raw.plugin,
+    port: raw.port,
+    secret: raw.secret,
+    issuedAt: raw.issuedAt,
+    fetchedAt: raw.fetchedAt,
+  };
+  if (raw.previousSecret !== undefined) config.previousSecret = raw.previousSecret;
+  if (raw.previousIssuedAt !== undefined) config.previousIssuedAt = raw.previousIssuedAt;
+  if (raw.acknowledged !== undefined) config.acknowledged = raw.acknowledged;
+  return config;
+}
+
+// ---------------------------------------------------------------------------
+// Context: the file system root and the commands (replaced by the tests)
+// ---------------------------------------------------------------------------
+
+function runCommand(file, args, { input, env, timeoutMs } = {}) {
+  const result = spawnSync(file, args, {
+    cwd: '/',
+    env: { ...BASE_ENV, ...env },
+    input,
+    encoding: 'utf8',
+    timeout: timeoutMs ?? 120_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: result.error,
+  };
+}
+
+/** Bytes a non-root user may still allocate on the file system holding `p`. */
+function freeBytes(p) {
+  const st = fs.statfsSync(p);
+  return st.bavail * st.bsize;
+}
+
+/**
+ * `root` prefixes every path (a test sandbox; "/" in production), `run`
+ * runs a command (`spawnSync` semantics), `chown` sets an owner,
+ * `rootUid`/`rootGid` own what belongs to root, `freeBytes` measures free
+ * space, `stdin` replaces fd 0 (bytes, or a function returning them),
+ * `lockWaitMs` shortens every wait for the lock.
+ */
+function createContext(options = {}) {
+  return {
+    root: options.root ?? '/',
+    run: options.run ?? runCommand,
+    chown: options.chown ?? ((p, uid, gid) => fs.lchownSync(p, uid, gid)),
+    rootUid: options.rootUid ?? 0,
+    rootGid: options.rootGid ?? 0,
+    freeBytes: options.freeBytes ?? freeBytes,
+    stdin: options.stdin,
+    lockWaitMs: options.lockWaitMs,
+  };
+}
+
+function at(ctx, absolute) {
+  return ctx.root === '/' ? absolute : path.join(ctx.root, absolute);
+}
+
+function lastLines(text, count) {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-count)
+    .join(' / ')
+    .slice(0, 300);
+}
+
+function mustRun(ctx, file, args, options = {}) {
+  const result = ctx.run(file, args, options);
+  if (result.error) {
+    throw new Error(`${path.basename(file)} could not run: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `${path.basename(file)} ${args[0] ?? ''} exited with status ${result.status}: ` +
+        lastLines(result.stderr || result.stdout, 3),
+    );
+  }
+  return result;
+}
+
+function systemctl(ctx, args, { allowFailure = false } = {}) {
+  const result = ctx.run(SYSTEMCTL, args, { timeoutMs: 90_000 });
+  if (result.error) throw new Error(`systemctl could not run: ${result.error.message}`);
+  if (result.status !== 0 && !allowFailure) {
+    throw new Error(
+      `systemctl ${args.join(' ')} exited with status ${result.status}: ${lastLines(result.stderr, 3)}`,
+    );
+  }
+  return result;
+}
+
+function readInput(ctx, maxBytes) {
+  if (ctx.stdin !== undefined) {
+    const input = typeof ctx.stdin === 'function' ? ctx.stdin() : ctx.stdin;
+    if (input.length > maxBytes) throw new UsageError('input is too large');
+    return input;
+  }
+  const chunks = [];
+  let total = 0;
+  const buf = Buffer.alloc(1024 * 1024);
+  for (;;) {
+    let read;
+    try {
+      read = fs.readSync(0, buf, 0, buf.length, null);
+    } catch (err) {
+      if (err.code === 'EAGAIN') continue;
+      if (err.code === 'EOF') break;
+      throw err;
+    }
+    if (read === 0) break;
+    total += read;
+    if (total > maxBytes) throw new UsageError('input is too large');
+    chunks.push(Buffer.from(buf.subarray(0, read)));
+  }
+  return Buffer.concat(chunks);
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem helpers
+// ---------------------------------------------------------------------------
+
+function lstatOrNull(p) {
+  try {
+    return fs.lstatSync(p);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function isFile(p) {
+  const st = lstatOrNull(p);
+  return st !== null && st.isFile();
+}
+
+function readOrNull(p) {
+  try {
+    return fs.readFileSync(p, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function fsyncDir(dir) {
+  const fd = fs.openSync(dir, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const CREATE_EXCL =
+  fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
+
+/** Atomically replace `dest` (temp file, fsync, owner, rename); `owner` defaults to root. */
+function atomicWrite(ctx, dest, content, mode, owner) {
+  const dir = path.dirname(dest);
+  const tmp = path.join(dir, `.lamaste-apphost-${crypto.randomBytes(8).toString('hex')}`);
+  const fd = fs.openSync(tmp, CREATE_EXCL, 0o600);
+  try {
+    try {
+      fs.writeSync(fd, content);
+      fs.fchmodSync(fd, mode);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    ctx.chown(tmp, owner ? owner.uid : ctx.rootUid, owner ? owner.gid : ctx.rootGid);
+    fs.renameSync(tmp, dest);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  fsyncDir(dir);
+}
+
+/**
+ * Create `dir` (`mode`, root) unless it exists; refuse anything but a
+ * root-owned directory nobody else may write.
+ */
+function ensureRootDirectory(ctx, dir, mode = 0o755) {
+  try {
+    fs.mkdirSync(dir, { mode });
+    ctx.chown(dir, ctx.rootUid, ctx.rootGid);
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+  }
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== ctx.rootUid || (st.mode & 0o022) !== 0) {
+    throw new Error(`${dir} is not a root-owned directory`);
+  }
+}
+
+/** Delete a directory tree this helper owns; refuse anything else at that path. */
+function removeTree(ctx, dir, { rootOwned = true } = {}) {
+  const st = lstatOrNull(dir);
+  if (st === null) return false;
+  if (!st.isDirectory() || (rootOwned && st.uid !== ctx.rootUid)) {
+    throw new Error(`${dir} is not a directory this helper manages`);
+  }
+  // rmSync never follows a symbolic link inside the tree.
+  fs.rmSync(dir, { recursive: true, force: true });
+  return true;
+}
+
+function replaceSymlink(link, target) {
+  const tmp = path.join(
+    path.dirname(link),
+    `.lamaste-apphost-${crypto.randomBytes(8).toString('hex')}`,
+  );
+  fs.symlinkSync(target, tmp);
+  try {
+    fs.renameSync(tmp, link);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/** The version a `current`/`previous` link of a code directory points at, or null. */
+function linkedVersion(codeDir, name) {
+  let target;
+  try {
+    target = fs.readlinkSync(path.join(codeDir, name));
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'EINVAL') return null;
+    throw err;
+  }
+  if (!isVersion(target)) return null;
+  const st = lstatOrNull(path.join(codeDir, target));
+  return st !== null && st.isDirectory() ? target : null;
+}
+
+// ---------------------------------------------------------------------------
+// The lock: one mutating operation at a time
+// ---------------------------------------------------------------------------
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+/**
+ * Take the helper's lock (`/run/lamaste-apphost.lock`). The lock is created
+ * with its content in one step — the owner's PID is written to a temp file
+ * that is then hard-linked to the lock path — so no other operation ever
+ * sees it empty. A lock whose owner is gone is taken over; one without a
+ * readable owner is left alone while it is young. Returns the release.
+ */
+function acquireLock(ctx, waitMs) {
+  const lockPath = at(ctx, LOCK_FILE);
+  const content = `${process.pid}\n`;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const tmp = `${lockPath}.${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+    const fd = fs.openSync(tmp, CREATE_EXCL, 0o600);
+    try {
+      fs.writeSync(fd, content);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    let taken = false;
+    try {
+      fs.linkSync(tmp, lockPath);
+      taken = true;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+    if (taken) {
+      return () => {
+        if (readOrNull(lockPath) === content) fs.rmSync(lockPath, { force: true });
+      };
+    }
+
+    const held = readOrNull(lockPath);
+    if (held === null) continue;
+    const owner = /^([1-9][0-9]{0,9})\n$/.exec(held);
+    const pid = owner ? Number(owner[1]) : null;
+    let stale;
+    if (pid === null) {
+      const st = lstatOrNull(lockPath);
+      stale = st !== null && Date.now() - st.mtimeMs > LOCK_YOUNG_MS;
+    } else {
+      stale = !processAlive(pid);
+    }
+    if (stale) {
+      // Take over by renaming it aside — only one contender can — and give
+      // it back if a live owner took the lock in between.
+      const aside = `${lockPath}.stale-${crypto.randomBytes(8).toString('hex')}`;
+      try {
+        fs.renameSync(lockPath, aside);
+      } catch (err) {
+        if (err.code === 'ENOENT') continue;
+        throw err;
+      }
+      const moved = readOrNull(aside);
+      if (moved !== null && moved !== held) {
+        try {
+          fs.linkSync(aside, lockPath);
+        } catch {
+          // A third operation holds the lock now; it is the owner.
+        }
+      }
+      fs.rmSync(aside, { force: true });
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `another lamaste-apphost operation is still running${pid ? ` (PID ${pid})` : ''}`,
+      );
+    }
+    sleep(200);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The package tarball: checked, then unpacked from the checked entries
+// ---------------------------------------------------------------------------
+
+function sri(bytes) {
+  return `sha512-${crypto.createHash('sha512').update(bytes).digest('base64')}`;
+}
+
+const BLOCK = 512;
+/** Regular file, directory, and the PAX header describing the next entry. */
+const TAR_TYPES = new Set(['0', '\0', '5', 'x']);
+const PAX_KEYS = new Set([
+  'path',
+  'size',
+  'mtime',
+  'atime',
+  'ctime',
+  'uid',
+  'gid',
+  'uname',
+  'gname',
+  'mode',
+  'dev',
+  'ino',
+  'nlink',
+  'comment',
+]);
+
+function cString(buf, start, length) {
+  const slice = buf.subarray(start, start + length);
+  const nul = slice.indexOf(0);
+  return slice.subarray(0, nul === -1 ? slice.length : nul).toString('utf8');
+}
+
+function tarNumber(buf, start, length, what) {
+  const text = cString(buf, start, length).trim();
+  if (text === '') return 0;
+  if (!/^[0-7]+$/.test(text)) throw new UsageError(`the package tarball has a malformed ${what}`);
+  return Number.parseInt(text, 8);
+}
+
+function badPax() {
+  return new UsageError('the package tarball has a malformed PAX header');
+}
+
+/**
+ * A PAX extended header, strictly: records of `<length> <keyword>=<value>\n`
+ * where the length is decimal without sign or leading zero, followed by
+ * exactly one space, and counts the whole record including its newline.
+ * Only the fields npm writes are accepted, each at most once.
+ */
+function parsePax(data) {
+  const out = {};
+  let at = 0;
+  while (at < data.length) {
+    let i = at;
+    while (i < data.length && data[i] >= 0x30 && data[i] <= 0x39) i++;
+    const digits = data.subarray(at, i).toString('ascii');
+    if (!/^[1-9][0-9]{0,8}$/.test(digits) || data[i] !== 0x20) throw badPax();
+    const end = at + Number(digits);
+    if (end > data.length || end <= i + 2 || data[end - 1] !== 0x0a) throw badPax();
+    const record = data.subarray(i + 1, end - 1).toString('utf8');
+    const eq = record.indexOf('=');
+    if (eq <= 0) throw badPax();
+    const key = record.slice(0, eq);
+    if (!PAX_KEYS.has(key)) {
+      throw new UsageError(
+        `the package tarball uses an unsupported PAX field (${key.slice(0, 40)})`,
+      );
+    }
+    if (Object.hasOwn(out, key)) throw badPax();
+    out[key] = record.slice(eq + 1);
+    at = end;
+  }
+  return out;
+}
+
+function assertArchivePath(name, isDir) {
+  const p = isDir && name.endsWith('/') ? name.slice(0, -1) : name;
+  // eslint-disable-next-line no-control-regex
+  if (p.length === 0 || p.length > 1024 || /[\x00-\x1f\x7f\\]/.test(p)) {
+    throw new UsageError('the package tarball has an entry with an invalid name');
+  }
+  const segments = p.split('/');
+  if (segments.some((s) => s === '' || s === '.' || s === '..')) {
+    throw new UsageError('the package tarball has an entry with an invalid name');
+  }
+  if (segments[0] !== 'package' || (!isDir && segments.length < 2)) {
+    throw new UsageError('the package tarball has an entry outside package/');
+  }
+  return p;
+}
+
+/**
+ * Check every entry of the unpacked archive: POSIX ustar (as npm writes
+ * it) with valid checksums, only regular files and directories, every path
+ * inside `package/` without `.`, `..` or empty segments, each at most once,
+ * nothing after the end-of-archive marker. Links, devices, FIFOs and the
+ * GNU and global-PAX extensions are refused. Returns the entries
+ * (`{ path, dir, start, end }`, offsets into `tar`) and their total size —
+ * exactly what {@link extractEntries} writes.
+ */
+function scanTarball(tar) {
+  let at = 0;
+  let pax = null;
+  let bytes = 0;
+  const entries = [];
+  const seen = new Set();
+  while (at + BLOCK <= tar.length) {
+    const header = tar.subarray(at, at + BLOCK);
+    if (header.every((b) => b === 0)) {
+      if (!tar.subarray(at).every((b) => b === 0)) {
+        throw new UsageError('the package tarball has data after its end');
+      }
+      if (pax !== null) throw new UsageError('the package tarball ends with a PAX header');
+      return { entries, bytes };
+    }
+    let sum = 0;
+    for (let i = 0; i < BLOCK; i++) sum += i >= 148 && i < 156 ? 0x20 : header[i];
+    if (tarNumber(header, 148, 8, 'checksum') !== sum) {
+      throw new UsageError('the package tarball has a corrupt header');
+    }
+    if (
+      cString(header, 257, 6) !== 'ustar' ||
+      header.subarray(263, 265).toString('ascii') !== '00'
+    ) {
+      throw new UsageError('the package tarball is not a POSIX ustar archive');
+    }
+    const type = String.fromCharCode(header[156]);
+    if (!TAR_TYPES.has(type)) {
+      throw new UsageError(
+        'the package tarball holds something other than files and directories (a link or device)',
+      );
+    }
+    let size = tarNumber(header, 124, 12, 'size');
+    if (type !== 'x' && pax !== null && pax.size !== undefined) {
+      if (!/^(0|[1-9][0-9]{0,14})$/.test(pax.size)) {
+        throw new UsageError('the package tarball has a bad size');
+      }
+      size = Number(pax.size);
+    }
+    const dataStart = at + BLOCK;
+    const dataEnd = dataStart + size;
+    if (dataEnd > tar.length) throw new UsageError('the package tarball is truncated');
+    if (type === 'x') {
+      if (pax !== null) throw new UsageError('the package tarball has two PAX headers in a row');
+      pax = parsePax(tar.subarray(dataStart, dataEnd));
+    } else {
+      const prefix = cString(header, 345, 155);
+      const name = cString(header, 0, 100);
+      const full =
+        pax !== null && pax.path !== undefined ? pax.path : prefix ? `${prefix}/${name}` : name;
+      const dir = type === '5';
+      if (dir && size !== 0) throw new UsageError('the package tarball has a directory with data');
+      const p = assertArchivePath(full, dir);
+      if (seen.has(p)) throw new UsageError('the package tarball has an entry twice');
+      seen.add(p);
+      pax = null;
+      if (entries.length >= ENTRIES_MAX) {
+        throw new UsageError('the package tarball has too many entries');
+      }
+      entries.push({ path: p, dir, start: dataStart, end: dataEnd });
+      bytes += size;
+    }
+    at = dataStart + Math.ceil(size / BLOCK) * BLOCK;
+  }
+  throw new UsageError('the package tarball has no end-of-archive marker');
+}
+
+function gunzip(tgz) {
+  try {
+    return zlib.gunzipSync(tgz, { maxOutputLength: UNPACKED_MAX });
+  } catch (err) {
+    if (err instanceof RangeError || err.code === 'ERR_BUFFER_TOO_LARGE') {
+      throw new UsageError('the package tarball unpacks to more than 512 MiB');
+    }
+    throw new UsageError('the package tarball is not gzip data');
+  }
+}
+
+/** A directory of the staged tree: created 0755 when missing, refused when it is anything else. */
+function stagedDirectory(dir) {
+  try {
+    fs.mkdirSync(dir, { mode: 0o755 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    if (!fs.lstatSync(dir).isDirectory()) {
+      throw new UsageError('the package tarball has a file and a directory of the same name');
+    }
+  }
+}
+
+/**
+ * Write the checked entries into `staging` (root 0700): directories 0755,
+ * regular files created exclusively without following links, 0644. What
+ * is written is exactly what {@link scanTarball} checked; directories an
+ * archive leaves implicit are created on the way.
+ */
+function extractEntries(tar, entries, staging) {
+  for (const entry of entries) {
+    const segments = entry.path.split('/');
+    let dir = staging;
+    for (const segment of segments.slice(0, entry.dir ? segments.length : -1)) {
+      dir = path.join(dir, segment);
+      stagedDirectory(dir);
+    }
+    if (entry.dir) continue;
+    let fd;
+    try {
+      fd = fs.openSync(path.join(staging, ...segments), CREATE_EXCL, 0o644);
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        throw new UsageError('the package tarball has a file and a directory of the same name');
+      }
+      throw err;
+    }
+    try {
+      const data = tar.subarray(entry.start, entry.end);
+      let written = 0;
+      while (written < data.length) written += fs.writeSync(fd, data, written);
+      fs.fchmodSync(fd, 0o644);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+}
+
+/**
+ * The staged tree, once more: `package/` and below it only directories and
+ * regular files with one link each. Every entry becomes root-owned,
+ * directories 0755, files 0644 — readable by the agent half, writable only
+ * by root, no set-id or executable bit.
+ */
+function validateTree(ctx, staging) {
+  const top = fs.readdirSync(staging);
+  if (top.length !== 1 || top[0] !== 'package') {
+    throw new UsageError('the package tarball unpacks to something other than package/');
+  }
+  let count = 0;
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      const p = path.join(dir, name);
+      const st = fs.lstatSync(p);
+      if (++count > ENTRIES_MAX) throw new UsageError('the package tarball has too many entries');
+      if (st.isDirectory()) {
+        fs.chmodSync(p, 0o755);
+        ctx.chown(p, ctx.rootUid, ctx.rootGid);
+        walk(p);
+      } else if (st.isFile()) {
+        if (st.nlink !== 1) throw new UsageError('the package tarball holds a hard link');
+        fs.chmodSync(p, 0o644);
+        ctx.chown(p, ctx.rootUid, ctx.rootGid);
+      } else {
+        throw new UsageError('the package tarball holds a link, device or other special file');
+      }
+    }
+  };
+  const pkgDir = path.join(staging, 'package');
+  if (!fs.lstatSync(pkgDir).isDirectory()) {
+    throw new UsageError('the package tarball has no package/ directory');
+  }
+  fs.chmodSync(pkgDir, 0o755);
+  ctx.chown(pkgDir, ctx.rootUid, ctx.rootGid);
+  walk(pkgDir);
+}
+
+/**
+ * The bundled rule: the package is the one the spec names at `version`,
+ * declares no dependency to install and no install script, is no native
+ * addon, and its entry is a file. Then the tarball is the whole code.
+ */
+function checkPackage(pkgDir, spec, version) {
+  const manifestPath = path.join(pkgDir, 'package.json');
+  const st = lstatOrNull(manifestPath);
+  if (st === null || !st.isFile() || st.size > PACKAGE_JSON_MAX) {
+    throw new UsageError('the package has no readable package.json');
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    throw new UsageError('the package.json of the package is not JSON');
+  }
+  if (!isRecord(manifest)) throw new UsageError('the package.json of the package is not an object');
+  if (manifest.name !== spec.package) {
+    throw new UsageError(`the tarball is not ${spec.package}`);
+  }
+  if (manifest.version !== version) {
+    throw new UsageError(`the tarball is not version ${version}`);
+  }
+  for (const field of ['dependencies', 'optionalDependencies']) {
+    const deps = manifest[field];
+    if (deps !== undefined && deps !== null && (!isRecord(deps) || Object.keys(deps).length > 0)) {
+      throw new UsageError(`the agent package must be bundled, but it declares ${field}`);
+    }
+  }
+  for (const field of ['bundleDependencies', 'bundledDependencies']) {
+    const deps = manifest[field];
+    if (deps === true || (Array.isArray(deps) && deps.length > 0)) {
+      throw new UsageError(`the agent package must be bundled, but it declares ${field}`);
+    }
+  }
+  if (isRecord(manifest.scripts)) {
+    for (const script of ['preinstall', 'install', 'postinstall']) {
+      if (Object.hasOwn(manifest.scripts, script)) {
+        throw new UsageError(`the agent package must not have a ${script} script`);
+      }
+    }
+  }
+  // npm runs `node-gyp rebuild` for a package with binding.gyp — an install
+  // script by another name, and a native addon the bundled rule rules out.
+  if (lstatOrNull(path.join(pkgDir, 'binding.gyp')) !== null) {
+    throw new UsageError('the agent package is a native addon (binding.gyp)');
+  }
+  if (!isFile(path.join(pkgDir, spec.service.entry))) {
+    throw new UsageError(`the service entry ${spec.service.entry} is not a file in the package`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Ownership: the owner record of a route, the account of an agent half
+// ---------------------------------------------------------------------------
+
+/** The owner record of `route`, or null. A record that does not parse is refused, not ignored. */
+function readOwner(ctx, route) {
+  const text = readOrNull(at(ctx, PATHS.ownerFile(route)));
+  if (text === null) return null;
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    raw = null;
+  }
+  if (
+    !isRecord(raw) ||
+    raw.route !== route ||
+    typeof raw.package !== 'string' ||
+    !PACKAGE_RE.test(raw.package) ||
+    typeof raw.label !== 'string' ||
+    !LABEL_RE.test(raw.label)
+  ) {
+    throw new Error(
+      `the owner record ${PATHS.ownerFile(route)} is unreadable; repair or delete it by hand`,
+    );
+  }
+  return { package: raw.package, label: raw.label, since: String(raw.since ?? '') };
+}
+
+function writeOwner(ctx, route, owner) {
+  ensureRootDirectory(ctx, at(ctx, '/var/lib/lamalibre'));
+  ensureRootDirectory(ctx, at(ctx, APPS_DATA));
+  ensureRootDirectory(ctx, at(ctx, OWNERS_DIR));
+  atomicWrite(
+    ctx,
+    at(ctx, PATHS.ownerFile(route)),
+    `${JSON.stringify({ route, package: owner.package, label: owner.label, since: owner.since })}\n`,
+    0o644,
+  );
+}
+
+function purgeCommand(label, route) {
+  return `sudo ${PATHS.helper} remove ${label} ${route} --purge`;
+}
+
+/**
+ * Only the agent that owns `route` acts on it. For an install the package
+ * must match too: a route's kept data is never handed to another package
+ * or another agent — the owner purges it first.
+ */
+function assertOwner(ctx, route, label, pkg) {
+  const owner = readOwner(ctx, route);
+  if (owner === null) return null;
+  if (owner.label !== label || (pkg !== undefined && owner.package !== pkg)) {
+    throw new NotOwnerError(
+      `${route} belongs to ${owner.package} installed by agent "${owner.label}"` +
+        (pkg !== undefined ? `, not ${pkg} from agent "${label}"` : `, not agent "${label}"`) +
+        `; its data is kept for it — remove it with purge first (on that agent's panel, or ` +
+        `${purgeCommand(owner.label, route)})`,
+    );
+  }
+  return owner;
+}
+
+function getent(ctx, database, name) {
+  const result = ctx.run(GETENT, [database, name], { timeoutMs: 30_000 });
+  if (result.error) throw new Error(`getent could not run: ${result.error.message}`);
+  if (result.status === 2) return null;
+  if (result.status !== 0) {
+    throw new Error(`getent ${database} exited with status ${result.status}`);
+  }
+  const fields = result.stdout.split('\n')[0].split(':');
+  if (database === 'passwd') {
+    const uid = Number.parseInt(fields[2], 10);
+    const gid = Number.parseInt(fields[3], 10);
+    if (!Number.isInteger(uid) || !Number.isInteger(gid)) {
+      throw new Error(`getent: malformed entry for ${name}`);
+    }
+    return { uid, gid, comment: fields[4] ?? '' };
+  }
+  const gid = Number.parseInt(fields[2], 10);
+  if (!Number.isInteger(gid)) throw new Error(`getent: malformed entry for ${name}`);
+  return { gid };
+}
+
+/**
+ * The agent half's account when it exists, checked: its comment names this
+ * route, it is not privileged. An account of the same name that names
+ * another route — or carries no record — is not this agent half's.
+ */
+function serviceAccount(ctx, route) {
+  const name = serviceUser(route);
+  const entry = getent(ctx, 'passwd', name);
+  if (entry === null) return null;
+  if (entry.comment !== serviceAccountComment(route)) {
+    throw new NotOwnerError(
+      `the account ${name} exists but is not the account of ${route} ` +
+        `(its comment is not "${serviceAccountComment(route)}"); refusing to use it`,
+    );
+  }
+  if (entry.uid === 0 || entry.gid === 0) {
+    throw new Error(`the account ${name} is privileged; an agent half never runs as root`);
+  }
+  return { name, uid: entry.uid, gid: entry.gid };
+}
+
+/** The agent half's system account (nologin, no home), created when absent. */
+function ensureServiceAccount(ctx, route) {
+  const existing = serviceAccount(ctx, route);
+  if (existing !== null) return { account: existing, created: false };
+  const name = serviceUser(route);
+  if (getent(ctx, 'group', name) !== null) {
+    throw new NotOwnerError(
+      `a group named ${name} exists without its account; it is not adopted — remove it first`,
+    );
+  }
+  mustRun(ctx, USERADD, [
+    '--system',
+    '--user-group',
+    '--comment',
+    serviceAccountComment(route),
+    '--no-create-home',
+    '--home-dir',
+    '/nonexistent',
+    '--shell',
+    NOLOGIN,
+    name,
+  ]);
+  const account = serviceAccount(ctx, route);
+  if (account === null) throw new Error(`useradd did not create ${name}`);
+  return { account, created: true };
+}
+
+/** Delete the agent half's account — only one that is provably its own. */
+function deleteServiceAccount(ctx, route) {
+  const account = serviceAccount(ctx, route);
+  if (account === null) return;
+  mustRun(ctx, USERDEL, [account.name]);
+  // userdel removes the account's own group; one left behind is deleted
+  // only while it is still that group.
+  const group = getent(ctx, 'group', account.name);
+  if (group !== null && group.gid === account.gid) mustRun(ctx, GROUPDEL, [account.name]);
+}
+
+// ---------------------------------------------------------------------------
+// The service: directories, system packages, unit
+// ---------------------------------------------------------------------------
+
+/** /var/lib/lamalibre/apps/<route>: 0700, owned by the account; kept across versions. */
+function ensureDataDir(ctx, route, account) {
+  ensureRootDirectory(ctx, at(ctx, '/var/lib/lamalibre'));
+  ensureRootDirectory(ctx, at(ctx, APPS_DATA));
+  const dir = at(ctx, PATHS.dataDir(route));
+  let created = true;
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    created = false;
+  }
+  if (!fs.lstatSync(dir).isDirectory()) {
+    throw new Error(`${PATHS.dataDir(route)} is not a directory`);
+  }
+  // Only the directory itself: a recursive chown as root could be steered
+  // by links the agent half created inside it.
+  ctx.chown(dir, account.uid, account.gid);
+  fs.chmodSync(dir, 0o700);
+  return created;
+}
+
+/** /etc/lamalibre/apps/<route>: 0750 root:<account's group>. */
+function ensureConfigDir(ctx, route, account) {
+  ensureRootDirectory(ctx, at(ctx, '/etc/lamalibre'));
+  ensureRootDirectory(ctx, at(ctx, APPS_CONFIG));
+  const dir = at(ctx, PATHS.configDir(route));
+  let created = true;
+  try {
+    fs.mkdirSync(dir, { mode: 0o750 });
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    created = false;
+  }
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== ctx.rootUid) {
+    throw new Error(`${PATHS.configDir(route)} is not a root-owned directory`);
+  }
+  ctx.chown(dir, ctx.rootUid, account.gid);
+  fs.chmodSync(dir, 0o750);
+  return created;
+}
+
+/**
+ * Purge the data directory: first moved into a root-only trash directory,
+ * out of the account's reach, then deleted there.
+ */
+function purgeDataDir(ctx, route) {
+  const dir = at(ctx, PATHS.dataDir(route));
+  const st = lstatOrNull(dir);
+  if (st === null) return;
+  if (!st.isDirectory()) throw new Error(`${PATHS.dataDir(route)} is not a directory`);
+  const trash = at(ctx, TRASH_DIR);
+  ensureRootDirectory(ctx, trash, 0o700);
+  fs.chmodSync(trash, 0o700);
+  const trashed = path.join(trash, `${route}-${crypto.randomBytes(8).toString('hex')}`);
+  fs.renameSync(dir, trashed);
+  // Everything here is being deleted — also what an interrupted purge left.
+  for (const name of fs.readdirSync(trash)) {
+    fs.rmSync(path.join(trash, name), { recursive: true, force: true });
+  }
+}
+
+function osReleaseIds(ctx) {
+  for (const file of OS_RELEASE) {
+    const text = readOrNull(at(ctx, file));
+    if (text === null) continue;
+    const ids = [];
+    for (const line of text.split('\n')) {
+      const m = /^(ID|ID_LIKE)=(.*)$/.exec(line.trim());
+      if (m) ids.push(...m[2].replace(/^["']|["']$/g, '').split(/\s+/));
+    }
+    return ids.filter(Boolean);
+  }
+  return [];
+}
+
+function dpkgInstalled(ctx, name) {
+  const result = ctx.run(DPKG_QUERY, ['-W', '-f=${Status}', name], { timeoutMs: 30_000 });
+  return !result.error && result.status === 0 && /\binstall ok installed\b/.test(result.stdout);
+}
+
+/** Install the approved system packages the machine lacks (Debian family only). */
+function ensureSystemPackages(ctx, packages) {
+  const missing = packages.filter((p) => !dpkgInstalled(ctx, p));
+  if (missing.length === 0) return;
+  const ids = osReleaseIds(ctx);
+  if (!ids.includes('debian') && !ids.includes('ubuntu')) {
+    throw new Error(
+      `the agent half needs ${missing.join(', ')}, and this is not a Debian-family system ` +
+        'where Lamaste can install them; install them by hand',
+    );
+  }
+  const env = { DEBIAN_FRONTEND: 'noninteractive' };
+  const lock = ['-o', 'DPkg::Lock::Timeout=120'];
+  mustRun(ctx, APT_GET, ['update', ...lock], { env, timeoutMs: 300_000 });
+  mustRun(ctx, APT_GET, ['install', '-y', '--no-install-recommends', ...lock, ...missing], {
+    env,
+    timeoutMs: 600_000,
+  });
+  const still = missing.filter((p) => !dpkgInstalled(ctx, p));
+  if (still.length > 0) throw new Error(`apt-get did not install ${still.join(', ')}`);
+}
+
+/**
+ * The unit an agent half runs as — a fixed template; paths, never secrets.
+ * Never MemoryDenyWriteExecute: V8's JIT writes the code it runs. No
+ * ProcSubset=pid either: Node.js reads /proc/cpuinfo, /proc/stat and
+ * /proc/meminfo for os.cpus(), os.totalmem() and os.freemem(), which
+ * applications use to size worker pools — hiding them breaks them quietly.
+ * RestrictAddressFamilies leaves out AF_NETLINK, so os.networkInterfaces()
+ * is unavailable; an agent half binds loopback and needs no interface list.
+ */
+function renderUnit(route, spec) {
+  const user = serviceUser(route);
+  const dataDir = PATHS.dataDir(route);
+  return [
+    `# Managed by lamaste-apphost: the agent half of Lamaste app plugin ${route}.`,
+    '[Unit]',
+    `Description=Lamaste app plugin ${route} (agent half)`,
+    'After=network-online.target',
+    'Wants=network-online.target',
+    '',
+    '[Service]',
+    'Type=simple',
+    `User=${user}`,
+    `Group=${user}`,
+    `ExecStart=${NODE_BIN} ${PATHS.codeDir(route)}/current/package/${spec.service.entry}`,
+    `Environment=LAMASTE_APP_CONFIG=${PATHS.configFile(route)}`,
+    `Environment=LAMASTE_APP_DATA_DIR=${dataDir}`,
+    'Environment=NODE_ENV=production',
+    `WorkingDirectory=${dataDir}`,
+    'Restart=on-failure',
+    'RestartSec=5',
+    'NoNewPrivileges=yes',
+    'ProtectSystem=strict',
+    `ReadWritePaths=${dataDir}`,
+    'ProtectHome=yes',
+    'PrivateTmp=yes',
+    'PrivateDevices=yes',
+    'PrivateIPC=yes',
+    'RemoveIPC=yes',
+    'ProtectProc=invisible',
+    'ProtectKernelTunables=yes',
+    'ProtectKernelModules=yes',
+    'ProtectKernelLogs=yes',
+    'ProtectControlGroups=yes',
+    'ProtectClock=yes',
+    'ProtectHostname=yes',
+    'RestrictSUIDSGID=yes',
+    'RestrictRealtime=yes',
+    'RestrictNamespaces=yes',
+    'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX',
+    'LockPersonality=yes',
+    'SystemCallArchitectures=native',
+    'SystemCallFilter=@system-service',
+    // A call outside the set fails with EPERM instead of killing the
+    // process: libuv probes io_uring and falls back to its thread pool.
+    'SystemCallErrorNumber=EPERM',
+    'CapabilityBoundingSet=',
+    'UMask=0077',
+    ...(spec.service.memoryMax !== null ? [`MemoryMax=${spec.service.memoryMax}`] : []),
+    'StandardOutput=journal',
+    'StandardError=journal',
+    '',
+    '[Install]',
+    'WantedBy=multi-user.target',
+    '',
+  ].join('\n');
+}
+
+function unitPath(ctx, route) {
+  return at(ctx, `${UNITS_DIR}/${unitName(route)}`);
+}
+
+function unitState(ctx, route) {
+  if (!isFile(unitPath(ctx, route))) return 'absent';
+  const result = ctx.run(SYSTEMCTL, ['is-active', unitName(route)], { timeoutMs: 30_000 });
+  return !result.error && result.status === 0 && result.stdout.trim() === 'active'
+    ? 'active'
+    : 'inactive';
+}
+
+function outcome(ctx, route) {
+  return {
+    ok: true,
+    version: linkedVersion(at(ctx, PATHS.codeDir(route)), 'current'),
+    unit: unitState(ctx, route),
+  };
+}
+
+/** The spec kept beside each version, so activating it restores its unit. */
+const VERSION_SPEC = 'apphost.json';
+
+function readVersionSpec(ctx, route, version) {
+  const file = path.join(at(ctx, PATHS.codeDir(route)), version, VERSION_SPEC);
+  return isFile(file) ? parseSpecLine(fs.readFileSync(file, 'utf8')) : null;
+}
+
+/** Start (or restart) the unit when its config is in place; without one it cannot run. */
+function startWhenConfigured(ctx, route, { restart }) {
+  if (!isFile(at(ctx, PATHS.configFile(route)))) return;
+  systemctl(ctx, ['enable', unitName(route)]);
+  systemctl(ctx, [restart ? 'restart' : 'start', unitName(route)]);
+}
+
+/** Point `current` at `version`; the version it pointed at becomes `previous`. */
+function switchCurrent(ctx, route, version) {
+  const codeDir = at(ctx, PATHS.codeDir(route));
+  const before = linkedVersion(codeDir, 'current');
+  if (before !== version) {
+    if (before !== null) replaceSymlink(path.join(codeDir, 'previous'), before);
+    replaceSymlink(path.join(codeDir, 'current'), version);
+  }
+  fsyncDir(codeDir);
+}
+
+/** Keep the current and the previous version; delete the others. */
+function pruneVersions(ctx, route) {
+  const codeDir = at(ctx, PATHS.codeDir(route));
+  const keep = new Set(
+    [linkedVersion(codeDir, 'current'), linkedVersion(codeDir, 'previous')].filter(Boolean),
+  );
+  for (const name of fs.readdirSync(codeDir)) {
+    const p = path.join(codeDir, name);
+    if ((isVersion(name) && !keep.has(name)) || name.startsWith('.lamaste-apphost-')) {
+      fs.rmSync(p, { recursive: true, force: true });
+    }
+  }
+  if (lstatOrNull(path.join(codeDir, 'previous')) && !linkedVersion(codeDir, 'previous')) {
+    fs.rmSync(path.join(codeDir, 'previous'), { force: true });
+  }
+}
+
+function installedVersions(ctx, route) {
+  const codeDir = at(ctx, PATHS.codeDir(route));
+  let names;
+  try {
+    names = fs.readdirSync(codeDir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+  return names
+    .filter((n) => isVersion(n) && lstatOrNull(path.join(codeDir, n))?.isDirectory())
+    .sort(compareVersions);
+}
+
+/** The routes with an installed version. */
+function installedRoutes(ctx) {
+  let names = [];
+  try {
+    names = fs.readdirSync(at(ctx, APPS_CODE));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  return names.filter((n) => ROUTE_RE.test(n) && installedVersions(ctx, n).length > 0).sort();
+}
+
+function compareVersions(a, b) {
+  const split = (v) => {
+    const dash = v.indexOf('-');
+    return {
+      nums: (dash === -1 ? v : v.slice(0, dash)).split('.').map(Number),
+      pre: dash === -1 ? null : v.slice(dash + 1),
+    };
+  };
+  const x = split(a);
+  const y = split(b);
+  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i] - y.nums[i];
+  if (x.pre === y.pre) return 0;
+  if (x.pre === null) return 1;
+  if (y.pre === null) return -1;
+  return x.pre < y.pre ? -1 : 1;
+}
+
+const STAGING_RE = /^\.stage-[a-f0-9]{16}-(.+)$/;
+
+function removeStaging(ctx, route) {
+  const apps = at(ctx, APPS_CODE);
+  for (const name of fs.readdirSync(apps)) {
+    const m = STAGING_RE.exec(name);
+    if (m && m[1] === route) fs.rmSync(path.join(apps, name), { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+function install(ctx, args) {
+  if (args.length !== 4) {
+    throw new UsageError('usage: install <label> <route> <version> <integrity>');
+  }
+  const [label, route, version, integrity] = args;
+  assertLabel(label);
+  assertRoute(route);
+  assertVersion(version);
+  assertIntegrity(integrity);
+
+  // Locked before stdin is read: a second install waits instead of holding
+  // a second tarball in memory.
+  const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.install);
+  try {
+    const input = readInput(ctx, SPEC_LINE_MAX + 1 + TARBALL_MAX);
+    const newline = input.indexOf(0x0a);
+    if (newline === -1 || newline > SPEC_LINE_MAX) {
+      throw new UsageError('stdin starts with one line of JSON: the service spec');
+    }
+    const spec = parseSpecLine(input.subarray(0, newline).toString('utf8'));
+    const tgz = input.subarray(newline + 1);
+    if (tgz.length === 0) {
+      throw new UsageError('the package tarball follows the service spec on stdin');
+    }
+    if (sri(tgz) !== integrity) {
+      throw new Error('the package tarball does not match its integrity; nothing was installed');
+    }
+    const tar = gunzip(tgz);
+    const archive = scanTarball(tar);
+    if (!fs.existsSync(at(ctx, SYSTEMD_RUNTIME))) {
+      throw new Error(
+        'systemd is not the system manager here; an agent half runs as a systemd service',
+      );
+    }
+    try {
+      return installLocked(ctx, { label, route, version, spec, tar, archive });
+    } catch (err) {
+      // A first install that failed leaves no empty code directory behind.
+      try {
+        if (installedVersions(ctx, route).length === 0) {
+          removeTree(ctx, at(ctx, PATHS.codeDir(route)));
+        }
+      } catch {
+        // The failure itself is what the caller needs to hear about.
+      }
+      throw err;
+    }
+  } finally {
+    release();
+  }
+}
+
+function installLocked(ctx, { label, route, version, spec, tar, archive }) {
+  // Whose route it is, before anything is written.
+  const owner = assertOwner(ctx, route, label, spec.package);
+  const fresh = installedVersions(ctx, route).length === 0;
+  if (owner === null && (lstatOrNull(at(ctx, PATHS.dataDir(route))) !== null || !fresh)) {
+    throw new NotOwnerError(
+      `${route} has data or code on this machine but no owner record; it is not taken over — ` +
+        `remove ${PATHS.dataDir(route)} and ${PATHS.codeDir(route)} by hand if they are no ` +
+        'longer needed',
+    );
+  }
+  if (fresh && installedRoutes(ctx).length >= ROUTES_MAX) {
+    throw new Error(`this machine already holds ${ROUTES_MAX} agent halves, the most it may`);
+  }
+
+  ensureRootDirectory(ctx, at(ctx, '/opt/lamalibre'));
+  ensureRootDirectory(ctx, at(ctx, APPS_CODE));
+  ensureRootDirectory(ctx, at(ctx, PATHS.codeDir(route)));
+  removeStaging(ctx, route);
+  const needed = archive.bytes + archive.entries.length * ENTRY_OVERHEAD + FREE_SPACE_MARGIN;
+  const free = ctx.freeBytes(at(ctx, APPS_CODE));
+  if (free < needed) {
+    throw new Error(
+      `not enough free space for the agent half: ${Math.ceil(needed / 2 ** 20)} MiB needed ` +
+        `in ${APPS_CODE}, ${Math.floor(free / 2 ** 20)} MiB free`,
+    );
+  }
+
+  // Unpacked next to the code directory, so moving it in is a rename.
+  const staging = at(ctx, `${APPS_CODE}/.stage-${crypto.randomBytes(8).toString('hex')}-${route}`);
+  fs.mkdirSync(staging, { mode: 0o700 });
+  // What this run created, undone when it fails before the code is in place.
+  const created = { account: false, owner: false, dataDir: false, configDir: false };
+  let placed = false;
+  try {
+    extractEntries(tar, archive.entries, staging);
+    validateTree(ctx, staging);
+    checkPackage(path.join(staging, 'package'), spec, version);
+    fs.writeFileSync(path.join(staging, VERSION_SPEC), `${JSON.stringify(spec)}\n`, {
+      mode: 0o644,
+      flag: 'wx',
+    });
+    ctx.chown(path.join(staging, VERSION_SPEC), ctx.rootUid, ctx.rootGid);
+
+    ensureSystemPackages(ctx, spec.systemPackages);
+    const { account, created: accountCreated } = ensureServiceAccount(ctx, route);
+    created.account = accountCreated;
+    if (owner === null) {
+      writeOwner(ctx, route, { package: spec.package, label, since: new Date().toISOString() });
+      created.owner = true;
+    }
+    created.dataDir = ensureDataDir(ctx, route, account);
+    created.configDir = ensureConfigDir(ctx, route, account);
+
+    fs.chmodSync(staging, 0o755);
+    ctx.chown(staging, ctx.rootUid, ctx.rootGid);
+    const codeDir = at(ctx, PATHS.codeDir(route));
+    const dest = path.join(codeDir, version);
+    if (lstatOrNull(dest) !== null) {
+      // The same version again (a retried job): swap the new copy in.
+      const old = path.join(codeDir, `.lamaste-apphost-${crypto.randomBytes(8).toString('hex')}`);
+      fs.renameSync(dest, old);
+      fs.renameSync(staging, dest);
+      fs.rmSync(old, { recursive: true, force: true });
+    } else {
+      fs.renameSync(staging, dest);
+    }
+    placed = true;
+    fsyncDir(codeDir);
+  } catch (err) {
+    if (!placed) undoCreated(ctx, route, created);
+    throw err;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+
+  // The version is in place. A failure from here takes the agent half back
+  // to the version that ran before — or, for a first install, to nothing —
+  // so a failed install never leaves one half set up: the relay treats a
+  // reported install failure as nothing to remove.
+  const before = linkedVersion(at(ctx, PATHS.codeDir(route)), 'current');
+  try {
+    atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644);
+    switchCurrent(ctx, route, version);
+    systemctl(ctx, ['daemon-reload']);
+    startWhenConfigured(ctx, route, { restart: true });
+  } catch (err) {
+    rollBackInstall(ctx, route, { version, before, created });
+    throw err;
+  }
+  try {
+    pruneVersions(ctx, route);
+  } catch {
+    // Only older versions are left over; the next install prunes them.
+  }
+  return outcome(ctx, route);
+}
+
+/** Best effort, each step on its own: what cannot be undone is left for `remove`. */
+function attempt(fn) {
+  try {
+    fn();
+  } catch {
+    // The install's own failure is what is reported.
+  }
+}
+
+function rollBackInstall(ctx, route, { version, before, created }) {
+  const codeDir = at(ctx, PATHS.codeDir(route));
+  if (before === null) {
+    attempt(() => systemctl(ctx, ['disable', '--now', unitName(route)], { allowFailure: true }));
+    attempt(() => fs.rmSync(unitPath(ctx, route), { force: true }));
+    attempt(() => systemctl(ctx, ['daemon-reload'], { allowFailure: true }));
+    attempt(() => removeTree(ctx, codeDir));
+    undoCreated(ctx, route, created);
+    return;
+  }
+  if (before === version) return; // the same version again: nothing else ran before
+  const spec = readVersionSpec(ctx, route, before);
+  if (spec !== null)
+    attempt(() => atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644));
+  attempt(() => replaceSymlink(path.join(codeDir, 'current'), before));
+  attempt(() => replaceSymlink(path.join(codeDir, 'previous'), version));
+  attempt(() => systemctl(ctx, ['daemon-reload'], { allowFailure: true }));
+  attempt(() => startWhenConfigured(ctx, route, { restart: true }));
+}
+
+/** Best effort: take back what a failed install created (it never held data). */
+function undoCreated(ctx, route, created) {
+  if (created.configDir) attempt(() => removeTree(ctx, at(ctx, PATHS.configDir(route))));
+  if (created.dataDir) attempt(() => fs.rmdirSync(at(ctx, PATHS.dataDir(route))));
+  if (created.owner) attempt(() => fs.rmSync(at(ctx, PATHS.ownerFile(route)), { force: true }));
+  if (created.account) attempt(() => deleteServiceAccount(ctx, route));
+}
+
+function config(ctx, args) {
+  if (args.length !== 2) throw new UsageError('usage: config <label> <route>');
+  const [label, route] = args;
+  assertLabel(label);
+  assertRoute(route);
+
+  const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.config);
+  try {
+    const bytes = readInput(ctx, CONFIG_MAX);
+    const pluginConfig = parsePluginConfig(bytes, route);
+    const owner = assertOwner(ctx, route, label);
+    const account = serviceAccount(ctx, route);
+    if (
+      owner === null ||
+      account === null ||
+      linkedVersion(at(ctx, PATHS.codeDir(route)), 'current') === null
+    ) {
+      throw new NotInstalledError(`the agent half of ${route} is not installed`);
+    }
+    ensureConfigDir(ctx, route, account);
+    const file = at(ctx, PATHS.configFile(route));
+    let previousPort = null;
+    if (isFile(file)) {
+      try {
+        previousPort = JSON.parse(fs.readFileSync(file, 'utf8')).port ?? null;
+      } catch {
+        previousPort = null;
+      }
+    }
+    atomicWrite(ctx, file, `${JSON.stringify(pluginConfig, null, 2)}\n`, 0o600, account);
+    if (isFile(unitPath(ctx, route))) {
+      // A rotated secret needs no restart (the agent half re-reads the file
+      // on a signature it cannot verify); a new port does.
+      const moved = previousPort !== null && previousPort !== pluginConfig.port;
+      startWhenConfigured(ctx, route, { restart: moved });
+    }
+    return outcome(ctx, route);
+  } finally {
+    release();
+  }
+}
+
+function activate(ctx, args) {
+  if (args.length !== 3) throw new UsageError('usage: activate <label> <route> <version>');
+  const [label, route, version] = args;
+  assertLabel(label);
+  assertRoute(route);
+  assertVersion(version);
+
+  const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.activate);
+  try {
+    const owner = assertOwner(ctx, route, label);
+    if (owner === null || installedVersions(ctx, route).length === 0) {
+      throw new NotInstalledError(`the agent half of ${route} is not installed`);
+    }
+    const spec = readVersionSpec(ctx, route, version);
+    if (spec === null) throw new Error(`version ${version} of ${route} is not kept on this agent`);
+    if (spec.package !== owner.package) {
+      throw new NotOwnerError(`version ${version} of ${route} is not ${owner.package}`);
+    }
+    if (serviceAccount(ctx, route) === null) {
+      throw new NotInstalledError(`the account of ${route} is missing; install it again`);
+    }
+    atomicWrite(ctx, unitPath(ctx, route), renderUnit(route, spec), 0o644);
+    switchCurrent(ctx, route, version);
+    pruneVersions(ctx, route);
+    systemctl(ctx, ['daemon-reload']);
+    startWhenConfigured(ctx, route, { restart: true });
+    return outcome(ctx, route);
+  } finally {
+    release();
+  }
+}
+
+function remove(ctx, args) {
+  const [label, route, ...flags] = args;
+  if (route === undefined || flags.length > 1 || flags.some((f) => f !== '--purge')) {
+    throw new UsageError('usage: remove <label> <route> [--purge]');
+  }
+  assertLabel(label);
+  assertRoute(route);
+  const purge = flags.length === 1;
+
+  const release = acquireLock(ctx, ctx.lockWaitMs ?? LOCK_WAIT_MS.remove);
+  try {
+    // Whose it is, and — for a purge — that the account is its own, before
+    // anything is stopped or deleted.
+    assertOwner(ctx, route, label);
+    if (purge) serviceAccount(ctx, route);
+
+    const unit = unitName(route);
+    systemctl(ctx, ['disable', '--now', unit], { allowFailure: true });
+    if (isFile(unitPath(ctx, route))) {
+      fs.rmSync(unitPath(ctx, route), { force: true });
+      systemctl(ctx, ['daemon-reload']);
+    }
+    systemctl(ctx, ['reset-failed', unit], { allowFailure: true });
+    if (lstatOrNull(at(ctx, APPS_CODE)) !== null) removeStaging(ctx, route);
+    removeTree(ctx, at(ctx, PATHS.codeDir(route)));
+    removeTree(ctx, at(ctx, PATHS.configDir(route)));
+    if (purge) {
+      purgeDataDir(ctx, route);
+      deleteServiceAccount(ctx, route);
+      fs.rmSync(at(ctx, PATHS.ownerFile(route)), { force: true });
+    }
+    return { ok: true, version: null, unit: unitState(ctx, route) };
+  } finally {
+    release();
+  }
+}
+
+function status(ctx, args) {
+  if (args.length > 1) throw new UsageError('usage: status [<route>]');
+  let routes;
+  if (args.length === 1) {
+    assertRoute(args[0]);
+    routes = [args[0]];
+  } else {
+    let names = [];
+    try {
+      names = fs.readdirSync(at(ctx, APPS_CODE));
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    routes = names
+      .filter((n) => ROUTE_RE.test(n) && lstatOrNull(at(ctx, PATHS.codeDir(n)))?.isDirectory())
+      .sort();
+  }
+  const apps = {};
+  for (const route of routes) {
+    const codeDir = at(ctx, PATHS.codeDir(route));
+    let owner;
+    try {
+      owner = readOwner(ctx, route);
+    } catch {
+      owner = null;
+    }
+    const app = {
+      versions: installedVersions(ctx, route),
+      current: linkedVersion(codeDir, 'current'),
+      previous: linkedVersion(codeDir, 'previous'),
+      unit: unitState(ctx, route),
+      owner: owner === null ? null : { package: owner.package, label: owner.label },
+    };
+    // Asked about one agent half, the answer is always there; the full
+    // list holds only those with code or a unit.
+    if (args.length === 1 || app.versions.length > 0 || app.unit !== 'absent') apps[route] = app;
+  }
+  // The units run the Node.js this helper runs on (NODE_BIN, its shebang):
+  // what a plugin's `agent.requires.node` is checked against.
+  return { protocol: PROTOCOL_VERSION, node: process.versions.node, apps };
+}
+
+/**
+ * Run one command; returns what it prints as JSON. `options` replaces the
+ * context (see {@link createContext}) and `getuid` for the tests.
+ */
+function main(argv, options = {}) {
+  const getuid = options.getuid ?? process.getuid;
+  if (typeof getuid !== 'function' || getuid() !== 0) {
+    throw new UsageError('must run as root (via sudo)');
+  }
+  process.umask(0o022);
+  const ctx = createContext(options);
+  const [command, ...args] = argv;
+  switch (command) {
+    case 'install':
+      return install(ctx, args);
+    case 'config':
+      return config(ctx, args);
+    case 'activate':
+      return activate(ctx, args);
+    case 'remove':
+      return remove(ctx, args);
+    case 'status':
+      return status(ctx, args);
+    default:
+      throw new UsageError(`unknown command: ${command ?? '(none)'}`);
+  }
+}
+
+function exitStatus(err) {
+  if (err instanceof UsageError) return 2;
+  if (err instanceof NotInstalledError) return 3;
+  if (err instanceof NotOwnerError) return 4;
+  return 1;
+}
+
+if (require.main === module) {
+  try {
+    const result = main(process.argv.slice(2));
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } catch (err) {
+    process.stderr.write(
+      `lamaste-apphost: ${(err instanceof Error ? err.message : String(err)).replace(/\s+/g, ' ')}\n`,
+    );
+    process.exit(exitStatus(err));
+  }
+} else {
+  module.exports = {
+    PROTOCOL_VERSION,
+    ROUTE_RE,
+    LABEL_RE,
+    VERSION_RE,
+    INTEGRITY_RE,
+    PACKAGE_RE,
+    PACKAGE_MAX,
+    ENTRY_RE,
+    ENTRY_MAX,
+    MEMORY_MAX_RE,
+    SYSTEM_PACKAGE_RE,
+    SYSTEM_PACKAGE_MAX,
+    SYSTEM_PACKAGES_MAX,
+    SERVICE_USER_MAX,
+    ROUTES_MAX,
+    PATHS,
+    NODE_BIN,
+    UsageError,
+    NotInstalledError,
+    NotOwnerError,
+    exitStatus,
+    serviceUser,
+    serviceAccountComment,
+    unitName,
+    isVersion,
+    parseSpecLine,
+    parsePluginConfig,
+    parsePax,
+    acquireLock,
+    createContext,
+    renderUnit,
+    scanTarball,
+    extractEntries,
+    validateTree,
+    main,
+  };
+}

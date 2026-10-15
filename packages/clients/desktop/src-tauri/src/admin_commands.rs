@@ -58,6 +58,54 @@ fn admin_delete(path: &str, body: Option<&str>) -> Result<serde_json::Value, Str
         .map_err(|e| format!("Failed to parse response: {} — body: {}", e, safe_error_body(&resp)))
 }
 
+/// A refusal as the commands that start plugin operations reject with it.
+fn refusal(message: String) -> serde_json::Value {
+    serde_json::json!({ "error": message })
+}
+
+/// Helper: a request that starts a plugin operation (hosting, removing a
+/// hosting, uninstalling, updating, approving an update). A refusal keeps
+/// what the panel said beyond its message, for the panel UI to explain it:
+/// the command rejects with `{ error, code?, reasons?, operationId? }` —
+/// `code` `agent_not_eligible` (with the agent's `reasons`),
+/// `push_install_refused` or `hooks_not_approved`.
+fn admin_operation(method: &str, path: &str, body: Option<&str>) -> Result<serde_json::Value, serde_json::Value> {
+    let cfg = config::load_admin_config().map_err(refusal)?;
+    let resp = api::curl_panel_admin_response(&cfg, method, path, body).map_err(refusal)?;
+    let value: serde_json::Value = serde_json::from_str(&resp).map_err(|e| {
+        refusal(format!("Failed to parse response: {} — body: {}", e, safe_error_body(&resp)))
+    })?;
+    let Some(error) = api::panel_error_text(&value) else {
+        return Ok(value);
+    };
+    let mut answer = serde_json::Map::new();
+    answer.insert("error".to_string(), serde_json::Value::String(error));
+    if let Some(code) = value.get("code").filter(|c| c.is_string()) {
+        answer.insert("code".to_string(), code.clone());
+    }
+    if let Some(reasons) = value.get("reasons").filter(|r| r.is_array()) {
+        answer.insert("reasons".to_string(), reasons.clone());
+    }
+    if let Some(id) = value.get("operationId").filter(|i| i.is_string()) {
+        answer.insert("operationId".to_string(), id.clone());
+    }
+    Err(serde_json::Value::Object(answer))
+}
+
+/// `?force=true&purge=true` for removing a plugin's hosting, with only the
+/// flags that are set: `force` lets failing pre-teardown hooks pass, `purge`
+/// deletes the data and service account of an agent half Lamaste installed.
+fn removal_query(force: Option<bool>, purge: Option<bool>) -> String {
+    let mut query = serde_json::Map::new();
+    if force.unwrap_or(false) {
+        query.insert("force".to_string(), serde_json::Value::Bool(true));
+    }
+    if purge.unwrap_or(false) {
+        query.insert("purge".to_string(), serde_json::Value::Bool(true));
+    }
+    query_string(&serde_json::Value::Object(query))
+}
+
 /// Validate that a label is safe for use in filesystem paths.
 /// Rejects path separators, `..' components, and control characters.
 fn validate_label(label: &str) -> Result<(), String> {
@@ -586,12 +634,16 @@ pub async fn admin_disable_plugin(name: String) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
-pub async fn admin_uninstall_plugin(name: String) -> Result<serde_json::Value, String> {
+pub async fn admin_uninstall_plugin(
+    name: String,
+    force: Option<bool>,
+    purge: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
     tokio::task::spawn_blocking(move || {
-        let path = format!("/api/plugins/{}", url_encode(&name));
-        admin_delete(&path, None)
+        let path = format!("/api/plugins/{}{}", url_encode(&name), removal_query(force, purge));
+        admin_operation("DELETE", &path, None)
     })
-    .await.map_err(|e| format!("Task failed: {}", e))?
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
 }
 
 // --- Hosting an agent-hosted plugin's agent half on an agent ---
@@ -606,20 +658,160 @@ pub async fn admin_get_plugin_hosting(name: String) -> Result<serde_json::Value,
 }
 
 #[tauri::command]
-pub async fn admin_set_plugin_hosting(name: String, agent_label: String) -> Result<serde_json::Value, String> {
+pub async fn admin_get_plugin_hosting_eligibility(name: String) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || {
-        let path = format!("/api/plugins/{}/hosting", url_encode(&name));
-        let body = serde_json::json!({ "agentLabel": agent_label }).to_string();
-        admin_post(&path, Some(&body))
+        let path = format!("/api/plugins/{}/hosting/eligibility", url_encode(&name));
+        admin_get(&path)
     })
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
 #[tauri::command]
-pub async fn admin_clear_plugin_hosting(name: String) -> Result<serde_json::Value, String> {
+pub async fn admin_set_plugin_hosting(
+    name: String,
+    agent_label: String,
+) -> Result<serde_json::Value, serde_json::Value> {
     tokio::task::spawn_blocking(move || {
         let path = format!("/api/plugins/{}/hosting", url_encode(&name));
+        let body = serde_json::json!({ "agentLabel": agent_label }).to_string();
+        admin_operation("POST", &path, Some(&body))
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+#[tauri::command]
+pub async fn admin_clear_plugin_hosting(
+    name: String,
+    force: Option<bool>,
+    purge: Option<bool>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!(
+            "/api/plugins/{}/hosting{}",
+            url_encode(&name),
+            removal_query(force, purge)
+        );
+        admin_operation("DELETE", &path, None)
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+#[tauri::command]
+pub async fn admin_get_plugin_operations(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/operations", url_encode(&name));
+        admin_get(&path)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_get_plugin_operation(name: String, id: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/operations/{}", url_encode(&name), url_encode(&id));
+        admin_get(&path)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+// --- Lifecycle hooks: review, approval, auto-approve; updating in place ---
+
+#[tauri::command]
+pub async fn admin_get_plugin_hooks(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hooks", url_encode(&name));
+        admin_get(&path)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_approve_plugin_hooks(
+    name: String,
+    digest: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hooks/approve", url_encode(&name));
+        let body = serde_json::json!({ "digest": digest }).to_string();
+        // Approving a pending update starts it.
+        admin_operation("POST", &path, Some(&body))
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+#[tauri::command]
+pub async fn admin_set_plugin_hooks_auto_approve(name: String, enabled: bool) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hooks/auto-approve", url_encode(&name));
+        let body = serde_json::json!({ "enabled": enabled }).to_string();
+        admin_put(&path, &body)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_update_plugin(
+    name: String,
+    version: Option<String>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/update", url_encode(&name));
+        let body = match version {
+            Some(v) => serde_json::json!({ "version": v }),
+            None => serde_json::json!({}),
+        }
+        .to_string();
+        admin_operation("POST", &path, Some(&body))
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+#[tauri::command]
+pub async fn admin_discard_plugin_update(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/update", url_encode(&name));
         admin_delete(&path, None)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+// --- Audit log and panel notifications ---
+
+/// `?key=value&…` from a JSON object of query values (strings, numbers, booleans).
+fn query_string(query: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(map) = query.as_object() {
+        for (key, value) in map {
+            let text = match value {
+                serde_json::Value::String(s) if !s.is_empty() => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                _ => continue,
+            };
+            parts.push(format!("{}={}", url_encode(key), url_encode(&text)));
+        }
+    }
+    if parts.is_empty() { String::new() } else { format!("?{}", parts.join("&")) }
+}
+
+#[tauri::command]
+pub async fn admin_get_audit_log(query: serde_json::Value) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || admin_get(&format!("/api/audit{}", query_string(&query))))
+        .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_get_notifications(query: serde_json::Value) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        admin_get(&format!("/api/notifications{}", query_string(&query)))
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_mark_notifications_read(target: serde_json::Value) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        admin_post("/api/notifications/read", Some(&target.to_string()))
     })
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
