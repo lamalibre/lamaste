@@ -60,4 +60,18 @@ export default defineConfig({
 
   // Skip dead-link checks for panel-internal links
   ignoreDeadLinks: true,
+
+  markdown: {
+    // VitePress marks fenced code blocks v-pre but not inline code, so Vue
+    // compiles `{{ … }}` inside backticks as an interpolation. The docs quote
+    // Go templates (Authelia's `{{ secret "…" }}`) in inline code; render
+    // every inline code span verbatim.
+    config(md) {
+      const renderCodeInline = md.renderer.rules.code_inline;
+      md.renderer.rules.code_inline = (tokens, idx, options, env, self) => {
+        tokens[idx].attrSet('v-pre', '');
+        return renderCodeInline(tokens, idx, options, env, self);
+      };
+    },
+  },
 });
