@@ -128,7 +128,7 @@ export async function uninstallPluginWithHosting(
       const retained = await retainedDataOf(name);
       throw httpError(
         retained.length > 0
-          ? `Plugin "${name}" is not hosted — the data agents keep of it (${retained.map((r) => r.agentLabel).join(', ')}) is purged per agent: DELETE /api/plugins/${name}/retained-data?agentLabel=<label>`
+          ? `Plugin "${name}" is not hosted — the data agents keep of it (${retained.map((r) => r.agentLabel).join(', ')}) is purged per agent: Purge under Retained data on the Plugins page, or lamaste-server plugins purge-data ${name} --agent <label>`
           : `Plugin "${name}" is not hosted and no agent keeps data of it — nothing to purge`,
         400,
       );

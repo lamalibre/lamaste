@@ -12,8 +12,14 @@
  * takes the data back.
  */
 
+import { APPHOST_PATHS, appServiceUser } from '@lamalibre/lamaste';
 import { getStateDb } from './state-db.js';
 
+/**
+ * A record as the API shows it: what the table keeps, and what a purge
+ * deletes on the agent — the data directory and the account, both derived
+ * from the route — so a panel or CLI confirmation can name them.
+ */
 function rowToRecord(row) {
   return {
     agentLabel: row.agent_label,
@@ -22,6 +28,8 @@ function rowToRecord(row) {
     package: row.package,
     since: row.since,
     operation: row.operation,
+    dataDir: APPHOST_PATHS.dataDir(row.route),
+    serviceUser: appServiceUser(row.route),
   };
 }
 

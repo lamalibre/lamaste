@@ -8,7 +8,8 @@ import { listen } from '@tauri-apps/api/event';
 
 /**
  * Invoke a command that starts a plugin operation (hosting, removing a
- * hosting, uninstalling, updating, approving an update). It rejects with
+ * hosting, uninstalling, updating, approving an update, purging retained
+ * data) or settles one's leftovers (forgetting retained data). It rejects with
  * the panel's refusal — `{ error, code?, reasons?, operationId? }` — which
  * is rethrown as the Error the web client throws for it, so the panel UI
  * can explain it (an ineligible agent's reasons, closed push install).
@@ -147,6 +148,11 @@ export const desktopAdminClient = {
   clearPluginHosting: (name, options = {}) =>
     invokeOperation('admin_clear_plugin_hosting', removalArgs(name, options)),
   rotatePluginHostingSecret: (name) => invoke('admin_rotate_plugin_hosting_secret', { name }),
+  getPluginRetainedData: (name) => invoke('admin_get_plugin_retained_data', { name }),
+  purgePluginRetainedData: (name, agentLabel) =>
+    invokeOperation('admin_purge_plugin_retained_data', { name, agentLabel }),
+  forgetPluginRetainedData: (name, agentLabel) =>
+    invokeOperation('admin_forget_plugin_retained_data', { name, agentLabel }),
   getPluginOperations: (name) => invoke('admin_get_plugin_operations', { name }),
   getPluginOperation: (name, id) => invoke('admin_get_plugin_operation', { name, id }),
   getPluginHooks: (name) => invoke('admin_get_plugin_hooks', { name }),

@@ -1033,7 +1033,12 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // POST /plugins/push-install/:label — send push install command
+  // POST /plugins/push-install/:label — record a push-install command
+  // (legacy). It checks the push-install gates and logs the command in the
+  // push-install session log, and that is all: no agent polls for it and
+  // nothing delivers it. What Lamaste really pushes — installing, updating
+  // and removing an agent half — runs as plugin operations (hosting, update,
+  // unhosting, uninstall, purging retained data), gated the same way.
   // ------------------------------------------------------------------
   fastify.post(
     '/plugins/push-install/:label',
@@ -1070,14 +1075,12 @@ export default async function pluginRoutes(fastify, _opts) {
         status: 'sent',
       });
 
-      // The actual command execution happens on the agent side.
-      // This endpoint signals intent; the agent polls or receives via WebSocket.
       return {
         ok: true,
         label: params.label,
         action: body.action,
         packageName: body.packageName || null,
-        message: `Push install command "${body.action}" sent to agent "${params.label}"`,
+        message: `Push install command "${body.action}" for agent "${params.label}" recorded in the push-install log; nothing delivers it to the agent`,
       };
     },
   );

@@ -1704,9 +1704,15 @@ function renderUnit(route, spec) {
     'NoNewPrivileges=yes',
     'ProtectSystem=strict',
     `ReadWritePaths=${dataDir}`,
+    // ProtectSystem=strict leaves /run writable, and /run/lock is 1777:
+    // nothing of the agent half's belongs there.
+    'ReadOnlyPaths=/run',
     'ProtectHome=yes',
     'PrivateTmp=yes',
     'PrivateDevices=yes',
+    // PrivateDevices binds the machine's /dev/shm (1777) into its /dev: a
+    // private one instead, so nothing it writes there is seen outside.
+    'TemporaryFileSystem=/dev/shm:nosuid,nodev,noexec',
     'PrivateIPC=yes',
     'RemoveIPC=yes',
     'ProtectProc=invisible',

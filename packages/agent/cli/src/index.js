@@ -49,7 +49,8 @@ ${b('COMMANDS')}
   ${c('plugin')}          Manage agent plugins (install, uninstall, update, status)
   ${c('panel')}           Manage agent web panel (--enable, --disable, --status, reset-pin)
   ${c('chisel')}          Manage chisel tunnel credential (refresh-credential)
-  ${c('apphost')}         App host helper for plugins' agent halves (enable, pin, status, disable)
+  ${c('apphost')}         App host helper for plugins' agent halves (enable, pin, status,
+                  relay-keys, remove, disable)
   ${c('list')}            List all configured agents
   ${c('switch')}          Set the default agent
 

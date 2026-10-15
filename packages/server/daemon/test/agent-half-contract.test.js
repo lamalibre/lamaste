@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
   validateManifest,
+  ManifestValidationError,
   agentHalfOf,
   agentHalfPreview,
   appServiceUser,
@@ -58,7 +59,9 @@ function manifestError(agent, extra = {}) {
     validateManifest({ ...base, ...extra, agent });
     return null;
   } catch (err) {
-    return err.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('\n');
+    // core's own error class: never zod's, which another copy of zod would not match.
+    assert.ok(err instanceof ManifestValidationError, String(err));
+    return err.issues.map((e) => `${e.path}: ${e.message}`).join('\n');
   }
 }
 

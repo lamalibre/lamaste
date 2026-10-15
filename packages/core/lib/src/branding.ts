@@ -20,9 +20,10 @@ export const productBundleId = (service: string): string => `com.${ORG}.${PROJEC
 export const ecosystemUnit = (service: string): string => `${ORG}-${service}`;
 export const productUnit = (service: string): string => `${ORG}-${PROJECT}-${service}`;
 
-// User filesystem roots
+// User filesystem roots — of this process's user, or of the user whose home is `home`
 export const userEcosystemRoot = (): string => path.join(homedir(), `.${ORG}`);
-export const userProductRoot = (): string => path.join(homedir(), `.${ORG}`, PROJECT);
+export const userProductRoot = (home: string = homedir()): string =>
+  path.join(home, `.${ORG}`, PROJECT);
 
 // System filesystem roots
 export const etcEcosystemRoot = (): string => `/etc/${ORG}`;

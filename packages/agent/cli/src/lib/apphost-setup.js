@@ -10,10 +10,12 @@
  * directories). The key is fetched over that agent's own pinned mTLS
  * channel (`GET /api/agents/me/relay-keys`) by the agent's user — root
  * never handles the agent's certificate or its password — and root accepts
- * the answer only as it validates it: an Ed25519 key whose id is derived
- * from the key, and the label the relay knows the agent by, which its
- * signed jobs must name. An agent without a pinned panel certificate is
- * not pinned: its channel could be anyone's.
+ * the answer only as it validates it: a label the agent user's registry
+ * lists (root reads it itself, and refuses a label root's own agents use
+ * when the user is another), an Ed25519 key whose id is derived from the
+ * key, and the label the relay knows the agent by, which its signed jobs
+ * must name. An agent without a pinned panel certificate is not pinned: its
+ * channel could be anyone's.
  */
 
 import crypto from 'node:crypto';
@@ -28,7 +30,13 @@ import {
   parseRelayKeysResponse,
   relayPublicKeySpki,
 } from '@lamalibre/lamaste';
-import { listAgents, loadAgentConfig, readRelayPin, relayPinJson } from '@lamalibre/lamaste/agent';
+import {
+  agentsRegistryPathIn,
+  listAgents,
+  loadAgentConfig,
+  readRelayPin,
+  relayPinJson,
+} from '@lamalibre/lamaste/agent';
 
 /** The helper as this version of the agent CLI ships it. */
 export const HELPER_SOURCE = fileURLToPath(
@@ -77,6 +85,28 @@ export function sudoersRule(user) {
     `Defaults!${helper} env_keep -= "${denied}"\n` +
     `Defaults!${helper} env_delete += "${denied}"\n` +
     `${user} ALL=(root) NOPASSWD: ${helper}\n`
+  );
+}
+
+/**
+ * Refuse to hand app hosting to `user` while the rule names another user,
+ * unless `force`: the helper serves one OS user per machine (the sudoers
+ * rule names one user; an agent running as root needs none), so the other
+ * user's agents could no longer install, update or remove their agent
+ * halves — those stay on the machine with nobody to manage them.
+ *
+ * @param {string} user
+ * @param {string | null} current  the user the installed rule names, or null
+ * @param {boolean} force
+ */
+export function assertOneAppHostUser(user, current, force) {
+  if (current === null || current === user || force) return;
+  throw new Error(
+    `The app host helper serves ${current} on this machine (${APPHOST_PATHS.sudoers}); it serves ` +
+      `one OS user per machine, so enabling it for ${user} would leave ${current}'s agents unable ` +
+      `to install, update or remove their agent halves (sudo lamaste-agent apphost status lists ` +
+      `those installed). Unhost or uninstall the plugins those agents host on their panels ` +
+      `first, then pass --force to hand app hosting to ${user}.`,
   );
 }
 
@@ -138,7 +168,12 @@ export const ROOT_OWNED_INSTALL = 'sudo npm install -g @lamalibre/lamaste-agent'
 const CLI_BIN = fileURLToPath(new URL('../../bin/lamaste-agent.js', import.meta.url));
 
 const SUDO = '/usr/bin/sudo';
+const GETENT = '/usr/bin/getent';
 const SYSTEM_ENV = Object.freeze({ PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LANG: 'C.UTF-8' });
+
+/** Run a system command with only the environment `options.env` gives, never rejecting. */
+const runSystem = (file, args, options) =>
+  execa(file, args, { ...options, reject: false, extendEnv: false });
 
 /** The directories above a pin, outermost first; each root-owned, 0755. */
 export const RELAY_PIN_DIRS = Object.freeze([
@@ -225,9 +260,7 @@ export async function fetchRelayKeysAs(user, options = {}) {
   if (user === 'root') {
     return collectRelayKeys({ label: options.label });
   }
-  const run =
-    options.run ??
-    ((file, args, opts) => execa(file, args, { ...opts, reject: false, extendEnv: false }));
+  const run = options.run ?? runSystem;
   const args = [
     '-n',
     '-u',
@@ -270,6 +303,134 @@ export async function fetchRelayKeysAs(user, options = {}) {
   return parsed.relays;
 }
 
+/**
+ * Where user `user` lives: its uid and home directory in the system's user
+ * database (`getent passwd`, so users from NSS count too) — the HOME
+ * `sudo -u <user> -H` gives this CLI when it fetches the relay keys.
+ *
+ * @param {string} user
+ * @param {{ run?: (file: string, args: string[], options: object) => Promise<{ exitCode: number, stdout: string }> }} [options] - tests
+ * @returns {Promise<{ uid: number, home: string }>}
+ */
+export async function lookupUser(user, options = {}) {
+  const run = options.run ?? runSystem;
+  const result = await run(GETENT, ['passwd', user], {
+    cwd: '/',
+    env: { ...SYSTEM_ENV },
+    timeout: 30_000,
+  });
+  // getent: 2 is "no such key".
+  if (result.exitCode === 2) throw new Error(`There is no user named "${user}"`);
+  if (result.exitCode !== 0) {
+    throw new Error(`Looking up user "${user}" failed (exit status ${result.exitCode})`);
+  }
+  const fields = (String(result.stdout).split('\n')[0] ?? '').split(':');
+  const uid = Number(fields[2]);
+  const home = fields[5] ?? '';
+  if (fields.length !== 7 || fields[0] !== user || !Number.isSafeInteger(uid) || uid < 0) {
+    throw new Error(`The user database's entry for "${user}" is not one root can use`);
+  }
+  if (!path.isAbsolute(home) || /\p{Cc}/u.test(home)) {
+    throw new Error(`"${user}" has no usable home directory in the user database`);
+  }
+  return { uid, home };
+}
+
+/** The most an agent registry may weigh for root to read it. */
+const REGISTRY_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Read at most `max` + 1 bytes of an open file: the caller tells a file
+ * that grew past `max` from one that fits.
+ */
+async function readBounded(fh, max) {
+  const buf = Buffer.alloc(max + 1);
+  let length = 0;
+  while (length < buf.length) {
+    const { bytesRead } = await fh.read(buf, length, buf.length - length, length);
+    if (bytesRead === 0) break;
+    length += bytesRead;
+  }
+  return buf.subarray(0, length);
+}
+
+/**
+ * The labels of user `user`'s agents on this machine, read by root from
+ * that user's agent registry — the one `lamaste-agent` lists its agents
+ * from when run as that user, so the labels {@link fetchRelayKeysAs}
+ * fetched relay keys for. The file lies in a home the user controls, so
+ * root reads it as such: not through a link at its own name, not a FIFO
+ * (opened without blocking), a regular file the user owns — never root's or
+ * another user's file reached through a linked directory — at most 1 MiB,
+ * and never echoed. No registry: no agents.
+ *
+ * @param {string} user
+ * @param {{ lookup?: (user: string) => Promise<{ uid: number, home: string }> }} [options] - tests
+ * @returns {Promise<{ user: string, registry: string, labels: ReadonlySet<string> }>}
+ */
+export async function agentLabelsOf(user, options = {}) {
+  const { uid, home } = await (options.lookup ?? lookupUser)(user);
+  const registry = agentsRegistryPathIn(home);
+  let fh;
+  try {
+    fh = await open(registry, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { user, registry, labels: new Set() };
+    if (err?.code === 'ELOOP') {
+      throw new Error(
+        `${registry} is a symbolic link; root reads the agent registry only as a file`,
+      );
+    }
+    throw new Error(`${registry} cannot be read (${err?.code ?? 'unknown error'})`);
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile() || st.uid !== uid) {
+      throw new Error(`${registry} is not a regular file ${user} owns`);
+    }
+    const bytes = await readBounded(fh, REGISTRY_MAX_BYTES);
+    if (bytes.length > REGISTRY_MAX_BYTES) throw new Error(`${registry} is too large`);
+    let parsed;
+    try {
+      parsed = JSON.parse(bytes.toString('utf-8'));
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.agents)) {
+      throw new Error(`${registry} is not an agent registry`);
+    }
+    const labels = parsed.agents
+      .map((agent) => (agent && typeof agent === 'object' ? agent.label : undefined))
+      .filter((label) => typeof label === 'string' && AGENT_LABEL_REGEX.test(label));
+    return { user, registry, labels: new Set(labels) };
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * The agents a pin may name, as {@link machineAgentsOf} found them.
+ *
+ * @typedef {{ user: string, registry: string, labels: ReadonlySet<string>, rootLabels: ReadonlySet<string> }} MachineAgents
+ */
+
+/**
+ * The agents a pin fetched as `user` may name: those `user`'s registry
+ * lists. A pin is per label for the whole machine, and the helper serves
+ * root as well as the user the sudoers rule names, so for any user but root
+ * a label root's own agents use is left out too — that user's answer must
+ * never replace the key root's agent verifies its jobs with.
+ *
+ * @param {string} user
+ * @param {{ lookup?: (user: string) => Promise<{ uid: number, home: string }> }} [options] - tests
+ * @returns {Promise<MachineAgents>}
+ */
+export async function machineAgentsOf(user, options = {}) {
+  const own = await agentLabelsOf(user, options);
+  const rootLabels = user === 'root' ? new Set() : (await agentLabelsOf('root', options)).labels;
+  return { ...own, rootLabels };
+}
+
 /** An https URL of reasonable length with nothing in it a terminal would act on. */
 function isPanelUrl(value) {
   if (typeof value !== 'string' || value.length > 2048 || /\p{Cc}/u.test(value)) return false;
@@ -282,19 +443,28 @@ function isPanelUrl(value) {
 
 /**
  * The pin for one entry of {@link fetchRelayKeysAs}, validated as root
- * must: the label one of this machine's, the relay's own label for the
- * agent, and its first key — the one it signs with — an Ed25519 key whose
- * id is derived from it.
+ * must: the label one of the agents {@link machineAgentsOf} found for the
+ * user the keys were fetched as, the relay's own label for the agent, and
+ * its first key — the one it signs with — an Ed25519 key whose id is
+ * derived from it.
  *
  * @param {unknown} entry
- * @param {Date} [now]
+ * @param {{ agents: MachineAgents, now?: Date }} options
  * @returns {import('@lamalibre/lamaste/agent').RelayPin}
  */
-export function relayPinFrom(entry, now = new Date()) {
+export function relayPinFrom(entry, { agents, now = new Date() }) {
   const e = /** @type {Record<string, unknown>} */ (entry ?? {});
   const label = e.label;
   if (typeof label !== 'string' || !AGENT_LABEL_REGEX.test(label)) {
     throw new Error('The relay keys name no valid agent label');
+  }
+  if (!agents.labels.has(label)) {
+    throw new Error(
+      `"${label}" is not an agent of ${agents.user} on this machine (${agents.registry} does not list it)`,
+    );
+  }
+  if (agents.rootLabels.has(label)) {
+    throw new Error(`"${label}" is one of root's agents on this machine; pin it with --user root`);
   }
   if (typeof e.error === 'string') throw new Error(userText(e.error));
   const panelUrl = e.panelUrl;
@@ -385,21 +555,26 @@ export async function writeRelayPin(pin, { root = '/', owner = ROOT_OWNER } = {}
 }
 
 /**
- * Pin the relay key of each entry {@link fetchRelayKeysAs} returned. One
- * label failing does not keep the others from being pinned; each result
- * says what happened (`previousKid`: the key pinned before, if any).
+ * Pin the relay key of each entry {@link fetchRelayKeysAs} returned for the
+ * user `agents` describes ({@link machineAgentsOf}). One label failing does
+ * not keep the others from being pinned; each result says what happened
+ * (`previousKid`: the key pinned before, if any — printed beside the new
+ * one, so the operator can compare both with the relay's).
  *
  * @param {unknown[]} fetched
- * @param {{ root?: string, owner?: { uid: number, gid: number }, now?: Date }} [options]
+ * @param {{ agents: MachineAgents, root?: string, owner?: { uid: number, gid: number }, now?: Date }} options
  * @returns {Promise<Array<{ label: string, kid: string, agent: string, panelUrl: string, previousKid: string | null } | { label: string, error: string }>>}
  */
-export async function pinRelayKeys(fetched, { root = '/', owner = ROOT_OWNER, now } = {}) {
+export async function pinRelayKeys(fetched, { agents, root = '/', owner = ROOT_OWNER, now }) {
+  if (!agents) {
+    throw new TypeError('pinRelayKeys needs the agents of the user the keys were fetched as');
+  }
   const results = [];
   for (const entry of fetched) {
     const label =
       entry && typeof entry === 'object' && typeof entry.label === 'string' ? entry.label : '?';
     try {
-      const pin = relayPinFrom(entry, now);
+      const pin = relayPinFrom(entry, { agents, now });
       const previous = await readRelayPin(pin.label, { root, ownerUid: owner.uid });
       await writeRelayPin(pin, { root, owner });
       results.push({

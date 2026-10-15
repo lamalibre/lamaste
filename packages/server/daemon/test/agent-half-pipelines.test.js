@@ -1155,7 +1155,10 @@ test('retained data: recorded on removal without purge, shown, taken back, purge
   await lib.saveAgentRegistry(registry);
   await assert.rejects(
     lib.purgeRetainedData('fx', 'vm2', { ...actor, sourceIp: IP }),
-    (err) => err.statusCode === 409 && err.code === 'agent_not_enrolled',
+    (err) =>
+      err.statusCode === 409 &&
+      err.code === 'agent_not_enrolled' &&
+      /lamaste-server plugins forget-data fx --agent vm2/.test(err.message),
   );
   const forgotten = await lib.purgeRetainedData('fx', 'vm2', {
     ...actor,
@@ -1185,6 +1188,8 @@ test('retained data: another agent package is not installed over it', async () =
     assert.equal(err.code, 'retained_data_conflict');
     assert.equal(err.retained.package, '@lamalibre/ux-old-agent');
     assert.match(err.message, /purge that data first/);
+    // The refusal names the panel and the CLI, not the raw API.
+    assert.match(err.message, /lamaste-server plugins purge-data ux --agent vm1/);
     return true;
   });
   assert.equal(await lib.getHostingView('ux'), null);
@@ -1227,6 +1232,15 @@ test('retained data through the API: listed with the plugins, per plugin, forgot
     plugin: 'ux',
     package: '@lamalibre/ux-agent',
   });
+  // Uninstalling with purge a plugin that is not hosted: refused, naming
+  // where its retained data is purged — the panel and the CLI.
+  await assert.rejects(
+    lib.uninstallPluginWithHosting('ux', { ...actor, purge: true, sourceIp: IP }),
+    (err) =>
+      err.statusCode === 400 &&
+      /\(vm1\) is purged per agent/.test(err.message) &&
+      /lamaste-server plugins purge-data ux --agent <label>/.test(err.message),
+  );
   const admin = { 'x-test-role': 'admin' };
   let res = await app.inject({ method: 'GET', url: '/api/plugins', headers: admin });
   assert.equal(res.statusCode, 200);
@@ -1239,6 +1253,9 @@ test('retained data through the API: listed with the plugins, per plugin, forgot
   assert.equal(ux.route, 'ux');
   assert.equal(ux.retainedData.length, 1);
   assert.ok(Date.parse(ux.retainedData[0].since) > 0);
+  // What a purge deletes on the agent, for the panel's and the CLI's confirmations.
+  assert.equal(ux.retainedData[0].dataDir, '/var/lib/lamalibre/apps/ux');
+  assert.equal(ux.retainedData[0].serviceUser, 'lamaste-app-ux');
 
   res = await app.inject({ method: 'GET', url: '/api/plugins/ux/retained-data', headers: admin });
   assert.equal(res.json().retainedData[0].agentLabel, 'vm1');

@@ -82,7 +82,7 @@ const AdminClientContext = createContext(null);
  * @property {(id: string) => Promise<{ok}>} killTicketSession
  *
  * Plugins:
- * @property {() => Promise<{plugins: Array}>} getPlugins
+ * @property {() => Promise<{plugins: Array, retainedData: Array}>} getPlugins — each plugin with the data agents keep of its agent half (`retainedData`); the top-level `retainedData` covers uninstalled plugins too
  * @property {(packageName: string) => Promise<any>} installPlugin
  * @property {(name: string) => Promise<{ok}>} enablePlugin
  * @property {(name: string) => Promise<{ok}>} disablePlugin
@@ -93,6 +93,9 @@ const AdminClientContext = createContext(null);
  * @property {(name: string, agentLabel: string) => Promise<{ok, operation}>} setPluginHosting — refused with `code` agent_not_eligible (`reasons`), push_install_refused or hooks_not_approved
  * @property {(name: string, options?: {force?: boolean, purge?: boolean}) => Promise<{ok, operation}>} clearPluginHosting
  * @property {(name: string) => Promise<{ok, hosting}>} rotatePluginHostingSecret
+ * @property {(name: string) => Promise<{retainedData: Array<{agentLabel, route, plugin, package, since, operation, dataDir, serviceUser}>}>} getPluginRetainedData — what agents keep of the plugin's agent half, by its name (after an uninstall too)
+ * @property {(name: string, agentLabel: string) => Promise<{ok, operation}>} purgePluginRetainedData — an operation (kind purge-data); refused with `code` push_install_refused, retained_data_in_use or agent_not_enrolled
+ * @property {(name: string, agentLabel: string) => Promise<{ok, forgotten}>} forgetPluginRetainedData — drops the relay's record only; the data stays on the agent
  * @property {(name: string) => Promise<{operations: Array}>} getPluginOperations
  * @property {(name: string, id: string) => Promise<{operation}>} getPluginOperation
  * @property {(name: string) => Promise<{hooks}>} getPluginHooks — relay hook set, agent hooks, agent half, approval (`approval.digest` is what to approve), pending update

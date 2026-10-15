@@ -79,6 +79,7 @@ export type {
   PluginStatus,
   PluginRegistryEntry,
   PluginRegistry,
+  RetainedAgentData,
   AdminClient,
   AgentClient,
 } from './types.js';

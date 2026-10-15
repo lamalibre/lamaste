@@ -21,6 +21,7 @@ import { useToast } from '../components/Toast.jsx';
 import { PluginHooks, PluginOperation, PluginUpdate } from '../components/PluginLifecycle.jsx';
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
 import PushInstallSection from '../components/PushInstallSection.jsx';
+import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { refusalText } from '../lib/pluginRefusal.js';
@@ -362,6 +363,8 @@ function PluginCard({
           isActing={isActing}
         />
       )}
+
+      {agentHosted && <PluginRetainedData plugin={plugin} isActing={isActing} />}
 
       <div className="flex flex-wrap items-center gap-2">
         {plugin.status === 'disabled' ? (
@@ -881,6 +884,10 @@ export default function Plugins() {
   const handleRotate = useCallback((name) => rotateMutation.mutate(name), [rotateMutation]);
 
   const plugins = pluginsQuery.data?.plugins;
+  // What agents keep of agent halves Lamaste removed: the installed
+  // plugins' records show on their cards, the others' below the list.
+  const retainedData = pluginsQuery.data?.retainedData ?? [];
+  const installedNames = new Set((plugins ?? []).map((p) => p.name));
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -936,6 +943,12 @@ export default function Plugins() {
           ))}
         </div>
       )}
+
+      <UninstalledRetainedData
+        records={retainedData}
+        installedNames={installedNames}
+        isActing={isActing}
+      />
 
       <PushInstallSection>
         <PushInstallPolicies />

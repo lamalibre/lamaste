@@ -10,9 +10,9 @@ ALTER TABLE plugins ADD COLUMN agent_half_pin TEXT;
 
 -- Agent jobs gain kinds besides `hook`: `app-install`, `app-activate` and
 -- `app-remove` run the agent's root helper. Their parameters are `payload`
--- (JSON: {spec} | {version} | {purge}); `stage` and `input` belong to hook
--- jobs only, so they become nullable. SQLite cannot drop a NOT NULL
--- constraint in place: the table is rebuilt with its rows.
+-- (JSON: {spec} | {version, package} | {purge, package}); `stage` and
+-- `input` belong to hook jobs only, so they become nullable. SQLite cannot
+-- drop a NOT NULL constraint in place: the table is rebuilt with its rows.
 CREATE TABLE agent_jobs_v2 (
   id           TEXT PRIMARY KEY,
   agent_label  TEXT NOT NULL,

@@ -714,6 +714,57 @@ pub async fn admin_get_plugin_operation(name: String, id: String) -> Result<serd
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+// --- Retained data: what agents keep of agent halves removed without purge ---
+
+/// `/api/plugins/<name>/retained-data?agentLabel=<label>[&forget=true]`.
+fn retained_data_path(name: &str, agent_label: &str, forget: bool) -> String {
+    let mut query = serde_json::Map::new();
+    query.insert("agentLabel".to_string(), serde_json::Value::String(agent_label.to_string()));
+    if forget {
+        query.insert("forget".to_string(), serde_json::Value::Bool(true));
+    }
+    format!(
+        "/api/plugins/{}/retained-data{}",
+        url_encode(name),
+        query_string(&serde_json::Value::Object(query))
+    )
+}
+
+#[tauri::command]
+pub async fn admin_get_plugin_retained_data(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/retained-data", url_encode(&name));
+        admin_get(&path)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Purge what agent `agent_label` keeps of the plugin's agent half — an
+/// operation, push-gated as `uninstall`; a refusal keeps its `code`.
+#[tauri::command]
+pub async fn admin_purge_plugin_retained_data(
+    name: String,
+    agent_label: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        admin_operation("DELETE", &retained_data_path(&name, &agent_label, false), None)
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+/// Drop only the relay's record of what agent `agent_label` keeps; the
+/// agent is not touched. A refusal keeps its `code` (`retained_data_in_use`).
+#[tauri::command]
+pub async fn admin_forget_plugin_retained_data(
+    name: String,
+    agent_label: String,
+) -> Result<serde_json::Value, serde_json::Value> {
+    tokio::task::spawn_blocking(move || {
+        admin_operation("DELETE", &retained_data_path(&name, &agent_label, true), None)
+    })
+    .await.map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
 // --- Lifecycle hooks: review, approval, auto-approve; updating in place ---
 
 #[tauri::command]

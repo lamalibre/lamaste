@@ -13,6 +13,7 @@ import path from 'node:path';
 
 import {
   validateManifest,
+  ManifestValidationError,
   relayHookSetOf,
   agentHookSetOf,
   relayHookSetDigest,
@@ -78,7 +79,9 @@ function manifestError(hooks, extra = {}) {
     validateManifest({ ...base, ...extra, hooks });
     return null;
   } catch (err) {
-    return err.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('\n');
+    // core's own error class: never zod's, which another copy of zod would not match.
+    assert.ok(err instanceof ManifestValidationError, String(err));
+    return err.issues.map((e) => `${e.path}: ${e.message}`).join('\n');
   }
 }
 

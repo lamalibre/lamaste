@@ -193,6 +193,14 @@ export const webAdminClient = {
     jsonDelete(`/api/plugins/${encodeURIComponent(name)}/hosting${removalQuery(options)}`),
   rotatePluginHostingSecret: (name) =>
     jsonPost(`/api/plugins/${encodeURIComponent(name)}/hosting/rotate-secret`),
+  getPluginRetainedData: (name) =>
+    apiFetch(`/api/plugins/${encodeURIComponent(name)}/retained-data`),
+  purgePluginRetainedData: (name, agentLabel) =>
+    jsonDelete(`/api/plugins/${encodeURIComponent(name)}/retained-data${toQuery({ agentLabel })}`),
+  forgetPluginRetainedData: (name, agentLabel) =>
+    jsonDelete(
+      `/api/plugins/${encodeURIComponent(name)}/retained-data${toQuery({ agentLabel, forget: 'true' })}`,
+    ),
   getPluginOperations: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations`),
   getPluginOperation: (name, id) =>
     apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations/${encodeURIComponent(id)}`),

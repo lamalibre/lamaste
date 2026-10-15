@@ -94,6 +94,29 @@ export interface PluginRegistry {
   plugins: PluginRegistryEntry[];
 }
 
+/**
+ * What an agent keeps of an agent half Lamaste removed without purge (an
+ * unhost, an uninstall, a rolled-back install): its data directory and its
+ * account, recorded on the relay by the name of the plugin it belonged to —
+ * so it can be purged, or its record forgotten, after the plugin is gone.
+ */
+export interface RetainedAgentData {
+  readonly agentLabel: string;
+  readonly route: string;
+  /** The plugin it belonged to — possibly no longer installed. */
+  readonly plugin: string;
+  /** The agent package whose data it is. */
+  readonly package: string;
+  /** Since when the agent keeps it. */
+  readonly since: string;
+  /** The operation that removed the agent half, when one did. */
+  readonly operation: string | null;
+  /** What a purge deletes on the agent: the data directory… */
+  readonly dataDir: string;
+  /** …and the account (user and group) the agent half ran as. */
+  readonly serviceUser: string;
+}
+
 // ---------------------------------------------------------------------------
 // AdminClient interface
 // ---------------------------------------------------------------------------
@@ -216,7 +239,12 @@ export interface AdminClient {
   killTicketSession(id: string): Promise<{ ok: boolean }>;
 
   // Plugins
-  getPlugins(): Promise<{ plugins: unknown[] }>;
+  /**
+   * The installed plugins — each with the data agents keep of its agent
+   * half (`retainedData`) — and, as the top-level `retainedData`, what every
+   * agent keeps, of uninstalled plugins too.
+   */
+  getPlugins(): Promise<{ plugins: unknown[]; retainedData: RetainedAgentData[] }>;
   installPlugin(packageName: string): Promise<unknown>;
   enablePlugin(name: string): Promise<{ ok: boolean }>;
   disablePlugin(name: string): Promise<{ ok: boolean }>;
@@ -254,6 +282,30 @@ export interface AdminClient {
     options?: { force?: boolean; purge?: boolean },
   ): Promise<{ ok: boolean; operation: unknown }>;
   rotatePluginHostingSecret(name: string): Promise<{ ok: boolean; hosting: unknown }>;
+  // Retained data: what agents keep of the plugin's agent half after it was
+  // removed without purge — by the plugin's name, so after it is uninstalled
+  // too.
+  getPluginRetainedData(name: string): Promise<{ retainedData: RetainedAgentData[] }>;
+  /**
+   * Purge what agent `agentLabel` keeps of the plugin's agent half — its
+   * data directory and account — through the agent's app host helper: an
+   * operation (kind `purge-data`), push-install gated as `uninstall`. A
+   * refusal rejects as for {@link AdminClient.setPluginHosting}, with `code`
+   * `push_install_refused`, `retained_data_in_use` or `agent_not_enrolled`.
+   */
+  purgePluginRetainedData(
+    name: string,
+    agentLabel: string,
+  ): Promise<{ ok: boolean; operation: unknown }>;
+  /**
+   * Drop only the relay's record of what agent `agentLabel` keeps; the agent
+   * is not touched and the data stays on the machine — for an agent that is
+   * gone, or data removed there by hand.
+   */
+  forgetPluginRetainedData(
+    name: string,
+    agentLabel: string,
+  ): Promise<{ ok: boolean; forgotten: RetainedAgentData }>;
   getPluginOperations(name: string): Promise<{ operations: unknown[] }>;
   getPluginOperation(name: string, id: string): Promise<{ operation: unknown }>;
   // Lifecycle hooks and what needs approval — the relay hook set and the

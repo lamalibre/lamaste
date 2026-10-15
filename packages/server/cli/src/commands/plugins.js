@@ -36,6 +36,15 @@
  *   discard-update <name>
  *                        Drop an update that waits for approval
  *   operations <name>    Recent hosting / update / uninstall operations and their steps
+ *   retained-data [<name>]
+ *                        What agents keep of agent halves removed without purge — of every
+ *                        plugin (uninstalled ones too), or of one
+ *   purge-data <name> --agent <label>
+ *                        Delete what an agent keeps of the plugin's agent half (its data
+ *                        directory and account) through its app host helper — an operation,
+ *                        followed to its end
+ *   forget-data <name> --agent <label>
+ *                        Drop only the relay's record of it; the data stays on the agent
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -48,6 +57,7 @@
 
 import chalk from 'chalk';
 import { execa } from 'execa';
+import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import { PANEL_SERVICE } from '../config.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
@@ -99,6 +109,12 @@ export async function runPlugins(args, { json }) {
       return discardUpdateCmd(args[1], { json });
     case 'operations':
       return operationsCmd(args[1], { json });
+    case 'retained-data':
+      return retainedDataCmd(args.slice(1), { json });
+    case 'purge-data':
+      return purgeDataCmd(args.slice(1), { json });
+    case 'forget-data':
+      return forgetDataCmd(args.slice(1), { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -141,6 +157,13 @@ ${b('Subcommands:')}
   ${c('discard-update <name>')}
                        Drop an update that waits for approval
   ${c('operations <name>')}    Recent operations of the plugin and their steps
+  ${c('retained-data [<name>]')}
+                       What agents keep of agent halves removed without purge (every
+                       plugin's, uninstalled ones too, or one plugin's)
+  ${c('purge-data <name> --agent <label>')}
+                       Delete it on the agent — its data directory and account (a push)
+  ${c('forget-data <name> --agent <label>')}
+                       Drop only the relay's record; the data stays on the agent
 `);
 }
 
@@ -451,6 +474,205 @@ async function operationsCmd(name, { json }) {
     for (const step of op.steps) printStep(step);
     printWarnings(op.warnings);
   }
+  console.log('');
+}
+
+// ---------------------------------------------------------------------------
+// Retained data
+// ---------------------------------------------------------------------------
+
+/**
+ * The arguments of `purge-data|forget-data <name> --agent <label>`. Pure,
+ * exported for tests.
+ *
+ * @param {'purge-data' | 'forget-data'} sub
+ * @param {string[]} args  what follows the subcommand
+ * @returns {{ ok: true, name: string, agentLabel: string } | { ok: false, error: string }}
+ */
+export function parseRetainedDataArgs(sub, args) {
+  const usage = `Usage: lamaste-server plugins ${sub} <name> --agent <label>`;
+  let name = null;
+  let agentLabel = null;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--agent') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        return { ok: false, error: `--agent needs a value — ${usage}` };
+      }
+      agentLabel = value;
+      i++;
+    } else if (arg.startsWith('--')) {
+      return { ok: false, error: `Unknown option ${arg} — ${usage}` };
+    } else if (name === null) {
+      name = arg;
+    } else {
+      return { ok: false, error: `Unexpected argument "${arg}" — ${usage}` };
+    }
+  }
+  if (name === null || agentLabel === null) return { ok: false, error: usage };
+  if (!AGENT_LABEL_REGEX.test(agentLabel)) {
+    return { ok: false, error: `"${agentLabel}" is not an agent label` };
+  }
+  return { ok: true, name, agentLabel };
+}
+
+/**
+ * Each record of what agents keep, marked with whether its plugin is still
+ * installed — a record outlives its plugin's uninstall. Pure, exported for
+ * tests.
+ *
+ * @param {Array<Record<string, unknown>>} records
+ * @param {ReadonlySet<string>} installed  the names of the installed plugins
+ */
+export function retainedDataRows(records, installed) {
+  return records.map((record) => ({ ...record, installed: installed.has(record.plugin) }));
+}
+
+/**
+ * `/api/plugins/<name>/retained-data`, with `query` as its query string.
+ *
+ * @param {string} name
+ * @param {Record<string, string>} [query]
+ */
+function retainedDataPath(name, query) {
+  const base = `/api/plugins/${encodeURIComponent(name)}/retained-data`;
+  return query ? `${base}?${new URLSearchParams(query)}` : base;
+}
+
+/**
+ * `retained-data [<name>]`: every plugin's records (with whether the plugin
+ * is still installed), or one plugin's, by the name it had.
+ *
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function retainedDataCmd(args, { json }) {
+  if (args.length > 1 || args.some((a) => a.startsWith('--'))) {
+    fail('Usage: lamaste-server plugins retained-data [<name>]', json);
+  }
+  const name = args[0];
+  let rows;
+  try {
+    if (name) {
+      ({ retainedData: rows } = await panelRequest('GET', retainedDataPath(name)));
+    } else {
+      const { plugins = [], retainedData = [] } = await panelRequest('GET', '/api/plugins');
+      rows = retainedDataRows(retainedData, new Set(plugins.map((p) => p.name)));
+    }
+  } catch (err) {
+    fail(err.message, json);
+  }
+  if (json) {
+    emit({ retainedData: rows });
+    return;
+  }
+  if (rows.length === 0) {
+    console.log(
+      name
+        ? `\n  No agent keeps data of ${chalk.cyan(name)}'s agent half.\n`
+        : '\n  No agent keeps data of a removed agent half.\n',
+    );
+    return;
+  }
+  const d = chalk.dim;
+  console.log('');
+  console.log(chalk.bold(name ? `  Retained data of ${name}` : '  Retained data'));
+  console.log(d('  ' + '\u2500'.repeat(40)));
+  for (const r of rows) {
+    const uninstalled = r.installed === false ? chalk.yellow(' (uninstalled)') : '';
+    console.log(
+      `  ${chalk.cyan(r.plugin)}${uninstalled}  ${d('on')} ${chalk.cyan(r.agentLabel)}  ` +
+        `${d('route')} ${r.route}  ${r.package}  ${d(`since ${r.since}`)}`,
+    );
+    console.log(d(`    ${r.dataDir}, account ${r.serviceUser}`));
+  }
+  console.log('');
+  console.log(
+    d('  Purge it on the agent:   lamaste-server plugins purge-data <name> --agent <label>'),
+  );
+  console.log(
+    d('  Forget the record only:  lamaste-server plugins forget-data <name> --agent <label>'),
+  );
+  console.log('');
+}
+
+/**
+ * The record of what agent `agentLabel` keeps of plugin `name`, or null —
+ * read before a purge or a forget to say what it concerns.
+ */
+async function findRetainedRecord(name, agentLabel) {
+  const { retainedData } = await panelRequest('GET', retainedDataPath(name));
+  return retainedData.find((r) => r.agentLabel === agentLabel) ?? null;
+}
+
+/**
+ * `purge-data <name> --agent <label>`: delete what the agent keeps — its
+ * data directory and account — through its app host helper. Once the panel
+ * has started the operation it says what is being deleted, follows the
+ * operation to its end and exits non-zero unless it succeeded.
+ *
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function purgeDataCmd(args, { json }) {
+  const parsed = parseRetainedDataArgs('purge-data', args);
+  if (!parsed.ok) fail(parsed.error, json);
+  const { name, agentLabel } = parsed;
+  let record;
+  try {
+    record = await findRetainedRecord(name, agentLabel);
+  } catch (err) {
+    fail(err.message, json);
+  }
+  if (!record) fail(`Agent "${agentLabel}" keeps no data of plugin "${name}"`, json);
+  let result;
+  try {
+    result = await panelRequest('DELETE', retainedDataPath(name, { agentLabel }));
+  } catch (err) {
+    failRefused(err, json, { name, agentLabel, action: 'uninstall' });
+  }
+  if (!json) {
+    console.log(
+      `\n  Purging what ${chalk.cyan(agentLabel)} keeps of ${chalk.cyan(name)} (route ${record.route}): ` +
+        `deleting ${record.dataDir} and the account ${record.serviceUser}`,
+    );
+  }
+  await finishOperation(name, result.operation, { json });
+}
+
+/**
+ * `forget-data <name> --agent <label>`: drop the relay's record only. The
+ * agent is not touched — said, with how to remove the data there.
+ *
+ * @param {string[]} args
+ * @param {{ json: boolean }} options
+ */
+async function forgetDataCmd(args, { json }) {
+  const parsed = parseRetainedDataArgs('forget-data', args);
+  if (!parsed.ok) fail(parsed.error, json);
+  const { name, agentLabel } = parsed;
+  let result;
+  try {
+    result = await panelRequest('DELETE', retainedDataPath(name, { agentLabel, forget: 'true' }));
+  } catch (err) {
+    fail(err.message, json);
+  }
+  const { forgotten } = result;
+  if (json) {
+    emitComplete({ name, forgotten });
+    return;
+  }
+  console.log(
+    `\n  Forgot the relay's record of what ${chalk.cyan(agentLabel)} keeps of ${chalk.cyan(name)}.`,
+  );
+  console.log(
+    chalk.yellow(
+      `  Nothing on ${agentLabel} changed: ${forgotten.dataDir} and the account ${forgotten.serviceUser}` +
+        `\n  stay there — remove them on the machine with` +
+        ` sudo lamaste-agent apphost remove ${forgotten.route} --purge`,
+    ),
+  );
   console.log('');
 }
 

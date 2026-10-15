@@ -55,7 +55,16 @@ export const LOGS_DIR = path.join(LAMASTE_DIR, 'logs');
 export const LEGACY_CONFIG_PATH = path.join(LAMASTE_DIR, 'agent.json');
 
 /** Multi-agent registry path. */
-export const AGENTS_REGISTRY_PATH = path.join(LAMASTE_DIR, 'agents.json');
+export const AGENTS_REGISTRY_PATH = agentsRegistryPathIn(HOME);
+
+/**
+ * The multi-agent registry of the user whose home directory is `home` —
+ * where `lamaste-agent`, run as that user, lists its agents. Root reads the
+ * agent user's registry through it (`lamaste-agent apphost enable|pin`).
+ */
+export function agentsRegistryPathIn(home: string): string {
+  return path.join(userProductRoot(home), 'agents.json');
+}
 
 /** Servers registry path. */
 export const SERVERS_REGISTRY_PATH = path.join(LAMASTE_DIR, 'servers.json');

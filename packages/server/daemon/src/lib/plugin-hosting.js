@@ -457,7 +457,7 @@ export async function assertNoForeignRetainedData(label, route, pkg) {
   const retained = await findRetainedData(label, route);
   if (retained && retained.package !== pkg) {
     throw httpError(
-      `Agent "${label}" keeps the data of ${retained.package} (plugin "${retained.plugin}") for route "${route}" since ${retained.since} — Lamaste does not install ${pkg} over it; purge that data first (DELETE /api/plugins/${retained.plugin}/retained-data?agentLabel=${label})`,
+      `Agent "${label}" keeps the data of ${retained.package} (plugin "${retained.plugin}") for route "${route}" since ${retained.since} — Lamaste does not install ${pkg} over it; purge that data first: Purge under Retained data on the Plugins page, or lamaste-server plugins purge-data ${retained.plugin} --agent ${label}`,
       409,
       { code: 'retained_data_conflict', retained },
     );
@@ -511,7 +511,7 @@ export async function purgeRetainedData(name, agentLabel, { actor, logger, sourc
   }
   if (!(await isActiveAgent(agentLabel))) {
     throw httpError(
-      `Agent "${agentLabel}" is no longer enrolled — nothing can be pushed to it. Purge the data on the machine (sudo lamaste-agent apphost remove ${retained.route} --purge), then forget the record (forget=true)`,
+      `Agent "${agentLabel}" is no longer enrolled — nothing can be pushed to it. Purge the data on the machine (sudo lamaste-agent apphost remove ${retained.route} --purge), then forget the relay's record: Forget under Retained data on the Plugins page, or lamaste-server plugins forget-data ${name} --agent ${agentLabel}`,
       409,
       { code: 'agent_not_enrolled' },
     );

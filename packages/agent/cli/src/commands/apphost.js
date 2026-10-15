@@ -2,7 +2,7 @@
  * lamaste-agent apphost — the app host helper on this machine (slice 3).
  *
  * Usage:
- *   sudo lamaste-agent apphost enable [--user <name>]
+ *   sudo lamaste-agent apphost enable [--user <name>] [--force]
  *   sudo lamaste-agent apphost pin [--label <label>] [--user <name>]
  *   lamaste-agent apphost status [--json]
  *   lamaste-agent apphost relay-keys [--label <label>] [--json]
@@ -20,7 +20,9 @@
  * `enable` installs the helper root:root 0755 at /usr/local/sbin and the
  * rule (0440, checked with `visudo -c` before it is renamed into place),
  * checks that the agent's user can run it, and pins the relay key of every
- * agent on the machine (`apphost-setup.js`). `pin` pins them again after a
+ * agent of that user on the machine (`apphost-setup.js`). App hosting
+ * serves one OS user per machine: enabling it for another user than the
+ * rule names is refused unless `--force`. `pin` pins them again after a
  * relay rotated its key. `relay-keys` shows what each agent's relay
  * publishes (run as the agent's user; `pin` runs it so). `remove` takes an
  * agent half off the machine as the operator, with no relay involved — for
@@ -41,8 +43,10 @@ import { appHostStatus, isAppHostEnabled } from '@lamalibre/lamaste/agent';
 import {
   HELPER_SOURCE,
   ROOT_OWNED_INSTALL,
+  assertOneAppHostUser,
   collectRelayKeys,
   fetchRelayKeysAs,
+  machineAgentsOf,
   pinRelayKeys,
   readRelayPins,
   removeRelayPins,
@@ -101,10 +105,12 @@ function printUsage() {
 ${b('Usage:')} lamaste-agent apphost <subcommand>
 
 ${b('Subcommands:')}
-  ${c('enable [--user <name>]')}   Install the app host helper and the sudoers rule that lets
+  ${c('enable [--user <name>] [--force]')}
+                           Install the app host helper and the sudoers rule that lets
                            the agent's user run it, and pin each agent's relay key (run
                            with sudo; the user defaults to the one who ran sudo, --user
-                           root when the agent runs as root)
+                           root when the agent runs as root). One user per machine: a
+                           rule for another user is replaced only with --force
   ${c('pin [--label <label>]')}    Pin the relay key again after a relay rotated it (run with
                            sudo); the helper runs only jobs the pinned key signed
   ${c('status [--json]')}          Show the helper, its rule, the pinned relay keys and the
@@ -246,6 +252,10 @@ async function enable(args, json) {
   requireRoot('enable');
   await requireRootOwnedInstall('enable');
   const user = await agentUser(args);
+  const previousUser = await sudoersUser();
+  assertOneAppHostUser(user, previousUser, args.includes('--force'));
+  // The user the rule named before, when --force handed app hosting over.
+  const replacedUser = previousUser !== null && previousUser !== user ? previousUser : null;
   try {
     await access(NODE_BIN, constants.X_OK);
   } catch {
@@ -309,7 +319,8 @@ async function enable(args, json) {
   let relays = [];
   let relayError = null;
   try {
-    relays = await pinRelayKeys(await fetchRelayKeysAs(user));
+    const agents = await machineAgentsOf(user);
+    relays = await pinRelayKeys(await fetchRelayKeysAs(user), { agents });
   } catch (err) {
     relayError = err instanceof Error ? err.message : String(err);
   }
@@ -324,6 +335,7 @@ async function enable(args, json) {
         node,
         sudoers: user === 'root' ? null : APPHOST_PATHS.sudoers,
         user,
+        ...(replacedUser !== null ? { replacedUser } : {}),
         relays,
         ...(relayError !== null ? { relayError } : {}),
       }),
@@ -338,6 +350,13 @@ async function enable(args, json) {
     console.log('  Sudoers: none needed — the agent runs as root and calls the helper directly.');
   } else {
     console.log(`  Sudoers: ${APPHOST_PATHS.sudoers} (${user} may run the helper as root)`);
+  }
+  if (replacedUser !== null) {
+    console.log(
+      chalk.yellow(
+        `  Replaced the rule for ${replacedUser}: its agents can no longer run the helper.`,
+      ),
+    );
   }
   if (relayError !== null) {
     console.log(
@@ -376,6 +395,14 @@ function printPinned(relays) {
           : chalk.yellow(` (was ${r.previousKid})`);
     console.log(`    ${r.label.padEnd(20)} ${r.kid}${was}  ${chalk.dim(r.panelUrl)}`);
   }
+  if (relays.some((r) => !('error' in r))) {
+    console.log(
+      chalk.dim(
+        "  Compare each id with the relay's own: its panel logs it at start-up ('Relay assertion\n" +
+          "  signing key ready'), or lamaste-agent apphost relay-keys shows what it publishes now.",
+      ),
+    );
+  }
 }
 
 /**
@@ -400,7 +427,8 @@ async function pin(args, label, json) {
     throw new Error('The app host helper is not enabled: sudo lamaste-agent apphost enable');
   }
   const user = await pinUser(args);
-  const relays = await pinRelayKeys(await fetchRelayKeysAs(user, { label }));
+  const agents = await machineAgentsOf(user);
+  const relays = await pinRelayKeys(await fetchRelayKeysAs(user, { label }), { agents });
   const failed = relays.filter((r) => 'error' in r);
   if (json) {
     console.log(JSON.stringify({ ok: failed.length === 0, user, relays }));

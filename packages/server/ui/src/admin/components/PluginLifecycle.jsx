@@ -51,10 +51,12 @@ const KIND_LABEL = {
   unhost: 'Removing the hosting',
   update: 'Update',
   uninstall: 'Uninstall',
+  'purge-data': 'Purging retained data',
 };
 
 /**
- * A plugin's latest operation (hosting, unhosting, update, uninstall) and
+ * A plugin's latest operation (hosting, unhosting, update, uninstall,
+ * purging the data an agent kept of its agent half) and
  * its steps, followed while it runs. Shown until it is older than ten
  * minutes, so an outcome — a rollback, a failed stage — stays visible.
  */
