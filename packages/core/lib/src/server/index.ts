@@ -432,6 +432,10 @@ export type {
   PluginHealthMonitor,
 } from './plugin-health.js';
 
+// --- Agent-panel vhost authorization (relay assertions for lamaste-agentd) ---
+export { authorizeAgentPanelRequest, findAgentPanelTunnel } from './agent-panel-authz.js';
+export type { AgentPanelAuthzRequest, AgentPanelAuthzDecision } from './agent-panel-authz.js';
+
 // --- Branding ---
 export * from '../branding.js';
 

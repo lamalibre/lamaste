@@ -13,9 +13,9 @@
  *   capability-deny (HTTP 503), not capability-allow. This is enforced in
  *   the auth hook in server.js.
  *
- * - The cache key is the label as parsed from the mTLS cert CN. nginx is
- *   the sole writer of `X-SSL-Client-DN`, so the label is trusted input
- *   for caching purposes.
+ * - The cache key is the daemon's own label. Capabilities are fetched only
+ *   for a relay assertion naming this agent's certificate (lib/auth.js), so
+ *   no caller chooses the key.
  *
  * - TTL is short (60s) so capability revocations or grants on the panel
  *   take effect within a minute without restarting the daemon.

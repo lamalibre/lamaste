@@ -18,6 +18,9 @@
 # 7. GET /plugins/:name/check-update — nonexistent plugin returns 400
 # 8. GET /plugins/:name/bundle — nonexistent plugin returns 404
 # 9. Plugin name validation — reserved names, invalid chars
+# 10. Auth: no credential, forged certificate headers and percent-escaped
+#     paths are refused with 401 — the daemon's port is reachable by every
+#     process on the agent VM (the relay's signed assertions: spec 32)
 # ============================================================================
 
 set -euo pipefail
@@ -246,16 +249,21 @@ HEALTH_NO_AUTH=$(agent_exec "curl -sf --max-time 10 http://127.0.0.1:${AGENT_PAN
 assert_eq "$HEALTH_NO_AUTH" "ok" "Health endpoint accessible without auth" || true
 
 # ===========================================================================
-# 8. Auth validation — wrong agent label
+# 8. Auth validation — headers that only claim a certificate
 # ===========================================================================
 
-log_section "Auth validation — wrong agent label"
+log_section "Auth validation — forged certificate headers"
 
+# Anything on the agent VM can open 127.0.0.1:${AGENT_PANEL_PORT} and send
+# these; the daemon accepts the relay only with a relay assertion
 WRONG_LABEL_STATUS=$(agent_exec "curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:wrong-label' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins")
-assert_eq "$WRONG_LABEL_STATUS" "403" "Request with wrong agent label returns 403" || true
+assert_eq "$WRONG_LABEL_STATUS" "401" "Forged agent certificate headers are refused (401)" || true
 
-# Admin cert should be allowed
-ADMIN_STATUS=$(agent_exec "curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins")
-assert_eq "$ADMIN_STATUS" "200" "Admin cert is allowed to access agent panel" || true
+FORGED_ADMIN_STATUS=$(agent_exec "curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins")
+assert_eq "$FORGED_ADMIN_STATUS" "401" "Forged admin certificate headers are refused (401)" || true
+
+# The router decodes percent-escapes: /%61pi/... is routed as /api/...
+ESCAPED_STATUS=$(agent_exec "curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/%61pi/status")
+assert_eq "$ESCAPED_STATUS" "401" "Percent-escaped /api path without credentials is refused (401)" || true
 
 end_test

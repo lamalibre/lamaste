@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { access, lstat } from 'node:fs/promises';
+import { access, lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const SITES_AVAILABLE = '/etc/nginx/sites-available';
@@ -15,6 +15,14 @@ const SITES_ENABLED = '/etc/nginx/sites-enabled';
 const PRIV = '/usr/local/sbin/lamaste-priv';
 
 /**
+ * Ceiling for one nginx-related command (a `lamaste-priv` action, `nginx -t`,
+ * a reload). Each takes well under a second; a hung one must fail — and roll
+ * the vhost back — rather than hold up the caller, which at startup is the
+ * panel before it listens.
+ */
+const NGINX_COMMAND_TIMEOUT_MS = 60_000;
+
+/**
  * Run one `lamaste-priv nginx-site` action.
  *
  * @param {'write'|'backup'|'restore'|'discard-backup'|'enable'|'disable'|'remove'} action
@@ -24,6 +32,7 @@ const PRIV = '/usr/local/sbin/lamaste-priv';
 async function siteAction(action, name, content) {
   try {
     await execa('sudo', [PRIV, 'nginx-site', action, name], {
+      timeout: NGINX_COMMAND_TIMEOUT_MS,
       ...(content === undefined ? {} : { input: content }),
     });
   } catch (err) {
@@ -243,10 +252,74 @@ server {
 }
 
 /**
+ * A hostname written into a vhost as a literal. Where it names the vhost to
+ * an authorization subrequest it must stay a literal — a `$` would make nginx
+ * expand a variable there — so it is checked here, not trusted to the
+ * callers' validation.
+ */
+const LITERAL_HOSTNAME_RE =
+  /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+
+function assertLiteralHostname(name) {
+  if (typeof name !== 'string' || !LITERAL_HOSTNAME_RE.test(name)) {
+    throw new Error(`Invalid hostname for nginx vhost: ${name}`);
+  }
+}
+
+/**
+ * The URL an authorization subrequest asks about: the vhost's own hostname,
+ * written into the configuration, and the request's path and query.
+ *
+ * Never `$http_host`. nginx selects the vhost from the request line when the
+ * request is in absolute form (`GET https://a.example.com/x HTTP/1.1`) and
+ * from `Host` otherwise, so a client can send the request line of one
+ * hostname with the `Host` header of another: built from `$http_host`, the
+ * subrequest asked Authelia (and Gatekeeper) about the other hostname while
+ * nginx served this one. `$host` is no better — on the default server it is
+ * whatever `Host` the client sent. Every vhost here listens on 443 with TLS
+ * only, so the scheme is fixed too. `$request_uri` is what follows the host in
+ * the request target — it starts with `/`, or with `?` for an absolute-form
+ * target without a path — so it cannot change the URL's host.
+ *
+ * @param {string} fqdn
+ */
+function originalUrl(fqdn) {
+  assertLiteralHostname(fqdn);
+  return `https://${fqdn}$request_uri`;
+}
+
+/**
+ * Cleared in every authorization subrequest. Each names a host, a scheme or a
+ * path, and the client's values would otherwise reach Gatekeeper and
+ * Authelia; neither decides by them today, and neither may.
+ */
+const AUTHZ_CLEARED_HEADERS = `
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_set_header X-Forwarded-Uri "";
+        proxy_set_header X-Forwarded-Method "";`;
+
+/**
  * Write the Authelia auth portal vhost.
  */
 export async function writeAuthVhost(domain) {
+  const { name, config } = renderAuthVhost(domain);
+  await writeVhostFile(name, config);
+  return path.join(SITES_AVAILABLE, name);
+}
+
+/**
+ * Render the Authelia auth portal vhost. Pure; the startup reconcile renders
+ * it on the certificate directory the installed vhost names.
+ *
+ * @param {string} domain
+ * @param {string} [certPath] - certificate directory (default: the portal's own lineage)
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderAuthVhost(domain, certPath) {
   const fqdn = `auth.${domain}`;
+  let certDirClean = certPath || `/etc/letsencrypt/live/${fqdn}`;
+  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
   const config = `# Rate limit zone for user access authorize endpoint (5 requests/minute per IP)
 limit_req_zone $binary_remote_addr zone=user_access_auth:1m rate=5r/m;
 
@@ -254,8 +327,8 @@ server {
     listen 443 ssl;
     server_name ${fqdn};
 
-    ssl_certificate /etc/letsencrypt/live/${fqdn}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${fqdn}/privkey.pem;
+    ssl_certificate ${certDirClean}/fullchain.pem;
+    ssl_certificate_key ${certDirClean}/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
@@ -292,8 +365,9 @@ server {
         proxy_set_header Content-Length "";
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        # This vhost's hostname, never the client's Host header
+        proxy_set_header X-Original-URL ${originalUrl(fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
 
         proxy_http_version 1.1;
         proxy_buffers 4 32k;
@@ -331,8 +405,7 @@ server {
 }
 `;
 
-  await writeVhostFile('lamalibre-lamaste-auth', config);
-  return path.join(SITES_AVAILABLE, 'lamalibre-lamaste-auth');
+  return { name: 'lamalibre-lamaste-auth', fqdn, config };
 }
 
 /**
@@ -429,6 +502,14 @@ export async function writePublicVhost(
   certPath,
   { pathPrefix, maxBodySizeMb, enabled = true } = {},
 ) {
+  const { name, fqdn, config } = renderPublicVhost(subdomain, domain, port, certPath, {
+    pathPrefix,
+    maxBodySizeMb,
+  });
+  return safeWriteVhost(name, config, fqdn, { enabled });
+}
+
+function renderPublicVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb } = {}) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
@@ -455,7 +536,14 @@ ${bodySizeDirective(maxBodySizeMb)}
         proxy_set_header Remote-User "";
         proxy_set_header Remote-Groups "";
         proxy_set_header Remote-Name "";
-        proxy_set_header Remote-Email "";
+        proxy_set_header Remote-Email "";${
+          pathPrefix
+            ? `
+        # Nor a relay assertion: lamaste-agentd, which serves plugin routes,
+        # would otherwise be handed one a client sent.
+        proxy_set_header X-Lamalibre-Relay-Assertion "";`
+            : ''
+        }
 ${TUNNEL_PROXY_HEADERS}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
@@ -467,8 +555,7 @@ ${TUNNEL_PROXY_HEADERS}
 }
 `;
 
-  const name = `lamalibre-lamaste-app-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn, { enabled });
+  return { name: `lamalibre-lamaste-app-${subdomain}`, fqdn, config };
 }
 
 /**
@@ -483,22 +570,11 @@ export async function writeAuthenticatedVhost(
   certPath,
   { pathPrefix, maxBodySizeMb, enabled = true } = {},
 ) {
-  if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
-    throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
-  }
-
-  const fqdn = `${subdomain}.${domain}`;
-  const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
-  let certDirClean = certDir;
-  while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
-
-  const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
+  const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
     pathPrefix,
     maxBodySizeMb,
     restricted: false,
   });
-
-  const name = `lamalibre-lamaste-app-${subdomain}`;
   return safeWriteVhost(name, config, fqdn, { enabled });
 }
 
@@ -514,6 +590,21 @@ export async function writeRestrictedVhost(
   certPath,
   { pathPrefix, maxBodySizeMb, enabled = true } = {},
 ) {
+  const { name, fqdn, config } = renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
+    pathPrefix,
+    maxBodySizeMb,
+    restricted: true,
+  });
+  return safeWriteVhost(name, config, fqdn, { enabled });
+}
+
+function renderGatekeeperTunnelVhost(
+  subdomain,
+  domain,
+  port,
+  certPath,
+  { pathPrefix, maxBodySizeMb, restricted },
+) {
   if (pathPrefix && !/^[a-z0-9][a-z0-9._-]*$/.test(pathPrefix)) {
     throw new Error(`Invalid pathPrefix for nginx vhost: ${pathPrefix}`);
   }
@@ -526,11 +617,30 @@ export async function writeRestrictedVhost(
   const config = buildGatekeeperVhost(fqdn, certDirClean, port, domain, {
     pathPrefix,
     maxBodySizeMb,
-    restricted: true,
+    restricted,
   });
 
-  const name = `lamalibre-lamaste-app-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn, { enabled });
+  return { name: `lamalibre-lamaste-app-${subdomain}`, fqdn, config };
+}
+
+/**
+ * Render the vhost of an app or plugin tunnel — what the tunnel workflows
+ * write for `accessMode`. Pure; used to compare an installed vhost with what
+ * the generators produce today (see vhost-reconcile.js).
+ *
+ * @param {'public'|'authenticated'|'restricted'} accessMode
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderTunnelVhost(accessMode, subdomain, domain, port, certPath, opts = {}) {
+  const { pathPrefix, maxBodySizeMb } = opts;
+  if (accessMode === 'public') {
+    return renderPublicVhost(subdomain, domain, port, certPath, { pathPrefix, maxBodySizeMb });
+  }
+  return renderGatekeeperTunnelVhost(subdomain, domain, port, certPath, {
+    pathPrefix,
+    maxBodySizeMb,
+    restricted: accessMode !== 'authenticated',
+  });
 }
 
 /**
@@ -538,6 +648,16 @@ export async function writeRestrictedVhost(
  * Both 'authenticated' and 'restricted' modes use this — the difference
  * is handled server-side by Gatekeeper based on the tunnel's accessMode.
  * For restricted mode, the 403 body from Gatekeeper is served inline.
+ *
+ * The subrequest names the tunnel in its path, `/authz/tunnel/<fqdn>`,
+ * written here as the agent-panel vhost writes its agent's label, and
+ * `X-Original-URL` and `Host` carry the same hostname (see
+ * {@link originalUrl}). Vhosts before 4.3 called `/authz/check` with both
+ * built from the client's `Host`, so an Authelia user allowed on one tunnel
+ * reached any other — the request line named the tunnel nginx served, `Host`
+ * the one Gatekeeper authorized. Gatekeeper now refuses `/authz/check`: a
+ * vhost the panel has not rewritten closes its tunnel instead of opening it.
+ * The login redirect names this vhost for the same reason.
  */
 function buildGatekeeperVhost(
   fqdn,
@@ -546,6 +666,7 @@ function buildGatekeeperVhost(
   domain,
   { pathPrefix, maxBodySizeMb, restricted } = {},
 ) {
+  const url = originalUrl(fqdn);
   return `server {
     listen 443 ssl;
     server_name ${fqdn};
@@ -557,19 +678,20 @@ function buildGatekeeperVhost(
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 ${bodySizeDirective(maxBodySizeMb)}
-    # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
+    # Gatekeeper authorization subrequest (handles Authelia validation + grant check).
+    # The tunnel is named in the path — never by the client's Host header.
     location /internal/lamaste/authz {
         internal;
 
-        proxy_pass http://127.0.0.1:9294/authz/check;
+        proxy_pass http://127.0.0.1:9294/authz/tunnel/${fqdn};
         proxy_pass_request_body off;
 
         proxy_set_header Content-Length "";
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header Host $http_host;
+        proxy_set_header X-Original-URL ${url};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
+        proxy_set_header Host ${fqdn};
         proxy_set_header Cookie $http_cookie;
 
         proxy_http_version 1.1;
@@ -582,12 +704,25 @@ ${bodySizeDirective(maxBodySizeMb)}
         auth_request_set $user $upstream_http_remote_user;
         auth_request_set $groups $upstream_http_remote_groups;
         auth_request_set $name $upstream_http_remote_name;
-        auth_request_set $email $upstream_http_remote_email;
+        auth_request_set $email $upstream_http_remote_email;${
+          pathPrefix
+            ? `
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;`
+            : ''
+        }
 
         proxy_set_header Remote-User $user;
         proxy_set_header Remote-Groups $groups;
         proxy_set_header Remote-Name $name;
-        proxy_set_header Remote-Email $email;
+        proxy_set_header Remote-Email $email;${
+          pathPrefix
+            ? `
+
+        # The user, signed by Gatekeeper for this one request — lamaste-agentd,
+        # which serves plugin routes, trusts no Remote-* header without it
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`
+            : ''
+        }
 ${TUNNEL_PROXY_HEADERS}
 
         ${pathPrefix ? `rewrite ^/?(.*)$ /${pathPrefix}/$1 break;\n        ` : ''}proxy_pass http://127.0.0.1:${port};
@@ -596,8 +731,8 @@ ${TUNNEL_PROXY_HEADERS}
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login
-        error_page 401 =302 https://auth.${domain}/?rd=$scheme://$http_host$request_uri;
+        # Authentication failure -> redirect to Authelia login, back to this vhost
+        error_page 401 =302 https://auth.${domain}/?rd=${url};
 
         ${
           restricted
@@ -611,7 +746,7 @@ ${TUNNEL_PROXY_HEADERS}
 }
 
 /** True when `name` is linked into sites-enabled. The directory is world-readable. */
-async function isSiteEnabled(name) {
+export async function isSiteEnabled(name) {
   try {
     await lstat(path.join(SITES_ENABLED, name));
     return true;
@@ -703,6 +838,24 @@ async function safeWriteVhost(name, config, fqdn, { enabled = true } = {}) {
  * @param {string} [domain] - Base domain (needed for Authelia redirect URL)
  */
 export async function writeStaticSiteVhost(site, certDir, domain) {
+  const { name, fqdn, config } = renderStaticSiteVhost(site, certDir, domain);
+  return safeWriteVhost(name, config, fqdn, { enabled: true });
+}
+
+/**
+ * Render a static site vhost. Pure; the startup reconcile renders it on the
+ * certificate directory the installed vhost names.
+ *
+ * Authelia decides by the hostname of `X-Original-URL` — a site restricted to
+ * some users has rules for its own hostname only — so the subrequest names
+ * this site, never the client's `Host` (see {@link originalUrl}).
+ *
+ * @param {object} site - as for writeStaticSiteVhost
+ * @param {string} certDir
+ * @param {string} [domain]
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderStaticSiteVhost(site, certDir, domain) {
   let certDirClean = certDir;
   while (certDirClean.endsWith('/')) certDirClean = certDirClean.slice(0, -1);
   const aliasBlock = buildAliasRedirectBlock(site, certDirClean);
@@ -723,8 +876,9 @@ export async function writeStaticSiteVhost(site, certDir, domain) {
         proxy_set_header Content-Length "";
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
-        proxy_set_header X-Forwarded-For $remote_addr;
+        # This site's hostname, never the client's Host header
+        proxy_set_header X-Original-URL ${originalUrl(site.fqdn)};
+        proxy_set_header X-Forwarded-For $remote_addr;${AUTHZ_CLEARED_HEADERS}
 
         proxy_http_version 1.1;
         proxy_buffers 4 32k;
@@ -779,8 +933,7 @@ ${
 }
 ${aliasBlock}`;
 
-  const name = `lamalibre-lamaste-site-${site.id}`;
-  return safeWriteVhost(name, config, site.fqdn, { enabled: true });
+  return { name: `lamalibre-lamaste-site-${site.id}`, fqdn: site.fqdn, config };
 }
 
 /**
@@ -861,7 +1014,7 @@ export async function removeAppVhost(subdomain) {
  */
 export async function testConfig() {
   try {
-    await execa('sudo', ['nginx', '-t']);
+    await execa('sudo', ['nginx', '-t'], { timeout: NGINX_COMMAND_TIMEOUT_MS });
     return { valid: true };
   } catch (err) {
     return { valid: false, error: err.stderr || err.message };
@@ -873,7 +1026,7 @@ export async function testConfig() {
  */
 export async function reload() {
   try {
-    await execa('sudo', ['systemctl', 'reload', 'nginx']);
+    await execa('sudo', ['systemctl', 'reload', 'nginx'], { timeout: NGINX_COMMAND_TIMEOUT_MS });
     return { reloaded: true };
   } catch (err) {
     throw new Error(`Failed to reload nginx: ${err.stderr || err.message}`);
@@ -977,6 +1130,40 @@ export async function writeAgentPanelVhost(
   certPath,
   { enabled = true } = {},
 ) {
+  const { name, fqdn, config } = renderAgentPanelVhost(subdomain, domain, port, certPath);
+  return safeWriteVhost(name, config, fqdn, { enabled });
+}
+
+/**
+ * Render an agent panel vhost. Pure.
+ *
+ * nginx verifies the browser's client certificate, then asks the panel
+ * whether the request may reach the agent (`auth_request` to
+ * `/api/agent-panel/authz/<label>`, with the certificate's verification
+ * result, the method and `$request_uri`). The panel refuses a revoked or
+ * foreign certificate and otherwise signs a relay assertion for exactly this
+ * request, which goes to the agent's lamaste-agentd in
+ * `X-Lamalibre-Relay-Assertion`. The daemon accepts nothing else from the
+ * relay: its port, and the tunnel's port on the relay's loopback, can be
+ * reached without going through nginx, so a header proves nothing to it.
+ *
+ * `X-SSL-Client-*` still go upstream for agents older than 4.3, which read
+ * them; lamaste-agentd from 4.3 removes them unread.
+ *
+ * @param {string} subdomain - `agent-<label>`
+ * @param {string} domain
+ * @param {number} port
+ * @param {string} [certPath]
+ * @returns {{ name: string, fqdn: string, config: string }}
+ */
+export function renderAgentPanelVhost(subdomain, domain, port, certPath) {
+  if (!/^agent-[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
+    throw new Error(`Invalid agent panel subdomain for nginx vhost: ${subdomain}`);
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port for nginx vhost: ${port}`);
+  }
+  const label = subdomain.slice('agent-'.length);
   const fqdn = `${subdomain}.${domain}`;
   const certDir = certPath || `/etc/letsencrypt/live/${fqdn}`;
   let certDirClean = certDir;
@@ -996,16 +1183,50 @@ export async function writeAgentPanelVhost(
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
+    # Authorization by the panel: refuses revoked and foreign certificates,
+    # otherwise answers with the relay assertion for this one request
+    location = /internal/lamaste/agent-panel-authz {
+        internal;
+
+        proxy_pass http://127.0.0.1:3100/api/agent-panel/authz/${label};
+        proxy_pass_request_body off;
+        proxy_http_version 1.1;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        proxy_set_header X-SSL-Client-DN $ssl_client_s_dn;
+        proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Forwarded-For $remote_addr;
+
+        # Nothing else of the browser's request is the panel's business
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Groups "";
+        proxy_set_header Remote-Name "";
+        proxy_set_header Remote-Email "";
+    }
+
     # Reject requests without valid client certificate
     location / {
         if ($ssl_client_verify != SUCCESS) {
             return 496;
         }
 
+        auth_request /internal/lamaste/agent-panel-authz;
+        auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+
         proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
 
-        # Client cert headers — set from nginx TLS variables, never passed through from client
+        # The caller, signed by the panel for this one request
+        proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+
+        # Client cert headers — set from nginx TLS variables, never passed through
+        # from client; read only by agents older than 4.3
         proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
         proxy_set_header X-SSL-Client-DN $ssl_client_s_dn;
         proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
@@ -1031,9 +1252,42 @@ export async function writeAgentPanelVhost(
 }
 `;
 
-  const name = `lamalibre-lamaste-agent-panel-${subdomain}`;
-  return safeWriteVhost(name, config, fqdn, { enabled });
+  return { name: `lamalibre-lamaste-agent-panel-${subdomain}`, fqdn, config };
 }
+
+/**
+ * The installed sites-available/<name>, or null when there is none. The
+ * directory is world-readable.
+ *
+ * @param {string} name
+ * @returns {Promise<string | null>}
+ */
+export async function readInstalledVhost(name) {
+  try {
+    return await readFile(path.join(SITES_AVAILABLE, name), 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
+ * The certificate directory a vhost's `ssl_certificate` names, without the
+ * trailing slash — so a vhost can be rendered again on the certificate it was
+ * written for (a tunnel may be on a wildcard certificate). Null when the
+ * vhost names none.
+ *
+ * @param {string} config
+ * @returns {string | null}
+ */
+export function vhostCertDir(config) {
+  const match = /^\s*ssl_certificate\s+(\S+)\/fullchain\.pem;/m.exec(config);
+  return match ? match[1] : null;
+}
+
+// Install a rendered vhost (vhost-reconcile.js) through the same backup /
+// write / link state / test / reload / rollback path as every vhost write.
+export { safeWriteVhost as installVhost };
 
 /**
  * Remove an agent panel vhost from sites-available and sites-enabled, then test and reload nginx.

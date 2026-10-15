@@ -872,11 +872,11 @@
           }
         }
       ],
-      "bash": "log_section \"Auth validation — requests without credentials\"\n\nNO_AUTH_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$NO_AUTH_STATUS\" \"401\" \"Request without credentials returns 401\" || true\n\n# Health endpoint should still be accessible without auth\nHEALTH_NO_AUTH=$(agent_exec \"curl -sf --max-time 10 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\")\nassert_eq \"$HEALTH_NO_AUTH\" \"ok\" \"Health endpoint accessible without auth\" || true\n\n# ===========================================================================\n# 8. Auth validation — wrong agent label\n# ==========================================================================="
+      "bash": "log_section \"Auth validation — requests without credentials\"\n\nNO_AUTH_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$NO_AUTH_STATUS\" \"401\" \"Request without credentials returns 401\" || true\n\n# Health endpoint should still be accessible without auth\nHEALTH_NO_AUTH=$(agent_exec \"curl -sf --max-time 10 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health\" | jq -r '.status' 2>/dev/null || echo \"fail\")\nassert_eq \"$HEALTH_NO_AUTH\" \"ok\" \"Health endpoint accessible without auth\" || true\n\n# ===========================================================================\n# 8. Auth validation — headers that only claim a certificate\n# ==========================================================================="
     },
     {
-      "id": "auth-validation-wrong-agent-label",
-      "label": "Auth validation — wrong agent label",
+      "id": "auth-validation-forged-certificate-headers",
+      "label": "Auth validation — forged certificate headers",
       "steps": [
         {
           "id": "step-48",
@@ -904,7 +904,7 @@
         },
         {
           "id": "step-49",
-          "label": "Request with wrong agent label returns 403",
+          "label": "Forged agent certificate headers are refused (401)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -917,9 +917,9 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "401"
               },
-              "message": "Request with wrong agent label returns 403"
+              "message": "Forged agent certificate headers are refused (401)"
             }
           }
         },
@@ -940,7 +940,7 @@
           },
           "capture": [
             {
-              "variable": "ADMIN_STATUS",
+              "variable": "FORGED_ADMIN_STATUS",
               "from": {
                 "kind": "status"
               }
@@ -949,7 +949,7 @@
         },
         {
           "id": "step-51",
-          "label": "Admin cert is allowed to access agent panel",
+          "label": "Forged admin certificate headers are refused (401)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -958,22 +958,63 @@
               "kind": "eq",
               "actual": {
                 "kind": "var",
-                "name": "ADMIN_STATUS"
+                "name": "FORGED_ADMIN_STATUS"
               },
               "expected": {
                 "kind": "literal",
-                "value": "200"
+                "value": "401"
               },
-              "message": "Admin cert is allowed to access agent panel"
+              "message": "Forged admin certificate headers are refused (401)"
+            }
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${AGENT_PANEL_PORT}/%61pi/status",
+            "statusOnly": true,
+            "timeout": 10
+          },
+          "capture": [
+            {
+              "variable": "ESCAPED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Percent-escaped /api path without credentials is refused (401)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ESCAPED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Percent-escaped /api path without credentials is refused (401)"
             }
           }
         }
       ],
-      "bash": "log_section \"Auth validation — wrong agent label\"\n\nWRONG_LABEL_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:wrong-label' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$WRONG_LABEL_STATUS\" \"403\" \"Request with wrong agent label returns 403\" || true\n\n# Admin cert should be allowed\nADMIN_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$ADMIN_STATUS\" \"200\" \"Admin cert is allowed to access agent panel\" || true"
+      "bash": "log_section \"Auth validation — forged certificate headers\"\n\n# Anything on the agent VM can open 127.0.0.1:${AGENT_PANEL_PORT} and send\n# these; the daemon accepts the relay only with a relay assertion\nWRONG_LABEL_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=agent:wrong-label' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$WRONG_LABEL_STATUS\" \"401\" \"Forged agent certificate headers are refused (401)\" || true\n\nFORGED_ADMIN_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' http://127.0.0.1:${AGENT_PANEL_PORT}/api/plugins\")\nassert_eq \"$FORGED_ADMIN_STATUS\" \"401\" \"Forged admin certificate headers are refused (401)\" || true\n\n# The router decodes percent-escapes: /%61pi/... is routed as /api/...\nESCAPED_STATUS=$(agent_exec \"curl -s --max-time 10 -o /dev/null -w '%{http_code}' http://127.0.0.1:${AGENT_PANEL_PORT}/%61pi/status\")\nassert_eq \"$ESCAPED_STATUS\" \"401\" \"Percent-escaped /api path without credentials is refused (401)\" || true"
     }
   ],
   "apiHelpers": ["host_api_get"],
-  "headerRaw": "# ============================================================================\n# 19 — Agent Plugin CRUD (Three-VM)\n# ============================================================================\n# Tests the agent panel plugin management API (port 9393):\n#\n# 1. Agent panel health check (lamaste-agentd is installed on demand —\n#    setup-agent.sh installs only the CLI — started with\n#    `panel --enable --local-only`: the 9393 service without exposing it\n#    through the host, stopped again on exit; plugin routes are driven as\n#    the daemon's owner with the Bearer token of agentd.token, as the\n#    desktop app does)\n# 2. GET /plugins — empty list\n# 3. POST /plugins/install — validation (missing body, invalid name)\n# 4. POST /plugins/:name/enable — nonexistent plugin returns 400\n# 5. POST /plugins/:name/disable — nonexistent plugin returns 400\n# 6. DELETE /plugins/:name — nonexistent plugin returns 400\n# 7. GET /plugins/:name/check-update — nonexistent plugin returns 400\n# 8. GET /plugins/:name/bundle — nonexistent plugin returns 404\n# 9. Plugin name validation — reserved names, invalid chars\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 19 — Agent Plugin CRUD (Three-VM)\n# ============================================================================\n# Tests the agent panel plugin management API (port 9393):\n#\n# 1. Agent panel health check (lamaste-agentd is installed on demand —\n#    setup-agent.sh installs only the CLI — started with\n#    `panel --enable --local-only`: the 9393 service without exposing it\n#    through the host, stopped again on exit; plugin routes are driven as\n#    the daemon's owner with the Bearer token of agentd.token, as the\n#    desktop app does)\n# 2. GET /plugins — empty list\n# 3. POST /plugins/install — validation (missing body, invalid name)\n# 4. POST /plugins/:name/enable — nonexistent plugin returns 400\n# 5. POST /plugins/:name/disable — nonexistent plugin returns 400\n# 6. DELETE /plugins/:name — nonexistent plugin returns 400\n# 7. GET /plugins/:name/check-update — nonexistent plugin returns 400\n# 8. GET /plugins/:name/bundle — nonexistent plugin returns 404\n# 9. Plugin name validation — reserved names, invalid chars\n# 10. Auth: no credential, forged certificate headers and percent-escaped\n#     paths are refused with 401 — the daemon's port is reachable by every\n#     process on the agent VM (the relay's signed assertions: spec 32)\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent panel API helpers (port 9393 on the agent VM). Plugin routes admit\n# only the daemon's owner: the Bearer token in /root/.lamalibre/lamaste/agentd.token\n# (0600), read on the agent VM inside the same command so it never leaves the\n# VM — the way the desktop app drives the panel. An agent certificate, even\n# the owner's, is refused there.\n# AGENT_LABEL is the agent VM's local registry name; the host knows the agent\n# by the label its enrollment token carried (agentLabel in config.json).\nAGENT_PANEL_PORT=9393\nAGENT_LABEL=\"e2e-agent\"\nAGENT_CONFIG=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}/config.json\"\nHOST_AGENT_LABEL=\"\"\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# wait_panel_healthy — the agent daemon restarts itself after a plugin\n# enable or disable (unloadPanelService/loadPanelService), so a call made\n# right after one may get an empty reply; poll /api/health for up to 20 s\nwait_panel_healthy() {\n  local health=\"\"\n  for _ in $(seq 1 20); do\n    health=$(agent_exec \"curl -sf --max-time 5 http://127.0.0.1:${AGENT_PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n    if echo \"$health\" | jq -r '.status' 2>/dev/null | grep -q \"ok\"; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\ncleanup() {\n  # Stop the panel service started below (local-only: no host call).\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --disable --local-only 2>/dev/null; true\" > /dev/null 2>&1\n}\ntrap cleanup EXIT\n\nagent_panel_get() {\n  agent_exec \"curl -sf --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -H 'Accept: application/json' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"\"\n}\n\nagent_panel_get_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_panel_post() {\n  agent_exec \"curl -sf --max-time 30 -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"\"\n}\n\nagent_panel_post_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X POST -H 'Content-Type: application/json' -d '$2' http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nagent_panel_delete_status() {\n  agent_exec \"curl -s --max-time 30 -o /dev/null -w '%{http_code}' -H \\\"Authorization: Bearer \\$(node -e \\\"process.stdout.write(JSON.parse(require('fs').readFileSync('/root/.lamalibre/lamaste/agentd.token','utf8')).token)\\\")\\\" -X DELETE http://127.0.0.1:${AGENT_PANEL_PORT}/api/$1\" 2>/dev/null || echo \"000\"\n}\n\nbegin_test \"19 — Agent Plugin CRUD\"\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

@@ -34,6 +34,8 @@ import {
   stopHostedPluginHealthMonitor,
 } from './lib/plugin-hosting.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
+import { ensureRelaySigningKey } from './lib/relay-signing.js';
+import { reconcileSiteVhosts, reconcileTunnelVhosts } from './lib/vhost-reconcile.js';
 import {
   loadTicketScopeCapabilities,
   checkInstanceLiveness,
@@ -91,6 +93,11 @@ async function start() {
       server.log.warn({ err: err.message }, 'Startup OIDC client sync failed');
     });
   }
+
+  // The key relay assertions to agents' lamaste-agentd are signed with —
+  // created here when missing, before Gatekeeper (which signs with it too)
+  // needs it.
+  await ensureRelaySigningKey(server.log);
 
   // --- Plugins ---
   const ipOrigin = `https://${config.ip}:9292`;
@@ -184,7 +191,27 @@ async function start() {
   });
 
   // --- Start ---
+
+  // The auth portal and static site vhosts an older version wrote name the
+  // client's Host header, not their own hostname, to Authelia. Before listen:
+  // site changes take no lock, and none can arrive until the panel listens.
+  if (config.onboarding.status === 'COMPLETED' && config.domain) {
+    await reconcileSiteVhosts(server.log, config.domain).catch((err) => {
+      server.log.error({ err: err.message }, 'Startup site vhost reconcile failed');
+    });
+  }
+
   await server.listen({ host: '127.0.0.1', port: 3100 });
+
+  // Tunnel vhosts written by an older version: agent-panel and plugin vhosts
+  // do not forward relay assertions, without which lamaste-agentd refuses the
+  // relay, and Gatekeeper vhosts name the client's Host header to Gatekeeper.
+  // After listen: a rewritten agent-panel vhost asks this server at once.
+  if (config.onboarding.status === 'COMPLETED') {
+    reconcileTunnelVhosts(server.log).catch((err) => {
+      server.log.error({ err: err.message }, 'Startup tunnel vhost reconcile failed');
+    });
+  }
 
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
   startHostedPluginHealthMonitor(server.log);

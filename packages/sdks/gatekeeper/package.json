@@ -24,7 +24,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && cp -R src/lib/migrations dist/lib/migrations"
+    "build": "tsc -p tsconfig.json && cp -R src/lib/migrations dist/lib/migrations",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=22.5.0 <25.0.0"

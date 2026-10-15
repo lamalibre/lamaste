@@ -253,9 +253,14 @@ server {
     location /internal/lamaste/authz {
         internal;
 
-        proxy_pass http://127.0.0.1:9294/authz/check;
+        # The tunnel is named in the path, and the same hostname in the headers —
+        # never $http_host, the client's Host header, which an absolute-form
+        # request line can set to another tunnel
+        proxy_pass http://127.0.0.1:9294/authz/tunnel/myapp.example.com;
         proxy_pass_request_body off;
-        # ... X-Original-URL, X-Original-Method, Cookie headers ...
+        proxy_set_header X-Original-URL https://myapp.example.com$request_uri;
+        proxy_set_header Host myapp.example.com;
+        # ... X-Original-Method, Cookie headers ...
     }
 
     location / {
@@ -289,7 +294,7 @@ server {
         proxy_send_timeout 86400s;
 
         # Not logged in -> Authelia portal
-        error_page 401 =302 https://auth.example.com/?rd=$scheme://$http_host$request_uri;
+        error_page 401 =302 https://auth.example.com/?rd=https://myapp.example.com$request_uri;
         # Restricted only: no grant -> Gatekeeper's access-request page
         error_page 403 = /internal/lamaste/authz;
     }

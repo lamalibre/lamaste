@@ -19,6 +19,7 @@
 | `/etc/authelia/oidc-issuer.pem`                            | PEM        | lamaste-authelia         | 0600 | RSA-4096 key Authelia signs OIDC tokens with, written by `create-lamaste`; the panel cannot read it |
 | `/etc/lamalibre/lamaste/registry-credential.json`          | JSON       | lamaste:lamaste          | 0600 | The panel's registry (Feria) credential: a pasted token, or the `lamaste-server` OIDC client        |
 | `/etc/lamalibre/lamaste/oidc-clients.json`                 | JSON       | lamaste:lamaste          | 0600 | Plaintext secrets (and pbkdf2 salts) of confidential OIDC clients                                   |
+| `/etc/lamalibre/lamaste/relay-signing-key.json`            | JSON       | lamaste:lamaste          | 0600 | Ed25519 key relay assertions to agents' lamaste-agentd are signed with (panel and Gatekeeper)       |
 | `/etc/lamalibre/lamaste/ticket-scopes.json`                | JSON       | lamaste:lamaste          | 0600 | Ticket scope registry                                                                               |
 | `/etc/lamalibre/lamaste/tickets.json`                      | JSON       | lamaste:lamaste          | 0600 | Ticket and session store                                                                            |
 | `/etc/lamalibre/lamaste/invitations.json`                  | JSON       | lamaste:lamaste          | 0600 | Pending user invitations                                                                            |
@@ -40,6 +41,7 @@
 | `/etc/systemd/system/authelia.service`                     | systemd    | root:root                | 0644 | Authelia unit, written by `create-lamaste`                                                          |
 | `~/.lamalibre/lamaste/servers.json`                        | JSON       | user                     | 0600 | Desktop app server registry                                                                         |
 | `~/.lamalibre/lamaste/agents.json`                         | JSON       | user                     | 0600 | Multi-agent registry                                                                                |
+| `~/.lamalibre/lamaste/agentd.token`                        | JSON       | user                     | 0600 | Bearer token of lamaste-agentd's owner (the desktop app, scripts run as the user)                   |
 | `~/.lamalibre/lamaste/agents/<label>/config.json`          | JSON       | user                     | 0600 | Per-agent configuration                                                                             |
 | `~/.lamalibre/lamaste/agents/<label>/client.p12`           | PKCS#12    | user                     | 0600 | Per-agent mTLS certificate                                                                          |
 | `~/.lamalibre/lamaste/agents/<label>/ca.crt`               | PEM        | user                     | 0644 | Per-agent CA certificate                                                                            |
@@ -756,6 +758,26 @@ A secret is minted when the client first appears (plugin install, or the registr
 
 ---
 
+## `/etc/lamalibre/lamaste/relay-signing-key.json`
+
+The Ed25519 key the relay signs relay assertions with — the `X-Lamalibre-Relay-Assertion` header lamaste-agentd requires on every request from the relay (agent-panel vhost and plugin tunnels; see [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions)).
+
+```json
+{
+  "v": 1,
+  "privateKey": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "createdAt": "2026-10-15T10:00:00.000Z"
+}
+```
+
+The panel creates it at startup when it is missing (exclusively: a 0600 temp file linked into place) and signs agent-panel requests with it; Gatekeeper reads it and signs for plugin tunnels. Both re-read it when it changes — content or permissions — and refuse to sign with a key other users can read. Agents receive only the public key (`GET /api/agents/me/relay-keys`); its id is derived from the key.
+
+**Rotation:** replace the file (or remove it and restart `lamalibre-lamaste-serverd`, which creates a new one). Agents fetch the new public key when the first assertion signed with it arrives, at most every 30 seconds — requests through the relay may be refused for up to that long after a rotation.
+
+**Mode:** 0600, owner `lamaste`.
+
+---
+
 ## Client-Side Configuration
 
 ### `~/.lamalibre/lamaste/servers.json`
@@ -882,6 +904,11 @@ The sync timer, which runs `<node> <installed lamaste-agent> sync --label <label
 - Linux: `~/.config/systemd/user/lamalibre-lamaste-sync-<label>.service` (`Type=oneshot`) and `lamalibre-lamaste-sync-<label>.timer` (`OnActiveSec=5s`, `OnUnitInactiveSec=30s`) — also needs lingering to run without a login
 
 Both contain no secret (mode 0644) and are removed by `lamaste-agent uninstall` and by the desktop app's uninstall.
+
+The agent panel daemon (`lamaste-agentd`, started by `lamaste-agent panel --enable`):
+
+- macOS: `com.lamalibre.lamaste.panel-<label>` (plist label), `~/Library/LaunchAgents/com.lamalibre.lamaste.panel-<label>.plist` — `RunAtLoad`, `KeepAlive`
+- Linux: `~/.config/systemd/user/lamalibre-lamaste-panel-<label>.service`, enabled into `default.target` — needs lingering to run without a login. Units written before 4.3 named `multi-user.target`, which a user manager does not have, so the panel never started at boot; `lamaste-agent update` and `lamaste-agent panel --enable` rewrite that line and re-enable an enabled unit
 
 ---
 
@@ -1076,6 +1103,7 @@ WantedBy=multi-user.target
 | `/etc/lamalibre/lamaste/chisel-credentials.json`                       | lamaste:lamaste                   | 0600 | Chisel credentials                                        |
 | `/etc/lamalibre/lamaste/chisel-users`                                  | lamaste:lamaste-chisel            | 0640 | Chisel authfile                                           |
 | `/etc/lamalibre/lamaste/chisel-sentinel`                               | lamaste:lamaste                   | 0600 | Sentinel password                                         |
+| `/etc/lamalibre/lamaste/relay-signing-key.json`                        | lamaste:lamaste                   | 0600 | Relay assertion signing key                               |
 | `/etc/lamalibre/lamaste/pki/`                                          | lamaste:lamaste                   | 0700 | PKI directory                                             |
 | `/etc/lamalibre/lamaste/pki/ca.key`                                    | lamaste:lamaste                   | 0600 | CA private key                                            |
 | `/etc/lamalibre/lamaste/pki/ca.crt`                                    | lamaste:lamaste                   | 0644 | CA certificate                                            |
@@ -1112,6 +1140,7 @@ WantedBy=multi-user.target
 | `/usr/local/bin/chisel`, `/usr/local/bin/authelia`                     | root:root                         | 0755 | Pinned releases (`create-lamaste`)                        |
 | `~/.lamalibre/lamaste/servers.json`                                    | user                              | 0600 | Server registry                                           |
 | `~/.lamalibre/lamaste/agent.json`                                      | user                              | 0600 | Legacy agent config                                       |
+| `~/.lamalibre/lamaste/agentd.token`                                    | user                              | 0600 | Agent daemon owner token                                  |
 | `~/.lamalibre/lamaste/agents/<label>/`                                 | user                              | 0700 | Agent data directory                                      |
 | `~/.lamalibre/lamaste/agents/<label>/chisel.json`                      | user                              | 0600 | Agent Chisel credential                                   |
 | `~/.lamalibre/lamaste/agents/<label>/chisel.env`                       | user                              | 0600 | Linux `AUTH=` env file                                    |

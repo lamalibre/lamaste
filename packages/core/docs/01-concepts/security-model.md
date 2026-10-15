@@ -131,6 +131,32 @@ mTLS is stronger than a login page because:
 - There is no login endpoint to discover or attack
 - The rejection happens before any application code runs
 
+#### 5c. The agent daemon (`lamaste-agentd`) and relay assertions
+
+The agent daemon listens on `127.0.0.1:<port>` (9393 by default) of the agent machine. It is reached by the agent's owner directly and by the relay through two kinds of tunnel, and admits:
+
+| Caller                                                   | Proof                                                                    | Access                                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| The agent's owning OS user (desktop app, scripts)        | `Authorization: Bearer <token>` from `~/.lamalibre/lamaste/agentd.token` | Full                                                                        |
+| The admin certificate, on `agent-<label>.<domain>`       | A relay assertion signed by the panel                                    | Full                                                                        |
+| The agent's own certificate, on `agent-<label>.<domain>` | A relay assertion signed by the panel                                    | The capabilities the panel lists for it; owner-only routes refused          |
+| An Authelia user, on a plugin tunnel (`type: 'plugin'`)  | A relay assertion signed by Gatekeeper                                   | That plugin's routes, never `/api/*`; the plugin sees the asserted identity |
+
+**Threat model.** Binding to loopback is not an authentication boundary. Two kinds of process can open a connection to the daemon without going through nginx: any OS user on the agent machine (`127.0.0.1:<port>`), and any process on the relay (the tunnel's port on the relay's loopback, which Chisel carries to the agent). Up to 4.2 the daemon took its caller from request headers that nginx sets — `X-SSL-Client-Verify: SUCCESS` with `X-SSL-Client-DN: CN=admin` meant full control, plugin install included (code execution as the agent's user), and `Remote-User` meant any Authelia identity on plugin routes — so either kind of process could claim to be anyone. Its check of whether a request needs a caller also tested the raw URL, while the router decodes percent-escapes: `/%61pi/...` reached `/api/...` routes and `/%68erd/...` a plugin's routes with no credential at all.
+
+**Relay assertions.** From 4.3 the relay vouches for each request it sends with `X-Lamalibre-Relay-Assertion` — an Ed25519 signature over the agent the request is for (`aud`), the tunnel port, the caller, the method, the target (the exact `$request_uri` for a certificate caller; the plugin route for an Authelia user, whose request nginx rewrites), the issue time, a nonce and the key id. The daemon verifies it against the relay's public key and refuses it for another agent or port, for another method or target, older than 60 seconds (5 seconds of clock skew), or seen before. The signing key, `/etc/lamalibre/lamaste/relay-signing-key.json` (0600, `lamaste`), is created by the panel at startup:
+
+- **Agent-panel vhost:** nginx asks the panel about every request (`auth_request` to `GET /api/agent-panel/authz/<label>`, with the client certificate's verification result, the method and `$request_uri`). The panel's mTLS middleware refuses a revoked certificate — before, the agent panel could not check revocation at all — and the panel admits the admin certificate and the agent's own, then signs.
+- **Plugin tunnels:** Gatekeeper, which already validates the Authelia session for them, signs for the user it found; the answer is never cached (an assertion is single use).
+
+Agents hold only the public key. The daemon fetches it, with the label the relay knows the agent by (the audience of its assertions, which a local `--label` need not equal), from `GET /api/agents/me/relay-keys` over its pinned mTLS channel, keeps both in memory and fetches again when an assertion names an unknown key — at most once per 30 seconds. Nothing stored on an agent machine lets anyone mint an assertion, for that agent or another.
+
+The owner's token is as good as the owner: the desktop app hands it to curl on stdin, never in a process's arguments, which other local users can read.
+
+Headers that only claim a caller — `X-SSL-Client-*`, `Remote-*` and the assertion itself — are removed from every request before a route or plugin sees it; `Remote-*` are set again only from a verified user assertion, so a plugin reading identity headers (`@lamalibre/lamaste-identity`) reads the relay's word. Whether a request needs a caller follows the route the daemon matched, not the URL: every route does except the health check, the plugin bundles and the SPA's static files, and so does a path no route matches under an installed plugin's name (a plugin may answer it with its own not-found handler). The claim headers are removed from `rawHeaders` too.
+
+**What remains.** The relay's loopback is still the relay's trust boundary: the panel itself trusts the `X-SSL-Client-*` headers nginx sends to `127.0.0.1:3100`, so a process on the relay that can forge those can obtain an assertion as well — what it could do to agents before 4.3. With panel 2FA on it reaches further into agents than into the panel: forged (or stolen) admin-certificate headers no longer pass the panel's own management routes, but the agent-panel authorization is exempt from 2FA (the browser on `agent-<label>.<domain>` carries no 2FA cookie), so they still mint admin assertions — full control of every agent with a panel tunnel. Agent panels are guarded by the client certificate alone, as before; authenticating nginx to the panel is the relay-wide fix. An assertion binds the agent, the port, the method and the target, not the request body: a process on the agent machine that holds the daemon's port while the daemon is down receives the relay's requests, and could replay one with another body if the daemon comes back within the assertion's 65 seconds.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.
@@ -509,40 +535,46 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 
 ### Source files
 
-| File                                                       | Purpose                                                |
-| ---------------------------------------------------------- | ------------------------------------------------------ |
-| `packages/create-lamaste/src/tasks/harden.js`              | Swap, UFW, fail2ban, SSH hardening                     |
-| `packages/create-lamaste/src/tasks/mtls.js`                | PKI generation, file permissions                       |
-| `packages/create-lamaste/src/tasks/nginx.js`               | mTLS snippet, self-signed cert                         |
-| `packages/lamaste-serverd/src/lib/authelia.js`             | bcrypt hashing, atomic writes                          |
-| `packages/lamaste-serverd/src/lib/mtls.js`                 | Certificate rotation with rollback                     |
-| `packages/lamaste-serverd/src/lib/nginx.js`                | Vhost write-with-rollback pattern                      |
-| `packages/lamaste-serverd/src/middleware/mtls.js`          | Request-level mTLS check                               |
-| `packages/lamaste-serverd/src/lib/totp.js`                 | Panel 2FA TOTP verification and replay protection      |
-| `packages/lamaste-serverd/src/lib/session.js`              | HMAC-SHA256 session cookie signing                     |
-| `packages/lamaste-serverd/src/middleware/twofa-session.js` | 2FA session enforcement (after mTLS, before roleGuard) |
+| File                                                                | Purpose                                                |
+| ------------------------------------------------------------------- | ------------------------------------------------------ |
+| `packages/create-lamaste/src/tasks/harden.js`                       | Swap, UFW, fail2ban, SSH hardening                     |
+| `packages/create-lamaste/src/tasks/mtls.js`                         | PKI generation, file permissions                       |
+| `packages/create-lamaste/src/tasks/nginx.js`                        | mTLS snippet, self-signed cert                         |
+| `packages/lamaste-serverd/src/lib/authelia.js`                      | bcrypt hashing, atomic writes                          |
+| `packages/lamaste-serverd/src/lib/mtls.js`                          | Certificate rotation with rollback                     |
+| `packages/lamaste-serverd/src/lib/nginx.js`                         | Vhost write-with-rollback pattern                      |
+| `packages/lamaste-serverd/src/middleware/mtls.js`                   | Request-level mTLS check                               |
+| `packages/lamaste-serverd/src/lib/totp.js`                          | Panel 2FA TOTP verification and replay protection      |
+| `packages/lamaste-serverd/src/lib/session.js`                       | HMAC-SHA256 session cookie signing                     |
+| `packages/lamaste-serverd/src/middleware/twofa-session.js`          | 2FA session enforcement (after mTLS, before roleGuard) |
+| `packages/core/lib/src/relay-assertion.ts`                          | Relay assertions: signing key file, sign, verify       |
+| `packages/core/lib/src/server/agent-panel-authz.ts`                 | Who may use an agent panel through the relay           |
+| `packages/server/daemon/src/routes/management/agent-panel-authz.js` | The agent-panel vhost's `auth_request` target          |
+| `packages/sdks/gatekeeper/src/server/routes/authz.ts`               | Assertions for Authelia users on plugin tunnels        |
+| `packages/agent/daemon/src/lib/auth.js`                             | lamaste-agentd's authentication hook                   |
 
 ## Quick Reference
 
 ### Security layers
 
-| Layer                | Technology                           | Blocks                                |
-| -------------------- | ------------------------------------ | ------------------------------------- |
-| Firewall             | UFW                                  | Connections to non-allowed ports      |
-| Intrusion prevention | fail2ban                             | Repeated failed login attempts        |
-| SSH hardening        | sshd_config                          | Password-based SSH access             |
-| TLS encryption       | Let's Encrypt / self-signed          | Traffic interception and tampering    |
-| Admin auth           | mTLS client certificates             | Unauthorized admin access             |
-| Admin 2FA (optional) | Built-in TOTP                        | Stolen certificate abuse              |
-| Agent-to-agent auth  | Tickets (time-limited, single-use)   | Unauthorized cross-agent access       |
-| Tunnel ownership     | Chisel authfile per-agent grants     | One agent hijacking another's host    |
-| Reserved ports       | Tunnel port validation               | Publishing internal services          |
-| Privileged commands  | No-wildcard sudoers, `lamaste-priv`  | Root code execution via extra flags   |
-| Relay authenticity   | Agent verifies `tunnel.<domain>` TLS | Relay impersonation, credential theft |
-| App auth             | Authelia TOTP 2FA                    | Unauthorized app access               |
-| Service isolation    | `127.0.0.1` binding                  | Direct access to internal services    |
-| File permissions     | `chmod 600`                          | Unauthorized secret access            |
-| Atomic writes        | `mv` pattern                         | Partial file reads by services        |
+| Layer                | Technology                              | Blocks                                |
+| -------------------- | --------------------------------------- | ------------------------------------- |
+| Firewall             | UFW                                     | Connections to non-allowed ports      |
+| Intrusion prevention | fail2ban                                | Repeated failed login attempts        |
+| SSH hardening        | sshd_config                             | Password-based SSH access             |
+| TLS encryption       | Let's Encrypt / self-signed             | Traffic interception and tampering    |
+| Admin auth           | mTLS client certificates                | Unauthorized admin access             |
+| Admin 2FA (optional) | Built-in TOTP                           | Stolen certificate abuse              |
+| Agent-to-agent auth  | Tickets (time-limited, single-use)      | Unauthorized cross-agent access       |
+| Tunnel ownership     | Chisel authfile per-agent grants        | One agent hijacking another's host    |
+| Reserved ports       | Tunnel port validation                  | Publishing internal services          |
+| Privileged commands  | No-wildcard sudoers, `lamaste-priv`     | Root code execution via extra flags   |
+| Relay authenticity   | Agent verifies `tunnel.<domain>` TLS    | Relay impersonation, credential theft |
+| Agent daemon auth    | Relay assertions (Ed25519), owner token | Callers forged on an agent's loopback |
+| App auth             | Authelia TOTP 2FA                       | Unauthorized app access               |
+| Service isolation    | `127.0.0.1` binding                     | Direct access to internal services    |
+| File permissions     | `chmod 600`                             | Unauthorized secret access            |
+| Atomic writes        | `mv` pattern                            | Partial file reads by services        |
 
 ### Firewall rules
 

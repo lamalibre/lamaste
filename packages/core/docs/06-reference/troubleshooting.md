@@ -642,6 +642,31 @@ curl -s --cert client.p12:password \
 
 ---
 
+## Agent Panel or Plugin Tunnel Answers 401 Through the Relay
+
+**Symptom:** `https://agent-<label>.<domain>/` (with a valid certificate) or a plugin tunnel (after the Authelia login) answers `401 {"error":"Unauthorized"}`, while the agent's own desktop app works.
+
+**Cause:** From 4.3, lamaste-agentd accepts a request from the relay only with a relay assertion it can verify (see [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions)). The daemon's log (`~/.lamalibre/lamaste/agents/<label>/logs/panel.log`) names the reason:
+
+- `Failed to fetch relay verification keys` — the daemon cannot reach `GET /api/agents/me/relay-keys` on the panel: the relay is older than 4.3 (upgrade the relay — it is the side that must be upgraded first), or the panel is unreachable from the agent.
+- `Relay assertion refused` with `reason: "future"` or `"expired"` — the agent's clock differs from the relay's by more than a few seconds. Assertions are valid for 60 seconds with 5 seconds of skew; enable NTP on both.
+- `reason: "unknown_key"` — the relay's key was replaced less than 30 seconds ago; the daemon fetches the new one on the next request after that.
+- Nothing logged but the `401` itself — no assertion arrived: the vhost predates 4.3 and the panel's startup reconcile could not rewrite it (the panel log at startup names it: `Failed to rewrite tunnel vhost`). On the server, `grep -c 'auth_request /internal/lamaste/agent-panel-authz;' /etc/nginx/sites-available/lamalibre-lamaste-agent-panel-agent-<label>` must print `1`.
+
+A request sent straight to the daemon's port with `X-SSL-Client-*` or `Remote-User` headers is refused by design: those headers prove nothing.
+
+---
+
+## A Tunnel Answers 403 for Everyone After the Upgrade to 4.3
+
+**Symptom:** an `authenticated` or `restricted` tunnel answers `403` to every user — grantees included — and a restricted tunnel shows "This tunnel is unavailable until the relay rewrites its configuration." Gatekeeper's log (`journalctl -u lamalibre-lamaste-gatekeeper`) has `authz refused` with `reason: "vhost_predates_host_binding"`.
+
+**Cause:** the tunnel's vhost was written before 4.3 and still asks Gatekeeper's `/authz/check` with the client's `Host` header, which let a user allowed on one tunnel into another (see [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname)). Gatekeeper 4.3 refuses that subrequest, so such a vhost closes its tunnel. The panel rewrites tunnel vhosts when it starts; this one was not rewritten.
+
+**Fix:** the panel's startup log (`journalctl -u lamalibre-lamaste-serverd`) names the tunnel under `Left tunnel vhosts as they are` (with the reason) or `Failed to rewrite tunnel vhost` (with the `nginx -t` or certificate error). Fix that, then `sudo systemctl restart lamalibre-lamaste-serverd`. On the server, `grep -c 'authz/tunnel/<fqdn>;' /etc/nginx/sites-available/lamalibre-lamaste-app-<subdomain>` must print `1`. The same log lines name static sites (`Left site vhosts as they are`, `Failed to rewrite site vhost`): a site vhost that was not rewritten still names the client's `Host` to Authelia, so treat those first.
+
+---
+
 ## Quick Reference: Diagnostic Commands
 
 | What to Check        | Command                                                                 |

@@ -550,6 +550,23 @@ export function createPanelApiClient(label) {
     },
 
     /**
+     * Fetch the public keys relay assertions are signed with
+     * (`{ keys: [{ kid, publicKey }] }`). The caller validates each key.
+     * @param {object} config
+     * @returns {Promise<unknown>}
+     */
+    async fetchRelayKeys(config) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/relay-keys`;
+      try {
+        const { stdout } = await curlAuthenticated(baseDir, config, [url]);
+        return JSON.parse(stdout);
+      } catch (err) {
+        throw new Error(`Failed to fetch relay keys. Details: ${err.stderr || err.message}`);
+      }
+    },
+
+    /**
      * Check the status of the agent's panel tunnel.
      * @param {object} config
      * @returns {Promise<{ enabled: boolean, fqdn: string | null, port: number | null }>}

@@ -289,10 +289,11 @@ location /authelia {
     proxy_pass http://127.0.0.1:9091/api/verify?rd=https://auth.example.com/;
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
-    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+    # This vhost's own hostname, never $http_host (see below)
+    proxy_set_header X-Original-URL https://app.example.com$request_uri;
     proxy_set_header X-Forwarded-Method $request_method;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header X-Forwarded-Host app.example.com;
     proxy_set_header X-Forwarded-Uri $request_uri;
     proxy_set_header X-Forwarded-For $remote_addr;
 }
@@ -314,8 +315,10 @@ location / {
 }
 
 # Unauthenticated users are redirected to Authelia
-error_page 401 =302 https://auth.example.com/?rd=$scheme://$http_host$request_uri;
+error_page 401 =302 https://auth.example.com/?rd=https://app.example.com$request_uri;
 ```
+
+Authelia decides by the URL it is asked about, so the vhost writes its own hostname into it. `$http_host` — the client's `Host` header — would let a client send the request line of this vhost (`GET https://app.example.com/ HTTP/1.1`, which nginx uses to select the vhost) with the `Host` of a hostname its rules allow, and be let in here. Lamaste's generated vhosts do this; see [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname).
 
 The flow works like this:
 

@@ -119,3 +119,143 @@ test('the auth vhost serves the OIDC discovery, JWKS and token endpoints without
   assert.match(text, /proxy_set_header Host \$host;/);
   assert.match(text, /proxy_set_header X-Forwarded-Proto \$scheme;/);
 });
+
+/** The body of `location <path> {...}` in a vhost (no nested blocks but `if`). */
+function locationBody(text, matcher) {
+  const start = text.indexOf(`location ${matcher} {`);
+  assert.notEqual(start, -1, `location ${matcher}`);
+  let depth = 0;
+  for (let i = text.indexOf('{', start); i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    if (text[i] === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  throw new Error(`unterminated location ${matcher}`);
+}
+
+test('the agent panel vhost lets the panel authorize every request and forwards its assertion', async () => {
+  const text = await readFile(
+    path.join(captured, 'lamalibre-lamaste-agent-panel-agent-r730'),
+    'utf8',
+  );
+
+  const authz = locationBody(text, '= /internal/lamaste/agent-panel-authz');
+  assert.match(authz, /^\s*internal;$/m);
+  assert.match(authz, /proxy_pass http:\/\/127\.0\.0\.1:3100\/api\/agent-panel\/authz\/r730;/);
+  assert.match(authz, /proxy_pass_request_body off;/);
+  // Verified by nginx, never the client's: the certificate and the request.
+  assert.match(authz, /proxy_set_header X-SSL-Client-Verify \$ssl_client_verify;/);
+  assert.match(authz, /proxy_set_header X-SSL-Client-DN \$ssl_client_s_dn;/);
+  assert.match(authz, /proxy_set_header X-SSL-Client-Serial \$ssl_client_serial;/);
+  assert.match(authz, /proxy_set_header X-Original-Method \$request_method;/);
+  assert.match(authz, /proxy_set_header X-Original-URI \$request_uri;/);
+  assert.match(authz, /proxy_set_header X-Forwarded-For \$remote_addr;/);
+
+  const main = locationBody(text, '/');
+  assert.match(main, /return 496;/);
+  assert.match(main, /auth_request \/internal\/lamaste\/agent-panel-authz;/);
+  assert.match(
+    main,
+    /auth_request_set \$relay_assertion \$upstream_http_x_lamalibre_relay_assertion;/,
+  );
+  assert.match(main, /proxy_set_header X-Lamalibre-Relay-Assertion \$relay_assertion;/);
+  assert.match(main, /proxy_pass http:\/\/127\.0\.0\.1:9393;/);
+  // No rewrite: the daemon must receive $request_uri unchanged, as asserted.
+  assert.doesNotMatch(main, /rewrite/);
+});
+
+test('plugin tunnel vhosts carry Gatekeeper’s assertion; app tunnel vhosts are unchanged', async () => {
+  const restrictedPlugin = locationBody(
+    await readFile(path.join(captured, 'lamalibre-lamaste-app-app4'), 'utf8'),
+    '/',
+  );
+  assert.match(
+    restrictedPlugin,
+    /auth_request_set \$relay_assertion \$upstream_http_x_lamalibre_relay_assertion;/,
+  );
+  assert.match(restrictedPlugin, /proxy_set_header X-Lamalibre-Relay-Assertion \$relay_assertion;/);
+
+  // A public plugin tunnel has no user to vouch for — and passes on no client's assertion.
+  const publicPlugin = await readFile(path.join(captured, 'lamalibre-lamaste-app-app2'), 'utf8');
+  assert.match(publicPlugin, /proxy_set_header X-Lamalibre-Relay-Assertion "";/);
+
+  for (const app of ['app1', 'app3']) {
+    const text = await readFile(path.join(captured, `lamalibre-lamaste-app-${app}`), 'utf8');
+    assert.doesNotMatch(text, /Relay-Assertion|relay_assertion/i, app);
+  }
+});
+
+test('authorization subrequests name the vhost’s own hostname, never the client’s Host', async () => {
+  // nginx selects the vhost from an absolute-form request line
+  // (`GET https://a.example.com/ HTTP/1.1`) but `$http_host` is the client's
+  // Host header, which may name another tunnel or site: built from it, the
+  // subrequest authorized that other one while nginx served this one.
+  for (const name of await readdir(captured)) {
+    const text = await readFile(path.join(captured, name), 'utf8');
+    assert.doesNotMatch(text, /\$http_host/, name);
+  }
+
+  for (const app of ['app3', 'app4']) {
+    const fqdn = `${app}.example.com`;
+    const text = await readFile(path.join(captured, `lamalibre-lamaste-app-${app}`), 'utf8');
+    const authz = locationBody(text, '/internal/lamaste/authz');
+    // The tunnel is named in the path, as the agent panel names its agent.
+    assert.ok(
+      authz.includes(`proxy_pass http://127.0.0.1:9294/authz/tunnel/${fqdn};`),
+      `${app}: the subrequest path names the tunnel`,
+    );
+    // Nothing of the client's names another host, scheme or path to Gatekeeper.
+    for (const header of ['X-Forwarded-Host', 'X-Forwarded-Proto', 'X-Forwarded-Uri']) {
+      assert.ok(authz.includes(`proxy_set_header ${header} "";`), `${app}: ${header} cleared`);
+    }
+    assert.ok(
+      authz.includes(`proxy_set_header X-Original-URL https://${fqdn}$request_uri;`),
+      `${app}: X-Original-URL names the tunnel`,
+    );
+    assert.ok(authz.includes(`proxy_set_header Host ${fqdn};`), `${app}: Host names the tunnel`);
+    assert.ok(
+      locationBody(text, '/').includes(
+        `error_page 401 =302 https://auth.example.com/?rd=https://${fqdn}$request_uri;`,
+      ),
+      `${app}: the login redirect returns to the tunnel`,
+    );
+  }
+
+  const site = await readFile(
+    path.join(captured, 'lamalibre-lamaste-site-4f1d2c3a-1b2c-4d5e-8f90-123456789abc'),
+    'utf8',
+  );
+  const siteAuthz = locationBody(site, '/internal/authelia/authz');
+  assert.ok(
+    siteAuthz.includes('proxy_set_header X-Original-URL https://docs.example.com$request_uri;'),
+  );
+  assert.ok(siteAuthz.includes('proxy_set_header X-Forwarded-Host "";'));
+
+  const auth = await readFile(path.join(captured, 'lamalibre-lamaste-auth'), 'utf8');
+  assert.ok(
+    locationBody(auth, '/internal/authelia/authz').includes(
+      'proxy_set_header X-Original-URL https://auth.example.com$request_uri;',
+    ),
+  );
+});
+
+test('a hostname that is not a plain literal is refused, not written into a vhost', () => {
+  for (const [subdomain, domain] of [
+    ['app$http_host', 'example.com'],
+    ['app', 'example.com;'],
+    ['app', 'example.com $request_uri'],
+  ]) {
+    assert.throws(
+      () => nginx.renderTunnelVhost('restricted', subdomain, domain, 20013),
+      /Invalid hostname/,
+    );
+  }
+  assert.throws(
+    () =>
+      nginx.renderStaticSiteVhost(
+        { id: 'x', fqdn: 'docs.example.com$http_host', autheliaProtected: true, rootPath: '/x' },
+        '/etc/letsencrypt/live/x',
+        'example.com',
+      ),
+    /Invalid hostname/,
+  );
+});

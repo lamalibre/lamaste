@@ -167,6 +167,19 @@ export interface TunnelInfo {
   readonly fqdn: string;
   readonly accessMode: AccessMode;
   readonly enabled: boolean;
+  /**
+   * Set on a plugin tunnel (`type: 'plugin'` with an owning agent): the
+   * request goes to that agent's lamaste-agentd, which accepts the user only
+   * with a relay assertion Gatekeeper signs (see authz.ts).
+   */
+  readonly plugin?: PluginTunnelTarget | undefined;
+}
+
+/** Where a plugin tunnel's requests go: the agent, its daemon's port, the plugin route. */
+export interface PluginTunnelTarget {
+  readonly agentLabel: string;
+  readonly port: number;
+  readonly route: string;
 }
 
 /**

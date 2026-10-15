@@ -78,7 +78,7 @@ packages/lamaste-gatekeeper/
     server/
       index.js             # Fastify service entry point (127.0.0.1:9294)
       routes/
-        authz.js           # GET /authz/check — nginx auth_request target
+        authz.js           # GET /authz/tunnel/:fqdn — nginx auth_request target
         access-request.js  # GET /access-request — denial page with message templates
         groups.js          # REST API for group management
         grants.js          # REST API for grant management
@@ -316,9 +316,9 @@ proxy_cache_path /var/cache/nginx/authz levels=1:2
 
 location /internal/lamaste/authz {
     internal;
-    proxy_pass http://127.0.0.1:9294/authz/check;
+    proxy_pass http://127.0.0.1:9294/authz/tunnel/gitlab.example.com;
     proxy_cache authz_cache;
-    proxy_cache_key "$cookie_authelia_session$http_host";
+    proxy_cache_key "$server_name|$cookie_authelia_session";  # the vhost, never the client's Host
     proxy_cache_valid 200 30s;   # cache successful auth for 30s
     proxy_cache_valid 403 10s;   # cache denial for 10s (shorter — revocations take effect faster)
     # Never cache 401 — user needs fresh login redirect
@@ -416,10 +416,13 @@ server {
     # Gatekeeper auth (handles both authentication via Authelia + authorization via grants)
     location /internal/lamaste/authz {
         internal;
-        proxy_pass http://127.0.0.1:9294/authz/check;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+        # The tunnel in the path and the vhost's own hostname in the headers,
+        # never $http_host: an absolute-form request line selects this vhost
+        # while the client's Host names another tunnel
+        proxy_pass http://127.0.0.1:9294/authz/tunnel/gitlab.example.com;
+        proxy_set_header X-Original-URL https://gitlab.example.com$request_uri;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header Host $http_host;
+        proxy_set_header Host gitlab.example.com;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         # Forward cookies so gatekeeper can validate Authelia session
@@ -434,10 +437,10 @@ server {
         auth_request_set $remote_email $upstream_http_remote_email;
 
         # Authentication failure → Authelia login
-        error_page 401 =302 https://auth.example.com/?rd=$scheme://$http_host$request_uri;
+        error_page 401 =302 https://auth.example.com/?rd=https://gitlab.example.com$request_uri;
 
         # Authorization failure → access request page
-        error_page 403 =302 https://auth.example.com/access-request?tunnel=$http_host;
+        error_page 403 =302 https://auth.example.com/access-request?tunnel=gitlab.example.com;
 
         # Set headers for backend
         proxy_set_header Remote-User $remote_user;
@@ -456,13 +459,13 @@ server {
 
 ### Authz Check Endpoint
 
-`GET /authz/check`
+`GET /authz/tunnel/:fqdn` (vhosts before 4.3 called `GET /authz/check`, which is now refused — see [nginx Configuration](03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname))
 
-1. Read `Cookie` and `X-Original-URL` headers from nginx
+1. Read `Cookie` and `X-Original-URL` headers from nginx; the tunnel is the one named in the path, and `X-Original-URL` and `Host` must name it too
 2. Forward cookie to Authelia's verification endpoint (`http://127.0.0.1:9091/api/authz/forward-auth`)
 3. If Authelia returns 401 → return 401 (not authenticated)
 4. If Authelia returns 200 → extract `Remote-User`, `Remote-Groups`, `Remote-Name`, `Remote-Email` from Authelia response headers
-5. Parse hostname from `X-Original-URL` → look up tunnel
+5. Look up the tunnel named in the path
 6. Check tunnel's `accessMode`:
    - `public` → return 200 (should not reach here, but safe fallback)
    - `authenticated` → return 200 (Authelia passed = sufficient)

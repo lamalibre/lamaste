@@ -8,7 +8,7 @@
  * needed by the CLI panel command.
  */
 
-import { writeFile, rename, mkdir, unlink, access } from 'node:fs/promises';
+import { writeFile, rename, mkdir, unlink, access, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 import { execa } from 'execa';
@@ -17,6 +17,7 @@ import {
   panelPlistLabel,
   panelPlistPath,
   panelSystemdUnitPath,
+  panelSystemdUnitName,
   panelLogFile,
   panelErrorLogFile,
   agentLogsDir,
@@ -183,6 +184,15 @@ async function writePanelPlist(content, label) {
 // Linux — systemd
 // ---------------------------------------------------------------------------
 
+/**
+ * The target a user unit is enabled into. A user manager has no
+ * multi-user.target (that is the system manager's): a unit enabled into it
+ * gets a `.wants/` link nothing pulls in, so it never starts at boot — not
+ * even with lingering. default.target is what a user manager reaches.
+ */
+const PANEL_UNIT_INSTALL_TARGET = 'default.target';
+const LEGACY_INSTALL_LINE = 'WantedBy=multi-user.target';
+
 function generatePanelSystemdUnit(label, port, agentdPath) {
   const systemdQuote = (s) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
@@ -213,8 +223,52 @@ ProtectSystem=strict
 ReadWritePaths=${logsDir} ${dataDir}
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=${PANEL_UNIT_INSTALL_TARGET}
 `;
+}
+
+/**
+ * Repair a panel unit written before 4.3 with `WantedBy=multi-user.target`:
+ * rewrite that line to default.target and, when the unit was enabled,
+ * re-enable it so the boot-time link moves to default.target.wants/. A unit
+ * that is missing or already correct is left alone. Linux only.
+ *
+ * @param {string} label - Agent label
+ * @returns {Promise<{ repaired: boolean, reenabled: boolean }>}
+ */
+export async function repairPanelServiceInstallTarget(label) {
+  if (isDarwin()) return { repaired: false, reenabled: false };
+  const filePath = panelSystemdUnitPath(label);
+  let content;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return { repaired: false, reenabled: false };
+    throw err;
+  }
+  const lines = content.split('\n');
+  const index = lines.indexOf(LEGACY_INSTALL_LINE);
+  if (index === -1) return { repaired: false, reenabled: false };
+
+  // Was it enabled? `is-enabled` exits non-zero for a disabled unit.
+  const unit = panelSystemdUnitName(label);
+  let enabled = false;
+  try {
+    const { stdout } = await runUserSystemctl(['is-enabled', unit]);
+    enabled = String(stdout).trim() === 'enabled';
+  } catch {
+    enabled = false;
+  }
+
+  lines[index] = `WantedBy=${PANEL_UNIT_INSTALL_TARGET}`;
+  const tmp = filePath + '.tmp';
+  await writeFile(tmp, lines.join('\n'), { encoding: 'utf8', mode: 0o644 });
+  await rename(tmp, filePath);
+  await runUserSystemctl(['daemon-reload']);
+  // reenable = disable (removes every link to the unit, the stray
+  // multi-user.target.wants/ one included) + enable (per the new [Install]).
+  if (enabled) await runUserSystemctl(['reenable', unit]);
+  return { repaired: true, reenabled: enabled };
 }
 
 async function writePanelSystemdUnit(content, label) {
