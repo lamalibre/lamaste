@@ -292,6 +292,10 @@ There are two exceptions:
 | POST   | `/api/agents/me/chisel-credential/rotate`                 | Management | Rotate own Chisel credential (agent)       |
 | GET    | `/api/agents/me/registry-credential`                      | Management | One-hour registry token for the agent      |
 | GET    | `/api/agents/me/relay-keys`                               | Management | Relay assertion keys, caller's relay label |
+| GET    | `/api/agents/me/plugin-config/:route`                     | Management | Hosting agent: its plugin's port, secret   |
+| POST   | `/api/agents/me/plugin-config/:route/ack`                 | Management | Hosting agent holds the secret issued      |
+| POST   | `/api/agents/me/jobs/:id/result`                          | Management | Report an agent job's result (agent)       |
+| PUT    | `/api/agents/me/host-facts`                               | Management | Report the agent's host facts (agent)      |
 | GET    | `/api/agent-panel/authz/:label`                           | Management | Agent-panel vhost `auth_request` (nginx)   |
 | POST   | `/api/agents/:label/chisel-credential/rotate`             | Management | Rotate an agent's Chisel credential        |
 | GET    | `/api/tunnels/agent-config`                               | Management | One agent's tunnel configuration           |
@@ -347,6 +351,24 @@ There are two exceptions:
 | DELETE | `/api/plugins/:name`                                      | Management | Uninstall a plugin                         |
 | GET    | `/api/plugins/:name/oidc-clients`                         | Management | A plugin's OIDC clients (no secrets)       |
 | POST   | `/api/plugins/:name/oidc-clients/:clientId/rotate-secret` | Management | New secret for a confidential client       |
+| GET    | `/api/plugins/:name/hosting`                              | Management | Which agent hosts the plugin, its health   |
+| POST   | `/api/plugins/:name/hosting`                              | Management | Host the plugin on an agent (operation)    |
+| DELETE | `/api/plugins/:name/hosting`                              | Management | Remove the hosting (operation)             |
+| POST   | `/api/plugins/:name/hosting/rotate-secret`                | Management | New installation secret                    |
+| GET    | `/api/plugins/:name/hosting/eligibility`                  | Management | Which agents can host the plugin, and why  |
+| GET    | `/api/plugins/:name/retained-data`                        | Management | Data agents keep of its agent half         |
+| DELETE | `/api/plugins/:name/retained-data`                        | Management | Purge it on an agent, or forget the record |
+| GET    | `/api/plugins/:name/hooks`                                | Management | Lifecycle hooks, what needs approval       |
+| POST   | `/api/plugins/:name/hooks/approve`                        | Management | Approve with the approval digest           |
+| PUT    | `/api/plugins/:name/hooks/auto-approve`                   | Management | Auto-approve what later versions bring     |
+| POST   | `/api/plugins/:name/update`                               | Management | Update an agent-hosted plugin in place     |
+| DELETE | `/api/plugins/:name/update`                               | Management | Discard an update waiting for approval     |
+| GET    | `/api/plugins/:name/operations`                           | Management | The plugin's recent operations             |
+| GET    | `/api/plugins/:name/operations/:id`                       | Management | One operation and its steps                |
+| ANY    | `/api/<route>`, `/api/<route>/*`                          | Management | Forwarded to the agent half's `/admin/*`   |
+| GET    | `/api/audit`                                              | Management | Audit log                                  |
+| GET    | `/api/notifications`                                      | Management | Panel notifications                        |
+| POST   | `/api/notifications/read`                                 | Management | Mark notifications read                    |
 | GET    | `/api/registry-credential`                                | Management | Registry credential summary                |
 | PUT    | `/api/registry-credential`                                | Management | Set the registry credential (verified)     |
 | DELETE | `/api/registry-credential`                                | Management | Remove the registry credential             |
@@ -359,7 +381,7 @@ There are two exceptions:
 | POST   | `/api/plugins/push-install/enable/:label`                 | Management | Enable push install for agent              |
 | DELETE | `/api/plugins/push-install/enable/:label`                 | Management | Disable push install for agent             |
 | GET    | `/api/plugins/push-install/agent-status`                  | Management | Agent checks own push install status       |
-| POST   | `/api/plugins/push-install/:label`                        | Management | Send push install command to agent         |
+| POST   | `/api/plugins/push-install/:label`                        | Management | Record a push-install command (legacy)     |
 | GET    | `/api/plugins/push-install/sessions`                      | Management | List push install audit log                |
 | POST   | `/api/tickets/scopes`                                     | Management | Register ticket scope                      |
 | GET    | `/api/tickets/scopes`                                     | Management | List scopes, instances, assignments        |
@@ -387,6 +409,8 @@ There are two exceptions:
 | GET    | `/api/storage/bindings`                                   | Management | List all bindings                          |
 | GET    | `/api/storage/bindings/:pluginName`                       | Management | Get binding for plugin                     |
 | DELETE | `/api/storage/bindings/:pluginName`                       | Management | Unbind storage from plugin                 |
+
+`POST /api/plugins/push-install/:label` checks the push-install gates and records the command in the push-install log; nothing delivers it to the agent. What Lamaste does push to an agent — installing, updating and removing an agent half — runs as plugin operations under the same gates ([Agent-Hosted Plugins](agent-hosted-plugins.md#push-install-gates)). The agent-hosted plugin endpoints are described in [Agent-Hosted Plugins](agent-hosted-plugins.md), [Lifecycle Hooks](lifecycle-hooks.md) and [Audit Log and Notifications](audit-and-notifications.md).
 
 ### Agent Capabilities
 

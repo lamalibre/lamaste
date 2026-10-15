@@ -212,6 +212,8 @@ An update whose agent half differs waits for approval like a changed hook set: `
 
 Removing an agent half without purge — unhosting, uninstalling, a rolled-back install — keeps its data directory and service account on the agent. The relay records it, one record per agent and route, by the name of the plugin it belonged to, so it can be purged after the plugin is uninstalled too. Hosting the same agent package on that agent again takes the data back and drops the record; another package is refused while it is there (`409`, `code: "retained_data_conflict"`, with the `retained` record), because the data is not its own.
 
+In the panel, the Plugins page lists the records under **Retained data** on the plugin's card and, for plugins that are no longer installed, in **Retained data of uninstalled plugins** below the list. Each record offers **Purge** — its confirmation names the agent, the route, the data directory and the account it deletes; the purge runs as an operation the page follows like any other — and **Forget**, whose confirmation says the data stays on the machine and how to remove it there. The CLI: `lamaste-server plugins retained-data [<name>]`, `purge-data <name> --agent <label>` and `forget-data <name> --agent <label>` ([below](#cli)).
+
 #### `GET /api/plugins/:name/retained-data`
 
 ```json
@@ -223,13 +225,15 @@ Removing an agent half without purge — unhosting, uninstalling, a rolled-back 
       "plugin": "market-indicators",
       "package": "@lamalibre/market-indicators-agent",
       "since": "2026-10-16T09:00:00.000Z",
-      "operation": "…uuid…"
+      "operation": "…uuid…",
+      "dataDir": "/var/lib/lamalibre/apps/market-indicators",
+      "serviceUser": "lamaste-app-market-indicators"
     }
   ]
 }
 ```
 
-`GET /api/plugins` carries each plugin's records as `retainedData`, and every agent's — of uninstalled plugins too — as a top-level `retainedData`.
+`operation` is the operation that removed the agent half (`null` when none did); `dataDir` and `serviceUser` are what a purge deletes on the agent. `GET /api/plugins` carries each plugin's records as `retainedData`, and every agent's — of uninstalled plugins too — as a top-level `retainedData`.
 
 #### `DELETE /api/plugins/:name/retained-data?agentLabel=<label>`
 
@@ -240,7 +244,7 @@ Purges what agent `<label>` keeps (10 per minute): an `app-remove` job with purg
 | 404    | That agent keeps no data of the plugin                                                                                                                                                                                                                                     |
 | 409    | The plugin is hosted on that agent and uses the data (`retained_data_in_use` — remove its hosting with purge instead); the agent is no longer enrolled (`agent_not_enrolled` — purge on the machine with `sudo lamaste-agent apphost remove <route> --purge`, then forget) |
 
-`DELETE /api/plugins/:name?purge=true` of a plugin that is not hosted is refused (`400`), naming the agents that keep its data. There is no panel page or CLI command for retained data yet.
+`DELETE /api/plugins/:name?purge=true` of a plugin that is not hosted is refused (`400`), naming the agents that keep its data. The refusals that send an administrator to retained data — `retained_data_conflict`, `agent_not_enrolled` and that `400` — name the panel's Retained data and the `lamaste-server plugins purge-data|forget-data` commands.
 
 ### Error codes
 
@@ -373,6 +377,9 @@ lamaste-server plugins host <name> --agent <label>        # host the plugin (fol
 lamaste-server plugins unhost <name> [--force] [--purge]  # remove the hosting
 lamaste-server plugins uninstall <name> [--force] [--purge]
 lamaste-server plugins rotate-hosting-secret <name>       # new installation secret
+lamaste-server plugins retained-data [<name>]             # what agents keep of removed agent halves
+lamaste-server plugins purge-data <name> --agent <label>  # delete it on the agent (follows the operation)
+lamaste-server plugins forget-data <name> --agent <label> # drop the relay's record only
 lamaste-server plugins hooks <name>                       # what needs approval: relay hooks, the agent half
 lamaste-server push-install status|on|off                 # the switch, policies, every agent's window
 lamaste-server push-install open <agent> [--minutes <n>] [--policy <id>]
@@ -380,7 +387,7 @@ lamaste-server push-install close <agent>
 lamaste-server push-install default-policy <id>
 ```
 
-`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's. `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
+`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's. `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
 
 ## State
 

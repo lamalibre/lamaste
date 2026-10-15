@@ -25,9 +25,9 @@ sudo lamaste-agent apphost enable --user root  # the agent runs as root: no sudo
 What `enable` does:
 
 1. Installs the helper root:root 0755 at `/usr/local/sbin/lamaste-apphost` (written under a hidden temporary name, renamed into place).
-2. Writes `/etc/sudoers.d/lamaste-apphost` (root:root 0440) naming the agent's user — the one who ran `sudo`, or `--user`. The file is checked with `visudo -c` before it is renamed into place; an invalid rule is never live. With `--user root` no rule is written and an existing one is removed. The rule names one user: enabling for another user replaces it.
+2. Writes `/etc/sudoers.d/lamaste-apphost` (root:root 0440) naming the agent's user — the one who ran `sudo`, or `--user`. The file is checked with `visudo -c` before it is renamed into place; an invalid rule is never live. With `--user root` no rule is written and an existing one is removed. **App hosting serves one OS user per machine**: while the rule names another user, `enable` is refused — that user's agents could no longer install, update or remove their agent halves, which would stay on the machine with nobody to manage them. Unhost or uninstall the plugins those agents host first (`apphost status` lists the agent halves installed), then `--force` replaces the rule (or removes it, for `--user root`).
 3. Checks that the helper answers (`status`) and that the agent's user can run it with `sudo -n`.
-4. Pins the relay key of every agent of that user on the machine (see [Pinning the relay key](#pinning-the-relay-key)). A failure here leaves the helper enabled — it runs no job until `sudo lamaste-agent apphost pin` succeeds.
+4. Pins the relay key of every agent of that user on the machine (see [Pinning the relay key](#pinning-the-relay-key)), printing each label's key id to compare with the relay's. A failure here leaves the helper enabled — it runs no job until `sudo lamaste-agent apphost pin` succeeds.
 
 The agent's next sync reports the helper to the relay in its [host facts](agent-hosted-plugins.md#host-facts); from then on the panel lists the agent as able to host plugins whose agent half Lamaste installs.
 
@@ -47,7 +47,7 @@ Any arguments are allowed: the helper validates every argument and derives every
 
 | Command                                                                 | Run as                   | Does                                                                                                                                                                                                                                                                              |
 | ----------------------------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sudo lamaste-agent apphost enable [--user <name>]`                     | root                     | Install the helper and the rule, pin each agent's relay key (above)                                                                                                                                                                                                               |
+| `sudo lamaste-agent apphost enable [--user <name>] [--force]`           | root                     | Install the helper and the rule, pin each agent's relay key (above). Refused while the rule names another user, unless `--force`                                                                                                                                                  |
 | `sudo lamaste-agent apphost pin [--label <label>] [--user <name>]`      | root                     | Pin the relay key again — after a relay rotated its key, or an agent was enrolled again. The user defaults to the one the rule names, else root. Prints each label's key id and the one pinned before (`was …`); exits 1 when a label failed                                      |
 | `lamaste-agent apphost status [--json]`                                 | the agent's user or root | The helper (protocol, Node.js, whether it is the version this install ships), the pinned relay keys, the agent halves installed (version, previous version, unit state, owner). As root also the user the rule names                                                              |
 | `lamaste-agent apphost relay-keys [--label <label>] [--json]`           | the agent's user         | What each agent's relay publishes now, fetched over the agent's pinned mTLS channel, and whether it is the key pinned                                                                                                                                                             |
@@ -142,9 +142,11 @@ RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/lamalibre/apps/market-indicators
+ReadOnlyPaths=/run
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+TemporaryFileSystem=/dev/shm:nosuid,nodev,noexec
 PrivateIPC=yes
 RemoveIPC=yes
 ProtectProc=invisible
@@ -174,19 +176,19 @@ WantedBy=multi-user.target
 
 The unit is written from a fixed template; it holds paths, never a secret.
 
-| Directive                                                                                                                       | Why                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `User=` / `Group=` the agent half's account                                                                                     | Plugin code never runs as root or as the agent's user                                                                                                                     |
-| `NoNewPrivileges`, `CapabilityBoundingSet=` (empty), `RestrictSUIDSGID`                                                         | No privilege gained through set-id binaries or capabilities; no privileged port, no `chown`                                                                               |
-| `ProtectSystem=strict`, `ReadWritePaths=` the data directory, `ProtectHome`, `PrivateTmp`, `UMask=0077`                         | The whole file system read-only but the data directory and a private `/tmp`; homes invisible; new files private                                                           |
-| `PrivateDevices`, `PrivateIPC`, `RemoveIPC`                                                                                     | No device nodes, no shared IPC namespace, its IPC objects removed when it stops                                                                                           |
-| `ProtectProc=invisible`                                                                                                         | Other users' processes are not visible in `/proc`                                                                                                                         |
-| `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname` | The kernel's tunables and modules, the cgroup tree, the clock and the hostname cannot be changed; the kernel log cannot be read                                           |
-| `RestrictRealtime`, `RestrictNamespaces`, `LockPersonality`, `SystemCallArchitectures=native`                                   | No realtime scheduling, no new namespaces, no personality or foreign-ABI tricks                                                                                           |
-| `SystemCallFilter=@system-service`, `SystemCallErrorNumber=EPERM`                                                               | Only the system calls services need; a call outside the set fails with `EPERM` instead of killing the process (libuv probes `io_uring` and falls back to its thread pool) |
-| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`                                                                              | IP and Unix sockets only. Outbound network stays the application's (an agent half fetches what it must); it binds loopback                                                |
-| `MemoryMax=`                                                                                                                    | From `agent.service.memoryMax`; left out when the manifest sets none                                                                                                      |
-| `Restart=on-failure`, `WantedBy=multi-user.target`                                                                              | Restarted 5 s after a crash; started at boot                                                                                                                              |
+| Directive                                                                                                                       | Why                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `User=` / `Group=` the agent half's account                                                                                     | Plugin code never runs as root or as the agent's user                                                                                                                                      |
+| `NoNewPrivileges`, `CapabilityBoundingSet=` (empty), `RestrictSUIDSGID`                                                         | No privilege gained through set-id binaries or capabilities; no privileged port, no `chown`                                                                                                |
+| `ProtectSystem=strict`, `ReadWritePaths=` the data directory, `ReadOnlyPaths=/run`, `ProtectHome`, `PrivateTmp`, `UMask=0077`   | The whole file system read-only but the data directory and a private `/tmp`; `/run` too (strict leaves it writable, and `/run/lock` is world-writable); homes invisible; new files private |
+| `PrivateDevices`, `TemporaryFileSystem=/dev/shm`, `PrivateIPC`, `RemoveIPC`                                                     | No device nodes, a private `/dev/shm` (PrivateDevices alone binds the machine's, which every user can write), no shared IPC namespace, its IPC objects removed when it stops               |
+| `ProtectProc=invisible`                                                                                                         | Other users' processes are not visible in `/proc`                                                                                                                                          |
+| `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname` | The kernel's tunables and modules, the cgroup tree, the clock and the hostname cannot be changed; the kernel log cannot be read                                                            |
+| `RestrictRealtime`, `RestrictNamespaces`, `LockPersonality`, `SystemCallArchitectures=native`                                   | No realtime scheduling, no new namespaces, no personality or foreign-ABI tricks                                                                                                            |
+| `SystemCallFilter=@system-service`, `SystemCallErrorNumber=EPERM`                                                               | Only the system calls services need; a call outside the set fails with `EPERM` instead of killing the process (libuv probes `io_uring` and falls back to its thread pool)                  |
+| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`                                                                              | IP and Unix sockets only. Outbound network stays the application's (an agent half fetches what it must); it binds loopback                                                                 |
+| `MemoryMax=`                                                                                                                    | From `agent.service.memoryMax`; left out when the manifest sets none                                                                                                                       |
+| `Restart=on-failure`, `WantedBy=multi-user.target`                                                                              | Restarted 5 s after a crash; started at boot                                                                                                                                               |
 
 Not used, on purpose:
 
@@ -248,7 +250,7 @@ Any failure is exit 5, with a message that says what to do — `re-pin the relay
 
 ### Pinning the relay key
 
-`sudo lamaste-agent apphost enable` and `sudo lamaste-agent apphost pin` fetch each agent's relay key **as the agent's user** (`sudo -n -u <user> -H -- … lamaste-agent apphost relay-keys --json`), over that agent's own pinned mTLS channel (`GET /api/agents/me/relay-keys`) — root never handles the agent's certificate or its password. An agent without a pinned panel certificate is not pinned: its channel could be anyone's. Root accepts the answer only as it validates it — an `https` panel URL, an Ed25519 key whose id is derived from the key (the first 16 bytes of the SHA-256 of its DER SubjectPublicKeyInfo, hex), the relay's label for the agent — and writes the first key, the one the relay signs with:
+`sudo lamaste-agent apphost enable` and `sudo lamaste-agent apphost pin` fetch each agent's relay key **as the agent's user** (`sudo -n -u <user> -H -- … lamaste-agent apphost relay-keys --json`), over that agent's own pinned mTLS channel (`GET /api/agents/me/relay-keys`) — root never handles the agent's certificate or its password. An agent without a pinned panel certificate is not pinned: its channel could be anyone's. Root accepts the answer only as it validates it — a label of that user's agents, an `https` panel URL, an Ed25519 key whose id is derived from the key (the first 16 bytes of the SHA-256 of its DER SubjectPublicKeyInfo, hex), the relay's label for the agent — and writes the first key, the one the relay signs with:
 
 ```json
 {
@@ -264,10 +266,12 @@ Any failure is exit 5, with a message that says what to do — `re-pin the relay
 
 The helper reads a pin only from a root-owned file (opened without following links) in root-owned directories nobody else may write.
 
+**Whose labels.** Root checks each label against the agent user's own agent registry, which it reads itself: `~/.lamalibre/lamaste/agents.json` in that user's home as the user database names it (`getent passwd` — the home `sudo -H` gives the CLI that fetched the keys), only as a regular file that user owns, not through a link and at most 1 MiB. A label the registry does not list is not pinned. A pin is per label for the whole machine and the helper serves root as well as the rule's user, so for any user but root a label root's own agents use is refused too (`pin it with --user root`) — one user's answer never replaces the key another's agent verifies its jobs with. The registry is that user's file: the check keeps its pins to the agents it set up, and away from root's; it does not make its answer more trustworthy than its account (below).
+
 **Trust on first use.** The pin is as trustworthy as the agent's account and its channel at the moment `enable` or `pin` runs. Compare it with the relay's key once:
 
 - on the relay: the panel logs the key id at start-up (`journalctl -u lamalibre-lamaste-serverd | grep 'signing key ready'`), and `GET /api/agents/me/relay-keys` with the admin certificate answers `keys[0].kid`;
-- on the agent: `sudo lamaste-agent apphost status` lists each label's pinned id in full; `lamaste-agent apphost relay-keys` shows what the relay publishes now and whether it is pinned;
+- on the agent: `enable` and `pin` print each label's pinned id in full, and for a re-pin the id pinned before (`was …`); `sudo lamaste-agent apphost status` lists them; `lamaste-agent apphost relay-keys` shows what the relay publishes now and whether it is pinned;
 - in the panel: the Certificates page and the host dialog show the first 12 hex digits of the id each agent reports pinned, and an agent whose pin is not the relay's key is not eligible (`re-pin the relay key`).
 
 **Rotation.** After the relay's signing key is replaced, every agent's helper refuses that relay's jobs until `sudo lamaste-agent apphost pin` runs on the agent; the panel shows those agents as not eligible meanwhile. An agent enrolled again under another relay label needs a re-pin too.
@@ -286,7 +290,7 @@ The relay lists app jobs in `GET /api/tunnels/agent-config` (`agentJobs`, see [A
 
 ## Several agents on one machine
 
-Agents of different relays may share a machine and its helper — under the one user the rule names, or root. Each label has its own pin, and each relay's jobs name its own agent. A route belongs to the agent that first installed it (its owner record); another agent, or another package, is refused that route — and the data kept with it — until the owner purges it (exit 4). The sync also leaves a route alone that another agent's `apphost-state.json` lists, and delivers no config while two agents claim one.
+Agents of different relays may share a machine and its helper — under the one user the rule names, or root (`enable` for another user is refused unless `--force`). Each label has its own pin, and each relay's jobs name its own agent. A route belongs to the agent that first installed it (its owner record); another agent, or another package, is refused that route — and the data kept with it — until the owner purges it (exit 4). The sync also leaves a route alone that another agent's `apphost-state.json` lists, and delivers no config while two agents claim one.
 
 ## Writing an agent half
 
@@ -327,10 +331,10 @@ The contract:
 
 ## Retained data
 
-Removing an agent half without purge — unhosting, uninstalling, a rolled-back install — keeps its data directory, its account and its owner record on the agent. The relay keeps a record of it (`retainedData` in `GET /api/plugins`, `GET /api/plugins/:name/retained-data`), by the plugin's name, so it can still be purged after the plugin is uninstalled. Hosting the same agent package on that agent again takes the data back; another package is refused (`retained_data_conflict`) until it is purged:
+Removing an agent half without purge — unhosting, uninstalling, a rolled-back install — keeps its data directory, its account and its owner record on the agent. The relay keeps a record of it, by the plugin's name, so it can still be purged after the plugin is uninstalled: the Plugins page shows it under **Retained data** on the plugin's card, or — once the plugin is uninstalled — under **Retained data of uninstalled plugins**; `lamaste-server plugins retained-data [<name>]` lists it ([the API](agent-hosted-plugins.md#retained-data)). Hosting the same agent package on that agent again takes the data back; another package is refused (`retained_data_conflict`) until it is purged:
 
-- from the relay, `DELETE /api/plugins/:name/retained-data?agentLabel=<label>` — an `app-remove` job with purge, gated by push install like any removal;
-- on the machine — for an agent the relay can no longer reach — `sudo lamaste-agent apphost remove <route> --purge`, then `DELETE …/retained-data?agentLabel=<label>&forget=true` to drop the relay's record.
+- from the relay — **Purge** on the Plugins page, or `lamaste-server plugins purge-data <name> --agent <label>` — an `app-remove` job with purge, gated by push install like any removal and followed like any operation;
+- on the machine — for an agent the relay can no longer reach — `sudo lamaste-agent apphost remove <route> --purge`, then **Forget** on the Plugins page or `lamaste-server plugins forget-data <name> --agent <label>` to drop the relay's record. Forgetting touches nothing on the agent.
 
 ## Limits
 
