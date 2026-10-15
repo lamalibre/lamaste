@@ -358,7 +358,19 @@ curl -s --cert client.p12:password \
       "createdAt": "2026-03-16T10:00:00.000Z",
       "expiresAt": "2028-03-16T10:00:00.000Z",
       "revoked": false,
-      "expiringSoon": false
+      "expiringSoon": false,
+      "status": "active",
+      "hostFacts": {
+        "os": "darwin",
+        "arch": "arm64",
+        "distro": null,
+        "node": "22.13.1",
+        "systemd": false,
+        "apphost": null
+      },
+      "hostFactsAt": "2026-10-16T09:00:00.000Z",
+      "pushInstallEnabledUntil": "2026-10-16T10:30:00.000Z",
+      "pushInstallPolicy": "default"
     },
     {
       "label": "office-imac",
@@ -369,25 +381,33 @@ curl -s --cert client.p12:password \
       "createdAt": "2026-03-10T08:00:00.000Z",
       "expiresAt": "2028-03-10T08:00:00.000Z",
       "revoked": true,
-      "expiringSoon": false
+      "expiringSoon": false,
+      "status": "revoked",
+      "hostFacts": null,
+      "hostFactsAt": null
     }
   ]
 }
 ```
 
-| Field              | Type                  | Description                                                                          |
-| ------------------ | --------------------- | ------------------------------------------------------------------------------------ |
-| `label`            | `string`              | Agent identifier (matches certificate CN `agent:<label>`)                            |
-| `serial`           | `string`              | Certificate serial number                                                            |
-| `capabilities`     | `string[]`            | Granted capabilities                                                                 |
-| `allowedSites`     | `string[]`            | Site names this agent can access for file operations                                 |
-| `enrollmentMethod` | `string`              | `"p12"`, `"hardware-bound"`, or `"delegated"` — how the agent certificate was issued |
-| `delegatedBy`      | `string \| undefined` | For delegated certs: the label of the delegating agent                               |
-| `certType`         | `string \| undefined` | `"plugin-agent"` for delegated certs, absent for regular agents                      |
-| `createdAt`        | `string`              | ISO 8601 creation timestamp                                                          |
-| `expiresAt`        | `string`              | ISO 8601 expiry timestamp                                                            |
-| `revoked`          | `boolean`             | Whether the certificate has been revoked                                             |
-| `expiringSoon`     | `boolean`             | `true` if the certificate is not revoked and fewer than 30 days remain until expiry  |
+| Field                     | Type                  | Description                                                                                                                                                                                     |
+| ------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `label`                   | `string`              | Agent identifier (matches certificate CN `agent:<label>`)                                                                                                                                       |
+| `serial`                  | `string`              | Certificate serial number                                                                                                                                                                       |
+| `capabilities`            | `string[]`            | Granted capabilities                                                                                                                                                                            |
+| `allowedSites`            | `string[]`            | Site names this agent can access for file operations                                                                                                                                            |
+| `enrollmentMethod`        | `string`              | `"p12"`, `"hardware-bound"`, or `"delegated"` — how the agent certificate was issued                                                                                                            |
+| `delegatedBy`             | `string \| undefined` | For delegated certs: the label of the delegating agent                                                                                                                                          |
+| `certType`                | `string \| undefined` | `"plugin-agent"` for delegated certs, absent for regular agents                                                                                                                                 |
+| `createdAt`               | `string`              | ISO 8601 creation timestamp                                                                                                                                                                     |
+| `expiresAt`               | `string`              | ISO 8601 expiry timestamp                                                                                                                                                                       |
+| `revoked`                 | `boolean`             | Whether the certificate has been revoked                                                                                                                                                        |
+| `expiringSoon`            | `boolean`             | `true` if the certificate is not revoked and fewer than 30 days remain until expiry                                                                                                             |
+| `status`                  | `string`              | `"revoked"`, `"expired"`, `"expiring-soon"` (within 30 days) or `"active"`, in that order                                                                                                       |
+| `hostFacts`               | `object \| null`      | What the agent last reported about its host (OS, distribution, architecture, Node.js, systemd, its app host helper) — see [Host facts](agent-hosted-plugins.md#host-facts); `null` until it has |
+| `hostFactsAt`             | `string \| null`      | When it reported them                                                                                                                                                                           |
+| `pushInstallEnabledUntil` | `string \| undefined` | End of the agent's last push-install window (open while in the future); absent once it is closed                                                                                                |
+| `pushInstallPolicy`       | `string \| undefined` | The push-install policy of that window                                                                                                                                                          |
 
 ---
 

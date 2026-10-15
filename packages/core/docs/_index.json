@@ -203,6 +203,11 @@
           "file": "04-api-reference/agent-hosted-plugins.md"
         },
         {
+          "title": "App Host (Agent Halves)",
+          "slug": "api-app-host",
+          "file": "04-api-reference/app-host.md"
+        },
+        {
           "title": "Lifecycle Hooks",
           "slug": "api-lifecycle-hooks",
           "file": "04-api-reference/lifecycle-hooks.md"

@@ -1,6 +1,6 @@
 # Audit Log & Notifications
 
-The panel keeps an **audit log** of administrative decisions — approving a plugin's relay hooks, switching auto-approve, hosting and removing a hosting, installing, updating and uninstalling a plugin — and of what plugins' [lifecycle hooks](lifecycle-hooks.md) report through the `audit` effect. **Notifications** are messages for the relay's administrators: a hook's `notify-admins` effect, an update waiting for approval, a rule pack updated with Lamaste. Both live in `state.db` and hold metadata only — never a request or response body or a secret.
+The panel keeps an **audit log** of administrative decisions — approving a plugin's relay hooks, switching auto-approve, hosting and removing a hosting, installing, updating and uninstalling a plugin — and of what plugins' [lifecycle hooks](lifecycle-hooks.md) report through the `audit` effect. **Notifications** are messages for the relay's administrators: a hook's `notify-admins` effect, an update waiting for approval (with why auto-approve did not cover it), a rule pack updated with Lamaste. Both live in `state.db` and hold metadata only — never a request or response body or a secret.
 
 All endpoints are admin only.
 
@@ -31,7 +31,18 @@ Newest first. Query: `plugin`, `action` (exact, or a prefix ending in `.` such a
 | `auto-approve`   | a plugin's auto-approve                                      |
 | `lamaste`        | the panel itself                                             |
 
-Actions written by Lamaste: `plugin.installed`, `plugin.uninstalled`, `plugin.hosted`, `plugin.unhosted`, `plugin.updated`, `plugin.update.reverted`, `plugin.update.awaiting-approval`, `plugin.update.discarded`, `hooks.approved`, `hooks.auto-approve.enabled|disabled`, `hooks.rules-updated`, `hooks.effects-dropped`. Details are capped at 4 KiB (strings at 300 characters, three levels deep). Entries are kept 180 days, at most 50 000.
+Actions written by Lamaste: `plugin.installed`, `plugin.uninstalled`, `plugin.hosted`, `plugin.unhosted`, `plugin.updated`, `plugin.update.reverted`, `plugin.update.awaiting-approval`, `plugin.update.discarded`, `hooks.approved`, `hooks.auto-approve.enabled|disabled`, `hooks.auto-approve.withheld`, `hooks.rules-updated`, `hooks.effects-dropped`, and for an [agent half Lamaste installs](app-host.md):
+
+| Action                                      | When                                                                                                                                                 |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin.agent-half.installed`               | The agent reported the pinned version installed and its unit active — `agentLabel`, `package`, `version`, `integrity`, `phase`, `retainedDataReused` |
+| `plugin.agent-half.activated`               | A failed update switched the agent back to the version before — `version`, `from`                                                                    |
+| `plugin.agent-half.removed`                 | Removed from the agent — `version`, `purge`, `phase` (`uninstall` or `rollback`)                                                                     |
+| `plugin.agent-half.purged`                  | Retained data purged on the agent — `route`, `package`                                                                                               |
+| `plugin.agent-half.retained-data.forgotten` | The relay's record of retained data dropped without touching the agent                                                                               |
+| `hooks.auto-approve.withheld`               | Auto-approve did not cover an update because its agent half changes what runs as root — `reasons`                                                    |
+
+Details are capped at 4 KiB (strings at 300 characters, three levels deep). Entries are kept 180 days, at most 50 000.
 
 ## `GET /api/notifications`
 

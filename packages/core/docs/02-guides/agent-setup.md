@@ -117,7 +117,7 @@ The relay only lets an agent open the ports of the enabled tunnels it carries, a
 4. The service definition lists exactly the tunnels the relay grants this agent.
 5. The client runs when there is something to carry, and is stopped when the agent carries no tunnel or the operator stopped it.
 
-When everything already matches, a run costs one panel request and changes nothing. The timer runs it:
+When everything already matches, a run costs one panel request and changes nothing. After converging, a run also reports the agent's host facts when they changed and runs the jobs the relay listed for the plugins this agent hosts — lifecycle hook calls, and installing, switching or removing an agent half ([App Host](../04-api-reference/app-host.md)); an install may take up to 10 minutes, so systemd allows a run 20 (`TimeoutStartSec=20min`). The timer runs it:
 
 | Platform | Units                                                                                        | Schedule                                                      |
 | -------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -167,6 +167,19 @@ lamaste-agent switch <label>         # change the default agent
 lamaste-agent uninstall --label <l>  # stop and remove one agent, including its sync timer
 ```
 
+## Hosting app plugins (Linux)
+
+To let the panel install the agent halves of app plugins on this machine — their accounts, units and directories — enable the app host helper once, from a root-owned install:
+
+```bash
+sudo npm install -g @lamalibre/lamaste-agent
+sudo lamaste-agent apphost enable              # the agent runs as the user who ran sudo
+lamaste-agent apphost status                   # helper, pinned relay keys, installed agent halves
+sudo lamaste-agent apphost pin                 # after the relay rotated its signing key
+```
+
+The agent reports it on its next sync, and the panel can then host plugins whose agent half Lamaste installs here, while this agent's push-install window is open. `lamaste-agent uninstall` refuses while agent halves are installed for the agents it would remove. See [App Host](../04-api-reference/app-host.md).
+
 ## Troubleshooting
 
 | Symptom                                                     | Cause and fix                                                                                                                                                                                                                   |
@@ -182,6 +195,9 @@ lamaste-agent uninstall --label <l>  # stop and remove one agent, including its 
 | Tunnel works until reboot                                   | Lingering is off. See step 3.                                                                                                                                                                                                   |
 | New tunnel returns 502                                      | The agent has not synced yet (up to ~30 s), or nothing listens on `127.0.0.1:<port>` on the agent. Run `lamaste-agent update` to apply at once.                                                                                 |
 | Upload fails with 413                                       | The request is larger than the tunnel's body limit. Raise **Largest request body** on the tunnel (`maxBodySizeMb`).                                                                                                             |
+| `uninstall` refuses: agent halves are installed             | Agent halves run here for this agent. Unhost or uninstall those plugins on the panel (the next sync removes them), or `sudo lamaste-agent apphost disable --force` (data is kept).                                              |
+| `apphost enable` says the install is not root-owned         | Root installs the helper only from code no other user can change: `sudo npm install -g @lamalibre/lamaste-agent`, then `sudo lamaste-agent apphost enable` from that install.                                                   |
+| Hosting refused: the helper trusts another relay key        | The relay's signing key was replaced, or the agent enrolled again. Run `sudo lamaste-agent apphost pin`; compare the key id with the relay's ([App Host](../04-api-reference/app-host.md#pinning-the-relay-key)).               |
 
 ## For Developers
 

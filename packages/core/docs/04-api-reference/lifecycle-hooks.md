@@ -66,11 +66,11 @@ Matching errs towards running the hook: literal segments match case-insensitivel
 
 ## Approval
 
-Relay hooks are code Lamaste runs on the relay, so an administrator approves them first. What is approved is a **digest**: SHA-256 over the normalised relay declarations (defaults applied, shared-hook settings included) and the SHA-256 of the entry module. A version whose declarations or module differ by one byte has another digest.
+Relay hooks are code Lamaste runs on the relay, and an [agent half Lamaste installs](app-host.md) is code it has an agent's root helper install, so an administrator approves both first. What is approved is one **digest**: SHA-256 over the canonical JSON of the normalised relay declarations (defaults applied, shared-hook settings included) with the SHA-256 of the entry module, and of the agent half pinned for the version — its package, version, tarball integrity, service (`entry`, `memoryMax`) and system packages (`{ v: 2, relay, agentHalf }`, either part `null` when the version brings none). A version whose declarations, module or agent half differ by one byte has another digest. The runner records the relay part's own digest, so a new agent half with an unchanged relay module leaves the runner current.
 
-- Installing a plugin with relay hooks leaves them **pending**: the plugin can be enabled, but not hosted, and its forwarded API answers `503 { code: "hooks_not_approved" }` until the approval.
-- **Approving** names the digest the administrator saw; if the hook set changed meanwhile the panel answers `409` with the current digest.
-- **Updating** a plugin whose new version brings another hook set waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log.
+- Installing a plugin with relay hooks or an agent half Lamaste installs leaves them **pending**: the plugin can be enabled, but not hosted, and its forwarded API answers `503 { code: "hooks_not_approved" }` until the approval.
+- **Approving** names the digest the administrator saw; if what the version brings changed meanwhile the panel answers `409` with the current digest.
+- **Updating** a plugin whose new version brings another hook set or agent half waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log — except an agent half change that runs more as root: an agent half where there was none, another agent package, added system packages, another service entry or memory limit ([withheld](agent-hosted-plugins.md#approval)).
 - Agent hooks are the plugin's own code on its own agent and need no approval. Shared hooks are part of the approved set by name and settings; their rules ride Lamaste releases (see below).
 
 Every approval, auto-approve change and auto-approval is recorded in the [audit log](audit-and-notifications.md) with the administrator certificate's serial.
@@ -105,9 +105,21 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
       "failOpenCount": 0
     },
     "agent": { "stages": [{ "stage": "install:pre-tunnel", "timeoutMs": 60000 }] },
+    "agentHalf": {
+      "package": "@lamalibre/fx-agent",
+      "version": "1.0.0",
+      "integrity": "sha512-…",
+      "entry": "dist/agentd.mjs",
+      "memoryMax": null,
+      "systemPackages": [],
+      "serviceUser": "lamaste-app-fx",
+      "unitName": "lamalibre-app-fx.service",
+      "dataDir": "/var/lib/lamalibre/apps/fx"
+    },
     "approval": {
       "required": true,
       "state": "pending",
+      "digest": "…64 hex: what to approve…",
       "approvedDigest": null,
       "approvedVersion": null,
       "approvedAt": null,
@@ -120,7 +132,7 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 }
 ```
 
-`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `pendingUpdate` is `{ version, digest, stagedAt, relay }` while an update waits.
+`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, autoApproveWithheld }` while an update waits — `autoApproveWithheld` lists why auto-approve did not cover it (`null` otherwise).
 
 ### `POST /api/plugins/:name/hooks/approve`
 
@@ -137,10 +149,12 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 `{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
 
 - `200 { upToDate: true }` — nothing to do;
-- `202 { pendingUpdate }` — its relay hook set differs from the approved one and auto-approve is off; approve it with the digest shown;
+- `202 { pendingUpdate }` — what it brings (relay hook set, agent half) differs from what was approved and auto-approve is off or withheld; approve it with the digest shown;
 - `202 { operation }` — the update runs: the new hook module goes into the runner, the install pipeline runs with `phase: "upgrade"` around installing the package (agent stages through the tunnel), and a failure restores the previous package, row and module.
 
-A version that names another plugin, turns the plugin into a server plugin, or drops the agent half of a hosted plugin is refused (`400`). `DELETE /api/plugins/:name/update` discards a pending update.
+The agent half of a hosted plugin whose agent half Lamaste installs is pinned when the version is staged and installed on the agent **first**, after the agent's pre stage; a failure after that activates the version that ran before ([Hosting with an agent half](agent-hosted-plugins.md#the-pipelines)). That is a push: the hosting agent must be eligible for the new version and push install must allow `update` — checked when the update starts, not while it waits for approval.
+
+A version that names another plugin, turns the plugin into a server plugin, or drops the agent half of a hosted plugin is refused (`400`), and so is one that switches a hosted plugin between an agent half installed by hand and one Lamaste installs. `DELETE /api/plugins/:name/update` discards a pending update.
 
 ## Operations
 
@@ -179,13 +193,15 @@ Hosting, removing a hosting, an update and the uninstall of a hosted plugin wait
 | ---------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | relay pre  | `install:pre-tunnel` — a failure leaves nothing                                                                | `uninstall:pre-teardown` — a failure stops it unless forced            |
 | Lamaste    | reserve: internal tunnel **without** its chisel grant (the port), record and secret (`installing`), capability | —                                                                      |
+| Lamaste    | the agent half Lamaste installs (`agent.package`): an `app-install` job ([App Host](app-host.md))              | —                                                                      |
 | agent pre  | `install:pre-tunnel` by the agent's sync on its loopback (agent job); a failure releases what was reserved     | `uninstall:pre-teardown` through the tunnel                            |
 | Lamaste    | grant the tunnel, wait until the agent half answers through it (150 s)                                         | remove the tunnel (`removing`; the secret stays)                       |
 | agent post | `install:post-tunnel` through the tunnel                                                                       | `uninstall:post-teardown` by the agent's sync — a failure is a warning |
+| Lamaste    | —                                                                                                              | remove the agent half Lamaste installed (`app-remove`; `purge` too)    |
 | Lamaste    | —                                                                                                              | revoke the secret and the capability                                   |
 | relay post | `install:post-tunnel`, then the hosting turns `active`                                                         | `uninstall:post-teardown` — a failure is a warning                     |
 
-A failure after the agent's pre stage rolls back: the uninstall pipeline with `phase: "rollback"` for the sides that took part, then Lamaste's own steps in reverse; the operation ends `rolled-back`. Post stages and every uninstall stage must be **idempotent**. `DELETE /api/plugins/:name/hosting?force=true` (and `DELETE /api/plugins/:name?force=true`) passes failing pre-teardown stages — for an agent that is gone — and is recorded.
+A failure after the agent's pre stage — or once the agent half's install job was dispatched — rolls back: the uninstall pipeline with `phase: "rollback"` for the sides that took part, then Lamaste's own steps in reverse (an agent half is removed without purge); the operation ends `rolled-back`. Post stages and every uninstall stage must be **idempotent**. `DELETE /api/plugins/:name/hosting?force=true` (and `DELETE /api/plugins/:name?force=true`) passes failing pre-teardown stages — for an agent that is gone — and is recorded; `?purge=true` also deletes the data of the agent half Lamaste installed.
 
 The hosting's **phase** (`installing`, `active`, `removing`) is on the hosting record and in `agent-config`: the forwarder and the health monitor use only `active` hostings.
 
@@ -298,8 +314,8 @@ lamaste-server plugins auto-approve <name> on|off
 lamaste-server plugins update <name> [--version <v>]
 lamaste-server plugins discard-update <name>
 lamaste-server plugins host <name> --agent <label>          # follows the operation
-lamaste-server plugins unhost <name> [--force]
-lamaste-server plugins uninstall <name> [--force]
+lamaste-server plugins unhost <name> [--force] [--purge]
+lamaste-server plugins uninstall <name> [--force] [--purge]
 lamaste-server plugins operations <name>
 ```
 

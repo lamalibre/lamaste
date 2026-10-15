@@ -157,6 +157,22 @@ Headers that only claim a caller — `X-SSL-Client-*`, `Remote-*` and the assert
 
 **What remains.** The relay's loopback is still the relay's trust boundary: the panel itself trusts the `X-SSL-Client-*` headers nginx sends to `127.0.0.1:3100`, so a process on the relay that can forge those can obtain an assertion as well — what it could do to agents before 4.3. With panel 2FA on it reaches further into agents than into the panel: forged (or stolen) admin-certificate headers no longer pass the panel's own management routes, but the agent-panel authorization is exempt from 2FA (the browser on `agent-<label>.<domain>` carries no 2FA cookie), so they still mint admin assertions — full control of every agent with a panel tunnel. Agent panels are guarded by the client certificate alone, as before; authenticating nginx to the panel is the relay-wide fix. An assertion binds the agent, the port, the method and the target, not the request body: a process on the agent machine that holds the daemon's port while the daemon is down receives the relay's requests, and could replay one with another body if the daemon comes back within the assertion's 65 seconds.
 
+#### 5d. The app host on agents
+
+An agent half Lamaste installs runs on its agent as a service of its own, so something on the agent has to act as root: create an account and a unit, write under `/opt`, `/var/lib` and `/etc`, install system packages. That is `lamaste-apphost`, enabled once per machine by the agent's operator (`sudo lamaste-agent apphost enable`). See [App Host](../04-api-reference/app-host.md) for the helper, its files and the unit.
+
+**What the sudoers rule grants.** The agent's user may run one root-owned program, `/usr/local/sbin/lamaste-apphost`, with any arguments, a reset environment and Node.js's code-loading variables deleted. The program validates every argument, derives every path from the route and the agent label, takes content on stdin, reads nothing the agent's user can write, and does five things: install a version, write a plugin config, switch the current version, remove, report status. It never runs plugin code: the agent half runs as its own account (`lamaste-app-<route>`) under a hardened unit — no capabilities, `NoNewPrivileges`, the file system read-only but its data directory, its code root-owned 0644. `enable` installs the program only from a root-owned `lamaste-agent` install, so root never runs or copies code another user could have changed.
+
+**Why jobs are relay-signed.** Without a signature, the agent's user — or whoever takes its account — could have the helper install any package it can produce with any system packages, activate any kept version, or purge data, as root. Approval of what an agent half brings happens on the relay, so the relay signs every `app-install`, `app-activate` and `app-remove` with its Ed25519 relay key when it creates the job, over the agent's label, the route, the job id, the kind, the payload (the exact package, version, tarball integrity, service and system packages; the version and package to activate; the purge flag and package) and a deadline of at most an hour. The helper verifies it with the key pinned for that agent, compares the payload with what it is asked, and runs each job id once. The agent's sync carries the signature from `agent-config` to the helper; it can neither make nor change one.
+
+**The pin is trust on first use.** `enable` and `pin` fetch the relay's key as the agent's user, over that agent's pinned mTLS channel, and root checks only its shape — an Ed25519 key whose id is derived from it. An agent account that is already compromised at that moment could hand root its own key. Compare the pinned id with the relay's once: on the relay the panel logs it at start-up (`Relay assertion signing key ready`, `kid`) and `GET /api/agents/me/relay-keys` with the admin certificate returns it; on the agent `sudo lamaste-agent apphost status` lists each label's pin. The panel shows the first 12 hex digits each agent reports pinned and does not let an agent whose pin is not the relay's key host an agent half. A pin is a root-owned file in root-owned directories; the helper refuses one anyone else could have written or linked. After the relay's key is replaced, the helper refuses its jobs until `sudo lamaste-agent apphost pin` runs.
+
+**Owner records.** A route belongs to the agent label and the agent package that first installed it — a root-owned record outside the agent half's data. Another label, or another package, is refused that route and the data kept with it until the owner purges it; the account an agent half runs as names its route, and an account that does not is never reused, given files or deleted. A relay can therefore neither take over another relay's agent half on a shared machine nor hand one package's data to another.
+
+**Several agents on one machine.** Agents of different relays may share a machine and its helper. The rule names one OS user, so they run as that user (or root); each label has its own pin, and a relay's signature names its own label for the agent, so a job signed for one agent is not run as another's.
+
+**What a compromised agent account can still do:** read and rewrite the plugin configs it already holds (`config` is not signed) — breaking the admin API of that agent half; run `status`; run a signed job it received when it likes before the job expires, or not at all; report results that are not true (the relay's view of what runs on the agent is the agent's report); stop its tunnel and its sync. **What it cannot:** run anything as root beyond those fixed operations; install, switch or remove anything the relay did not sign, or anything other than exactly what it signed; replay a job; pin a key (root only); read or write an agent half's data directory (0700, another account); act on a route another label or package owns. **A compromised relay** can do on its agents what its signature allows: install any `@lamalibre/` package from its registry at any version, with system packages from the agent's configured apt sources, running as a service account — never plugin code as root — and remove or purge the agent halves it owns.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.
@@ -446,6 +462,10 @@ Sensitive files use restrictive permissions:
 | `~/.lamalibre/lamaste/agents/<label>/chisel.json`, `chisel.env`     | `600` | Agent's Chisel credential (agent machine)         |
 | `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist` | `600` | Carries `AUTH` in its environment (macOS agent)   |
 | `/etc/lamalibre/lamaste/pki/`                                       | `700` | PKI directory itself                              |
+| `/etc/sudoers.d/lamaste-apphost`                                    | `440` | The app host rule (agent machine)                 |
+| `/etc/lamalibre/apps/<route>/plugin-config.json`                    | `600` | An agent half's port and secret; its account      |
+| `/var/lib/lamalibre/apps/<route>/`                                  | `700` | An agent half's data; its account                 |
+| `/var/lib/lamalibre/apps/.jobs/`, `.trash/`                         | `700` | Signed jobs that ran; purged data (root)          |
 
 Mode `600` means only the file owner can read or write. Mode `640` adds read access for the file's group, `660` also write access. Mode `700` means only the directory owner can list, read, or modify contents. See [Configuration Files](../06-reference/config-files.md#file-permissions-table) for the owner of every directory.
 
@@ -558,6 +578,10 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 | `packages/server/daemon/src/routes/management/agent-panel-authz.js` | The agent-panel vhost's `auth_request` target          |
 | `packages/sdks/gatekeeper/src/server/routes/authz.ts`               | Assertions for Authelia users on plugin tunnels        |
 | `packages/agent/daemon/src/lib/auth.js`                             | lamaste-agentd's authentication hook                   |
+| `packages/core/lib/src/app-job-signature.ts`                        | Relay-signed app jobs: envelope, sign, verify          |
+| `packages/agent/cli/scripts/lamaste-apphost`                        | The app host helper (root, Node.js built-ins only)     |
+| `packages/agent/cli/src/lib/apphost-setup.js`                       | Root-owned install check, sudoers rule, relay key pins |
+| `packages/server/daemon/src/lib/agent-jobs.js`                      | Agent jobs; app jobs signed when created               |
 
 ## Quick Reference
 
@@ -577,6 +601,8 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 | Privileged commands  | No-wildcard sudoers, `lamaste-priv`     | Root code execution via extra flags   |
 | Relay authenticity   | Agent verifies `tunnel.<domain>` TLS    | Relay impersonation, credential theft |
 | Agent daemon auth    | Relay assertions (Ed25519), owner token | Callers forged on an agent's loopback |
+| Agent root helper    | Relay-signed app jobs, pinned key       | Root actions the relay did not sign   |
+| Agent half sandbox   | Own account, hardened systemd unit      | Plugin code as root                   |
 | App auth             | Authelia TOTP 2FA                       | Unauthorized app access               |
 | Service isolation    | `127.0.0.1` binding                     | Direct access to internal services    |
 | File permissions     | `chmod 600`                             | Unauthorized secret access            |

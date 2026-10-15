@@ -19,7 +19,9 @@
 | `/etc/authelia/oidc-issuer.pem`                                    | PEM        | lamaste-authelia         | 0600 | RSA-4096 key Authelia signs OIDC tokens with, written by `create-lamaste`; the panel cannot read it                                               |
 | `/etc/lamalibre/lamaste/registry-credential.json`                  | JSON       | lamaste:lamaste          | 0600 | The panel's registry (Feria) credential: a pasted token, or the `lamaste-server` OIDC client                                                      |
 | `/etc/lamalibre/lamaste/oidc-clients.json`                         | JSON       | lamaste:lamaste          | 0600 | Plaintext secrets (and pbkdf2 salts) of confidential OIDC clients                                                                                 |
-| `/etc/lamalibre/lamaste/relay-signing-key.json`                    | JSON       | lamaste:lamaste          | 0600 | Ed25519 key relay assertions to agents' lamaste-agentd are signed with (panel and Gatekeeper)                                                     |
+| `/etc/lamalibre/lamaste/relay-signing-key.json`                    | JSON       | lamaste:lamaste          | 0600 | Ed25519 key relay assertions (panel, Gatekeeper) and agents' app jobs (panel) are signed with                                                     |
+| `/etc/lamalibre/lamaste/push-install-config.json`                  | JSON       | lamaste:lamaste          | 0600 | Push install: the switch, the policies, the default policy                                                                                        |
+| `/etc/lamalibre/lamaste/push-install-sessions.json`                | JSON       | lamaste:lamaste          | 0600 | Push install log (last 500 pushes)                                                                                                                |
 | `/etc/lamalibre/lamaste/ticket-scopes.json`                        | JSON       | lamaste:lamaste          | 0600 | Ticket scope registry                                                                                                                             |
 | `/etc/lamalibre/lamaste/tickets.json`                              | JSON       | lamaste:lamaste          | 0600 | Ticket and session store                                                                                                                          |
 | `/etc/lamalibre/lamaste/invitations.json`                          | JSON       | lamaste:lamaste          | 0600 | Pending user invitations                                                                                                                          |
@@ -55,8 +57,18 @@
 | `~/.lamalibre/lamaste/agents/<label>/sync-state.json`              | JSON       | user                     | 0600 | Outcome of the last `lamaste-agent sync`                                                                                                          |
 | `~/.lamalibre/lamaste/agents/<label>/app-plugins/<route>.json`     | JSON       | user                     | 0600 | Port and installation secret of a plugin hosted on this agent                                                                                     |
 | `~/.lamalibre/lamaste/agents/<label>/app-plugin-tunnel-state.json` | JSON       | user                     | 0600 | The tunnel state last delivered to each hosted plugin's agent half                                                                                |
+| `~/.lamalibre/lamaste/agents/<label>/apphost-state.json`           | JSON       | user                     | 0600 | The agent halves the app host helper installed for this agent                                                                                     |
+| `~/.lamalibre/lamaste/agents/<label>/host-facts.json`              | JSON       | user                     | 0600 | What the agent last reported about its host, and the helper's last answer                                                                         |
+| `~/.lamalibre/lamaste/agents/<label>/app-job-results.json`         | JSON       | user                     | 0600 | App job results the relay has not taken yet                                                                                                       |
 | `~/.lamalibre/lamaste/agents/<label>/logs/`                        | directory  | user                     | 0700 | Per-agent Chisel and sync log files                                                                                                               |
 | `~/.lamalibre/lamaste/agent.json`                                  | JSON       | user                     | 0600 | Legacy single-server config                                                                                                                       |
+| `/usr/local/sbin/lamaste-apphost`                                  | Node.js    | root:root                | 0755 | Agent machine: the app host helper — see [Agent machine: the app host](#agent-machine-the-app-host)                                               |
+| `/etc/sudoers.d/lamaste-apphost`                                   | sudoers    | root:root                | 0440 | Agent machine: lets the agent's user run the helper                                                                                               |
+| `/etc/lamalibre/apphost/relays/<label>.json`                       | JSON       | root:root                | 0644 | Agent machine: the relay key pinned for agent `<label>`                                                                                           |
+| `/opt/lamalibre/apps/<route>/`                                     | directory  | root:root                | 0755 | Agent machine: an agent half's installed versions                                                                                                 |
+| `/var/lib/lamalibre/apps/<route>/`                                 | directory  | lamaste-app-\<route\>    | 0700 | Agent machine: an agent half's data                                                                                                               |
+| `/etc/lamalibre/apps/<route>/plugin-config.json`                   | JSON       | lamaste-app-\<route\>    | 0600 | Agent machine: an agent half's port and installation secret                                                                                       |
+| `/etc/systemd/system/lamalibre-app-<route>.service`                | systemd    | root:root                | 0644 | Agent machine: an agent half's unit                                                                                                               |
 
 ---
 
@@ -776,9 +788,9 @@ The Ed25519 key the relay signs relay assertions with — the `X-Lamalibre-Relay
 }
 ```
 
-The panel creates it at startup when it is missing (exclusively: a 0600 temp file linked into place) and signs agent-panel requests with it; Gatekeeper reads it and signs for plugin tunnels. Both re-read it when it changes — content or permissions — and refuse to sign with a key other users can read. Agents receive only the public key (`GET /api/agents/me/relay-keys`); its id is derived from the key.
+The panel creates it at startup when it is missing (exclusively: a 0600 temp file linked into place), logs its id (`Relay assertion signing key ready`, `kid`) and signs agent-panel requests with it — and every app job it creates for an agent's root helper ([App Host](../04-api-reference/app-host.md#signed-app-jobs)); Gatekeeper reads it and signs for plugin tunnels. Both re-read it when it changes — content or permissions — and refuse to sign with a key other users can read. Agents receive only the public key (`GET /api/agents/me/relay-keys`); its id is derived from the key. While it is unusable no app job is created.
 
-**Rotation:** replace the file (or remove it and restart `lamalibre-lamaste-serverd`, which creates a new one). Agents fetch the new public key when the first assertion signed with it arrives, at most every 30 seconds — requests through the relay may be refused for up to that long after a rotation.
+**Rotation:** replace the file (or remove it and restart `lamalibre-lamaste-serverd`, which creates a new one). Agents fetch the new public key when the first assertion signed with it arrives, at most every 30 seconds — requests through the relay may be refused for up to that long after a rotation. The app host helpers do not: they keep the key their operator pinned, refuse the relay's app jobs until `sudo lamaste-agent apphost pin` runs on each agent machine, and the panel shows those agents as not eligible to host an agent half meanwhile.
 
 **Mode:** 0600, owner `lamaste`.
 
@@ -896,6 +908,12 @@ The directory itself is mode 0700 (re-applied on every sync).
 - `logs/sync.log` — sync timer log: only runs that changed something, and each error when it first appears and when it clears
 - `plugins.json` — agent plugin registry
 - `plugins/` — per-plugin data directories
+- `app-plugins/<route>.json` — the port and installation secret of a plugin hosted on this agent (mode 0600): `{ plugin, port, secret, issuedAt, previousSecret?, previousIssuedAt?, fetchedAt, acknowledged }`
+- `apphost-state.json` — the agent halves the app host helper installed for this agent (mode 0600): `{ "apps": { "<route>": { "version": "1.0.0", "updatedAt": "…" } } }`. Written by the sync's app jobs; read by converge, which hands a fetched plugin config to the service of a route listed here before acknowledging it. When it cannot be read the sync rebuilds it from the helper's owner records naming this label
+- `host-facts.json` — what was last reported as host facts and the helper's last answer (mode 0600): `{ "reported": { "hash", "at" } | null, "apphost": { "helper": "<dev:ino:size:mtime>", "facts": { "version", "node" } | null, "at" } | null }`. Facts are reported when their hash changes or a day passed; the helper is asked again when its file changes or a day passed
+- `app-job-results.json` — results of app jobs the relay has not taken yet (mode 0600): `{ "<jobId>": { "result", "deadlineAt" } }` — a signed job runs once, so a report that failed is made again from here, until the job's deadline
+
+An install job packs the agent package in `~/.lamalibre/lamaste/tmp/agent/apphost-*/` (0700, with a throw-away npm userconfig holding the brokered registry token) and deletes it afterwards.
 
 Service files use per-agent names:
 
@@ -907,7 +925,7 @@ Both run `chisel client --max-retry-interval 30s https://tunnel.<domain>:443 R:1
 The sync timer, which runs `<node> <installed lamaste-agent> sync --label <label> --quiet` (`<node>` is a stable path such as `/opt/homebrew/bin/node` when one on `PATH` resolves to the running binary, so a Node.js upgrade does not break it):
 
 - macOS: `com.lamalibre.lamaste.sync-<label>` (plist label), `~/Library/LaunchAgents/com.lamalibre.lamaste.sync-<label>.plist` — `StartInterval` 30, `RunAtLoad`
-- Linux: `~/.config/systemd/user/lamalibre-lamaste-sync-<label>.service` (`Type=oneshot`) and `lamalibre-lamaste-sync-<label>.timer` (`OnActiveSec=5s`, `OnUnitInactiveSec=30s`) — also needs lingering to run without a login
+- Linux: `~/.config/systemd/user/lamalibre-lamaste-sync-<label>.service` (`Type=oneshot`, `TimeoutStartSec=20min` — converge and the relay's jobs, the longest of which installs an agent half in up to 10 minutes) and `lamalibre-lamaste-sync-<label>.timer` (`OnActiveSec=5s`, `OnUnitInactiveSec=30s`) — also needs lingering to run without a login
 
 Both contain no secret (mode 0644) and are removed by `lamaste-agent uninstall` and by the desktop app's uninstall.
 
@@ -921,6 +939,33 @@ The agent panel daemon (`lamaste-agentd`, started by `lamaste-agent panel --enab
 ### `~/.lamalibre/lamaste/agent.json`
 
 Legacy single-server configuration. Automatically migrated to the multi-agent registry on first use. After migration, renamed to `agent.json.backup`.
+
+---
+
+## Agent machine: the app host
+
+On a Linux agent where the operator ran `sudo lamaste-agent apphost enable`, the root helper `lamaste-apphost` installs the agent halves of the plugins the panel hosts there ([App Host](../04-api-reference/app-host.md)). Every path below is derived from a validated route or agent label; root writes them atomically (temp file, `fsync`, rename) and refuses to use one that is not what it expects — a directory another user can write, a link where a file belongs.
+
+| Path                                                | Owner                        | Mode                  | Contents                                                                                                                                                                                                             |
+| --------------------------------------------------- | ---------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/usr/local/sbin/lamaste-apphost`                   | root:root                    | 0755                  | The helper — copied by `enable` from a root-owned `lamaste-agent` install                                                                                                                                            |
+| `/etc/sudoers.d/lamaste-apphost`                    | root:root                    | 0440                  | `<user> ALL=(root) NOPASSWD: /usr/local/sbin/lamaste-apphost`, with `env_reset`, `!setenv` and Node.js variables deleted; checked with `visudo -c` before it is renamed into place. None when the agent runs as root |
+| `/etc/lamalibre/apphost/relays/<label>.json`        | root:root                    | 0644 (dirs 0755)      | The relay key pinned for agent `<label>`: `{ v, label, agent, kid, publicKey, panelUrl, pinnedAt }` — public material                                                                                                |
+| `/opt/lamalibre/apps/<route>/<version>/`            | root:root                    | dirs 0755, files 0644 | The package as published (`package/`) and `apphost.json`, the spec it was installed with                                                                                                                             |
+| `/opt/lamalibre/apps/<route>/current`, `previous`   | root:root                    | symlinks              | The running version and the one before it; other versions are deleted                                                                                                                                                |
+| `/opt/lamalibre/apps/.stage-<hex>-<route>/`         | root:root                    | 0700                  | Unpacking while an install runs                                                                                                                                                                                      |
+| `/var/lib/lamalibre/apps/<route>/`                  | the agent half's account     | 0700                  | The agent half's data (`LAMASTE_APP_DATA_DIR`) — kept on removal, deleted by a purge                                                                                                                                 |
+| `/var/lib/lamalibre/apps/.owners/<route>.json`      | root:root                    | 0644 (dir 0755)       | Who owns the route on this machine: `{ route, package, label, since }` — kept on removal, deleted by a purge                                                                                                         |
+| `/var/lib/lamalibre/apps/.jobs/used.json`           | root:root                    | 0600 (dir 0700)       | `{ v: 1, jobs: { <jobId>: <expiry, ms> } }` — the signed jobs that ran, each until it expires                                                                                                                        |
+| `/var/lib/lamalibre/apps/.trash/`                   | root:root                    | 0700                  | Purged data, deleted there                                                                                                                                                                                           |
+| `/etc/lamalibre/apps/<route>/`                      | root:\<the account's group\> | 0750                  | The agent half's configuration directory                                                                                                                                                                             |
+| `/etc/lamalibre/apps/<route>/plugin-config.json`    | the agent half's account     | 0600                  | Port and installation secret (`LAMASTE_APP_CONFIG`), the shape of the agent's `app-plugins/<route>.json`                                                                                                             |
+| `/etc/systemd/system/lamalibre-app-<route>.service` | root:root                    | 0644                  | The agent half's unit, from a fixed template — paths, never secrets                                                                                                                                                  |
+| `/run/lamaste-apphost.lock`                         | root:root                    | 0600                  | Held (with the owner's PID) while a mutating helper command runs                                                                                                                                                     |
+
+The agent half's account and group are `lamaste-app-<route>` for routes of up to 18 characters, `lamaste-app-<first 2 characters>-<16 hex digits of SHA-256(route)>` otherwise; the account's comment is `lamaste-app route=<route>`. `/opt/lamalibre`, `/opt/lamalibre/apps`, `/var/lib/lamalibre`, `/var/lib/lamalibre/apps`, `/etc/lamalibre` and `/etc/lamalibre/apps` are root-owned 0755.
+
+`sudo lamaste-agent apphost disable` removes the rule, the helper and the pins (and `/etc/lamalibre/apphost` when it is empty). Removing an agent half deletes its unit, code and configuration directory; a purge also deletes its data directory, account and owner record. System packages are never removed.
 
 ---
 
@@ -1100,60 +1145,71 @@ WantedBy=multi-user.target
 
 ## File Permissions Table
 
-| Path                                                                   | Owner                             | Mode | Notes                                                     |
-| ---------------------------------------------------------------------- | --------------------------------- | ---- | --------------------------------------------------------- |
-| `/etc/lamalibre/lamaste/`                                              | lamaste:lamaste                   | 0755 | State directory                                           |
-| `/etc/lamalibre/lamaste/panel.json`                                    | lamaste:lamaste                   | 0600 | Panel config                                              |
-| `/etc/lamalibre/lamaste/tunnels.json`                                  | lamaste:lamaste                   | 0600 | Tunnel state                                              |
-| `/etc/lamalibre/lamaste/sites.json`                                    | lamaste:lamaste                   | 0600 | Site state                                                |
-| `/etc/lamalibre/lamaste/chisel-credentials.json`                       | lamaste:lamaste                   | 0600 | Chisel credentials                                        |
-| `/etc/lamalibre/lamaste/chisel-users`                                  | lamaste:lamaste-chisel            | 0640 | Chisel authfile                                           |
-| `/etc/lamalibre/lamaste/chisel-sentinel`                               | lamaste:lamaste                   | 0600 | Sentinel password                                         |
-| `/etc/lamalibre/lamaste/relay-signing-key.json`                        | lamaste:lamaste                   | 0600 | Relay assertion signing key                               |
-| `/etc/lamalibre/lamaste/pki/`                                          | lamaste:lamaste                   | 0700 | PKI directory                                             |
-| `/etc/lamalibre/lamaste/pki/ca.key`                                    | lamaste:lamaste                   | 0600 | CA private key                                            |
-| `/etc/lamalibre/lamaste/pki/ca.crt`                                    | lamaste:lamaste                   | 0644 | CA certificate                                            |
-| `/etc/lamalibre/lamaste/pki/client.key`                                | lamaste:lamaste                   | 0600 | Client private key                                        |
-| `/etc/lamalibre/lamaste/pki/client.crt`                                | lamaste:lamaste                   | 0644 | Client certificate                                        |
-| `/etc/lamalibre/lamaste/pki/client.p12`                                | lamaste:lamaste                   | 0600 | PKCS12 bundle                                             |
-| `/etc/lamalibre/lamaste/pki/.p12-password`                             | lamaste:lamaste                   | 0600 | PKCS12 password                                           |
-| `/etc/lamalibre/lamaste/pki/self-signed.pem`                           | lamaste:lamaste                   | 0644 | Self-signed TLS cert                                      |
-| `/etc/lamalibre/lamaste/pki/self-signed-key.pem`                       | lamaste:lamaste                   | 0600 | Self-signed TLS key                                       |
-| `/etc/lamalibre/lamaste/ticket-scopes.json`                            | lamaste:lamaste                   | 0600 | Ticket scope registry                                     |
-| `/etc/lamalibre/lamaste/tickets.json`                                  | lamaste:lamaste                   | 0600 | Ticket/session store                                      |
-| `/etc/lamalibre/lamaste/invitations.json`                              | lamaste:lamaste                   | 0600 | Pending invitations                                       |
-| `/etc/lamalibre/lamaste/plugins.json`                                  | lamaste:lamaste                   | 0600 | Plugin registry                                           |
-| `/etc/lamalibre/lamaste/storage-config.json`                           | lamaste:lamaste                   | 0600 | Storage registry                                          |
-| `/etc/lamalibre/lamaste/storage-master.key`                            | lamaste:lamaste                   | 0600 | Storage encryption key                                    |
-| `/etc/lamalibre/lamaste/groups.json`                                   | lamaste:lamaste                   | 0600 | Lamaste groups                                            |
-| `/etc/lamalibre/lamaste/access-grants.json`                            | lamaste:lamaste                   | 0600 | Access grants                                             |
-| `/etc/lamalibre/lamaste/gatekeeper.json`                               | lamaste:lamaste                   | 0600 | Gatekeeper settings                                       |
-| `/etc/lamalibre/lamaste/access-request-log.json`                       | lamaste:lamaste                   | 0600 | Denied access log                                         |
-| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`                    | lamaste:lamaste                   | 0600 | Enrollment tokens                                         |
-| `/etc/lamalibre/lamaste/pki/revoked.json`                              | lamaste:lamaste                   | 0600 | Revocation list                                           |
-| `/etc/lamalibre/lamaste/pki/agents/registry.json`                      | lamaste:lamaste                   | 0600 | Agent cert metadata                                       |
-| `/etc/lamalibre/lamaste/chisel-server.key`                             | lamaste:lamaste-chisel            | 0640 | Chisel SSH host key                                       |
-| `/etc/authelia/`                                                       | lamaste:lamaste-authelia          | 2770 | Authelia config (setgid)                                  |
-| `/etc/authelia/configuration.yml`                                      | lamaste:lamaste-authelia          | 0640 | Auth config                                               |
-| `/etc/authelia/users.yml`                                              | lamaste:lamaste-authelia          | 0660 | User database                                             |
-| `/etc/authelia/.secrets.json`                                          | lamaste:lamaste-authelia          | 0600 | Auth secrets (panel only)                                 |
-| `/etc/authelia/db.sqlite3`, `notifications.txt`                        | lamaste-authelia:lamaste-authelia | 0600 | Authelia's own files                                      |
-| `/var/log/authelia/`                                                   | lamaste-authelia:lamaste-authelia | 0750 | Authelia log                                              |
-| `/opt/lamalibre/lamaste/`                                              | root:root                         | 0755 | Install directory (read-only for lamaste)                 |
-| `/opt/lamalibre/lamaste/hooks/<route>/<sha256>.mjs`                    | root:root                         | 0644 | Approved relay hook module (read by the sandboxed runner) |
-| `/run/lamalibre-lamaste-hooks/<route>.sock`                            | root:lamaste                      | 0660 | Relay hook runner socket (systemd)                        |
-| `/var/www/lamaste/`                                                    | lamaste:www-data                  | 2750 | Static site files (files 0640; nginx reads via the group) |
-| `/etc/sudoers.d/lamaste`                                               | root:root                         | 0440 | Sudo rules (no wildcards)                                 |
-| `/usr/local/sbin/lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info` | root:root                         | 0755 | Validating sudo programs                                  |
-| `/usr/local/bin/chisel`, `/usr/local/bin/authelia`                     | root:root                         | 0755 | Pinned releases (`create-lamaste`)                        |
-| `~/.lamalibre/lamaste/servers.json`                                    | user                              | 0600 | Server registry                                           |
-| `~/.lamalibre/lamaste/agent.json`                                      | user                              | 0600 | Legacy agent config                                       |
-| `~/.lamalibre/lamaste/agentd.token`                                    | user                              | 0600 | Agent daemon owner token                                  |
-| `~/.lamalibre/lamaste/agents/<label>/`                                 | user                              | 0700 | Agent data directory                                      |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.json`                      | user                              | 0600 | Agent Chisel credential                                   |
-| `~/.lamalibre/lamaste/agents/<label>/chisel.env`                       | user                              | 0600 | Linux `AUTH=` env file                                    |
-| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist`    | user                              | 0600 | macOS service (has `AUTH`)                                |
-| `~/.lamalibre/lamaste/services.json`                                   | user                              | 0600 | Service registry                                          |
+| Path                                                                                                | Owner                             | Mode | Notes                                                     |
+| --------------------------------------------------------------------------------------------------- | --------------------------------- | ---- | --------------------------------------------------------- |
+| `/etc/lamalibre/lamaste/`                                                                           | lamaste:lamaste                   | 0755 | State directory                                           |
+| `/etc/lamalibre/lamaste/panel.json`                                                                 | lamaste:lamaste                   | 0600 | Panel config                                              |
+| `/etc/lamalibre/lamaste/tunnels.json`                                                               | lamaste:lamaste                   | 0600 | Tunnel state                                              |
+| `/etc/lamalibre/lamaste/sites.json`                                                                 | lamaste:lamaste                   | 0600 | Site state                                                |
+| `/etc/lamalibre/lamaste/chisel-credentials.json`                                                    | lamaste:lamaste                   | 0600 | Chisel credentials                                        |
+| `/etc/lamalibre/lamaste/chisel-users`                                                               | lamaste:lamaste-chisel            | 0640 | Chisel authfile                                           |
+| `/etc/lamalibre/lamaste/chisel-sentinel`                                                            | lamaste:lamaste                   | 0600 | Sentinel password                                         |
+| `/etc/lamalibre/lamaste/relay-signing-key.json`                                                     | lamaste:lamaste                   | 0600 | Relay assertion signing key                               |
+| `/etc/lamalibre/lamaste/pki/`                                                                       | lamaste:lamaste                   | 0700 | PKI directory                                             |
+| `/etc/lamalibre/lamaste/pki/ca.key`                                                                 | lamaste:lamaste                   | 0600 | CA private key                                            |
+| `/etc/lamalibre/lamaste/pki/ca.crt`                                                                 | lamaste:lamaste                   | 0644 | CA certificate                                            |
+| `/etc/lamalibre/lamaste/pki/client.key`                                                             | lamaste:lamaste                   | 0600 | Client private key                                        |
+| `/etc/lamalibre/lamaste/pki/client.crt`                                                             | lamaste:lamaste                   | 0644 | Client certificate                                        |
+| `/etc/lamalibre/lamaste/pki/client.p12`                                                             | lamaste:lamaste                   | 0600 | PKCS12 bundle                                             |
+| `/etc/lamalibre/lamaste/pki/.p12-password`                                                          | lamaste:lamaste                   | 0600 | PKCS12 password                                           |
+| `/etc/lamalibre/lamaste/pki/self-signed.pem`                                                        | lamaste:lamaste                   | 0644 | Self-signed TLS cert                                      |
+| `/etc/lamalibre/lamaste/pki/self-signed-key.pem`                                                    | lamaste:lamaste                   | 0600 | Self-signed TLS key                                       |
+| `/etc/lamalibre/lamaste/ticket-scopes.json`                                                         | lamaste:lamaste                   | 0600 | Ticket scope registry                                     |
+| `/etc/lamalibre/lamaste/tickets.json`                                                               | lamaste:lamaste                   | 0600 | Ticket/session store                                      |
+| `/etc/lamalibre/lamaste/invitations.json`                                                           | lamaste:lamaste                   | 0600 | Pending invitations                                       |
+| `/etc/lamalibre/lamaste/plugins.json`                                                               | lamaste:lamaste                   | 0600 | Plugin registry                                           |
+| `/etc/lamalibre/lamaste/storage-config.json`                                                        | lamaste:lamaste                   | 0600 | Storage registry                                          |
+| `/etc/lamalibre/lamaste/storage-master.key`                                                         | lamaste:lamaste                   | 0600 | Storage encryption key                                    |
+| `/etc/lamalibre/lamaste/groups.json`                                                                | lamaste:lamaste                   | 0600 | Lamaste groups                                            |
+| `/etc/lamalibre/lamaste/access-grants.json`                                                         | lamaste:lamaste                   | 0600 | Access grants                                             |
+| `/etc/lamalibre/lamaste/gatekeeper.json`                                                            | lamaste:lamaste                   | 0600 | Gatekeeper settings                                       |
+| `/etc/lamalibre/lamaste/access-request-log.json`                                                    | lamaste:lamaste                   | 0600 | Denied access log                                         |
+| `/etc/lamalibre/lamaste/pki/enrollment-tokens.json`                                                 | lamaste:lamaste                   | 0600 | Enrollment tokens                                         |
+| `/etc/lamalibre/lamaste/pki/revoked.json`                                                           | lamaste:lamaste                   | 0600 | Revocation list                                           |
+| `/etc/lamalibre/lamaste/pki/agents/registry.json`                                                   | lamaste:lamaste                   | 0600 | Agent cert metadata                                       |
+| `/etc/lamalibre/lamaste/chisel-server.key`                                                          | lamaste:lamaste-chisel            | 0640 | Chisel SSH host key                                       |
+| `/etc/authelia/`                                                                                    | lamaste:lamaste-authelia          | 2770 | Authelia config (setgid)                                  |
+| `/etc/authelia/configuration.yml`                                                                   | lamaste:lamaste-authelia          | 0640 | Auth config                                               |
+| `/etc/authelia/users.yml`                                                                           | lamaste:lamaste-authelia          | 0660 | User database                                             |
+| `/etc/authelia/.secrets.json`                                                                       | lamaste:lamaste-authelia          | 0600 | Auth secrets (panel only)                                 |
+| `/etc/authelia/db.sqlite3`, `notifications.txt`                                                     | lamaste-authelia:lamaste-authelia | 0600 | Authelia's own files                                      |
+| `/var/log/authelia/`                                                                                | lamaste-authelia:lamaste-authelia | 0750 | Authelia log                                              |
+| `/opt/lamalibre/lamaste/`                                                                           | root:root                         | 0755 | Install directory (read-only for lamaste)                 |
+| `/opt/lamalibre/lamaste/hooks/<route>/<sha256>.mjs`                                                 | root:root                         | 0644 | Approved relay hook module (read by the sandboxed runner) |
+| `/run/lamalibre-lamaste-hooks/<route>.sock`                                                         | root:lamaste                      | 0660 | Relay hook runner socket (systemd)                        |
+| `/var/www/lamaste/`                                                                                 | lamaste:www-data                  | 2750 | Static site files (files 0640; nginx reads via the group) |
+| `/etc/sudoers.d/lamaste`                                                                            | root:root                         | 0440 | Sudo rules (no wildcards)                                 |
+| `/usr/local/sbin/lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`                              | root:root                         | 0755 | Validating sudo programs                                  |
+| `/usr/local/bin/chisel`, `/usr/local/bin/authelia`                                                  | root:root                         | 0755 | Pinned releases (`create-lamaste`)                        |
+| `~/.lamalibre/lamaste/servers.json`                                                                 | user                              | 0600 | Server registry                                           |
+| `~/.lamalibre/lamaste/agent.json`                                                                   | user                              | 0600 | Legacy agent config                                       |
+| `~/.lamalibre/lamaste/agentd.token`                                                                 | user                              | 0600 | Agent daemon owner token                                  |
+| `~/.lamalibre/lamaste/agents/<label>/`                                                              | user                              | 0700 | Agent data directory                                      |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.json`                                                   | user                              | 0600 | Agent Chisel credential                                   |
+| `~/.lamalibre/lamaste/agents/<label>/chisel.env`                                                    | user                              | 0600 | Linux `AUTH=` env file                                    |
+| `~/Library/LaunchAgents/com.lamalibre.lamaste.chisel-<label>.plist`                                 | user                              | 0600 | macOS service (has `AUTH`)                                |
+| `~/.lamalibre/lamaste/services.json`                                                                | user                              | 0600 | Service registry                                          |
+| `~/.lamalibre/lamaste/agents/<label>/apphost-state.json`, `host-facts.json`, `app-job-results.json` | user                              | 0600 | App host record, host facts, unreported app job results   |
+| `/usr/local/sbin/lamaste-apphost`                                                                   | root:root                         | 0755 | App host helper (agent machine)                           |
+| `/etc/sudoers.d/lamaste-apphost`                                                                    | root:root                         | 0440 | App host rule (agent machine)                             |
+| `/etc/lamalibre/apphost/relays/<label>.json`                                                        | root:root                         | 0644 | Pinned relay key (agent machine)                          |
+| `/opt/lamalibre/apps/<route>/`                                                                      | root:root                         | 0755 | Agent half code, files 0644 (agent machine)               |
+| `/var/lib/lamalibre/apps/<route>/`                                                                  | lamaste-app-\<route\>             | 0700 | Agent half data (agent machine)                           |
+| `/var/lib/lamalibre/apps/.owners/<route>.json`                                                      | root:root                         | 0644 | Owner record (agent machine)                              |
+| `/var/lib/lamalibre/apps/.jobs/`, `.trash/`                                                         | root:root                         | 0700 | Signed jobs run; purged data (agent machine)              |
+| `/etc/lamalibre/apps/<route>/`                                                                      | root:lamaste-app-\<route\>        | 0750 | Agent half config directory (agent machine)               |
+| `/etc/lamalibre/apps/<route>/plugin-config.json`                                                    | lamaste-app-\<route\>             | 0600 | Agent half port and secret (agent machine)                |
+| `/etc/systemd/system/lamalibre-app-<route>.service`                                                 | root:root                         | 0644 | Agent half unit (agent machine)                           |
 
 ## Quick Reference
 
