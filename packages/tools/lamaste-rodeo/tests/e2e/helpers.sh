@@ -1671,6 +1671,8 @@ function sandboxProbe() {
     writes: {
       dataDir: tryWrite(path.join(dataDir, probe)),
       privateTmp: tryWrite(`/tmp/e2e-${ROUTE}-private-tmp`, true),
+      privateVarTmp: tryWrite(`/var/tmp/e2e-${ROUTE}-private-var-tmp`, true),
+      privateShm: tryWrite(`/dev/shm/e2e-${ROUTE}-private-shm`, true),
       etc: tryWrite(`/etc/${probe}`),
       code: tryWrite(`/opt/lamalibre/apps/${ROUTE}/current/package/${probe}`),
       appsDir: tryWrite(`/opt/lamalibre/apps/${ROUTE}/${probe}`),
@@ -1679,6 +1681,8 @@ function sandboxProbe() {
       root: tryWrite(`/root/${probe}`),
       home: tryWrite(`/home/${probe}`),
       runLock: tryWrite(`/run/lock/${probe}`),
+      run: tryWrite(`/run/${probe}`),
+      varCrash: tryWrite(`/var/crash/${probe}`),
     },
     reads: {
       agentState: tryRead(() => readdirSync('/root/.lamalibre')),

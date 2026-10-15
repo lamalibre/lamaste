@@ -41,7 +41,7 @@
       "value": "e2e-apphost-34"
     },
     "REMOTE_DIR": {
-      "value": "/tmp/e2e-34-app-plugin"
+      "value": "/var/tmp/e2e-34-app-plugin"
     },
     "CLEAN_PLUGINS": {
       "value": "${PLUGIN}",
@@ -2697,7 +2697,7 @@
         },
         {
           "id": "step-162",
-          "label": "Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)",
+          "label": "Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -2713,7 +2713,7 @@
                 "kind": "literal",
                 "value": "EROFS"
               },
-              "message": "Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)"
+              "message": "Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)"
             }
           }
         },
@@ -2773,6 +2773,94 @@
         },
         {
           "id": "step-166",
+          "label": "Sandbox: it has a /var/tmp…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".writes.privateVarTmp",
+              "expected": {
+                "kind": "literal",
+                "value": "ALLOWED"
+              },
+              "message": "Sandbox: it has a /var/tmp…"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…of its own: nothing appears in the machine's /var/tmp",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".privateVarTmpLeak",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…of its own: nothing appears in the machine's /var/tmp"
+            }
+          }
+        },
+        {
+          "id": "step-168",
+          "label": "Sandbox: it has a /dev/shm…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".writes.privateShm",
+              "expected": {
+                "kind": "literal",
+                "value": "ALLOWED"
+              },
+              "message": "Sandbox: it has a /dev/shm…"
+            }
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "…of its own: nothing appears in the machine's /dev/shm",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".privateShmLeak",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "…of its own: nothing appears in the machine's /dev/shm"
+            }
+          }
+        },
+        {
+          "id": "step-170",
           "label": "Sandbox: no new privileges, no capabilities",
           "target": "local",
           "continueOnError": true,
@@ -2794,14 +2882,14 @@
           }
         }
       ],
-      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
+      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateShm' 'ALLOWED' \"Sandbox: it has a /dev/shm…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…of its own: nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
     },
     {
       "id": "feria-s-record-the-agent-pulled-the-package-itself",
       "label": "Feria's record: the agent pulled the package itself",
       "steps": [
         {
-          "id": "step-169",
+          "id": "step-173",
           "label": "Set REQUESTS",
           "target": "local",
           "op": {
@@ -2818,7 +2906,7 @@
           ]
         },
         {
-          "id": "step-172",
+          "id": "step-176",
           "label": "Set TOKENS",
           "target": "local",
           "op": {
@@ -2835,7 +2923,7 @@
           ]
         },
         {
-          "id": "step-173",
+          "id": "step-177",
           "label": "Its token: an agent token, read scope",
           "target": "local",
           "continueOnError": true,
@@ -2857,7 +2945,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-178",
           "label": "…brokered by the panel's OIDC identity",
           "target": "local",
           "continueOnError": true,
@@ -2886,7 +2974,7 @@
       "label": "Uninstall with purge leaves nothing",
       "steps": [
         {
-          "id": "step-175",
+          "id": "step-179",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -2897,7 +2985,7 @@
           }
         },
         {
-          "id": "step-176",
+          "id": "step-180",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -2915,7 +3003,7 @@
           ]
         },
         {
-          "id": "step-177",
+          "id": "step-181",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -2932,7 +3020,7 @@
           ]
         },
         {
-          "id": "step-178",
+          "id": "step-182",
           "label": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -2954,7 +3042,7 @@
           }
         },
         {
-          "id": "step-180",
+          "id": "step-184",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -2975,7 +3063,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-186",
           "label": "The agent half went before the secret it runs with",
           "target": "local",
           "continueOnError": true,
@@ -2996,7 +3084,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-187",
           "label": "The plugin is gone from the relay",
           "target": "local",
           "continueOnError": true,
@@ -3017,7 +3105,7 @@
           }
         },
         {
-          "id": "step-185",
+          "id": "step-189",
           "label": "Audit: plugin.agent-half.removed, purge",
           "target": "local",
           "continueOnError": true,
@@ -3038,7 +3126,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-190",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3055,7 +3143,7 @@
           ]
         },
         {
-          "id": "step-187",
+          "id": "step-191",
           "label": "No unit on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -3077,7 +3165,7 @@
           }
         },
         {
-          "id": "step-188",
+          "id": "step-192",
           "label": "No code, config or data directory",
           "target": "local",
           "continueOnError": true,
@@ -3099,7 +3187,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-193",
           "label": "No ${SERVICE_USER} account or group",
           "target": "local",
           "continueOnError": true,
@@ -3121,7 +3209,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-194",
           "label": "The agent's record no longer lists it",
           "target": "local",
           "continueOnError": true,
@@ -3143,7 +3231,7 @@
           }
         },
         {
-          "id": "step-191",
+          "id": "step-195",
           "label": "The agent's own copy of the plugin config is gone",
           "target": "local",
           "op": {
@@ -3153,7 +3241,7 @@
           }
         },
         {
-          "id": "step-192",
+          "id": "step-196",
           "label": "The agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {
@@ -3168,7 +3256,7 @@
   ],
   "apiHelpers": [],
   "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel installs\n#    from it and holds its registry credential (OIDC), which brokers the\n#    agent's read tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only.\n# 5. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows agent:<label> pulling the tarball.\n# 6. Uninstalling with purge leaves no unit, code, config, data, account,\n#    tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/var/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

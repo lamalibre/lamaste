@@ -58,6 +58,14 @@ host_api_delete() {
 }
 
 # user_systemctl <args> — systemctl --user for root on the agent VM
+# nudge_sync — start the agent's sync now rather than at the timer's next
+# tick (the same unit the timer starts, so two syncs never run at once):
+# operations wait on agent jobs and tunnel hooks the sync delivers, and the
+# spec must finish inside rodeo's 10-minute limit
+nudge_sync() {
+  agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user start --no-block lamalibre-lamaste-sync-${AGENT_LABEL}.service > /dev/null 2>&1; true" > /dev/null 2>&1 || true
+}
+
 user_systemctl() {
   agent_exec "XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1"
 }
@@ -77,6 +85,7 @@ hosting_field() {
 wait_operation() {
   local id="$1" deadline=$((SECONDS + $2)) op='{}'
   while [ "$SECONDS" -lt "$deadline" ]; do
+    nudge_sync
     op=$(host_api_get "plugins/${PLUGIN}/operations/${id}" 2>/dev/null | jq -c '.operation' 2>/dev/null || echo '{}')
     if [ "$(echo "$op" | jq -r '.status' 2>/dev/null)" != "running" ]; then
       echo "$op"
@@ -115,6 +124,7 @@ wait_for() {
   local deadline=$((SECONDS + $1))
   shift
   while [ "$SECONDS" -lt "$deadline" ]; do
+    nudge_sync
     if "$@"; then return 0; fi
     sleep 3
   done

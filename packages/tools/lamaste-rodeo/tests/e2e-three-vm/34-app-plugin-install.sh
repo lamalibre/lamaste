@@ -62,7 +62,7 @@ DATA_DIR="/var/lib/lamalibre/apps/e2e-apphost"
 CONFIG_FILE="/etc/lamalibre/apps/e2e-apphost/plugin-config.json"
 SYSTEM_PACKAGE="sqlite3"
 POLICY_ID="e2e-apphost-34"
-REMOTE_DIR="/tmp/e2e-34-app-plugin"
+REMOTE_DIR="/var/tmp/e2e-34-app-plugin"
 LOCAL_TMP=""
 CLEAN_PLUGINS="${PLUGIN}"
 CLEAN_ROUTES="${PLUGIN}"
@@ -354,16 +354,20 @@ SANDBOX=$(host_api_get "${PLUGIN}/sandbox")
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$SANDBOX" '"\(.user) \(.uid > 0)"' "${SERVICE_USER} true" "Sandbox: the service is ${SERVICE_USER}, not root" || true
 assert_json_field "$SANDBOX" '.writes.dataDir' 'ALLOWED' "Sandbox: it writes its data directory" || true
-for target in etc code appsDir configDir usrLocal root home runLock; do
+for target in etc code appsDir configDir usrLocal root home runLock run varCrash; do
   assert_refused "$(json_get "$SANDBOX" ".writes.${target}")" "Sandbox: no write to ${target}" || true
 done
 if [ "$(json_get "$FACTS" '.runLockMode')" = "1777" ]; then
-  assert_json_field "$SANDBOX" '.writes.runLock' 'EROFS' "Sandbox: /run/lock, writable by every user, is read-only to it (ProtectSystem=strict)" || true
+  assert_json_field "$SANDBOX" '.writes.runLock' 'EROFS' "Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)" || true
 else
   log_skip "/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out"
 fi
 assert_json_field "$SANDBOX" '.writes.privateTmp' 'ALLOWED' "Sandbox: it has a /tmp…" || true
 assert_json_field "$FACTS" '.privateTmpLeak' 'false' "…of its own (PrivateTmp): nothing appears in the machine's /tmp" || true
+assert_json_field "$SANDBOX" '.writes.privateVarTmp' 'ALLOWED' "Sandbox: it has a /var/tmp…" || true
+assert_json_field "$FACTS" '.privateVarTmpLeak' 'false' "…of its own: nothing appears in the machine's /var/tmp" || true
+assert_json_field "$SANDBOX" '.writes.privateShm' 'ALLOWED' "Sandbox: it has a /dev/shm…" || true
+assert_json_field "$FACTS" '.privateShmLeak' 'false' "…of its own: nothing appears in the machine's /dev/shm" || true
 assert_json_field "$SANDBOX" '"\(.noNewPrivs) \(.capBnd) \(.capEff)"' '1 0000000000000000 0000000000000000' "Sandbox: no new privileges, no capabilities" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.agentState')" "Sandbox: the agent's own state (its keys) is out of reach" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.shadow')" "Sandbox: /etc/shadow is out of reach" || true

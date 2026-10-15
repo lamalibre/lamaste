@@ -581,6 +581,8 @@ process.stdout.write(
     aptRuns: Object.fromEntries(packages.map((p) => [p, aptRuns(p)])),
     runLockMode: statOf('/run/lock')?.mode ?? null,
     privateTmpLeak: fs.existsSync(`/tmp/e2e-${route}-private-tmp`),
+    privateVarTmpLeak: fs.existsSync(`/var/tmp/e2e-${route}-private-var-tmp`),
+    privateShmLeak: fs.existsSync(`/dev/shm/e2e-${route}-private-shm`),
   })}\n`,
 );
 PROBE_EOF
