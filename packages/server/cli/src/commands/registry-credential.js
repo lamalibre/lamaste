@@ -7,7 +7,8 @@
  *   registry-credential set --url <registry> --oidc
  *       The panel authenticates as its own `lamaste-server` OIDC client on
  *       the relay's Authelia (client-credentials grant, Feria login). Nothing
- *       to paste; Feria's auth.json must trust the relay as a rules issuer.
+ *       to paste; Feria's auth.json must grant the relay's lamaste-server client
+ *       through a "workloads" rule on its groups issuer for the relay Authelia.
  *   registry-credential set --url <registry> [--token-stdin]
  *       A long-lived Feria token, read from LAMASTE_REGISTRY_TOKEN or from
  *       stdin with --token-stdin. Never accepted as a command-line argument.

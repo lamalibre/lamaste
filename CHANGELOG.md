@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Registry credential `--oidc` named a Feria configuration that cannot exist.** When the registry refuses the panel, the error (and the API reference) told the operator to add a `rules` issuer for `https://auth.<domain>`. Feria keys trusted issuers by `iss` and refuses one listed twice, and the relay's users already log in through that issuer as a `groups` issuer — so the advice made Feria fail to start. It now points at a `workloads` rule on that `groups` issuer (Feria 0.3.2 or later) granting `admin` to `client_id` `lamaste-server`.
+
 ## [4.2.0] - 2026-10-14
 
 All lockstep packages move to 4.2.0; internal `@lamalibre/*` ranges become `^4.2.0`.

@@ -496,9 +496,9 @@ export async function loginToRegistry(
 /** Appended to every failure of the OIDC login: what the operator must configure on Feria. */
 function feriaRulesHint(registryUrl: string): string {
   return (
-    ' — Feria accepts the panel only through a "rules" issuer in its auth.json for the relay Authelia ' +
-    `(issuer https://auth.<domain>, audience ${registryAudience(registryUrl)}) with a rule that grants the admin scope ` +
-    `when the claim client_id — or sub, which carries the same value — is "${LAMASTE_SERVER_OIDC_CLIENT_ID}"`
+    ' — Feria (0.3.2 or later) accepts the panel only through a "workloads" rule on the relay Authelia\'s ' +
+    `"groups" issuer in its auth.json (issuer https://auth.<domain>, audience ${registryAudience(registryUrl)}) ` +
+    `that grants the admin scope when the claim client_id — or sub, which carries the same value — is "${LAMASTE_SERVER_OIDC_CLIENT_ID}"`
   );
 }
 

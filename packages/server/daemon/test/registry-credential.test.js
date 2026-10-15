@@ -384,7 +384,7 @@ test('verifyRegistryCredential (oidc) runs the whole chain and explains what Fer
   await assert.rejects(verifyRegistryCredential(oidcConfig(), oidcDeps()), (err) => {
     assert.equal(err.statusCode, 400);
     assert.match(err.message, /admin scope/);
-    assert.match(err.message, /"rules" issuer/);
+    assert.match(err.message, /"workloads" rule/);
     assert.match(err.message, /https:\/\/auth\.<domain>/);
     assert.match(err.message, new RegExp(`audience ${registryUrl}`));
     assert.match(err.message, /client_id — or sub/);
@@ -400,7 +400,7 @@ test('verifyRegistryCredential (oidc) runs the whole chain and explains what Fer
     (err) => {
       assert.equal(err.statusCode, 502);
       assert.match(err.message, /issuer is not trusted/);
-      assert.match(err.message, /"rules" issuer/);
+      assert.match(err.message, /"workloads" rule/);
       return true;
     },
   );
