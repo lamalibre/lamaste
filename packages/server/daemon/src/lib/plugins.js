@@ -18,6 +18,8 @@ import {
   RESERVED_API_PREFIXES,
   RESERVED_NAV_LABELS,
   derivePluginRoute,
+  hasAgentHalf,
+  pluginHostCapability,
   validateManifest as coreValidateManifest,
 } from '@lamalibre/lamaste';
 import { revokePluginCapabilitiesFromAgents } from '@lamalibre/lamaste/server';
@@ -61,8 +63,8 @@ async function getStmts() {
     insert: db.prepare(`
       INSERT INTO plugins
         (name, display_name, package_name, version, description, capabilities,
-         packages, panel, config, modes, hosting, status, installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         packages, panel, config, modes, hosting, agent, status, installed_at, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     deleteAll: db.prepare('DELETE FROM plugins'),
@@ -108,6 +110,7 @@ function rowToPlugin(row) {
   if (row.panel != null) entry.panel = JSON.parse(row.panel);
   if (row.config != null) entry.config = JSON.parse(row.config);
   if (row.modes != null) entry.modes = JSON.parse(row.modes);
+  if (row.agent != null) entry.agent = JSON.parse(row.agent);
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   return entry;
 }
@@ -161,6 +164,7 @@ export async function writePlugins(data) {
         nullableJson(p.config),
         nullableJson(p.modes),
         p.hosting ?? DEFAULT_PLUGIN_HOSTING,
+        nullableJson(p.agent),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -366,6 +370,7 @@ export function installPlugin(packageName, logger) {
       config: manifest.config,
       modes: manifest.modes,
       hosting: manifest.hosting,
+      agent: manifest.agent,
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -384,6 +389,7 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.config),
         nullableJson(entry.modes),
         entry.hosting,
+        nullableJson(entry.agent),
         entry.status,
         entry.installedAt,
         null,
@@ -422,6 +428,14 @@ export function uninstallPlugin(name, logger) {
       throw Object.assign(new Error(`Plugin "${name}" must be disabled before uninstalling`), {
         statusCode: 400,
       });
+    }
+
+    // A hosted agent half loses its internal tunnel, installation secret
+    // and host capability first; the registry row goes only once that is
+    // done, so a failure here leaves the plugin installed and hosted.
+    if (hasAgentHalf(plugin)) {
+      const { unhostPlugin } = await import('./plugin-hosting.js');
+      await unhostPlugin(name, logger, { ifHosted: true });
     }
 
     // Uninstall the npm package
@@ -565,6 +579,22 @@ export async function getPluginCapabilities() {
       const parsed = JSON.parse(row.capabilities);
       if (Array.isArray(parsed)) caps.push(...parsed);
     }
+    // `plugin:<route>:host` is never declared: Lamaste contributes it for
+    // every installed agent-hosted plugin with an agent half, enabled or
+    // not — hosting is an administrator's binding and outlives a disable.
+    if (row.hosting === 'agent' && row.agent != null) {
+      caps.push(pluginHostCapability(derivePluginRoute(row.name)));
+    }
   }
   return [...new Set(caps)];
+}
+
+/**
+ * One installed plugin by name, or null.
+ * @param {string} name
+ */
+export async function findPlugin(name) {
+  const s = await getStmts();
+  const row = s.selectByName.get(name);
+  return row ? rowToPlugin(row) : null;
 }

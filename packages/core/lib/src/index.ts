@@ -21,6 +21,11 @@ export {
   AGENT_LABEL_REGEX,
   RESERVED_TUNNEL_PORTS,
   isTunnelPortAllowed,
+  INTERNAL_PLUGIN_PORT_RANGE,
+  isInternalPluginPort,
+  PLUGIN_HOST_ACTION,
+  pluginHostCapability,
+  hasAgentHalf,
   CORE_SUBDOMAINS,
   LETSENCRYPT_EMAIL_REGEX,
   CHISEL_RELEASE,
@@ -85,6 +90,9 @@ export {
   ManifestSchema,
   LamaPackageNameSchema,
   validateManifest,
+  AgentRequiresSchema,
+  AgentBlockSchema,
+  AGENT_HALF_OS,
   OidcClientSchema,
   OIDC_GRANT_TYPES,
   OIDC_ACCESS_TOKEN_CLAIMS,
@@ -93,6 +101,7 @@ export {
 
 export type {
   ParsedManifest,
+  AgentBlock,
   OidcClientDeclaration,
   OidcGrantType,
   OidcAccessTokenClaim,
@@ -107,6 +116,28 @@ export {
 } from './file-helpers.js';
 
 export type { AtomicWriteOptions } from './file-helpers.js';
+
+// Caller assertions (relay forwarder → agent half of an agent-hosted plugin)
+export {
+  CALLER_ASSERTION_HEADER,
+  CALLER_ASSERTION_MAX_AGE_MS,
+  CALLER_ASSERTION_CLOCK_SKEW_MS,
+  CALLER_ASSERTION_VERSION,
+  HOSTING_SECRET_BYTES,
+  generateHostingSecret,
+  assertHostingSecret,
+  signCallerAssertion,
+  verifyCallerAssertion,
+  NonceStore,
+} from './caller-assertion.js';
+
+export type {
+  CallerIdentity,
+  CallerAssertionPayload,
+  CallerAssertionRejection,
+  VerifyCallerAssertionResult,
+  VerifyCallerAssertionOptions,
+} from './caller-assertion.js';
 
 // Plugin host
 export { pluginHostPlugin, invalidatePluginHostCache } from './plugin-host.js';

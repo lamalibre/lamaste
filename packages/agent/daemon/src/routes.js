@@ -187,6 +187,9 @@ export default async function routes(fastify, opts) {
       {
         fetchChiselCredential: () => api.fetchChiselCredential(config),
         rotateChiselCredential: () => api.rotateChiselCredential(config),
+        fetchPluginConfig: (route) => api.fetchPluginConfig(config, route),
+        acknowledgePluginConfig: (route, issuedAt) =>
+          api.acknowledgePluginConfig(config, route, issuedAt),
       },
       options,
     );

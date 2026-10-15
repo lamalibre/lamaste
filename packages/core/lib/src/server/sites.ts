@@ -82,7 +82,7 @@ export interface SiteStateDeps {
 }
 
 export interface TunnelReadDeps {
-  readTunnels(): Promise<Array<{ subdomain: string }>>;
+  readTunnels(): Promise<Array<{ subdomain: string | null }>>;
 }
 
 export interface AutheliaDeps {
@@ -192,7 +192,7 @@ function validateAliases(
   aliases: readonly string[],
   selfId: string | null,
   sites: readonly SiteEntry[],
-  tunnels: ReadonlyArray<{ subdomain: string }>,
+  tunnels: ReadonlyArray<{ subdomain: string | null }>,
   domain: string,
 ): string[] {
   const normalised = [...new Set(aliases.map((a) => a.trim().toLowerCase()))];
@@ -200,7 +200,10 @@ function validateAliases(
     throw new SiteError(`At most ${MAX_SITE_ALIASES} aliases per site`, 'INVALID_ALIAS');
   }
   const core = new Set(CORE_SUBDOMAINS.map((s) => `${s}.${domain}`));
-  const tunnelHosts = new Set(tunnels.map((t) => `${t.subdomain}.${domain}`));
+  // Internal plugin tunnels have no hostname and cannot collide.
+  const tunnelHosts = new Set(
+    tunnels.filter((t) => t.subdomain !== null).map((t) => `${t.subdomain}.${domain}`),
+  );
   for (const alias of normalised) {
     if (!HOSTNAME_RE.test(alias)) {
       throw new SiteError(`Invalid alias hostname '${alias}'`, 'INVALID_ALIAS');
@@ -316,7 +319,7 @@ export async function createSite(opts: CreateSiteOptions): Promise<CreateSiteRes
     throw new SiteError(`Domain '${fqdn}' is already in use by another site`, 'FQDN_IN_USE');
   }
 
-  if (tunnels.find((t) => `${t.subdomain}.${domain}` === fqdn)) {
+  if (tunnels.find((t) => t.subdomain !== null && `${t.subdomain}.${domain}` === fqdn)) {
     throw new SiteError(`Domain '${fqdn}' is already in use by a tunnel`, 'FQDN_TUNNEL_COLLISION');
   }
 

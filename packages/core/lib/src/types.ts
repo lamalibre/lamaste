@@ -6,6 +6,7 @@
  */
 
 import type { PluginHosting, PluginMode } from './constants.js';
+import type { AgentBlock } from './schemas.js';
 
 // ---------------------------------------------------------------------------
 // Plugin manifest
@@ -54,6 +55,8 @@ export interface PluginManifest {
   readonly config: Readonly<Record<string, PluginConfigEntry>>;
   readonly modes: readonly PluginMode[];
   readonly hosting: PluginHosting;
+  /** The agent half of an agent-hosted plugin; absent for identity-only and server plugins. */
+  readonly agent?: AgentBlock;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +81,8 @@ export interface PluginRegistryEntry {
   readonly modes: readonly PluginMode[];
   /** Absent in entries written before 4.2 — those are server plugins. */
   readonly hosting?: PluginHosting;
+  /** The agent half of an agent-hosted plugin (4.3); absent otherwise. */
+  readonly agent?: AgentBlock;
   status: PluginStatus;
   readonly installedAt: string;
   enabledAt?: string;
@@ -216,6 +221,11 @@ export interface AdminClient {
   disablePlugin(name: string): Promise<{ ok: boolean }>;
   uninstallPlugin(name: string): Promise<{ ok: boolean }>;
   fetchPluginBundle(name: string): Promise<string>;
+  // Agent-hosted plugins with an agent half: which agent hosts the plugin
+  getPluginHosting(name: string): Promise<{ hosting: unknown }>;
+  setPluginHosting(name: string, agentLabel: string): Promise<{ ok: boolean; hosting: unknown }>;
+  clearPluginHosting(name: string): Promise<{ ok: boolean }>;
+  rotatePluginHostingSecret(name: string): Promise<{ ok: boolean; hosting: unknown }>;
   getPushInstallConfig(): Promise<Record<string, unknown>>;
   updatePushInstallConfig(data: Record<string, unknown>): Promise<unknown>;
   getPushInstallPolicies(): Promise<{ policies: unknown[] }>;

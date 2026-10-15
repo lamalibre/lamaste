@@ -184,11 +184,56 @@ export const RESERVED_TUNNEL_PORTS: readonly number[] = Object.freeze([
   3100, 9090, 9091, 9292, 9294,
 ]);
 
-/** True when `port` may carry a tunnel (1024–65535 and not reserved). */
+/**
+ * Relay-loopback ports Lamaste assigns to internal plugin tunnels — the
+ * tunnels that carry an agent-hosted plugin's admin API from its hosting
+ * agent to the panel's forwarder. Lamaste picks the lowest free port of the
+ * range when the plugin is hosted; the range sits above the hand-planned
+ * application ports (blocks of ten from 20000) and below Linux's ephemeral
+ * range, and no tunnel created by hand may use it, so the two never collide.
+ * A tunnel created before this range existed keeps its port.
+ */
+export const INTERNAL_PLUGIN_PORT_RANGE = Object.freeze({ min: 21000, max: 21999 });
+
+/** True when `port` lies in {@link INTERNAL_PLUGIN_PORT_RANGE}. */
+export function isInternalPluginPort(port: number): boolean {
+  return (
+    Number.isInteger(port) &&
+    port >= INTERNAL_PLUGIN_PORT_RANGE.min &&
+    port <= INTERNAL_PLUGIN_PORT_RANGE.max
+  );
+}
+
+/**
+ * True when `port` may carry a tunnel created by hand (1024–65535, not a
+ * reserved Lamaste port, not in the internal plugin range).
+ */
 export function isTunnelPortAllowed(port: number): boolean {
   return (
-    Number.isInteger(port) && port >= 1024 && port <= 65535 && !RESERVED_TUNNEL_PORTS.includes(port)
+    Number.isInteger(port) &&
+    port >= 1024 &&
+    port <= 65535 &&
+    !RESERVED_TUNNEL_PORTS.includes(port) &&
+    !isInternalPluginPort(port)
   );
+}
+
+/**
+ * The action segment of the capability that marks an agent as the hosting
+ * agent of a plugin: `plugin:<route>:host`. It is never declared in a
+ * manifest — Lamaste contributes it for every installed agent-hosted plugin
+ * that has an `agent` block, grants it to the hosting agent's certificate,
+ * and only that certificate may fetch the plugin's installation secret. It
+ * does not admit calls to the plugin's forwarded API.
+ */
+export const PLUGIN_HOST_ACTION = 'host';
+
+/** `plugin:<route>:host` for the plugin whose route is `route`. */
+export function pluginHostCapability(route: string): string {
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(route)) {
+    throw new Error(`Invalid plugin route for host capability: "${route}"`);
+  }
+  return `${PLUGIN_CAPABILITY_NAMESPACE}:${route}:${PLUGIN_HOST_ACTION}`;
 }
 
 /**
@@ -315,6 +360,20 @@ export const DEFAULT_PLUGIN_HOSTING: PluginHosting = 'server';
  */
 export function isAgentHostedPlugin(plugin: { readonly hosting?: string | undefined }): boolean {
   return plugin.hosting === 'agent';
+}
+
+/**
+ * Whether an agent-hosted plugin has an *agent half* Lamaste connects to:
+ * its manifest carries an `agent` block. Such a plugin can be hosted on an
+ * agent (internal tunnel, installation secret, forwarded admin API) and may
+ * declare panel pages, served through the forwarder. An agent-hosted plugin
+ * without the block is identity only (slice 1), as Feria is.
+ */
+export function hasAgentHalf(plugin: {
+  readonly hosting?: string | undefined;
+  readonly agent?: object | null | undefined;
+}): boolean {
+  return isAgentHostedPlugin(plugin) && plugin.agent !== undefined && plugin.agent !== null;
 }
 
 // ---------------------------------------------------------------------------

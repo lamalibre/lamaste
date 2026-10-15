@@ -356,6 +356,92 @@ export async function rotateChiselCredential(config) {
 }
 
 /**
+ * Validate a plugin config payload from the panel (`GET /api/agents/me/plugin-config/<route>`).
+ * @param {unknown} parsed
+ * @returns {{ plugin: string, port: number, secret: string, issuedAt: string, previousSecret?: string, previousIssuedAt?: string }}
+ */
+function parsePluginConfig(parsed) {
+  if (
+    !parsed ||
+    typeof parsed.plugin !== 'string' ||
+    typeof parsed.port !== 'number' ||
+    typeof parsed.secret !== 'string' ||
+    typeof parsed.issuedAt !== 'string'
+  ) {
+    throw new Error('Panel returned malformed plugin config payload');
+  }
+  return {
+    plugin: parsed.plugin,
+    port: parsed.port,
+    secret: parsed.secret,
+    issuedAt: parsed.issuedAt,
+    ...(typeof parsed.previousSecret === 'string'
+      ? {
+          previousSecret: parsed.previousSecret,
+          ...(typeof parsed.previousIssuedAt === 'string'
+            ? { previousIssuedAt: parsed.previousIssuedAt }
+            : {}),
+        }
+      : {}),
+  };
+}
+
+/**
+ * Fetch the config of an agent-hosted plugin hosted on this agent: the port
+ * its agent half listens on and the installation secret. Only the hosting
+ * agent's certificate (capability `plugin:<route>:host`) is admitted.
+ *
+ * @param {object} config - Agent config
+ * @param {string} route - The plugin's route
+ */
+export async function fetchPluginConfig(config, route) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/plugin-config/${encodeURIComponent(route)}`;
+  try {
+    const { stdout } = await curlAuthenticated(config, [url]);
+    return parsePluginConfig(JSON.parse(stdout));
+  } catch (err) {
+    throw new Error(
+      `Failed to fetch the plugin config for "${route}" from panel. Details: ${err.stderr || err.message}`,
+    );
+  }
+}
+
+/**
+ * Tell the panel this agent holds the plugin secret issued at `issuedAt`;
+ * the panel's forwarder then signs with it and drops the previous one.
+ *
+ * @param {object} config - Agent config
+ * @param {string} route
+ * @param {string} issuedAt
+ */
+export async function acknowledgePluginConfig(config, route, issuedAt) {
+  const panelUrl = resolvePanelUrl(config);
+  const url = `${panelUrl}/api/agents/me/plugin-config/${encodeURIComponent(route)}/ack`;
+  try {
+    const { stdout } = await curlAuthenticated(config, [
+      '-X',
+      'POST',
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      JSON.stringify({ issuedAt }),
+      url,
+    ]);
+    const parsed = JSON.parse(stdout);
+    if (parsed?.acknowledged !== true) {
+      throw new Error(
+        `the panel now issues the secret of ${parsed?.secretIssuedAt ?? 'an unknown time'}`,
+      );
+    }
+  } catch (err) {
+    throw new Error(
+      `Failed to acknowledge the plugin config for "${route}". Details: ${err.stderr || err.message}`,
+    );
+  }
+}
+
+/**
  * Fetch the tunnel list from the panel.
  * @param {object} config - Agent config object
  * @returns {Promise<{ tunnels: Array<{ id: string, subdomain: string, port: number }> }>}

@@ -17,6 +17,7 @@ import healthRoutes from './routes/health.js';
 import onboardingRoutes from './routes/onboarding/index.js';
 import managementRoutes from './routes/management.js';
 import pluginRouter from './routes/plugin-router.js';
+import agentForwarderRoutes from './routes/agent-forwarder.js';
 import inviteRoutes from './routes/invite.js';
 import enrollmentRoutes from './routes/enrollment.js';
 import {
@@ -28,6 +29,10 @@ import userAccessSessionMiddleware from './middleware/user-access-session.js';
 import { getPluginCapabilities } from './lib/plugins.js';
 import { setPluginCapabilities } from './lib/mtls.js';
 import { startChiselReconciler } from './lib/chisel-reconcile.js';
+import {
+  startHostedPluginHealthMonitor,
+  stopHostedPluginHealthMonitor,
+} from './lib/plugin-hosting.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import {
   loadTicketScopeCapabilities,
@@ -158,6 +163,9 @@ async function start() {
     app.register(managementRoutes, { prefix: '/api' });
     app.register(userAccessAdminRoutes, { prefix: '/api' });
     app.register(pluginRouter, { prefix: '/api' });
+    // Last: agent-hosted plugins with an agent half, forwarded over their
+    // internal tunnels. Only what no other /api route answers reaches it.
+    app.register(agentForwarderRoutes, { prefix: '/api' });
   });
 
   // --- User-access session-protected routes (Bearer token, no mTLS) ---
@@ -178,6 +186,9 @@ async function start() {
   // --- Start ---
   await server.listen({ host: '127.0.0.1', port: 3100 });
 
+  // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
+  startHostedPluginHealthMonitor(server.log);
+
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {
     checkInstanceLiveness(server.log).catch((err) => {
@@ -190,6 +201,7 @@ async function start() {
   const shutdown = async (signal) => {
     server.log.info({ signal }, 'Received signal, shutting down gracefully');
     clearInterval(livenessInterval);
+    stopHostedPluginHealthMonitor();
     clearRateLimitInterval();
     await server.close();
     process.exit(0);

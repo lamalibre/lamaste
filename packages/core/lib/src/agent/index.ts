@@ -152,6 +152,29 @@ export { ensureAgentChiselBinary, installedAgentChiselVersion } from './chisel-b
 export type { AgentChiselBinaryResult } from './chisel-binary.js';
 export { convergeChiselService, setAgentTunnelsStopped, updateAgentConfig } from './converge.js';
 export { withAgentLock } from './agent-lock.js';
+
+// App plugins (hosting an agent-hosted plugin's agent half on this agent)
+export {
+  appPluginsDir,
+  appPluginConfigPath,
+  readAppPluginConfigFile,
+  loadAppPluginConfig,
+  saveAppPluginConfig,
+  removeAppPluginConfig,
+  listAppPluginConfigs,
+  parseAppPluginAssignments,
+  syncAppPluginConfigs,
+  createCallerAssertionVerifier,
+} from './app-plugins.js';
+export type {
+  AgentAppPluginConfig,
+  AppPluginAssignment,
+  IssuedAppPluginConfig,
+  AppPluginPanelCalls,
+  AppPluginSyncResult,
+  CallerAssertionVerifierOptions,
+  CallerAssertionVerifier,
+} from './app-plugins.js';
 export type {
   AgentConfigResponse,
   IssuedChiselCredential,

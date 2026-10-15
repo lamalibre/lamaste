@@ -33,8 +33,9 @@ export interface PluginTunnelGrant {
 }
 
 export interface TunnelEntry {
-  readonly subdomain: string;
-  readonly fqdn: string;
+  /** `null` on an internal plugin tunnel, which has no hostname. */
+  readonly subdomain: string | null;
+  readonly fqdn: string | null;
   readonly type: 'app' | 'panel' | 'plugin';
   readonly accessMode?: 'public' | 'authenticated' | 'restricted' | undefined;
   readonly enabled: boolean;

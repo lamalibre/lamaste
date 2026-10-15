@@ -1,5 +1,11 @@
 import { convergeChiselService, requireAgentConfig } from '@lamalibre/lamaste/agent';
-import { fetchAgentConfig, fetchChiselCredential, rotateChiselCredential } from './panel-api.js';
+import {
+  acknowledgePluginConfig,
+  fetchAgentConfig,
+  fetchChiselCredential,
+  fetchPluginConfig,
+  rotateChiselCredential,
+} from './panel-api.js';
 
 /**
  * Fetch this agent's configuration from its panel and converge the local
@@ -19,6 +25,9 @@ export async function convergeWithPanel(label, options = {}) {
     {
       fetchChiselCredential: () => fetchChiselCredential(config),
       rotateChiselCredential: () => rotateChiselCredential(config),
+      fetchPluginConfig: (route) => fetchPluginConfig(config, route),
+      acknowledgePluginConfig: (route, issuedAt) =>
+        acknowledgePluginConfig(config, route, issuedAt),
     },
     options,
   );
@@ -43,5 +52,10 @@ export function describeConverge(result) {
   if (result.credential === 'rotated') parts.push('chisel credential rotated');
   if (result.credential === 'fetched') parts.push('new chisel credential fetched');
   if (result.binaryUpdated) parts.push('chisel binary updated');
+  const app = result.appPlugins;
+  if (app?.fetched?.length) parts.push(`plugin config fetched: ${app.fetched.join(', ')}`);
+  if (app?.acknowledged?.length)
+    parts.push(`plugin config acknowledged: ${app.acknowledged.join(', ')}`);
+  if (app?.removed?.length) parts.push(`plugin config removed: ${app.removed.join(', ')}`);
   return parts.join('; ');
 }

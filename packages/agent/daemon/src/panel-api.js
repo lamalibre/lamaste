@@ -337,6 +337,84 @@ export function createPanelApiClient(label) {
     },
 
     /**
+     * Fetch the config of an agent-hosted plugin hosted on this agent (port
+     * and installation secret). Hosting-agent certificate only.
+     * @param {object} config
+     * @param {string} route
+     * @returns {Promise<{ plugin: string, port: number, secret: string, issuedAt: string, previousSecret?: string, previousIssuedAt?: string }>}
+     */
+    async fetchPluginConfig(config, route) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/plugin-config/${encodeURIComponent(route)}`;
+      let parsed;
+      try {
+        const { stdout } = await curlAuthenticated(baseDir, config, [url]);
+        parsed = JSON.parse(stdout);
+      } catch (err) {
+        throw new Error(
+          `Failed to fetch the plugin config for "${route}" from panel. Details: ${err.stderr || err.message}`,
+        );
+      }
+      if (
+        !parsed ||
+        typeof parsed.plugin !== 'string' ||
+        typeof parsed.port !== 'number' ||
+        typeof parsed.secret !== 'string' ||
+        typeof parsed.issuedAt !== 'string'
+      ) {
+        throw new Error('Panel returned malformed plugin config payload');
+      }
+      return {
+        plugin: parsed.plugin,
+        port: parsed.port,
+        secret: parsed.secret,
+        issuedAt: parsed.issuedAt,
+        ...(typeof parsed.previousSecret === 'string'
+          ? {
+              previousSecret: parsed.previousSecret,
+              ...(typeof parsed.previousIssuedAt === 'string'
+                ? { previousIssuedAt: parsed.previousIssuedAt }
+                : {}),
+            }
+          : {}),
+      };
+    },
+
+    /**
+     * Confirm to the panel that this agent holds the plugin secret issued
+     * at `issuedAt`.
+     * @param {object} config
+     * @param {string} route
+     * @param {string} issuedAt
+     */
+    async acknowledgePluginConfig(config, route, issuedAt) {
+      const panelUrl = resolvePanelUrl(config);
+      const url = `${panelUrl}/api/agents/me/plugin-config/${encodeURIComponent(route)}/ack`;
+      let parsed;
+      try {
+        const { stdout } = await curlAuthenticated(baseDir, config, [
+          '-X',
+          'POST',
+          '-H',
+          'Content-Type: application/json',
+          '-d',
+          JSON.stringify({ issuedAt }),
+          url,
+        ]);
+        parsed = JSON.parse(stdout);
+      } catch (err) {
+        throw new Error(
+          `Failed to acknowledge the plugin config for "${route}". Details: ${err.stderr || err.message}`,
+        );
+      }
+      if (parsed?.acknowledged !== true) {
+        throw new Error(
+          `Failed to acknowledge the plugin config for "${route}": the panel now issues the secret of ${parsed?.secretIssuedAt ?? 'an unknown time'}`,
+        );
+      }
+    },
+
+    /**
      * Ask the panel for a short-lived npm registry credential for one
      * plugin install. Returns `null` when the panel has none configured
      * (HTTP 404) — the install then uses the public registry.

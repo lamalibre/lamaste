@@ -594,6 +594,45 @@ pub async fn admin_uninstall_plugin(name: String) -> Result<serde_json::Value, S
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+// --- Hosting an agent-hosted plugin's agent half on an agent ---
+
+#[tauri::command]
+pub async fn admin_get_plugin_hosting(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hosting", url_encode(&name));
+        admin_get(&path)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_set_plugin_hosting(name: String, agent_label: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hosting", url_encode(&name));
+        let body = serde_json::json!({ "agentLabel": agent_label }).to_string();
+        admin_post(&path, Some(&body))
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_clear_plugin_hosting(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hosting", url_encode(&name));
+        admin_delete(&path, None)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[tauri::command]
+pub async fn admin_rotate_plugin_hosting_secret(name: String) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let path = format!("/api/plugins/{}/hosting/rotate-secret", url_encode(&name));
+        admin_post(&path, None)
+    })
+    .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
 #[tauri::command]
 pub async fn admin_fetch_plugin_bundle(name: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {

@@ -13,9 +13,10 @@ import {
   getAgentAllowedSites,
 } from '../../lib/mtls.js';
 import { z } from 'zod';
-import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import { AGENT_LABEL_REGEX, pluginHostCapability } from '@lamalibre/lamaste';
 import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import { acquireAgentToken } from '../../lib/registry-credential.js';
+import { agentPluginConfig, acknowledgeAgentPluginConfig } from '../../lib/plugin-hosting.js';
 
 /**
  * An agent may rotate its own chisel credential at most this often. Every
@@ -24,6 +25,18 @@ import { acquireAgentToken } from '../../lib/registry-credential.js';
  */
 const SELF_ROTATE_MIN_INTERVAL_MS = 10 * 60 * 1000;
 
+const PluginRouteParamSchema = z.object({
+  route: z
+    .string()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Invalid plugin route'),
+});
+
+const AckBodySchema = z.object({
+  issuedAt: z.string().min(1).max(64),
+});
+
 const LabelParamSchema = z.object({
   label: z
     .string()
@@ -31,6 +44,34 @@ const LabelParamSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9-]+$/, 'Invalid agent label'),
 });
+
+/**
+ * The plugin-config routes admit only a machine agent whose certificate
+ * carries the plugin's host capability. The admin master role passes every
+ * `requireRole` guard but has no agent identity to serve, so it is refused
+ * here too. Returns the reply when refused, undefined when admitted.
+ */
+function refuseUnlessHostingAgent(request, reply, route) {
+  if (request.certRole !== 'agent') {
+    return reply
+      .code(403)
+      .send({ error: 'Only the hosting agent certificate can read a plugin config' });
+  }
+  const label = request.certLabel;
+  if (!label || !AGENT_LABEL_REGEX.test(label)) {
+    return reply
+      .code(400)
+      .send({ error: 'Agent label could not be determined from client certificate' });
+  }
+  const required = pluginHostCapability(route);
+  if (!(request.certCapabilities || []).includes(required)) {
+    return reply.code(403).send({
+      error: 'Insufficient certificate capability',
+      details: { required, granted: request.certCapabilities || [] },
+    });
+  }
+  return undefined;
+}
 
 export default async function agentsRoutes(fastify, _opts) {
   // ------------------------------------------------------------------
@@ -191,6 +232,66 @@ export default async function agentsRoutes(fastify, _opts) {
         request.log.warn({ label, err: err.message }, 'Failed to broker registry token');
         return reply.code(status).send({ error: err.message || 'Failed to broker registry token' });
       }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /agents/me/plugin-config/:route
+  //
+  // The config of an agent-hosted plugin hosted on the calling agent: the
+  // port its agent half listens on and the installation secret (plus the
+  // previous secret during a rotation). Only the hosting agent can read it:
+  // its certificate must carry `plugin:<route>:host`, which hosting granted,
+  // and the hosting must name it. Identity comes strictly from the mTLS
+  // certificate.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/agents/me/plugin-config/:route',
+    {
+      preHandler: fastify.requireRole(['agent']),
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const { route } = PluginRouteParamSchema.parse(request.params);
+      const refused = refuseUnlessHostingAgent(request, reply, route);
+      if (refused) return refused;
+      const config = await agentPluginConfig(request.certLabel, route);
+      if (!config) {
+        return reply.code(404).send({ error: `Plugin "${route}" is not hosted on this agent` });
+      }
+      return config;
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /agents/me/plugin-config/:route/ack
+  //
+  // The hosting agent confirms it holds the secret issued at `issuedAt`.
+  // From then on the panel's forwarder signs with it and drops the previous
+  // one. An `issuedAt` that is not the current secret's is answered with
+  // `acknowledged: false` and the current `secretIssuedAt`, so the agent
+  // fetches again.
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/agents/me/plugin-config/:route/ack',
+    {
+      preHandler: fastify.requireRole(['agent']),
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const { route } = PluginRouteParamSchema.parse(request.params);
+      const body = AckBodySchema.parse(request.body);
+      const refused = refuseUnlessHostingAgent(request, reply, route);
+      if (refused) return refused;
+      const result = await acknowledgeAgentPluginConfig(request.certLabel, route, body.issuedAt);
+      if (!result) {
+        return reply.code(404).send({ error: `Plugin "${route}" is not hosted on this agent` });
+      }
+      request.log.info(
+        { label: request.certLabel, plugin: route, acknowledged: result.acknowledged },
+        'Plugin config acknowledgement',
+      );
+      return { ok: true, ...result };
     },
   );
 

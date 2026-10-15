@@ -959,6 +959,179 @@ FIXTURE_EOF
   done
 }
 
+# write_app_plugin_fixture dir
+# Writes `@lamalibre/e2e-app-plugin-server`: an agent-hosted plugin *with an
+# agent half* (manifest `agent` block) and panel pages, for specs 29 and 31.
+# Its main module throws if the panel ever imports it; the admin bundle and
+# every admin route come from the agent half (write_app_plugin_half).
+write_app_plugin_fixture() {
+  local dir="$1"
+  local pkg="@lamalibre/e2e-app-plugin-server"
+  local name="e2e-app-plugin"
+  mkdir -p "${dir}"
+  cat > "${dir}/package.json" <<FIXTURE_EOF
+{
+  "name": "${pkg}",
+  "version": "0.1.0",
+  "description": "Lamaste e2e fixture: an agent-hosted plugin with an agent half",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+  cat > "${dir}/index.js" <<FIXTURE_EOF
+// The application runs on its hosting agent; the panel forwards to it and
+// never loads this module.
+throw new Error('${name}: agent-hosted plugin code was imported');
+FIXTURE_EOF
+  cat > "${dir}/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E App Plugin",
+  "version": "0.1.0",
+  "description": "An agent half on the hosting agent, admin pages in the panel",
+  "hosting": "agent",
+  "agent": { "requires": { "node": ">=22", "os": ["linux"] } },
+  "modes": ["server"],
+  "packages": { "server": "${pkg}" },
+  "capabilities": ["plugin:${name}:use"],
+  "panel": {
+    "pages": [{ "path": "/status", "title": "Status", "icon": "activity" }],
+    "apiPrefix": "/api/${name}"
+  }
+}
+FIXTURE_EOF
+}
+
+# write_app_plugin_half file
+# Writes the fixture's agent half: a Node HTTP server on 127.0.0.1:<port>
+# (the port from the plugin config the agent fetched) whose /admin/* routes
+# accept only requests with a valid caller assertion, verified with
+# @lamalibre/lamaste/agent's createCallerAssertionVerifier.
+#
+#   node app-plugin-half.mjs --config <plugin config json> --plugin <route> \
+#     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>]
+#
+# Routes: /admin/health, /admin/ping (echoes caller, path, what headers
+# arrived), /admin/panel.js (a mount(ctx) bundle), /admin/echo (POST, counts
+# bytes), /admin/events (3 server-sent events), anything else under /admin
+# is 404. /app/* is the user surface and answers without an assertion — the
+# forwarder must never reach it. One log line per request.
+write_app_plugin_half() {
+  local dest="$1"
+  cat > "$dest" <<'HALF_EOF'
+import http from 'node:http';
+import path from 'node:path';
+import { appendFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const args = process.argv.slice(2);
+const opt = (name) => {
+  const i = args.indexOf(name);
+  return i === -1 ? undefined : args[i + 1];
+};
+const configPath = opt('--config');
+const plugin = opt('--plugin');
+const lamasteDir = opt('--lamaste');
+const logFile = opt('--log');
+if (!configPath || !plugin || !lamasteDir) {
+  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>]');
+  process.exit(2);
+}
+const agentLib = await import(pathToFileURL(path.join(lamasteDir, 'dist', 'agent', 'index.js')).href);
+const verifier = agentLib.createCallerAssertionVerifier({ configPath, plugin, reloadIntervalMs: 500 });
+const port = await verifier.port();
+
+function log(line) {
+  const text = `${new Date().toISOString()} ${line}\n`;
+  process.stdout.write(text);
+  if (logFile) appendFileSync(logFile, text);
+}
+
+function json(res, status, body, extraHeaders = {}) {
+  res.writeHead(status, { 'content-type': 'application/json', ...extraHeaders });
+  res.end(JSON.stringify(body));
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  const p = url.pathname;
+  if (p.startsWith('/app/')) {
+    log(`${req.method} ${req.url} 200 user-surface`);
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('USER SURFACE — reachable only through a user-surface tunnel');
+    return;
+  }
+  if (p !== '/admin' && !p.startsWith('/admin/')) {
+    log(`${req.method} ${req.url} 404 outside`);
+    json(res, 404, { error: 'not found' });
+    return;
+  }
+  const result = await verifier.verify(req.headers, req.method, req.url);
+  if (!result.ok) {
+    log(`${req.method} ${req.url} 401 refused=${result.reason}`);
+    json(res, 401, { error: 'caller assertion refused', reason: result.reason });
+    return;
+  }
+  const caller = result.payload.caller.type === 'admin' ? 'admin' : `agent:${result.payload.caller.label}`;
+  if (p === '/admin/health') {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    json(res, 200, { ok: true, plugin, port });
+    return;
+  }
+  if (p === '/admin/ping' || p === '/admin') {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    json(res, 200, {
+      pong: true,
+      caller: result.payload.caller,
+      path: req.url,
+      cookie: req.headers.cookie ?? null,
+      authorization: req.headers.authorization ?? null,
+      sslClientDn: req.headers['x-ssl-client-dn'] ?? null,
+    });
+    return;
+  }
+  if (p === '/admin/panel.js') {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    res.writeHead(200, { 'content-type': 'application/javascript' });
+    res.end(
+      `window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n` +
+        `window.__lamalibrePlugins[${JSON.stringify(plugin)}] = { mount(ctx) { ctx.mountPoint.textContent = 'E2E app plugin — served by the agent half'; return () => {}; } };\n`,
+    );
+    return;
+  }
+  if (p === '/admin/echo' && req.method === 'POST') {
+    let bytes = 0;
+    req.on('data', (c) => (bytes += c.length));
+    req.on('end', () => {
+      log(`POST ${req.url} 200 caller=${caller} bytes=${bytes}`);
+      json(res, 200, { bytes }, { 'set-cookie': 'app-session=should-not-pass' });
+    });
+    return;
+  }
+  if (p === '/admin/events') {
+    log(`${req.method} ${req.url} 200 caller=${caller} sse`);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    let n = 0;
+    const timer = setInterval(() => {
+      n += 1;
+      res.write(`data: tick ${n}\n\n`);
+      if (n === 3) {
+        clearInterval(timer);
+        res.end();
+      }
+    }, 200);
+    return;
+  }
+  log(`${req.method} ${req.url} 404 caller=${caller}`);
+  json(res, 404, { error: 'no such admin route' });
+});
+
+server.listen(port, '127.0.0.1', () => log(`listening on 127.0.0.1:${port} for plugin ${plugin}`));
+HALF_EOF
+}
+
 # decode_jwt_payload token
 # Print the JSON payload of a JWT (needs node, which every VM has).
 decode_jwt_payload() {

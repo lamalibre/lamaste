@@ -196,6 +196,11 @@
           "title": "Registry Credential & OIDC Clients",
           "slug": "api-registry-and-oidc",
           "file": "04-api-reference/registry-and-oidc.md"
+        },
+        {
+          "title": "Agent-Hosted Plugins",
+          "slug": "api-agent-hosted-plugins",
+          "file": "04-api-reference/agent-hosted-plugins.md"
         }
       ]
     },

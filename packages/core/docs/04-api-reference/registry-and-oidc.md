@@ -82,9 +82,11 @@ An application that runs on its own agent, behind a Lamaste tunnel, still needs 
 }
 ```
 
-It is installed like any plugin (`POST /api/plugins/install` runs `npm install --ignore-scripts` and reads `<package>/lamaste-plugin.json`), but Lamaste never imports the package — not the panel, and not an agent's plugin host if the package is installed there. Nothing is mounted under `/api/<name>/` (requests there answer `404`), no panel bundle is served, and no storage can be bound to it (`400`). A `panel` declaration is a manifest error (`400` on install). What takes effect is what the manifest declares: its `oidcClients` are written to Authelia on enable and removed on disable or uninstall, confidential-client secrets are minted and shown exactly as above, and its `capabilities` can be granted to agents. `GET /api/plugins` reports each plugin's `hosting`; a plugin installed before 4.2 is `"server"`.
+It is installed like any plugin (`POST /api/plugins/install` runs `npm install --ignore-scripts` and reads `<package>/lamaste-plugin.json`), but Lamaste never imports the package — not the panel, and not an agent's plugin host if the package is installed there. Nothing is mounted under `/api/<name>/` (requests there answer `404`), no panel bundle is served, and no storage can be bound to it (`400`). A `panel` declaration on such an identity-only plugin is a manifest error (`400` on install). What takes effect is what the manifest declares: its `oidcClients` are written to Authelia on enable and removed on disable or uninstall, confidential-client secrets are minted and shown exactly as above, and its `capabilities` can be granted to agents. `GET /api/plugins` reports each plugin's `hosting`; a plugin installed before 4.2 is `"server"`.
 
 The application's own tunnel (`feria.<domain>`) is created by the administrator as for any app; Lamaste does not create it from the manifest.
+
+An agent-hosted plugin whose manifest also has an `agent` block has an _agent half_ the panel connects to: it can be hosted on an agent, which gives it an internal plugin tunnel, an installation secret and a forwarded admin API, and it may declare panel pages. See [Agent-Hosted Plugins](agent-hosted-plugins.md).
 
 ## Plugin OIDC client endpoints
 

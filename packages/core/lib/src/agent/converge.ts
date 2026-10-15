@@ -33,6 +33,8 @@ import {
 import { ensureAgentChiselBinary } from './chisel-binary.js';
 import { isAgentEnabled, isAgentLoaded, loadAgent, unloadAgent } from './service.js';
 import { withAgentLock } from './agent-lock.js';
+import { parseAppPluginAssignments, syncAppPluginConfigs } from './app-plugins.js';
+import type { AppPluginPanelCalls, AppPluginSyncResult } from './app-plugins.js';
 
 /** The fields of the relay's agent-config response that converge reads. */
 export interface AgentConfigResponse {
@@ -40,6 +42,8 @@ export interface AgentConfigResponse {
   readonly chiselArgs?: unknown;
   readonly chiselCredentialIssuedAt?: unknown;
   readonly tunnels?: unknown;
+  /** The agent-hosted plugins this agent hosts (relay 4.3+). */
+  readonly appPlugins?: unknown;
 }
 
 export interface IssuedChiselCredential {
@@ -48,11 +52,21 @@ export interface IssuedChiselCredential {
   readonly createdAt: string | null;
 }
 
-/** Panel calls converge may need, bound to the agent's mTLS identity. */
-export interface ConvergePanelCalls {
+/**
+ * Panel calls converge may need, bound to the agent's mTLS identity. The
+ * plugin-config calls are optional so an older caller still converges; a
+ * relay listing `appPlugins` to a caller without them gets a warning.
+ */
+export interface ConvergePanelCalls extends Partial<AppPluginPanelCalls> {
   fetchChiselCredential(): Promise<IssuedChiselCredential>;
   rotateChiselCredential(): Promise<IssuedChiselCredential>;
 }
+
+const NO_APP_PLUGIN_SYNC: AppPluginSyncResult = Object.freeze({
+  fetched: [],
+  acknowledged: [],
+  removed: [],
+});
 
 export interface ConvergeOptions {
   /** Restart a running service even when nothing changed (`lamaste-agent update`). */
@@ -70,6 +84,8 @@ export interface ConvergeResult {
   readonly serviceChanged: boolean;
   readonly credential: 'kept' | 'fetched' | 'rotated';
   readonly binaryUpdated: boolean;
+  /** Configs of hosted plugins fetched, acknowledged or removed by this run. */
+  readonly appPlugins: AppPluginSyncResult;
   /** Non-fatal problems worth reporting (the run still converged). */
   readonly warnings: readonly string[];
 }
@@ -199,13 +215,20 @@ async function convergeLocked(
       : null;
   if (stopState) {
     const serviceChanged = await stopService(label);
+    // The plugin config files follow the relay's view whatever the client
+    // does: unhosting a plugin withdraws its internal tunnel, often the
+    // agent's last one, and its file (with the secret) must still go. Synced
+    // after the stop, so a stop never waits on the relay.
+    const stopWarnings: string[] = [];
+    const appPlugins = await ensureAppPluginConfigs(label, response, panel, stopWarnings);
     return {
       state: stopState,
       tunnels: spec.remotes.length,
       serviceChanged,
       credential: 'kept',
       binaryUpdated: false,
-      warnings: [],
+      appPlugins,
+      warnings: stopWarnings,
     };
   }
 
@@ -223,14 +246,46 @@ async function convergeLocked(
   if (!running || restart) {
     await loadAgent(label);
   }
+
+  // The plugins this agent hosts: their config files follow the relay's
+  // view, after the tunnel client — the secret is useless without the grant.
+  const appPlugins = await ensureAppPluginConfigs(label, response, panel, warnings);
+
   return {
     state: 'running',
     tunnels: spec.remotes.length,
     serviceChanged: !running || restart,
     credential: source,
     binaryUpdated: binary.installed,
+    appPlugins,
     warnings,
   };
+}
+
+async function ensureAppPluginConfigs(
+  label: string,
+  response: AgentConfigResponse,
+  panel: ConvergePanelCalls,
+  warnings: string[],
+): Promise<AppPluginSyncResult> {
+  const assignments = parseAppPluginAssignments(response.appPlugins, warnings);
+  if (!panel.fetchPluginConfig || !panel.acknowledgePluginConfig) {
+    if (assignments.length > 0) {
+      warnings.push(
+        'The panel lists plugins hosted on this agent, but this agent version cannot fetch their configs.',
+      );
+    }
+    return NO_APP_PLUGIN_SYNC;
+  }
+  return syncAppPluginConfigs(
+    label,
+    assignments,
+    {
+      fetchPluginConfig: panel.fetchPluginConfig,
+      acknowledgePluginConfig: panel.acknowledgePluginConfig,
+    },
+    warnings,
+  );
 }
 
 /**

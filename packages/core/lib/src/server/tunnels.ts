@@ -15,8 +15,10 @@
 import crypto from 'node:crypto';
 import {
   AGENT_LABEL_REGEX,
+  INTERNAL_PLUGIN_PORT_RANGE,
   RESERVED_TUNNEL_PORTS,
   derivePluginRoute as coreDerivePluginRoute,
+  isInternalPluginPort,
 } from '../constants.js';
 import { PromiseChainMutex } from '../file-helpers.js';
 
@@ -27,16 +29,30 @@ import { PromiseChainMutex } from '../file-helpers.js';
 export type TunnelType = 'app' | 'panel' | 'plugin';
 export type AccessMode = 'public' | 'authenticated' | 'restricted';
 
+/**
+ * Where a tunnel is reachable from. `public` (the default, and every tunnel
+ * before 4.3): an nginx vhost on `<subdomain>.<domain>` with a certificate.
+ * `internal`: the relay's loopback only — the chisel grant and the port,
+ * no vhost, no certificate, no DNS. Internal tunnels carry an agent-hosted
+ * plugin's admin API to the panel's forwarder; they have no subdomain and no
+ * access mode, and Lamaste assigns their port.
+ */
+export type TunnelExposure = 'public' | 'internal';
+
 export interface TunnelEntry {
   id: string;
-  subdomain: string;
-  fqdn: string;
+  /** `null` on an internal tunnel, which has no hostname. */
+  subdomain: string | null;
+  /** `null` on an internal tunnel. */
+  fqdn: string | null;
   port: number;
   description: string | null;
   type: TunnelType;
   accessMode?: AccessMode | undefined;
   enabled: boolean;
   createdAt: string;
+  /** Absent on tunnels written before 4.3 — those are public. */
+  exposure?: TunnelExposure | undefined;
   pluginName?: string | undefined;
   /**
    * The agent that carries this tunnel. Only that agent receives the tunnel
@@ -259,6 +275,40 @@ function assertTunnelPort(port: number): void {
       'RESERVED_PORT',
     );
   }
+  if (isInternalPluginPort(port)) {
+    throw new TunnelError(
+      `Port ${port} is in the range ${INTERNAL_PLUGIN_PORT_RANGE.min}–${INTERNAL_PLUGIN_PORT_RANGE.max}, ` +
+        'which Lamaste reserves for the internal tunnels of agent-hosted plugins',
+      'RESERVED_PORT',
+    );
+  }
+}
+
+/** True for a tunnel reachable only on the relay's loopback. */
+export function isInternalTunnel(tunnel: Pick<TunnelEntry, 'exposure'>): boolean {
+  return tunnel.exposure === 'internal';
+}
+
+/** A name for a tunnel in logs and results: its subdomain, or its plugin for an internal one. */
+export function tunnelLabel(tunnel: Pick<TunnelEntry, 'subdomain' | 'pluginRoute' | 'id'>): string {
+  return tunnel.subdomain ?? `internal:${tunnel.pluginRoute ?? tunnel.id}`;
+}
+
+/**
+ * The lowest port of {@link INTERNAL_PLUGIN_PORT_RANGE} no tunnel holds and
+ * Lamaste does not reserve. Pure; the caller holds the tunnel lock.
+ */
+export function assignInternalPluginPort(
+  tunnels: ReadonlyArray<Pick<TunnelEntry, 'port'>>,
+): number {
+  const taken = new Set(tunnels.map((t) => t.port));
+  for (let port = INTERNAL_PLUGIN_PORT_RANGE.min; port <= INTERNAL_PLUGIN_PORT_RANGE.max; port++) {
+    if (!taken.has(port) && !RESERVED_TUNNEL_PORTS.includes(port)) return port;
+  }
+  throw new TunnelError(
+    `No free port left in the internal plugin range ${INTERNAL_PLUGIN_PORT_RANGE.min}–${INTERNAL_PLUGIN_PORT_RANGE.max}`,
+    'PORT_IN_USE',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -345,16 +395,17 @@ export function bindUnownedTunnels(
     if (t.agentLabel) return t;
     let owner: string | undefined;
     if (t.type === 'panel') {
-      const named = t.subdomain.startsWith('agent-') ? t.subdomain.slice('agent-'.length) : '';
+      const subdomain = t.subdomain ?? '';
+      const named = subdomain.startsWith('agent-') ? subdomain.slice('agent-'.length) : '';
       owner = active.has(named) ? named : undefined;
     } else {
       owner = sole;
     }
     if (owner) {
-      bound.push({ subdomain: t.subdomain, agentLabel: owner });
+      bound.push({ subdomain: tunnelLabel(t), agentLabel: owner });
       return { ...t, agentLabel: owner };
     }
-    unowned.push(t.subdomain);
+    unowned.push(tunnelLabel(t));
     return t;
   });
   return { tunnels: next, bound, unowned };
@@ -365,11 +416,15 @@ export function bindUnownedTunnels(
 // ---------------------------------------------------------------------------
 
 export interface CreateTunnelOptions {
-  subdomain: string;
-  port: number;
+  /** Required for a public tunnel; must be absent for an internal one. */
+  subdomain?: string | undefined;
+  /** Required for a public tunnel; assigned from the internal range when absent on an internal one. */
+  port?: number | undefined;
   description?: string | undefined;
   type?: TunnelType | undefined;
   accessMode?: AccessMode | undefined;
+  /** `public` (default) or `internal` — see {@link TunnelExposure}. */
+  exposure?: TunnelExposure | undefined;
   pluginName?: string | undefined;
   /** The agent that will carry the tunnel. Must be enrolled and not revoked. */
   agentLabel: string;
@@ -392,12 +447,139 @@ export interface CreateTunnelOptions {
  * 3. Save to state
  * 4. Sync chisel (authfile grants the owning agent the new port)
  *
+ * An internal tunnel (`exposure: 'internal'`) skips steps 1 and 2: it has
+ * no hostname, so there is nothing to certify or to serve. Its port is
+ * assigned from the internal plugin range unless one is given.
+ *
  * Runs under the tunnel lock; the subdomain and port checks read the state
  * inside it. State is written before chisel is synced because the authfile
  * is rendered from persisted state. Rolls back on failure at each step.
  */
 export function createTunnel(opts: CreateTunnelOptions): Promise<TunnelEntry> {
-  return withTunnelLock(() => createTunnelLocked(opts));
+  return withTunnelLock(() =>
+    opts.exposure === 'internal' ? createInternalTunnelLocked(opts) : createTunnelLocked(opts),
+  );
+}
+
+async function createInternalTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntry> {
+  const {
+    description,
+    type = 'plugin',
+    pluginName,
+    agentLabel,
+    maxBodySizeMb = TUNNEL_MAX_BODY_MB.default,
+    chisel,
+    state,
+    agents,
+    logger,
+  } = opts;
+
+  // --- Validation ---
+
+  if (type !== 'plugin' || !pluginName) {
+    throw new TunnelError(
+      'An internal tunnel is a plugin tunnel: pluginName is required',
+      'INVALID_SETTING',
+    );
+  }
+  if (opts.subdomain !== undefined) {
+    throw new TunnelError('An internal tunnel has no subdomain', 'INVALID_SETTING');
+  }
+  if (opts.accessMode !== undefined) {
+    throw new TunnelError(
+      'An internal tunnel has no access mode — it is reachable only on the relay loopback',
+      'INVALID_SETTING',
+    );
+  }
+  assertMaxBodySize(maxBodySizeMb);
+  await assertAssignableAgent(agentLabel, agents);
+  const pluginRoute = derivePluginRoute(pluginName);
+  if ((RESERVED_PLUGIN_ROUTES as readonly string[]).includes(pluginRoute)) {
+    throw new TunnelError(
+      `Plugin route prefix '${pluginRoute}' conflicts with reserved path`,
+      'RESERVED_PLUGIN_ROUTE',
+    );
+  }
+
+  const existing = await state.readTunnels();
+
+  let port: number;
+  if (opts.port === undefined) {
+    port = assignInternalPluginPort(existing);
+  } else {
+    port = opts.port;
+    if (!isInternalPluginPort(port)) {
+      throw new TunnelError(
+        `An internal tunnel's port must be in ${INTERNAL_PLUGIN_PORT_RANGE.min}–${INTERNAL_PLUGIN_PORT_RANGE.max}`,
+        'INVALID_SETTING',
+      );
+    }
+    if (RESERVED_TUNNEL_PORTS.includes(port)) {
+      throw new TunnelError(`Port ${port} belongs to a Lamaste service`, 'RESERVED_PORT');
+    }
+    if (existing.find((t) => t.port === port)) {
+      throw new TunnelError(`Port ${port} is already in use by another tunnel`, 'PORT_IN_USE');
+    }
+  }
+
+  const tunnel: TunnelEntry = {
+    id: crypto.randomUUID(),
+    subdomain: null,
+    fqdn: null,
+    port,
+    description: description ?? null,
+    type: 'plugin',
+    accessMode: undefined,
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    exposure: 'internal',
+    agentLabel,
+    maxBodySizeMb,
+    pluginName,
+    pluginRoute,
+  };
+
+  // --- Save to state, then sync chisel (as for a public tunnel) ---
+
+  try {
+    await state.writeTunnels([...existing, tunnel]);
+  } catch (err: unknown) {
+    logger.error({ err }, 'Failed to save tunnel state');
+    throw new TunnelError(
+      `State persistence failed: ${err instanceof Error ? err.message : String(err)}`,
+      'STATE_FAILED',
+    );
+  }
+
+  try {
+    logger.info({ port, agentLabel, pluginRoute }, 'Syncing Chisel for internal plugin tunnel');
+    await chisel.syncChisel();
+  } catch (err: unknown) {
+    logger.error({ err }, 'Failed to sync Chisel');
+    let stateRestored = false;
+    try {
+      await state.writeTunnels(existing);
+      stateRestored = true;
+    } catch (rollbackErr: unknown) {
+      logger.error({ err: rollbackErr }, 'Rollback: failed to remove tunnel from state');
+    }
+    if (stateRestored) {
+      try {
+        await chisel.syncChisel();
+      } catch (rollbackErr: unknown) {
+        logger.error(
+          { err: rollbackErr },
+          'Rollback: failed to re-sync chisel; the authfile may still grant the removed port',
+        );
+      }
+    }
+    throw new TunnelError(
+      `Chisel reconfiguration failed: ${err instanceof Error ? err.message : String(err)}`,
+      'CHISEL_FAILED',
+    );
+  }
+
+  return tunnel;
 }
 
 async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntry> {
@@ -422,6 +604,12 @@ async function createTunnelLocked(opts: CreateTunnelOptions): Promise<TunnelEntr
 
   // --- Validation ---
 
+  if (typeof subdomain !== 'string' || subdomain.length === 0) {
+    throw new TunnelError('A tunnel needs a subdomain', 'INVALID_SETTING');
+  }
+  if (port === undefined) {
+    throw new TunnelError('A tunnel needs a port', 'INVALID_SETTING');
+  }
   assertTunnelPort(port);
   assertMaxBodySize(maxBodySizeMb);
   await assertAssignableAgent(agentLabel, agents);
@@ -606,11 +794,15 @@ export function deleteTunnel(opts: DeleteTunnelOptions): Promise<{ ok: true }> {
     }
     authorize?.(tunnel);
 
-    logger.info({ subdomain: tunnel.subdomain }, 'Removing nginx vhost');
-    if (tunnel.type === 'panel') {
-      await nginx.removeAgentPanelVhost(tunnel.subdomain);
+    if (tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
+      logger.info({ subdomain: tunnel.subdomain }, 'Removing nginx vhost');
+      if (tunnel.type === 'panel') {
+        await nginx.removeAgentPanelVhost(tunnel.subdomain);
+      } else {
+        await nginx.removeAppVhost(tunnel.subdomain);
+      }
     } else {
-      await nginx.removeAppVhost(tunnel.subdomain);
+      logger.info({ tunnel: tunnelLabel(tunnel) }, 'Removing internal plugin tunnel');
     }
 
     await state.writeTunnels(tunnels.filter((t) => t.id !== id));
@@ -718,20 +910,29 @@ async function toggleTunnelLocked(
 
   const isPanel = tunnel.type === 'panel';
 
-  if (enabled) {
-    logger.info({ subdomain: tunnel.subdomain }, 'Enabling tunnel');
-    if (isPanel) {
-      await nginx.enableAgentPanelVhost(tunnel.subdomain);
+  // An internal tunnel has no vhost: enabling or disabling it is only the
+  // chisel grant, which the sync below gives or withdraws.
+  if (tunnel.subdomain !== null && !isInternalTunnel(tunnel)) {
+    if (enabled) {
+      logger.info({ subdomain: tunnel.subdomain }, 'Enabling tunnel');
+      if (isPanel) {
+        await nginx.enableAgentPanelVhost(tunnel.subdomain);
+      } else {
+        await nginx.enableAppVhost(tunnel.subdomain);
+      }
     } else {
-      await nginx.enableAppVhost(tunnel.subdomain);
+      logger.info({ subdomain: tunnel.subdomain }, 'Disabling tunnel');
+      if (isPanel) {
+        await nginx.disableAgentPanelVhost(tunnel.subdomain);
+      } else {
+        await nginx.disableAppVhost(tunnel.subdomain);
+      }
     }
   } else {
-    logger.info({ subdomain: tunnel.subdomain }, 'Disabling tunnel');
-    if (isPanel) {
-      await nginx.disableAgentPanelVhost(tunnel.subdomain);
-    } else {
-      await nginx.disableAppVhost(tunnel.subdomain);
-    }
+    logger.info(
+      { tunnel: tunnelLabel(tunnel), enabled },
+      enabled ? 'Enabling internal plugin tunnel' : 'Disabling internal plugin tunnel',
+    );
   }
 
   // Save state, then sync chisel — a disabled tunnel's port is not granted
@@ -795,7 +996,7 @@ async function assignTunnelLocked(
   tunnel.agentLabel = agentLabel;
   await state.writeTunnels(tunnels);
   logger.info(
-    { subdomain: tunnel.subdomain, from: previous ?? null, to: agentLabel },
+    { tunnel: tunnelLabel(tunnel), from: previous ?? null, to: agentLabel },
     'Tunnel reassigned',
   );
   await syncOrThrow(chisel);
@@ -854,6 +1055,31 @@ async function reconfigureTunnelLocked(
     );
   }
 
+  // An internal tunnel has no vhost: it cannot be given an access mode, and
+  // its body limit is enforced by the panel's forwarder, so only the state
+  // changes.
+  if (isInternalTunnel(tunnel) || tunnel.subdomain === null) {
+    if (opts.accessMode !== undefined) {
+      throw new TunnelError(
+        'An internal tunnel has no access mode — it is reachable only on the relay loopback',
+        'INVALID_SETTING',
+      );
+    }
+    if (opts.maxBodySizeMb === undefined || opts.maxBodySizeMb === tunnel.maxBodySizeMb) {
+      return { ok: true as const, tunnel };
+    }
+    const previousLimit = tunnel.maxBodySizeMb;
+    tunnel.maxBodySizeMb = opts.maxBodySizeMb;
+    await state.writeTunnels(tunnels);
+    logger.info(
+      { tunnel: tunnelLabel(tunnel), from: previousLimit ?? null, to: opts.maxBodySizeMb },
+      'Internal plugin tunnel body limit changed',
+    );
+    return { ok: true as const, tunnel };
+  }
+  const subdomain = tunnel.subdomain;
+  const fqdn = tunnel.fqdn ?? `${subdomain}.${domain}`;
+
   const before = {
     accessMode: tunnel.accessMode ?? 'restricted',
     maxBodySizeMb: tunnel.maxBodySizeMb,
@@ -868,7 +1094,7 @@ async function reconfigureTunnelLocked(
 
   let certPath: string | undefined;
   try {
-    const cert = await certbot.issueTunnelCert(tunnel.fqdn, email);
+    const cert = await certbot.issueTunnelCert(fqdn, email);
     certPath = cert.certPath || undefined;
   } catch (err: unknown) {
     throw new TunnelError(
@@ -879,7 +1105,7 @@ async function reconfigureTunnelLocked(
 
   const enabled = tunnel.enabled !== false;
   const render = (settings: typeof after): Promise<void> =>
-    writeModeVhost(nginx, settings.accessMode, tunnel.subdomain, domain, tunnel.port, certPath, {
+    writeModeVhost(nginx, settings.accessMode, subdomain, domain, tunnel.port, certPath, {
       ...(tunnel.pluginRoute ? { pathPrefix: tunnel.pluginRoute } : {}),
       ...(settings.maxBodySizeMb !== undefined ? { maxBodySizeMb: settings.maxBodySizeMb } : {}),
       enabled,
@@ -911,7 +1137,7 @@ async function reconfigureTunnelLocked(
     );
   }
 
-  logger.info({ subdomain: tunnel.subdomain, from: before, to: after }, 'Tunnel reconfigured');
+  logger.info({ subdomain, from: before, to: after }, 'Tunnel reconfigured');
   return { ok: true as const, tunnel };
 }
 
@@ -954,11 +1180,11 @@ export function releaseAgentTunnels(
     const next: TunnelEntry[] = [];
     for (const t of tunnels) {
       if (t.type === 'panel' && (t.agentLabel === agentLabel || t.subdomain === panelSubdomain)) {
-        removedPanels.push(t.subdomain);
+        removedPanels.push(t.subdomain ?? panelSubdomain);
         continue;
       }
       if (t.agentLabel === agentLabel) {
-        released.push(t.subdomain);
+        released.push(tunnelLabel(t));
         const { agentLabel: _dropped, ...rest } = t;
         next.push(rest);
         continue;

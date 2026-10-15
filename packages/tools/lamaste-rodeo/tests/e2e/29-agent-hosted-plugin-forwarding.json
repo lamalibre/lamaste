@@ -1,0 +1,3508 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 29,
+    "name": "Agent-hosted plugin: hosting, forwarding, installation secret",
+    "suite": "e2e",
+    "description": "29 — Agent-hosted plugin: hosting, forwarding, installation secret",
+    "deps": [],
+    "requires": ["curl", "jq", "node", "npm"]
+  },
+  "env": {},
+  "constants": {},
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "DELETE plugins/${PLUGIN_NAME}/hosting",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN_NAME}/hosting"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "POST plugins/${PLUGIN_NAME}/disable",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "POST",
+        "path": "plugins/${PLUGIN_NAME}/disable"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "DELETE plugins/${PLUGIN_NAME}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "plugins/${PLUGIN_NAME}"
+      }
+    },
+    {
+      "id": "cleanup-3",
+      "label": "DELETE certs/agent/${AGENT_LABEL}",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "DELETE",
+        "path": "certs/agent/${AGENT_LABEL}"
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-check-onboarding-is-complete",
+      "label": "Pre-flight: check onboarding is complete",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Domain: ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Domain: ${DOMAIN}"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "GET /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN_NAME}/hosting"
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        }
+      ],
+      "when": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "var_not_empty",
+            "variable": "DOMAIN"
+          },
+          {
+            "kind": "var_not_eq",
+            "variable": "DOMAIN",
+            "value": "null"
+          }
+        ]
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping agent-hosted plugin forwarding tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-app-plugin\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_appplugin_000000000000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-apphost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nPORT=\"\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  pkill -f \"[h]ttp.server ${PORT:-0}\" 2>/dev/null || true\n  api_delete \"plugins/${PLUGIN_NAME}/hosting\" > /dev/null 2>&1 || true\n  api_post \"plugins/${PLUGIN_NAME}/disable\" > /dev/null 2>&1 || true\n  api_delete \"plugins/${PLUGIN_NAME}\" > /dev/null 2>&1 || true\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\n# agent_api_get path — GET as the test agent (its own certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_get_status() {\n  curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" \"${BASE_URL}/api/$1\" 2>/dev/null || echo \"000\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<name>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN_NAME}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_health <state> <seconds> — until the hosting's health.state is <state>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# write_half_config <plugin-config json> — the file the agent would write\nwrite_half_config() {\n  echo \"$1\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\n  chmod 600 \"${HALF_CONFIG}.tmp\"\n  mv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\n}\n\nstart_half() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN_NAME}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" &> \"${WORK_DIR}/half.out\" &\n  local deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# ===========================================================================\n# 1. Stand-in registry, install, enable\n# ==========================================================================="
+    },
+    {
+      "id": "install-and-enable-the-app-plugin-fixture",
+      "label": "Install and enable the app plugin fixture",
+      "steps": [
+        {
+          "id": "step-60",
+          "label": "Stand-in registry is up on ${STUB_URL}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Stand-in registry is up on ${STUB_URL}"
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "App plugin fixture installed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "App plugin fixture installed"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "Install records hosting agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.hosting",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "Install records hosting agent"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "Install records the agent block",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.agent.requires.node",
+              "expected": {
+                "kind": "literal",
+                "value": ">=22"
+              },
+              "message": "Install records the agent block"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "A plugin with an agent half may declare panel pages",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.panel.pages | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "A plugin with an agent half may declare panel pages"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/enable"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-70",
+          "label": "Plugin enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Plugin enabled"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "GET /api/plugins shows the plugin as not hosted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LISTED"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "GET /api/plugins shows the plugin as not hosted"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "UNHOSTED_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "An enabled but unhosted plugin's route answers 503",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "UNHOSTED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "An enabled but unhosted plugin's route answers 503"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install and enable the app plugin fixture\"\n\nrm -rf \"${WORK_DIR}\"\nmkdir -p \"${WORK_DIR}\" \"${AGENT_CERT_DIR}\"\nchmod 700 \"${AGENT_CERT_DIR}\"\nwrite_stub_registry \"${WORK_DIR}/stub-registry.mjs\"\nwrite_app_plugin_fixture \"${WORK_DIR}/fixture\"\nwrite_app_plugin_half \"${WORK_DIR}/app-plugin-half.mjs\"\npkill -f '[s]tub-registry.mjs' 2>/dev/null || true\nnohup node \"${WORK_DIR}/stub-registry.mjs\" --port \"${STUB_PORT}\" --admin-token \"${STUB_ADMIN_TOKEN}\" --issuer \"https://auth.${DOMAIN}\" --audience \"${STUB_URL}\" --jwks-url http://127.0.0.1:9091/jwks.json --package \"${WORK_DIR}/fixture\" &> \"${WORK_DIR}/stub.log\" &\nif wait_for_http \"${STUB_URL}/-/ping\" 30; then\n  log_pass \"Stand-in registry is up on ${STUB_URL}\"\nelse\n  log_fail \"Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)\"\n  end_test\n  exit $?\nfi\nprintf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' \"${STUB_URL}\" \"${STUB_PORT}\" \"${STUB_ADMIN_TOKEN}\" > \"${WORK_DIR}/npmrc\"\ninstall -o lamaste -g lamaste -m 0600 \"${WORK_DIR}/npmrc\" \"${STATE_DIR}/.npmrc\"\n\nINSTALL_RESPONSE=$(api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.ok' 'true' \"App plugin fixture installed\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.hosting' 'agent' \"Install records hosting agent\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.agent.requires.node' '>=22' \"Install records the agent block\" || true\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.panel.pages | length' '1' \"A plugin with an agent half may declare panel pages\" || true\n\nENABLE_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/enable\")\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\nLISTED=$(api_get \"plugins\" | jq -r \".plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\") | .agentHosting\" 2>/dev/null || echo \"\")\nassert_eq \"$LISTED\" \"null\" \"GET /api/plugins shows the plugin as not hosted\" || true\nUNHOSTED_STATUS=$(api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$UNHOSTED_STATUS\" \"503\" \"An enabled but unhosted plugin's route answers 503\" || true\n\n# ===========================================================================\n# 2. An agent to host it on\n# ==========================================================================="
+    },
+    {
+      "id": "enroll-the-hosting-agent",
+      "label": "Enroll the hosting agent",
+      "steps": [
+        {
+          "id": "step-75",
+          "label": "POST /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "certs/agent",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CERT_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "Agent certificate issued for ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Agent certificate issued for ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Extract P12_PASS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "P12_PASS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "CERT_RESPONSE"
+              },
+              "expression": ".p12Password"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "GET /api/agents/me/capabilities",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/capabilities"
+          },
+          "capture": [
+            {
+              "variable": "ME",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-83",
+          "label": "The agent certificate authenticates",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ME"
+              },
+              "path": ".role",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "The agent certificate authenticates"
+            }
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "BEFORE_CONFIG_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-85",
+          "label": "Without the host capability the plugin config is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BEFORE_CONFIG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "Without the host capability the plugin config is refused"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Enroll the hosting agent\"\n\nCERT_RESPONSE=$(api_post \"certs/agent\" \"{\\\"label\\\":\\\"${AGENT_LABEL}\\\",\\\"capabilities\\\":[\\\"tunnels:read\\\"]}\")\nassert_json_field \"$CERT_RESPONSE\" '.ok' 'true' \"Agent certificate issued for ${AGENT_LABEL}\" || true\nP12_PASS=$(echo \"$CERT_RESPONSE\" | jq -r '.p12Password' 2>/dev/null || echo \"\")\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.crt\" -clcerts -nokeys -passin pass:\"${P12_PASS}\" 2>/dev/null\nopenssl pkcs12 -in \"${STATE_DIR}/pki/agents/${AGENT_LABEL}/client.p12\" -out \"${AGENT_CERT_DIR}/client.key\" -nocerts -nodes -passin pass:\"${P12_PASS}\" 2>/dev/null\nchmod 600 \"${AGENT_CERT_DIR}/client.key\"\nunset P12_PASS\nME=$(agent_api_get \"agents/me/capabilities\")\nassert_json_field \"$ME\" '.role' 'agent' \"The agent certificate authenticates\" || true\nBEFORE_CONFIG_STATUS=$(agent_api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_eq \"$BEFORE_CONFIG_STATUS\" \"403\" \"Without the host capability the plugin config is refused\" || true\n\n# ===========================================================================\n# 3. Hosting: internal tunnel, capability, secret\n# ==========================================================================="
+    },
+    {
+      "id": "host-the-plugin-on-the-agent",
+      "label": "Host the plugin on the agent",
+      "steps": [
+        {
+          "id": "step-86",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting",
+            "body": {
+              "agentLabel": "no-such-agent"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "MISSING_AGENT_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "Hosting on an unknown agent is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MISSING_AGENT_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "Hosting on an unknown agent is refused"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-89",
+          "label": "Plugin hosted on ${AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin hosted on ${AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Extract PORT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PORT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "expression": ".hosting.port"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Port ${PORT} assigned from the internal range",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${PORT} assigned from the internal range"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        },
+        {
+          "id": "step-92",
+          "label": "Port ${PORT} is not in 21000–21999",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${PORT} is not in 21000–21999"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "The secret is not yet fetched",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".hosting.secretAcknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "The secret is not yet fetched"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Health starts unknown",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".hosting.health.state",
+              "expected": {
+                "kind": "literal",
+                "value": "unknown"
+              },
+              "message": "Health starts unknown"
+            }
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "expression": ".hosting.tunnelId"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "TWICE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-97",
+          "label": "A plugin has one hosting",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TWICE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "409"
+              },
+              "message": "A plugin has one hosting"
+            }
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "GET /api/tunnels?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "The tunnel is internal",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".exposure",
+              "expected": {
+                "kind": "literal",
+                "value": "internal"
+              },
+              "message": "The tunnel is internal"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "An internal tunnel has no subdomain",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".subdomain",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "An internal tunnel has no subdomain"
+            }
+          }
+        },
+        {
+          "id": "step-101",
+          "label": "An internal tunnel has no hostname",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".fqdn",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "An internal tunnel has no hostname"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "An internal tunnel has no access mode",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".accessMode",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "An internal tunnel has no access mode"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "The hosting agent carries it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "The hosting agent carries it"
+            }
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "The tunnel names the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL"
+              },
+              "path": ".pluginRoute",
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "The tunnel names the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "Set VHOST_PRESENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "ls /etc/nginx/sites-available 2>/dev/null | grep -c \"${PLUGIN_NAME}\" || true"
+          },
+          "capture": [
+            {
+              "variable": "VHOST_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "No nginx vhost was written for it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_PRESENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "No nginx vhost was written for it"
+            }
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "Set GRANT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "GRANT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-108",
+          "label": "The chisel authfile grants the agent port ${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GRANT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The chisel authfile grants the agent port ${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "CAPS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-110",
+          "label": "The agent holds plugin:${PLUGIN_NAME}:host",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "plugin:${PLUGIN_NAME}:host"
+              },
+              "message": "The agent holds plugin:${PLUGIN_NAME}:host"
+            }
+          }
+        },
+        {
+          "id": "step-111",
+          "label": "POST /api/tunnels",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "tunnels",
+            "body": "{\\",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "MANUAL_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-112",
+          "label": "A manual tunnel on a port of the internal range is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "MANUAL_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "A manual tunnel on a port of the internal range is refused"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "PATCH /api/tunnels/${TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "tunnels/${TUNNEL_ID}",
+            "body": {
+              "accessMode": "public"
+            },
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "PATCH_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "The internal tunnel cannot be changed through the tunnels API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PATCH_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The internal tunnel cannot be changed through the tunnels API"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "DELETE /api/tunnels/${TUNNEL_ID}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "tunnels/${TUNNEL_ID}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DELETE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "The internal tunnel cannot be deleted through the tunnels API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DELETE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The internal tunnel cannot be deleted through the tunnels API"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Host the plugin on the agent\"\n\nMISSING_AGENT_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" '{\"agentLabel\":\"no-such-agent\"}')\nassert_eq \"$MISSING_AGENT_STATUS\" \"400\" \"Hosting on an unknown agent is refused\" || true\n\nHOST_RESPONSE=$(api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.ok' 'true' \"Plugin hosted on ${AGENT_LABEL}\" || true\nPORT=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.port' 2>/dev/null || echo \"0\")\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nassert_json_field \"$HOST_RESPONSE\" '.hosting.secretAcknowledged' 'false' \"The secret is not yet fetched\" || true\nassert_json_field \"$HOST_RESPONSE\" '.hosting.health.state' 'unknown' \"Health starts unknown\" || true\nTUNNEL_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.tunnelId' 2>/dev/null || echo \"\")\n\nTWICE_STATUS=$(api_post_status \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$TWICE_STATUS\" \"409\" \"A plugin has one hosting\" || true\n\nTUNNEL=$(api_get \"tunnels?limit=500\" | jq \".tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$TUNNEL\" '.exposure' 'internal' \"The tunnel is internal\" || true\nassert_json_field \"$TUNNEL\" '.subdomain' 'null' \"An internal tunnel has no subdomain\" || true\nassert_json_field \"$TUNNEL\" '.fqdn' 'null' \"An internal tunnel has no hostname\" || true\nassert_json_field \"$TUNNEL\" '.accessMode' 'null' \"An internal tunnel has no access mode\" || true\nassert_json_field \"$TUNNEL\" '.agentLabel' \"${AGENT_LABEL}\" \"The hosting agent carries it\" || true\nassert_json_field \"$TUNNEL\" '.pluginRoute' \"${PLUGIN_NAME}\" \"The tunnel names the plugin\" || true\nVHOST_PRESENT=$(ls /etc/nginx/sites-available 2>/dev/null | grep -c \"${PLUGIN_NAME}\" || true)\nassert_eq \"$VHOST_PRESENT\" \"0\" \"No nginx vhost was written for it\" || true\n# The authfile is JSON: the pattern's backslashes are doubled in it.\nGRANT=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT\" \"1\" \"The chisel authfile grants the agent port ${PORT}\" || true\n\nCAPS=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_contains \"$CAPS\" \"plugin:${PLUGIN_NAME}:host\" \"The agent holds plugin:${PLUGIN_NAME}:host\" || true\n\nMANUAL_STATUS=$(api_post_status \"tunnels\" \"{\\\"subdomain\\\":\\\"e2e29manual\\\",\\\"port\\\":21005,\\\"agentLabel\\\":\\\"${AGENT_LABEL}\\\"}\")\nassert_eq \"$MANUAL_STATUS\" \"400\" \"A manual tunnel on a port of the internal range is refused\" || true\nPATCH_STATUS=$(api_patch_status \"tunnels/${TUNNEL_ID}\" '{\"accessMode\":\"public\"}')\nassert_eq \"$PATCH_STATUS\" \"403\" \"The internal tunnel cannot be changed through the tunnels API\" || true\nDELETE_STATUS=$(api_delete_status \"tunnels/${TUNNEL_ID}\")\nassert_eq \"$DELETE_STATUS\" \"403\" \"The internal tunnel cannot be deleted through the tunnels API\" || true\n\n# ===========================================================================\n# 4. The hosting agent fetches and acknowledges the plugin config\n# ==========================================================================="
+    },
+    {
+      "id": "plugin-config-hosting-agent-only",
+      "label": "Plugin config: hosting agent only",
+      "steps": [
+        {
+          "id": "step-117",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "ADMIN_CONFIG_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-118",
+          "label": "The admin certificate has no agent identity to read a plugin config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ADMIN_CONFIG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The admin certificate has no agent identity to read a plugin config"
+            }
+          }
+        },
+        {
+          "id": "step-119",
+          "label": "GET /api/tunnels/agent-config",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels/agent-config"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-120",
+          "label": "agent-config lists the hosted plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "path": ".appPlugins[0].route",
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "agent-config lists the hosted plugin"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "agent-config carries its port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "path": ".appPlugins[0].port",
+              "expected": {
+                "kind": "var",
+                "name": "PORT"
+              },
+              "message": "agent-config carries its port"
+            }
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "agent-config says the secret is not acknowledged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AGENT_CONFIG"
+              },
+              "path": ".appPlugins[0].secretAcknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "agent-config says the secret is not acknowledged"
+            }
+          }
+        },
+        {
+          "id": "step-123",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "PLUGIN_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-124",
+          "label": "The hosting agent fetches its plugin config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PLUGIN_CONFIG"
+              },
+              "path": ".plugin",
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "The hosting agent fetches its plugin config"
+            }
+          }
+        },
+        {
+          "id": "step-125",
+          "label": "The config carries the port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PLUGIN_CONFIG"
+              },
+              "path": ".port",
+              "expected": {
+                "kind": "var",
+                "name": "PORT"
+              },
+              "message": "The config carries the port"
+            }
+          }
+        },
+        {
+          "id": "step-126",
+          "label": "Extract SECRET_SHAPE",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "SECRET_SHAPE",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PLUGIN_CONFIG"
+              },
+              "expression": ".secret | test(\"^[a-f0-9]{64}$\")"
+            }
+          }
+        },
+        {
+          "id": "step-127",
+          "label": "The secret is 32 random bytes, hex",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "SECRET_SHAPE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The secret is 32 random bytes, hex"
+            }
+          }
+        },
+        {
+          "id": "step-128",
+          "label": "Extract ISSUED_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "ISSUED_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "PLUGIN_CONFIG"
+              },
+              "expression": ".issuedAt"
+            }
+          }
+        },
+        {
+          "id": "step-130",
+          "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}/ack",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "ACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-131",
+          "label": "The agent acknowledges the secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ACK"
+              },
+              "path": ".acknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent acknowledges the secret"
+            }
+          }
+        },
+        {
+          "id": "step-132",
+          "label": "The hosting records the acknowledgement",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.secretAcknowledged')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The hosting records the acknowledgement"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Plugin config: hosting agent only\"\n\nADMIN_CONFIG_STATUS=$(api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_eq \"$ADMIN_CONFIG_STATUS\" \"403\" \"The admin certificate has no agent identity to read a plugin config\" || true\n\nAGENT_CONFIG=$(agent_api_get \"tunnels/agent-config\")\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].route\" \"${PLUGIN_NAME}\" \"agent-config lists the hosted plugin\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].port\" \"${PORT}\" \"agent-config carries its port\" || true\nassert_json_field \"$AGENT_CONFIG\" \".appPlugins[0].secretAcknowledged\" \"false\" \"agent-config says the secret is not acknowledged\" || true\n\nPLUGIN_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_json_field \"$PLUGIN_CONFIG\" '.plugin' \"${PLUGIN_NAME}\" \"The hosting agent fetches its plugin config\" || true\nassert_json_field \"$PLUGIN_CONFIG\" '.port' \"${PORT}\" \"The config carries the port\" || true\nSECRET_SHAPE=$(echo \"$PLUGIN_CONFIG\" | jq -r '.secret | test(\"^[a-f0-9]{64}$\")' 2>/dev/null || echo \"false\")\nassert_eq \"$SECRET_SHAPE\" \"true\" \"The secret is 32 random bytes, hex\" || true\nISSUED_AT=$(echo \"$PLUGIN_CONFIG\" | jq -r '.issuedAt' 2>/dev/null || echo \"\")\nwrite_half_config \"$PLUGIN_CONFIG\"\n\nACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN_NAME}/ack\" \"{\\\"issuedAt\\\":\\\"${ISSUED_AT}\\\"}\")\nassert_json_field \"$ACK\" '.acknowledged' 'true' \"The agent acknowledges the secret\" || true\nassert_eq \"$(hosting_field '.hosting.secretAcknowledged')\" \"true\" \"The hosting records the acknowledgement\" || true\n\n# ===========================================================================\n# 5. Forwarding\n# ==========================================================================="
+    },
+    {
+      "id": "forwarding-through-api-plugin-name",
+      "label": "Forwarding through /api/${PLUGIN_NAME}/*",
+      "steps": [
+        {
+          "id": "step-133",
+          "label": "Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)"
+          }
+        },
+        {
+          "id": "step-134",
+          "label": "Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-135",
+          "label": "Set BARE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\""
+          },
+          "capture": [
+            {
+              "variable": "BARE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-136",
+          "label": "A loopback call without an assertion is refused",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BARE"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "malformed"
+              },
+              "message": "A loopback call without an assertion is refused"
+            }
+          }
+        },
+        {
+          "id": "step-137",
+          "label": "GET /api/${PLUGIN_NAME}/ping?x=1",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping?x=1"
+          },
+          "capture": [
+            {
+              "variable": "PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-138",
+          "label": "GET /api/${PLUGIN_NAME}/ping reaches the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/${PLUGIN_NAME}/ping reaches the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-139",
+          "label": "The assertion names the admin caller",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".caller.type",
+              "expected": {
+                "kind": "literal",
+                "value": "admin"
+              },
+              "message": "The assertion names the admin caller"
+            }
+          }
+        },
+        {
+          "id": "step-140",
+          "label": "The path is mapped under /admin with its query",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".path",
+              "expected": {
+                "kind": "literal",
+                "value": "/admin/ping?x=1"
+              },
+              "message": "The path is mapped under /admin with its query"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "nginx's client-certificate headers do not pass",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".sslClientDn",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "nginx's client-certificate headers do not pass"
+            }
+          }
+        },
+        {
+          "id": "step-142",
+          "label": "GET /api/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "ROOT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-143",
+          "label": "GET /api/${PLUGIN_NAME} maps to /admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROOT"
+              },
+              "path": ".path",
+              "expected": {
+                "kind": "literal",
+                "value": "/admin"
+              },
+              "message": "GET /api/${PLUGIN_NAME} maps to /admin"
+            }
+          }
+        },
+        {
+          "id": "step-144",
+          "label": "Set COOKIE_PING",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\""
+          },
+          "capture": [
+            {
+              "variable": "COOKIE_PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-145",
+          "label": "The panel's cookie never reaches the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COOKIE_PING"
+              },
+              "path": ".cookie",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "The panel's cookie never reaches the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-146",
+          "label": "An Authorization header never reaches the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "COOKIE_PING"
+              },
+              "path": ".authorization",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "An Authorization header never reaches the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-147",
+          "label": "GET /api/${PLUGIN_NAME}/app/secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/app/secret",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "USER_SURFACE_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-148",
+          "label": "The agent half's /app is out of the forwarder's reach",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "USER_SURFACE_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The agent half's /app is out of the forwarder's reach"
+            }
+          }
+        },
+        {
+          "id": "step-149",
+          "label": "Set DIRECT_APP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "DIRECT_APP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-150",
+          "label": "(the agent half does serve /app directly)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "DIRECT_APP"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "USER SURFACE"
+              },
+              "message": "(the agent half does serve /app directly)"
+            }
+          }
+        },
+        {
+          "id": "step-151",
+          "label": "GET /api/${PLUGIN_NAME}/panel.js",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/panel.js"
+          },
+          "capture": [
+            {
+              "variable": "BUNDLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-152",
+          "label": "The admin bundle is served through the forwarder",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BUNDLE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "__lamalibrePlugins"
+              },
+              "message": "The admin bundle is served through the forwarder"
+            }
+          }
+        },
+        {
+          "id": "step-153",
+          "label": "Set BUNDLE_TYPE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "BUNDLE_TYPE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-154",
+          "label": "The bundle keeps its content type",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BUNDLE_TYPE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "javascript"
+              },
+              "message": "The bundle keeps its content type"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "GET /api/plugins/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "PAGES",
+              "from": {
+                "kind": "jq",
+                "expression": ".plugin.panel.pages[0].path"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-156",
+          "label": "The panel lists the plugin's page",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "PAGES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "/status"
+              },
+              "message": "The panel lists the plugin's page"
+            }
+          }
+        },
+        {
+          "id": "step-158",
+          "label": "Set ECHO",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "ECHO",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-159",
+          "label": "A request body streams through",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ECHO"
+              },
+              "path": ".bytes",
+              "expected": {
+                "kind": "literal",
+                "value": "4096"
+              },
+              "message": "A request body streams through"
+            }
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "Set ECHO_HEADERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\""
+          },
+          "capture": [
+            {
+              "variable": "ECHO_HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-161",
+          "label": "Set-Cookie from the application never passes back",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "ECHO_HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "app-session"
+              },
+              "message": "Set-Cookie from the application never passes back"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "Set BIG_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "BIG_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "A body above the tunnel's 10 MiB limit is refused with 413",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "BIG_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "413"
+              },
+              "message": "A body above the tunnel's 10 MiB limit is refused with 413"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "Set SSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "SSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-166",
+          "label": "Server-sent events pass through nginx and the forwarder",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "data: tick 3"
+              },
+              "message": "Server-sent events pass through nginx and the forwarder"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "Set SSE_HEADERS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "SSE_HEADERS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-168",
+          "label": "The panel marks the event stream unbuffered for nginx",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SSE_HEADERS"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "x-accel-buffering: no"
+              },
+              "message": "The panel marks the event stream unbuffered for nginx"
+            }
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "AGENT_FORWARD_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-170",
+          "label": "The host capability alone does not admit calls to the plugin's API",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENT_FORWARD_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The host capability alone does not admit calls to the plugin's API"
+            }
+          }
+        },
+        {
+          "id": "step-171",
+          "label": "Set HALF_LINES",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "HALF_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-172",
+          "label": "The agent half verified every forwarded call (${HALF_LINES} admin calls logged)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent half verified every forwarded call (${HALF_LINES} admin calls logged)"
+          }
+        },
+        {
+          "id": "step-173",
+          "label": "The agent half logged ${HALF_LINES} verified admin calls",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent half logged ${HALF_LINES} verified admin calls"
+          }
+        }
+      ],
+      "bash": "log_section \"Forwarding through /api/${PLUGIN_NAME}/*\"\n\nif start_half; then\n  log_pass \"Agent half listens on 127.0.0.1:${PORT} and refuses a bare call (401)\"\nelse\n  log_fail \"Agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)\"\nfi\nBARE=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/admin/ping\" 2>/dev/null || echo \"{}\")\nassert_json_field \"$BARE\" '.reason' 'malformed' \"A loopback call without an assertion is refused\" || true\n\nPING=$(api_get \"${PLUGIN_NAME}/ping?x=1\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The assertion names the admin caller\" || true\nassert_json_field \"$PING\" '.path' '/admin/ping?x=1' \"The path is mapped under /admin with its query\" || true\nassert_json_field \"$PING\" '.sslClientDn' 'null' \"nginx's client-certificate headers do not pass\" || true\n\nROOT=$(api_get \"${PLUGIN_NAME}\")\nassert_json_field \"$ROOT\" '.path' '/admin' \"GET /api/${PLUGIN_NAME} maps to /admin\" || true\n\nCOOKIE_PING=$(_curl_mtls -H 'Cookie: lamaste_2fa_session=secret' -H 'Authorization: Bearer leak' \"${BASE_URL}/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$COOKIE_PING\" '.cookie' 'null' \"The panel's cookie never reaches the agent half\" || true\nassert_json_field \"$COOKIE_PING\" '.authorization' 'null' \"An Authorization header never reaches the agent half\" || true\n\nUSER_SURFACE_STATUS=$(api_get_status \"${PLUGIN_NAME}/app/secret\")\nassert_eq \"$USER_SURFACE_STATUS\" \"404\" \"The agent half's /app is out of the forwarder's reach\" || true\nDIRECT_APP=$(curl -s --max-time 5 \"http://127.0.0.1:${PORT}/app/secret\" 2>/dev/null || echo \"\")\nassert_contains \"$DIRECT_APP\" \"USER SURFACE\" \"(the agent half does serve /app directly)\" || true\n\nBUNDLE=$(api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle is served through the forwarder\" || true\nBUNDLE_TYPE=$(_curl_mtls -o /dev/null -w '%{content_type}' \"${BASE_URL}/api/${PLUGIN_NAME}/panel.js\" 2>/dev/null || echo \"\")\nassert_contains \"$BUNDLE_TYPE\" \"javascript\" \"The bundle keeps its content type\" || true\nPAGES=$(api_get \"plugins/${PLUGIN_NAME}\" | jq -r '.plugin.panel.pages[0].path' 2>/dev/null || echo \"\")\nassert_eq \"$PAGES\" \"/status\" \"The panel lists the plugin's page\" || true\n\nhead -c 4096 /dev/urandom > \"${WORK_DIR}/body.bin\"\nECHO=$(_curl_mtls -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_json_field \"$ECHO\" '.bytes' '4096' \"A request body streams through\" || true\nECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/body.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\")\nassert_not_contains \"$ECHO_HEADERS\" \"app-session\" \"Set-Cookie from the application never passes back\" || true\n\nhead -c $((11 * 1024 * 1024)) /dev/zero > \"${WORK_DIR}/big.bin\"\nBIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary \"@${WORK_DIR}/big.bin\" \"${BASE_URL}/api/${PLUGIN_NAME}/echo\" 2>/dev/null || echo \"000\")\nassert_eq \"$BIG_STATUS\" \"413\" \"A body above the tunnel's 10 MiB limit is refused with 413\" || true\n\nSSE=$(_curl_mtls -N --max-time 10 \"${BASE_URL}/api/${PLUGIN_NAME}/events\" 2>/dev/null || echo \"\")\nassert_contains \"$SSE\" \"data: tick 3\" \"Server-sent events pass through nginx and the forwarder\" || true\n# nginx consumes X-Accel-Buffering, so look at the panel's own answer on :3100\n# with the headers nginx would set for the admin certificate.\nSSE_HEADERS=$(curl -s --max-time 10 -D - -o /dev/null -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' \"http://127.0.0.1:3100/api/${PLUGIN_NAME}/events\" 2>/dev/null | tr 'A-Z' 'a-z' || echo \"\")\nassert_contains \"$SSE_HEADERS\" \"x-accel-buffering: no\" \"The panel marks the event stream unbuffered for nginx\" || true\n\nAGENT_FORWARD_STATUS=$(agent_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$AGENT_FORWARD_STATUS\" \"403\" \"The host capability alone does not admit calls to the plugin's API\" || true\n\nHALF_LINES=$(grep -c \"caller=admin\" \"${HALF_LOG}\" 2>/dev/null || true)\nif [ \"${HALF_LINES:-0}\" -ge 5 ] 2>/dev/null; then\n  log_pass \"The agent half verified every forwarded call (${HALF_LINES} admin calls logged)\"\nelse\n  log_fail \"The agent half logged ${HALF_LINES} verified admin calls\"\nfi\n\n# ===========================================================================\n# 6. Health\n# ==========================================================================="
+    },
+    {
+      "id": "health-monitor",
+      "label": "Health monitor",
+      "steps": [
+        {
+          "id": "step-174",
+          "label": "Health is up within 45 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up within 45 seconds"
+          }
+        },
+        {
+          "id": "step-175",
+          "label": "Health did not reach up: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not reach up: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-176",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "LISTED_HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-177",
+          "label": "GET /api/plugins carries the hosting's health",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "LISTED_HEALTH"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "up"
+              },
+              "message": "GET /api/plugins carries the hosting's health"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Health monitor\"\n\nif wait_health up 45; then\n  log_pass \"Health is up within 45 seconds\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\nLISTED_HEALTH=$(api_get \"plugins\" | jq -r \".plugins[] | select(.name == \\\"${PLUGIN_NAME}\\\") | .agentHosting.health.state\" 2>/dev/null || echo \"\")\nassert_eq \"$LISTED_HEALTH\" \"up\" \"GET /api/plugins carries the hosting's health\" || true\n\n# ===========================================================================\n# 7. Secret rotation with overlap\n# ==========================================================================="
+    },
+    {
+      "id": "rotate-the-installation-secret",
+      "label": "Rotate the installation secret",
+      "steps": [
+        {
+          "id": "step-178",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting/rotate-secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting/rotate-secret"
+          },
+          "capture": [
+            {
+              "variable": "ROTATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-179",
+          "label": "Rotation pending until the agent acknowledges",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE"
+              },
+              "path": ".hosting.rotationPending",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Rotation pending until the agent acknowledges"
+            }
+          }
+        },
+        {
+          "id": "step-180",
+          "label": "The new secret is not acknowledged yet",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE"
+              },
+              "path": ".hosting.secretAcknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "The new secret is not acknowledged yet"
+            }
+          }
+        },
+        {
+          "id": "step-181",
+          "label": "Extract NEW_ISSUED_AT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_ISSUED_AT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "ROTATE"
+              },
+              "expression": ".hosting.secretIssuedAt"
+            }
+          }
+        },
+        {
+          "id": "step-182",
+          "label": "A new secret was issued",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_ISSUED_AT"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_AT"
+              },
+              "message": "A new secret was issued"
+            }
+          }
+        },
+        {
+          "id": "step-183",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "STILL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-184",
+          "label": "Calls keep working on the previous secret before the agent fetched the new one",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STILL"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Calls keep working on the previous secret before the agent fetched the new one"
+            }
+          }
+        },
+        {
+          "id": "step-185",
+          "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}/ack",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "STALE_ACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-186",
+          "label": "Acknowledging the old secret changes nothing",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STALE_ACK"
+              },
+              "path": ".acknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "Acknowledging the old secret changes nothing"
+            }
+          }
+        },
+        {
+          "id": "step-187",
+          "label": "GET /api/agents/me/plugin-config/${PLUGIN_NAME}",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "NEW_CONFIG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-188",
+          "label": "The agent fetches the new secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "NEW_CONFIG"
+              },
+              "path": ".issuedAt",
+              "expected": {
+                "kind": "var",
+                "name": "NEW_ISSUED_AT"
+              },
+              "message": "The agent fetches the new secret"
+            }
+          }
+        },
+        {
+          "id": "step-189",
+          "label": "Extract NEW_PREVIOUS",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "NEW_PREVIOUS",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "NEW_CONFIG"
+              },
+              "expression": ".previousSecret // empty"
+            }
+          }
+        },
+        {
+          "id": "step-190",
+          "label": "The config carries the previous secret for the overlap",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "NEW_PREVIOUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "The config carries the previous secret for the overlap"
+            }
+          }
+        },
+        {
+          "id": "step-192",
+          "label": "POST /api/agents/me/plugin-config/${PLUGIN_NAME}/ack",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "agents/me/plugin-config/${PLUGIN_NAME}/ack",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "NEW_ACK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-193",
+          "label": "The agent acknowledges the new secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "NEW_ACK"
+              },
+              "path": ".acknowledged",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent acknowledges the new secret"
+            }
+          }
+        },
+        {
+          "id": "step-194",
+          "label": "The previous secret is dropped once acknowledged",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.rotationPending')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "The previous secret is dropped once acknowledged"
+            }
+          }
+        },
+        {
+          "id": "step-195",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-196",
+          "label": "Calls work on the new secret without restarting the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AFTER"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Calls work on the new secret without restarting the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-197",
+          "label": "Health stays up across the rotation",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health stays up across the rotation"
+          }
+        },
+        {
+          "id": "step-198",
+          "label": "Health lost after the rotation: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health lost after the rotation: $(hosting_field '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Rotate the installation secret\"\n\nROTATE=$(api_post \"plugins/${PLUGIN_NAME}/hosting/rotate-secret\")\nassert_json_field \"$ROTATE\" '.hosting.rotationPending' 'true' \"Rotation pending until the agent acknowledges\" || true\nassert_json_field \"$ROTATE\" '.hosting.secretAcknowledged' 'false' \"The new secret is not acknowledged yet\" || true\nNEW_ISSUED_AT=$(echo \"$ROTATE\" | jq -r '.hosting.secretIssuedAt' 2>/dev/null || echo \"\")\nassert_not_eq \"$NEW_ISSUED_AT\" \"$ISSUED_AT\" \"A new secret was issued\" || true\n\nSTILL=$(api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$STILL\" '.pong' 'true' \"Calls keep working on the previous secret before the agent fetched the new one\" || true\n\nSTALE_ACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN_NAME}/ack\" \"{\\\"issuedAt\\\":\\\"${ISSUED_AT}\\\"}\")\nassert_json_field \"$STALE_ACK\" '.acknowledged' 'false' \"Acknowledging the old secret changes nothing\" || true\n\nNEW_CONFIG=$(agent_api_get \"agents/me/plugin-config/${PLUGIN_NAME}\")\nassert_json_field \"$NEW_CONFIG\" '.issuedAt' \"${NEW_ISSUED_AT}\" \"The agent fetches the new secret\" || true\nNEW_PREVIOUS=$(echo \"$NEW_CONFIG\" | jq -r '.previousSecret // empty' 2>/dev/null || echo \"\")\nassert_not_eq \"$NEW_PREVIOUS\" \"\" \"The config carries the previous secret for the overlap\" || true\nwrite_half_config \"$NEW_CONFIG\"\nNEW_ACK=$(agent_api_post \"agents/me/plugin-config/${PLUGIN_NAME}/ack\" \"{\\\"issuedAt\\\":\\\"${NEW_ISSUED_AT}\\\"}\")\nassert_json_field \"$NEW_ACK\" '.acknowledged' 'true' \"The agent acknowledges the new secret\" || true\nassert_eq \"$(hosting_field '.hosting.rotationPending')\" \"false\" \"The previous secret is dropped once acknowledged\" || true\n\nAFTER=$(api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$AFTER\" '.pong' 'true' \"Calls work on the new secret without restarting the agent half\" || true\nif wait_health up 45; then\n  log_pass \"Health stays up across the rotation\"\nelse\n  log_fail \"Health lost after the rotation: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 8. The agent half goes away: a clean 502, health down and back\n# ==========================================================================="
+    },
+    {
+      "id": "agent-half-down",
+      "label": "Agent half down",
+      "steps": [
+        {
+          "id": "step-200",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-201",
+          "label": "Set START",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "date +%s"
+          },
+          "capture": [
+            {
+              "variable": "START",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-202",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DOWN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-203",
+          "label": "Set ELAPSED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "( $(date +%s) - START )"
+          },
+          "capture": [
+            {
+              "variable": "ELAPSED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-204",
+          "label": "A stopped agent half answers 502",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOWN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "A stopped agent half answers 502"
+            }
+          }
+        },
+        {
+          "id": "step-205",
+          "label": "The 502 came in ${ELAPSED}s — no hang",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The 502 came in ${ELAPSED}s — no hang"
+          }
+        },
+        {
+          "id": "step-206",
+          "label": "The 502 took ${ELAPSED}s",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The 502 took ${ELAPSED}s"
+          }
+        },
+        {
+          "id": "step-207",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "DOWN_BODY",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-208",
+          "label": "Nothing on the loopback port reads as the tunnel being down",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DOWN_BODY"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "Nothing on the loopback port reads as the tunnel being down"
+            }
+          }
+        },
+        {
+          "id": "step-210",
+          "label": "Health reports down within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health reports down within 60 seconds"
+          }
+        },
+        {
+          "id": "step-211",
+          "label": "Health did not report down: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not report down: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-212",
+          "label": "An answering port with no agent half is reason app",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "app"
+              },
+              "message": "An answering port with no agent half is reason app"
+            }
+          }
+        },
+        {
+          "id": "step-214",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-216",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-218",
+          "label": "A refused port is reason tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "A refused port is reason tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "Health is up again once the agent half is back",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up again once the agent half is back"
+          }
+        },
+        {
+          "id": "step-220",
+          "label": "Health did not recover: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not recover: $(hosting_field '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Agent half down\"\n\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nsleep 1\nSTART=$(date +%s)\nDOWN_STATUS=$(api_get_status \"${PLUGIN_NAME}/ping\")\nELAPSED=$(( $(date +%s) - START ))\nassert_eq \"$DOWN_STATUS\" \"502\" \"A stopped agent half answers 502\" || true\nif [ \"$ELAPSED\" -le 5 ]; then\n  log_pass \"The 502 came in ${ELAPSED}s — no hang\"\nelse\n  log_fail \"The 502 took ${ELAPSED}s\"\nfi\nDOWN_BODY=$(api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$DOWN_BODY\" '.reason' 'tunnel' \"Nothing on the loopback port reads as the tunnel being down\" || true\n\n# Something answers on the port but it is not the agent half: the application is down.\nnohup python3 -m http.server \"${PORT}\" --bind 127.0.0.1 -d \"${WORK_DIR}\" &> /dev/null &\nif wait_health down 60; then\n  log_pass \"Health reports down within 60 seconds\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"app\" \"An answering port with no agent half is reason app\" || true\npkill -f \"[h]ttp.server ${PORT}\" 2>/dev/null || true\nsleep 1\nfor _ in $(seq 1 20); do\n  if [ \"$(hosting_field '.hosting.health.reason')\" = \"tunnel\" ]; then break; fi\n  sleep 3\ndone\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"tunnel\" \"A refused port is reason tunnel\" || true\n\nif start_half && wait_health up 45; then\n  log_pass \"Health is up again once the agent half is back\"\nelse\n  log_fail \"Health did not recover: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 9. Clear the hosting; uninstall tears it down too; the CLI\n# ==========================================================================="
+    },
+    {
+      "id": "clear-hosting-and-uninstall",
+      "label": "Clear hosting and uninstall",
+      "steps": [
+        {
+          "id": "step-221",
+          "label": "DELETE /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_NAME}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-222",
+          "label": "Hosting removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNHOST"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Hosting removed"
+            }
+          }
+        },
+        {
+          "id": "step-223",
+          "label": "GET hosting answers 404 afterwards",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "GET hosting answers 404 afterwards"
+            }
+          }
+        },
+        {
+          "id": "step-224",
+          "label": "GET /api/tunnels?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-225",
+          "label": "The internal tunnel is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TUNNEL_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The internal tunnel is gone"
+            }
+          }
+        },
+        {
+          "id": "step-226",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "CAPS_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-227",
+          "label": "The host capability is revoked",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS_AFTER"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "plugin:${PLUGIN_NAME}:host"
+              },
+              "message": "The host capability is revoked"
+            }
+          }
+        },
+        {
+          "id": "step-228",
+          "label": "Set GRANT_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "GRANT_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-229",
+          "label": "The chisel grant is withdrawn",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "GRANT_AFTER"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The chisel grant is withdrawn"
+            }
+          }
+        },
+        {
+          "id": "step-230",
+          "label": "The route answers 503 (not hosted) again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"${PLUGIN_NAME}/ping\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "The route answers 503 (not hosted) again"
+            }
+          }
+        },
+        {
+          "id": "step-231",
+          "label": "The agent can no longer fetch the config",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "The agent can no longer fetch the config"
+            }
+          }
+        },
+        {
+          "id": "step-232",
+          "label": "Set CLI_HOST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins host \"${PLUGIN_NAME}\" --agent \"${AGENT_LABEL}\" --json 2>/dev/null | tail -1 || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "CLI_HOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-233",
+          "label": "lamaste-server plugins host hosts the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "CLI_HOST"
+              },
+              "path": ".hosting.agentLabel",
+              "expected": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "lamaste-server plugins host hosts the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-234",
+          "label": "Set CLI_SHOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins hosting \"${PLUGIN_NAME}\" 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_SHOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-235",
+          "label": "lamaste-server plugins hosting shows the agent",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_SHOW"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "AGENT_LABEL"
+              },
+              "message": "lamaste-server plugins hosting shows the agent"
+            }
+          }
+        },
+        {
+          "id": "step-236",
+          "label": "Set CLI_LIST",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-server plugins list 2>&1 || true"
+          },
+          "capture": [
+            {
+              "variable": "CLI_LIST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-237",
+          "label": "lamaste-server plugins list shows where it is hosted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CLI_LIST"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "on ${AGENT_LABEL}"
+              },
+              "message": "lamaste-server plugins list shows where it is hosted"
+            }
+          }
+        },
+        {
+          "id": "step-238",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/disable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/disable"
+          },
+          "capture": [
+            {
+              "variable": "DISABLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-239",
+          "label": "Plugin disabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "DISABLE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "disabled"
+              },
+              "message": "Plugin disabled"
+            }
+          }
+        },
+        {
+          "id": "step-240",
+          "label": "Disabling keeps the hosting",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Disabling keeps the hosting"
+            }
+          }
+        },
+        {
+          "id": "step-241",
+          "label": "DELETE /api/plugins/${PLUGIN_NAME}",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_NAME}"
+          },
+          "capture": [
+            {
+              "variable": "UNINSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-242",
+          "label": "Plugin uninstalled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNINSTALL"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin uninstalled"
+            }
+          }
+        },
+        {
+          "id": "step-243",
+          "label": "GET /api/tunnels?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "INTERNAL_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-244",
+          "label": "Uninstalling removed the internal tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "INTERNAL_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Uninstalling removed the internal tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-245",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "CAPS_FINAL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-246",
+          "label": "Uninstalling revoked the host capability",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS_FINAL"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "plugin:${PLUGIN_NAME}:host"
+              },
+              "message": "Uninstalling revoked the host capability"
+            }
+          }
+        },
+        {
+          "id": "step-247",
+          "label": "Set HOSTINGS_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -r \"has(\\\"${PLUGIN_NAME}\\\")\" \"${STATE_DIR}/plugin-hostings.json\" 2>/dev/null || echo \"false\""
+          },
+          "capture": [
+            {
+              "variable": "HOSTINGS_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-248",
+          "label": "The hosting record is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "HOSTINGS_FILE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "false"
+              },
+              "message": "The hosting record is gone"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Clear hosting and uninstall\"\n\nUNHOST=$(api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nassert_json_field \"$UNHOST\" '.ok' 'true' \"Hosting removed\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"404\" \"GET hosting answers 404 afterwards\" || true\nTUNNEL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nCAPS_AFTER=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_AFTER\" \"plugin:${PLUGIN_NAME}:host\" \"The host capability is revoked\" || true\nGRANT_AFTER=$(grep -cF \"R:127\\\\\\\\.0\\\\\\\\.0\\\\\\\\.1:${PORT}\\$\" \"${STATE_DIR}/chisel-users\" 2>/dev/null || true)\nassert_eq \"$GRANT_AFTER\" \"0\" \"The chisel grant is withdrawn\" || true\nassert_eq \"$(api_get_status \"${PLUGIN_NAME}/ping\")\" \"503\" \"The route answers 503 (not hosted) again\" || true\nassert_eq \"$(agent_api_get_status \"agents/me/plugin-config/${PLUGIN_NAME}\")\" \"403\" \"The agent can no longer fetch the config\" || true\n\nCLI_HOST=$(lamaste-server plugins host \"${PLUGIN_NAME}\" --agent \"${AGENT_LABEL}\" --json 2>/dev/null | tail -1 || echo '{}')\nassert_json_field \"$CLI_HOST\" '.hosting.agentLabel' \"${AGENT_LABEL}\" \"lamaste-server plugins host hosts the plugin\" || true\nCLI_SHOW=$(lamaste-server plugins hosting \"${PLUGIN_NAME}\" 2>&1 || true)\nassert_contains \"$CLI_SHOW\" \"${AGENT_LABEL}\" \"lamaste-server plugins hosting shows the agent\" || true\nCLI_LIST=$(lamaste-server plugins list 2>&1 || true)\nassert_contains \"$CLI_LIST\" \"on ${AGENT_LABEL}\" \"lamaste-server plugins list shows where it is hosted\" || true\n\nDISABLE=$(api_post \"plugins/${PLUGIN_NAME}/disable\")\nassert_json_field \"$DISABLE\" '.status' 'disabled' \"Plugin disabled\" || true\nassert_eq \"$(api_get_status \"plugins/${PLUGIN_NAME}/hosting\")\" \"200\" \"Disabling keeps the hosting\" || true\nUNINSTALL=$(api_delete \"plugins/${PLUGIN_NAME}\")\nassert_json_field \"$UNINSTALL\" '.ok' 'true' \"Plugin uninstalled\" || true\nINTERNAL_LEFT=$(api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.exposure == \\\"internal\\\" and .pluginRoute == \\\"${PLUGIN_NAME}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$INTERNAL_LEFT\" \"0\" \"Uninstalling removed the internal tunnel\" || true\nCAPS_FINAL=$(api_get \"certs/agent\" | jq -c \".agents[] | select(.label == \\\"${AGENT_LABEL}\\\") | .capabilities\" 2>/dev/null || echo \"[]\")\nassert_not_contains \"$CAPS_FINAL\" \"plugin:${PLUGIN_NAME}:host\" \"Uninstalling revoked the host capability\" || true\nHOSTINGS_FILE=$(jq -r \"has(\\\"${PLUGIN_NAME}\\\")\" \"${STATE_DIR}/plugin-hostings.json\" 2>/dev/null || echo \"false\")\nassert_eq \"$HOSTINGS_FILE\" \"false\" \"The hosting record is gone\" || true"
+    }
+  ],
+  "apiHelpers": ["agent_api_get", "agent_api_get_status", "agent_api_post"],
+  "headerRaw": "# ============================================================================\n# 29 — Agent-hosted plugin: hosting, forwarding, installation secret\n# ============================================================================\n# Hosts an agent-hosted plugin that has an agent half (fixture\n# @lamalibre/e2e-app-plugin-server, served by a stand-in registry on the VM)\n# on an agent, and verifies on one VM:\n# - hosting creates an internal plugin tunnel (port assigned from\n#   21000–21999, no hostname, no access mode, not editable as a tunnel) and\n#   grants the agent `plugin:<route>:host`; a manual tunnel on such a port\n#   is refused\n# - only the hosting agent's certificate fetches the plugin config (port and\n#   secret) and acknowledges it\n# - the panel forwards /api/<route>/* to the agent half's /admin/* with a\n#   caller assertion: pages and the bundle work, the user surface (/app) is\n#   out of reach, credentials never pass, bodies stream, the body limit\n#   holds, server-sent events pass through, a loopback call without an\n#   assertion is refused\n# - rotating the secret keeps calls working, before and after the agent\n#   acknowledges the new one\n# - a stopped agent half is a clean 502, and the health monitor reports\n#   down (app, then tunnel) and up again\n# - clearing the hosting and uninstalling the plugin remove tunnel, secret\n#   and capability; the same through lamaste-server plugins host|unhost\n#\n# The agent half listens on the relay loopback directly: on one VM the\n# chisel client cannot bind the assigned port (the chisel server holds it\n# when an agent connects), so the tunnel leg is proven by three-VM spec 31.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm\n\nbegin_test \"29 — Agent-hosted plugin: hosting, forwarding, installation secret\"\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

@@ -12,6 +12,9 @@ import {
   X,
   Loader2,
   Network,
+  Server,
+  RefreshCw,
+  Activity,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
@@ -40,8 +43,156 @@ function HostingBadge() {
   );
 }
 
-function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
+function HealthBadge({ health }) {
+  const state = health?.state ?? 'unknown';
+  const styles =
+    state === 'up'
+      ? 'bg-green-500/20 text-green-400'
+      : state === 'down'
+        ? 'bg-red-500/20 text-red-400'
+        : 'bg-zinc-500/20 text-zinc-400';
+  const label =
+    state === 'up' ? 'reachable' : state === 'down' ? `down (${health.reason ?? '?'})` : 'unknown';
+  const title = [
+    health?.since ? `since ${new Date(health.since).toLocaleString()}` : null,
+    health?.checkedAt ? `checked ${new Date(health.checkedAt).toLocaleTimeString()}` : null,
+    state !== 'up' && health?.lastError ? health.lastError : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${styles}`}
+      title={title}
+    >
+      <Activity size={11} />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Where an agent-hosted plugin's agent half runs: the hosting agent, the
+ * assigned port and its health, or a picker to host it on an agent.
+ */
+function HostingSection({ plugin, agents, onHost, onUnhost, onRotate, isActing }) {
+  const [agentLabel, setAgentLabel] = useState('');
+  const [confirmUnhost, setConfirmUnhost] = useState(false);
+  const hosting = plugin.agentHosting;
+
+  if (hosting) {
+    return (
+      <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <Server size={12} className="text-cyan-400" />
+          <span className="text-zinc-300">
+            Hosted on <span className="font-mono text-zinc-200">{hosting.agentLabel}</span>
+          </span>
+          <span className="text-zinc-500">
+            port <span className="font-mono">{hosting.port}</span>
+          </span>
+          <HealthBadge health={hosting.health} />
+          {!hosting.secretAcknowledged && (
+            <span className="text-zinc-500" title="The agent fetches it on its next sync">
+              secret not yet fetched
+            </span>
+          )}
+          {hosting.rotationPending && <span className="text-yellow-400">rotation pending</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={isActing}
+            onClick={() => onRotate(plugin.name)}
+            className="flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1 text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+            title="Issue a new installation secret; the previous one stays accepted until the agent acknowledges the new one"
+          >
+            <RefreshCw size={11} />
+            Rotate secret
+          </button>
+          {confirmUnhost ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-zinc-400">Remove tunnel, secret and capability?</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmUnhost(false);
+                  onUnhost(plugin.name);
+                }}
+                className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmUnhost(false)}
+                className="rounded bg-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-600"
+              >
+                No
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={isActing}
+              onClick={() => setConfirmUnhost(true)}
+              className="flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1 text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+            >
+              <X size={11} />
+              Clear hosting
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs">
+      <p className="text-zinc-400 mb-2">
+        Not hosted yet. Pick the agent that runs its agent half: Lamaste creates the internal
+        tunnel, assigns the port and issues the installation secret.
+      </p>
+      <div className="flex items-center gap-2">
+        <select
+          value={agentLabel}
+          onChange={(e) => setAgentLabel(e.target.value)}
+          className="rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-zinc-300 focus:outline-none focus:border-cyan-400"
+        >
+          <option value="">Choose an agent…</option>
+          {agents.map((a) => (
+            <option key={a.label} value={a.label}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={isActing || !agentLabel}
+          onClick={() => onHost(plugin.name, agentLabel)}
+          className="flex items-center gap-1.5 rounded bg-cyan-600 px-3 py-1 text-white hover:bg-cyan-500 disabled:opacity-50"
+        >
+          <Server size={11} />
+          Host on agent
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PluginCard({
+  plugin,
+  agents,
+  onEnable,
+  onDisable,
+  onUninstall,
+  onHost,
+  onUnhost,
+  onRotate,
+  isActing,
+}) {
   const agentHosted = plugin.hosting === 'agent';
+  const hasAgentHalf = agentHosted && plugin.agent != null;
   const [confirmUninstall, setConfirmUninstall] = useState(false);
 
   const handleUninstall = () => {
@@ -71,10 +222,16 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
 
       {plugin.description && <p className="text-zinc-400 text-sm mb-2">{plugin.description}</p>}
 
-      {agentHosted && (
+      {agentHosted && !hasAgentHalf && (
         <p className="text-zinc-500 text-xs mb-2">
           Runs on its own agent. Lamaste registers its OIDC clients and capabilities; it mounts no
           routes and serves no pages for it.
+        </p>
+      )}
+      {hasAgentHalf && (
+        <p className="text-zinc-500 text-xs mb-2">
+          Runs on an agent; the panel forwards its admin API and pages to the agent half over an
+          internal tunnel.
         </p>
       )}
 
@@ -99,6 +256,17 @@ function PluginCard({ plugin, onEnable, onDisable, onUninstall, isActing }) {
             </span>
           ))}
         </div>
+      )}
+
+      {hasAgentHalf && (
+        <HostingSection
+          plugin={plugin}
+          agents={agents}
+          onHost={onHost}
+          onUnhost={onUnhost}
+          onRotate={onRotate}
+          isActing={isActing}
+        />
       )}
 
       <div className="flex items-center gap-2">
@@ -513,11 +681,56 @@ export default function Plugins() {
     onError: (err) => addToast(errorMessage(err), 'error'),
   });
 
+  // Machine agents an agent half can be hosted on (plugin-agent certificates
+  // carry no chisel credential and cannot carry a tunnel).
+  const agentsQuery = useQuery({
+    queryKey: ['agent-certs'],
+    queryFn: () => client.getAgentCerts(),
+    enabled: Boolean(pluginsQuery.data?.plugins?.some((p) => p.hosting === 'agent' && p.agent)),
+  });
+  const hostableAgents = (agentsQuery.data?.agents || []).filter(
+    (a) => !a.revoked && !a.label.startsWith('plugin-agent:'),
+  );
+
+  const hostMutation = useMutation({
+    mutationFn: ({ name, agentLabel }) => client.setPluginHosting(name, agentLabel),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+      addToast(
+        `Plugin "${data.hosting?.plugin}" hosted on ${data.hosting?.agentLabel} (port ${data.hosting?.port})`,
+      );
+    },
+    onError: (err) => addToast(errorMessage(err), 'error'),
+  });
+
+  const unhostMutation = useMutation({
+    mutationFn: (name) => client.clearPluginHosting(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      queryClient.invalidateQueries({ queryKey: ['tunnels'] });
+      addToast('Plugin hosting removed');
+    },
+    onError: (err) => addToast(errorMessage(err), 'error'),
+  });
+
+  const rotateMutation = useMutation({
+    mutationFn: (name) => client.rotatePluginHostingSecret(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+      addToast('New installation secret issued — the agent picks it up on its next sync');
+    },
+    onError: (err) => addToast(errorMessage(err), 'error'),
+  });
+
   const isActing =
     installMutation.isPending ||
     enableMutation.isPending ||
     disableMutation.isPending ||
-    uninstallMutation.isPending;
+    uninstallMutation.isPending ||
+    hostMutation.isPending ||
+    unhostMutation.isPending ||
+    rotateMutation.isPending;
 
   const handleInstall = useCallback(
     (packageName) => installMutation.mutate(packageName),
@@ -532,6 +745,13 @@ export default function Plugins() {
     (name) => uninstallMutation.mutate(name),
     [uninstallMutation],
   );
+
+  const handleHost = useCallback(
+    (name, agentLabel) => hostMutation.mutate({ name, agentLabel }),
+    [hostMutation],
+  );
+  const handleUnhost = useCallback((name) => unhostMutation.mutate(name), [unhostMutation]);
+  const handleRotate = useCallback((name) => rotateMutation.mutate(name), [rotateMutation]);
 
   const plugins = pluginsQuery.data?.plugins;
 
@@ -578,9 +798,13 @@ export default function Plugins() {
             <PluginCard
               key={plugin.name}
               plugin={plugin}
+              agents={hostableAgents}
               onEnable={handleEnable}
               onDisable={handleDisable}
               onUninstall={handleUninstall}
+              onHost={handleHost}
+              onUnhost={handleUnhost}
+              onRotate={handleRotate}
               isActing={isActing}
             />
           ))}

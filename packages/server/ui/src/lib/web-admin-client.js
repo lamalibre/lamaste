@@ -164,6 +164,12 @@ export const webAdminClient = {
   enablePlugin: (name) => jsonPost(`/api/plugins/${encodeURIComponent(name)}/enable`),
   disablePlugin: (name) => jsonPost(`/api/plugins/${encodeURIComponent(name)}/disable`),
   uninstallPlugin: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}`),
+  getPluginHosting: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/hosting`),
+  setPluginHosting: (name, agentLabel) =>
+    jsonPost(`/api/plugins/${encodeURIComponent(name)}/hosting`, { agentLabel }),
+  clearPluginHosting: (name) => jsonDelete(`/api/plugins/${encodeURIComponent(name)}/hosting`),
+  rotatePluginHostingSecret: (name) =>
+    jsonPost(`/api/plugins/${encodeURIComponent(name)}/hosting/rotate-secret`),
   fetchPluginBundle: async (name) => {
     const res = await fetch(`/api/${encodeURIComponent(name)}/panel.js`);
     if (!res.ok) throw new Error(`Failed to load plugin bundle for "${name}"`);

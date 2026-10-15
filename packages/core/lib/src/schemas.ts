@@ -231,6 +231,57 @@ export const OidcClientSchema = z
 export type OidcClientDeclaration = z.infer<typeof OidcClientSchema>;
 
 // ---------------------------------------------------------------------------
+// Agent block (agent-hosted plugins with an agent half)
+// ---------------------------------------------------------------------------
+
+/** Operating systems an agent half may require of its hosting agent. */
+export const AGENT_HALF_OS = ['linux', 'darwin'] as const;
+
+/**
+ * What the agent half requires of its hosting agent. Validated here; checked
+ * against the agent's reported platform when Lamaste installs the agent half
+ * onto an agent (the install flow — not yet; hosting an agent half that was
+ * installed by hand checks nothing).
+ */
+export const AgentRequiresSchema = z
+  .object({
+    /** A semver range for Node.js on the hosting agent, e.g. ">=22". */
+    node: z
+      .string()
+      .min(1)
+      .max(50)
+      .regex(/^[0-9A-Za-z .<>=^~|*x-]+$/, 'node must be a semver range')
+      .optional(),
+    os: z.array(z.enum(AGENT_HALF_OS)).min(1).max(AGENT_HALF_OS.length).optional(),
+    /** System packages the agent half's installer needs; listed for the install preview. */
+    systemPackages: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(100)
+          .regex(/^[a-z0-9][a-z0-9+.-]*$/, 'System package names are lowercase'),
+      )
+      .max(50)
+      .optional(),
+  })
+  .strict();
+
+/**
+ * The `agent` block of an agent-hosted plugin: present when the plugin has
+ * an agent half Lamaste connects to through an internal plugin tunnel. The
+ * port is assigned by Lamaste when the plugin is hosted, so the block does
+ * not name one. See `plugin-development/design/agent-hosted-app-plugins.md`.
+ */
+export const AgentBlockSchema = z
+  .object({
+    requires: AgentRequiresSchema.optional(),
+  })
+  .strict();
+
+export type AgentBlock = z.infer<typeof AgentBlockSchema>;
+
+// ---------------------------------------------------------------------------
 // Plugin manifest
 // ---------------------------------------------------------------------------
 
@@ -341,18 +392,36 @@ export const ManifestSchema = z
      * (`oidcClients`, `capabilities`) take effect.
      */
     hosting: z.enum(PLUGIN_HOSTINGS).optional().default(DEFAULT_PLUGIN_HOSTING),
+    /**
+     * The agent half of an agent-hosted plugin (see `AgentBlockSchema`).
+     * Only meaningful — and only accepted — with `hosting: "agent"`.
+     */
+    agent: AgentBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
+    if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['agent'],
+        message: 'An "agent" block needs "hosting": "agent" — a server plugin has no agent half',
+      });
+    }
+
     // An agent-hosted plugin has no code in the panel, so nothing could
-    // serve a page or a panel bundle for it. Its pages arrive with the
-    // agent forwarder; until then a panel declaration is a manifest error,
-    // not something to drop silently.
-    if (manifest.hosting === 'agent' && Object.keys(manifest.panel).length > 0) {
+    // serve a page or a panel bundle for it — unless it has an agent half:
+    // then the panel forwards `/api/<route>/*` (the bundle included) to the
+    // agent half over the internal plugin tunnel. Without the block a panel
+    // declaration is a manifest error, not something to drop silently.
+    if (
+      manifest.hosting === 'agent' &&
+      manifest.agent === undefined &&
+      Object.keys(manifest.panel).length > 0
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['panel'],
         message:
-          'An agent-hosted plugin ("hosting": "agent") cannot declare a panel — Lamaste does not load its code',
+          'An agent-hosted plugin ("hosting": "agent") without an "agent" block cannot declare a panel — Lamaste does not load its code',
       });
     }
 

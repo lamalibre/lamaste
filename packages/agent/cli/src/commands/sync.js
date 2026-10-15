@@ -32,10 +32,14 @@ export async function runSync({ label, quiet = false }) {
     // credential yet) is logged when it first appears, not every 30 seconds.
     const seen = new Set(previous?.lastWarnings ?? []);
     const newWarnings = result.warnings.filter((w) => !seen.has(w));
+    const app = result.appPlugins;
     const noteworthy =
       result.serviceChanged ||
       result.credential !== 'kept' ||
       result.binaryUpdated ||
+      app.fetched.length > 0 ||
+      app.acknowledged.length > 0 ||
+      app.removed.length > 0 ||
       newWarnings.length > 0 ||
       previous?.lastError ||
       previous?.lastState !== result.state;

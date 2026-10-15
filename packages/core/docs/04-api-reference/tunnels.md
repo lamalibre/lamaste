@@ -53,19 +53,20 @@ curl -s --cert client.p12:password \
 }
 ```
 
-| Field           | Type             | Description                                                                                                                                                                                |
-| --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`            | `string`         | UUID v4 identifier                                                                                                                                                                         |
-| `subdomain`     | `string`         | The subdomain portion (e.g., `app`)                                                                                                                                                        |
-| `fqdn`          | `string`         | Fully qualified domain name (e.g., `app.example.com`)                                                                                                                                      |
-| `port`          | `number`         | Port the carrying agent forwards; bound on `127.0.0.1` on both the server and the agent                                                                                                    |
-| `description`   | `string \| null` | Optional human-readable description                                                                                                                                                        |
-| `type`          | `string`         | `'app'` (default), `'panel'` (agent web panel), or `'plugin'`                                                                                                                              |
-| `accessMode`    | `string`         | `'restricted'` (default), `'authenticated'`, or `'public'` — absent on panel tunnels                                                                                                       |
-| `agentLabel`    | `string`         | The agent that carries the tunnel. Absent only on an unassigned legacy tunnel (see below)                                                                                                  |
-| `maxBodySizeMb` | `number`         | Largest request body nginx accepts, in MiB. Absent on panel tunnels and on tunnels created before the setting existed, which keep nginx's built-in 1 MiB until a body limit is set on them |
-| `enabled`       | `boolean`        | Whether the tunnel is active (defaults to `true`)                                                                                                                                          |
-| `createdAt`     | `string`         | ISO 8601 timestamp                                                                                                                                                                         |
+| Field           | Type             | Description                                                                                                                                                                                                                                             |
+| --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | `string`         | UUID v4 identifier                                                                                                                                                                                                                                      |
+| `subdomain`     | `string`         | The subdomain portion (e.g., `app`)                                                                                                                                                                                                                     |
+| `fqdn`          | `string`         | Fully qualified domain name (e.g., `app.example.com`)                                                                                                                                                                                                   |
+| `port`          | `number`         | Port the carrying agent forwards; bound on `127.0.0.1` on both the server and the agent                                                                                                                                                                 |
+| `description`   | `string \| null` | Optional human-readable description                                                                                                                                                                                                                     |
+| `type`          | `string`         | `'app'` (default), `'panel'` (agent web panel), or `'plugin'`                                                                                                                                                                                           |
+| `accessMode`    | `string`         | `'restricted'` (default), `'authenticated'`, or `'public'` — absent on panel tunnels                                                                                                                                                                    |
+| `agentLabel`    | `string`         | The agent that carries the tunnel. Absent only on an unassigned legacy tunnel (see below)                                                                                                                                                               |
+| `exposure`      | `string`         | `'internal'` on the internal tunnel of a hosted agent-hosted plugin: no `subdomain`, `fqdn` or `accessMode`, only the chisel grant on a relay-loopback port. Absent (public) on every other tunnel. See [Agent-Hosted Plugins](agent-hosted-plugins.md) |
+| `maxBodySizeMb` | `number`         | Largest request body nginx accepts, in MiB. Absent on panel tunnels and on tunnels created before the setting existed, which keep nginx's built-in 1 MiB until a body limit is set on them                                                              |
+| `enabled`       | `boolean`        | Whether the tunnel is active (defaults to `true`)                                                                                                                                                                                                       |
+| `createdAt`     | `string`         | ISO 8601 timestamp                                                                                                                                                                                                                                      |
 
 ---
 
@@ -370,6 +371,7 @@ Revoking an agent's certificate releases its tunnels: its app and plugin tunnels
 - Minimum: 1024 (no privileged ports)
 - Maximum: 65535
 - Must not be a reserved port: `3100` (panel server), `9090` (Chisel server), `9091` (Authelia), `9292` (IP-based panel listener), `9294` (Gatekeeper)
+- Must not be in `21000`–`21999`, the range Lamaste assigns to the internal tunnels of hosted agent-hosted plugins (a tunnel created before 4.3 on such a port keeps it)
 - Must be unique across all tunnels — Chisel binds the same port on the server and on the agent
 
 A tunnel's vhost proxies to `127.0.0.1:<port>` on the relay, so a tunnel on one of Lamaste's own ports would publish that internal service on the internet. For the panel ports that would be an administrator takeover, not a leak: the panel trusts the client-certificate headers nginx sets. The reserved ports are rejected by the request schema, again inside the tunnel workflow, and never granted in the Chisel authfile.

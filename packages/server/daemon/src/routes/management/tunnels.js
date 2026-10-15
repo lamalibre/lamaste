@@ -17,14 +17,17 @@ import {
 } from '@lamalibre/lamaste/server';
 import {
   AGENT_LABEL_REGEX,
+  INTERNAL_PLUGIN_PORT_RANGE,
   PLUGIN_AGENT_CN_PREFIX,
   RESERVED_TUNNEL_PORTS,
+  isInternalPluginPort,
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
 import { readTunnels, readSites } from '../../lib/state.js';
 import { loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
+import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -41,6 +44,9 @@ const TunnelPortSchema = z
   .max(65535, 'Port must be at most 65535')
   .refine((p) => !RESERVED_TUNNEL_PORTS.includes(p), {
     message: `Ports ${RESERVED_TUNNEL_PORTS.join(', ')} belong to Lamaste services on the relay`,
+  })
+  .refine((p) => !isInternalPluginPort(p), {
+    message: `Ports ${INTERNAL_PLUGIN_PORT_RANGE.min}–${INTERNAL_PLUGIN_PORT_RANGE.max} are reserved for the internal tunnels of agent-hosted plugins`,
   });
 
 const AgentLabelSchema = z.string().regex(AGENT_LABEL_REGEX, 'Invalid agent label format');
@@ -155,6 +161,15 @@ function authorizeFor(request, action) {
     if (!mayActOn(request, tunnel)) {
       throw new TunnelError('Tunnel not found', 'NOT_FOUND');
     }
+    // An internal plugin tunnel belongs to the plugin's hosting: it is
+    // created and removed with it (DELETE /api/plugins/:name/hosting).
+    if (tunnel.exposure === 'internal') {
+      throw new TunnelError(
+        `Cannot ${action} an internal plugin tunnel here — it belongs to the hosting of plugin ` +
+          `"${tunnel.pluginRoute ?? tunnel.pluginName ?? '?'}"`,
+        'FORBIDDEN',
+      );
+    }
     if (tunnel.type === 'panel' && request.certRole !== 'admin') {
       const caps = request.certCapabilities || [];
       if (!caps.includes('panel:expose')) {
@@ -259,6 +274,10 @@ export default async function tunnelRoutes(fastify, _opts) {
             port: t.port,
             subdomain: t.subdomain,
           })),
+          // The agent-hosted plugins this agent hosts: the agent fetches a
+          // plugin's config when it does not hold the secret issued at
+          // `secretIssuedAt`, and acknowledges it (see converge).
+          appPlugins: AGENT_LABEL_REGEX.test(label) ? await listAgentPluginAssignments(label) : [],
         };
       } catch (err) {
         request.log.error(err, 'Failed to generate agent config');

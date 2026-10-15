@@ -488,6 +488,19 @@ function EditTunnelDialog({ tunnel, onConfirm, onCancel, isPending }) {
   );
 }
 
+// --- Internal plugin tunnel badge ---
+
+function InternalBadge({ tunnel }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400"
+      title="Internal tunnel of an agent-hosted plugin: no hostname, no certificate, reachable only by the panel's forwarder"
+    >
+      plugin:{tunnel.pluginRoute || '?'}
+    </span>
+  );
+}
+
 // --- Carrying agent badge ---
 
 function CarrierBadge({ tunnel }) {
@@ -547,6 +560,7 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
         <tbody>
           {tunnels.map((tunnel) => {
             const enabled = tunnel.enabled !== false;
+            const internal = tunnel.exposure === 'internal';
             return (
               <tr
                 key={tunnel.id}
@@ -563,24 +577,35 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
                     {enabled ? 'active' : 'disabled'}
                   </span>
                 </td>
-                <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{tunnel.subdomain}</td>
+                <td className="py-3 px-4 text-sm text-zinc-200 font-mono">
+                  {internal ? <InternalBadge tunnel={tunnel} /> : tunnel.subdomain}
+                </td>
                 <td className="py-3 px-4 text-sm">
-                  <a
-                    href={`https://${tunnel.fqdn}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`inline-flex items-center gap-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
-                  >
-                    {tunnel.fqdn}
-                    <ExternalLink size={12} />
-                  </a>
+                  {internal ? (
+                    <span className="text-zinc-500">relay loopback only</span>
+                  ) : (
+                    <a
+                      href={`https://${tunnel.fqdn}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`inline-flex items-center gap-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
+                    >
+                      {tunnel.fqdn}
+                      <ExternalLink size={12} />
+                    </a>
+                  )}
                 </td>
                 <td className="py-3 px-4 text-sm text-zinc-200 font-mono">{tunnel.port}</td>
                 <td className="py-3 px-4">
                   <CarrierBadge tunnel={tunnel} />
                 </td>
                 <td className="py-3 px-4 text-sm">
-                  {tunnel.type !== 'panel' && (
+                  {internal && (
+                    <span className="inline-block px-2 py-0.5 rounded text-xs bg-zinc-700/60 text-zinc-300">
+                      Internal
+                    </span>
+                  )}
+                  {tunnel.type !== 'panel' && !internal && (
                     <span
                       className={`inline-block px-2 py-0.5 rounded text-xs ${
                         tunnel.accessMode === 'public'
@@ -608,38 +633,47 @@ function TunnelTable({ tunnels, onDelete, onToggle, onEdit }) {
                   {relativeTime(tunnel.createdAt)}
                 </td>
                 <td className="py-3 px-4 text-right">
-                  <div className="inline-flex items-center gap-2">
-                    {tunnel.type !== 'panel' && (
+                  {internal ? (
+                    <span
+                      className="text-xs text-zinc-500"
+                      title="Managed with the plugin's hosting"
+                    >
+                      managed by plugin hosting
+                    </span>
+                  ) : (
+                    <div className="inline-flex items-center gap-2">
+                      {tunnel.type !== 'panel' && (
+                        <button
+                          type="button"
+                          onClick={() => onEdit(tunnel)}
+                          className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
+                          title="Agent, access mode, body limit"
+                        >
+                          <Settings2 size={12} />
+                          Edit
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => onEdit(tunnel)}
-                        className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600"
-                        title="Agent, access mode, body limit"
+                        onClick={() => onToggle(tunnel)}
+                        className={`inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs hover:bg-zinc-600 ${
+                          enabled ? 'text-yellow-400' : 'text-green-400'
+                        }`}
+                        title={enabled ? 'Disable tunnel' : 'Enable tunnel'}
                       >
-                        <Settings2 size={12} />
-                        Edit
+                        <Power size={12} />
+                        {enabled ? 'Disable' : 'Enable'}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onToggle(tunnel)}
-                      className={`inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs hover:bg-zinc-600 ${
-                        enabled ? 'text-yellow-400' : 'text-green-400'
-                      }`}
-                      title={enabled ? 'Disable tunnel' : 'Enable tunnel'}
-                    >
-                      <Power size={12} />
-                      {enabled ? 'Disable' : 'Enable'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDelete(tunnel)}
-                      className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/20 hover:text-red-300"
-                    >
-                      <Trash2 size={12} />
-                      Delete
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(tunnel)}
+                        className="inline-flex items-center gap-1.5 rounded bg-zinc-700 px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-600/20 hover:text-red-300"
+                      >
+                        <Trash2 size={12} />
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             );
@@ -657,6 +691,7 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
     <div className="md:hidden space-y-3">
       {tunnels.map((tunnel) => {
         const enabled = tunnel.enabled !== false;
+        const internal = tunnel.exposure === 'internal';
         return (
           <div
             key={tunnel.id}
@@ -674,11 +709,11 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
                   {enabled ? 'active' : 'disabled'}
                 </span>
                 <span className="text-sm font-semibold text-zinc-200 font-mono">
-                  {tunnel.subdomain}
+                  {internal ? <InternalBadge tunnel={tunnel} /> : tunnel.subdomain}
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {tunnel.type !== 'panel' && (
+                {tunnel.type !== 'panel' && !internal && (
                   <button
                     type="button"
                     onClick={() => onEdit(tunnel)}
@@ -688,31 +723,41 @@ function TunnelCards({ tunnels, onDelete, onToggle, onEdit }) {
                     <Settings2 size={14} />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => onToggle(tunnel)}
-                  className={`text-xs ${enabled ? 'text-yellow-400' : 'text-green-400'}`}
-                >
-                  <Power size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(tunnel)}
-                  className="inline-flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!internal && (
+                  <button
+                    type="button"
+                    onClick={() => onToggle(tunnel)}
+                    className={`text-xs ${enabled ? 'text-yellow-400' : 'text-green-400'}`}
+                  >
+                    <Power size={14} />
+                  </button>
+                )}
+                {!internal && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(tunnel)}
+                    className="inline-flex items-center gap-1 text-xs text-red-400 hover:text-red-300"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </div>
             </div>
-            <a
-              href={`https://${tunnel.fqdn}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`text-sm inline-flex items-center gap-1 mb-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
-            >
-              {tunnel.fqdn}
-              <ExternalLink size={12} />
-            </a>
+            {internal ? (
+              <p className="text-sm text-zinc-500 mb-1">
+                Relay loopback only — managed by plugin hosting
+              </p>
+            ) : (
+              <a
+                href={`https://${tunnel.fqdn}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`text-sm inline-flex items-center gap-1 mb-1 ${enabled ? 'text-cyan-400 hover:text-cyan-300' : 'text-zinc-500'}`}
+              >
+                {tunnel.fqdn}
+                <ExternalLink size={12} />
+              </a>
+            )}
             <div className="flex items-center gap-4 text-xs text-zinc-500 mt-2">
               <span>
                 Port: <span className="text-zinc-300 font-mono">{tunnel.port}</span>

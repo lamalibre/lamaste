@@ -10,6 +10,12 @@
  *   oidc-clients <name>  The OIDC clients a plugin declares on Authelia
  *   rotate-secret <name> <clientId>
  *                        New secret for a confidential OIDC client (shown once)
+ *   hosting <name>       Which agent hosts an agent-hosted plugin's agent half
+ *   host <name> --agent <label>
+ *                        Host the plugin on an agent: internal tunnel, secret, capability
+ *   unhost <name>        Remove the hosting (tunnel, secret, capability)
+ *   rotate-hosting-secret <name>
+ *                        New installation secret; the agent picks it up on its next sync
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -51,6 +57,14 @@ export async function runPlugins(args, { json }) {
       return oidcClientsCmd(args[1], { json });
     case 'rotate-secret':
       return rotateSecretCmd(args[1], args[2], { json });
+    case 'hosting':
+      return hostingCmd(args[1], { json });
+    case 'host':
+      return hostCmd(args[1], args.slice(2), { json });
+    case 'unhost':
+      return unhostCmd(args[1], { json });
+    case 'rotate-hosting-secret':
+      return rotateHostingSecretCmd(args[1], { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -72,6 +86,12 @@ ${b('Subcommands:')}
   ${c('oidc-clients <name>')}  OIDC clients the plugin declares on Authelia (no secrets)
   ${c('rotate-secret <name> <clientId>')}
                        Replace a confidential client's secret — printed once
+  ${c('hosting <name>')}       Which agent hosts the plugin's agent half, port, health
+  ${c('host <name> --agent <label>')}
+                       Host an agent-hosted plugin on an agent
+  ${c('unhost <name>')}        Remove the hosting
+  ${c('rotate-hosting-secret <name>')}
+                       New installation secret (the agent fetches it on its next sync)
 `);
 }
 
@@ -107,9 +127,134 @@ async function listPlugins({ json }) {
   for (const p of plugins) {
     const status = p.status === 'enabled' ? g('enabled') : r('disabled');
     const hosting = p.hosting === 'agent' ? chalk.yellow('agent-hosted') : d('server-hosted');
-    console.log(`  ${c(p.name)}  ${d(p.version)}  ${status}  ${hosting}  ${d(p.packageName)}`);
+    const hostedOn = p.agentHosting
+      ? `  ${d('on')} ${c(p.agentHosting.agentLabel)}:${p.agentHosting.port} ${healthWord(p.agentHosting.health)}`
+      : '';
+    console.log(
+      `  ${c(p.name)}  ${d(p.version)}  ${status}  ${hosting}${hostedOn}  ${d(p.packageName)}`,
+    );
   }
   console.log('');
+}
+
+/** One coloured word for a hosting's health. */
+function healthWord(health) {
+  if (!health || health.state === 'unknown') return chalk.dim('(health unknown)');
+  if (health.state === 'up') return chalk.green('up');
+  return chalk.red(`down (${health.reason ?? 'unknown'})`);
+}
+
+/**
+ * Print a hosting record.
+ * @param {Record<string, unknown>} hosting
+ */
+function printHosting(hosting) {
+  const d = chalk.dim;
+  console.log('');
+  console.log(chalk.bold(`  Hosting of ${hosting.plugin}`));
+  console.log(d('  ' + '\u2500'.repeat(40)));
+  console.log(`  agent:    ${chalk.cyan(hosting.agentLabel)}`);
+  console.log(
+    `  port:     ${hosting.port}  ${d('(relay loopback, internal tunnel ' + hosting.tunnelId + ')')}`,
+  );
+  console.log(
+    `  secret:   issued ${hosting.secretIssuedAt}${hosting.secretAcknowledged ? '' : d(' — not yet fetched by the agent')}${hosting.rotationPending ? chalk.yellow(' (rotation pending: previous secret still accepted)') : ''}`,
+  );
+  const h = hosting.health ?? {};
+  console.log(
+    `  health:   ${healthWord(h)}${h.since ? d(` since ${h.since}`) : ''}${h.lastError && h.state !== 'up' ? d(` — ${h.lastError}`) : ''}`,
+  );
+  console.log('');
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {{ json: boolean }} options
+ */
+async function hostingCmd(name, { json }) {
+  if (!name) fail('Usage: lamaste-server plugins hosting <name>', json);
+  let result;
+  try {
+    result = await panelRequest('GET', `/api/plugins/${encodeURIComponent(name)}/hosting`);
+  } catch (err) {
+    fail(err.message, json);
+  }
+  if (json) emit(result);
+  else printHosting(result.hosting);
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {string[]} rest
+ * @param {{ json: boolean }} options
+ */
+async function hostCmd(name, rest, { json }) {
+  const agentIdx = rest.indexOf('--agent');
+  const agentLabel = agentIdx !== -1 ? rest[agentIdx + 1] : undefined;
+  if (!name || !agentLabel) fail('Usage: lamaste-server plugins host <name> --agent <label>', json);
+  if (json) emitStep('host', 'running', `Hosting ${name} on ${agentLabel}`);
+  else process.stderr.write(`  Hosting ${chalk.cyan(name)} on ${chalk.cyan(agentLabel)}...`);
+  let result;
+  try {
+    result = await panelRequest('POST', `/api/plugins/${encodeURIComponent(name)}/hosting`, {
+      agentLabel,
+    });
+  } catch (err) {
+    if (!json) console.log(` ${chalk.red('failed')}`);
+    fail(err.message, json, 'host');
+  }
+  if (json) {
+    emitStep('host', 'complete');
+    emitComplete({ hosting: result.hosting });
+    return;
+  }
+  console.log(` ${chalk.green('ok')}`);
+  printHosting(result.hosting);
+  console.log(
+    `  The agent fetches the plugin config on its next sync (within about 30 s); the agent half\n` +
+      `  must listen on 127.0.0.1:${result.hosting.port} and verify callers with that config.\n`,
+  );
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {{ json: boolean }} options
+ */
+async function unhostCmd(name, { json }) {
+  if (!name) fail('Usage: lamaste-server plugins unhost <name>', json);
+  try {
+    await panelRequest('DELETE', `/api/plugins/${encodeURIComponent(name)}/hosting`);
+  } catch (err) {
+    fail(err.message, json);
+  }
+  if (json) emitComplete({ name, hosted: false });
+  else
+    console.log(
+      `\n  Hosting of ${chalk.cyan(name)} ${chalk.red('removed')} (tunnel, secret, capability).\n`,
+    );
+}
+
+/**
+ * @param {string | undefined} name
+ * @param {{ json: boolean }} options
+ */
+async function rotateHostingSecretCmd(name, { json }) {
+  if (!name) fail('Usage: lamaste-server plugins rotate-hosting-secret <name>', json);
+  let result;
+  try {
+    result = await panelRequest(
+      'POST',
+      `/api/plugins/${encodeURIComponent(name)}/hosting/rotate-secret`,
+    );
+  } catch (err) {
+    fail(err.message, json);
+  }
+  if (json) emitComplete({ hosting: result.hosting });
+  else {
+    console.log(`\n  New installation secret issued for ${chalk.cyan(name)}.`);
+    console.log(`  The previous secret stays accepted until the agent acknowledges the new one.`);
+    printHosting(result.hosting);
+  }
 }
 
 /**

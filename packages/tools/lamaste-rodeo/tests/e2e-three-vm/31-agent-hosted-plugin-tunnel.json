@@ -1,0 +1,1666 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 31,
+    "name": "Agent-hosted plugin through the internal tunnel",
+    "suite": "e2e-three-vm",
+    "description": "31 — Agent-hosted plugin through the internal tunnel (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq"]
+  },
+  "env": {},
+  "constants": {
+    "CURL_MTLS": {
+      "value": "curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt"
+    },
+    "HOST_IP": {
+      "value": "${HOST_IP:-10.13.37.1}",
+      "expression": true
+    },
+    "STUB_PORT": {
+      "value": "4874"
+    },
+    "STUB_URL": {
+      "value": "http://127.0.0.1:${STUB_PORT}",
+      "expression": true
+    },
+    "STUB_ADMIN_TOKEN": {
+      "value": "feria_e2eadmin_threevm_appplugin_00000000"
+    },
+    "PLUGIN_PACKAGE": {
+      "value": "@lamalibre/e2e-app-plugin-server"
+    },
+    "PLUGIN_NAME": {
+      "value": "e2e-app-plugin"
+    },
+    "AGENT_LABEL": {
+      "value": "e2e-agent"
+    },
+    "AGENT_DIR": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LABEL}",
+      "expression": true
+    },
+    "AGENT_CONFIG": {
+      "value": "${AGENT_DIR}/config.json",
+      "expression": true
+    },
+    "PLUGIN_CONFIG_FILE": {
+      "value": "${AGENT_DIR}/app-plugins/${PLUGIN_NAME}.json",
+      "expression": true
+    },
+    "SYNC_TIMER": {
+      "value": "lamalibre-lamaste-sync-${AGENT_LABEL}.timer",
+      "expression": true
+    },
+    "CHISEL_SERVICE": {
+      "value": "lamalibre-lamaste-chisel-${AGENT_LABEL}.service",
+      "expression": true
+    },
+    "REMOTE_DIR": {
+      "value": "/tmp/e2e-31-app-plugin"
+    },
+    "HALF_LOG": {
+      "value": "${REMOTE_DIR}/half.log",
+      "expression": true
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "DOMAIN",
+              "from": {
+                "kind": "jq",
+                "expression": ".domain"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "Set HOST_AGENT_LABEL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_config_field \"agentLabel\""
+          },
+          "capture": [
+            {
+              "variable": "HOST_AGENT_LABEL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_ENROLLED",
+              "from": {
+                "kind": "jq",
+                "expression": "[.agents[]? | select(.label == \""
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Agent ${HOST_AGENT_LABEL} is enrolled on the host",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent ${HOST_AGENT_LABEL} is enrolled on the host"
+          }
+        },
+        {
+          "id": "step-7",
+          "label": "Set TIMER_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "TIMER_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-8",
+          "label": "Sync timer ${SYNC_TIMER} is active on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TIMER_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "Sync timer ${SYNC_TIMER} is active on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "find \\"
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LIB_DIR",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "@lamalibre/lamaste not found under the agent VM's global lamaste-agent install",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "@lamalibre/lamaste not found under the agent VM's global lamaste-agent install"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "AGENT_LIB_DIR"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Set AGENT_LIB_PARENT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "dirname \"$(dirname \"$(dirname \"${AGENT_LIB_DIR}\")\")\""
+          },
+          "capture": [
+            {
+              "variable": "AGENT_LIB_PARENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-12",
+          "label": "Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_not_eq",
+        "variable": "AGENT_ENROLLED",
+        "value": "0"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(host_api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\n\nHOST_AGENT_LABEL=$(agent_config_field \"agentLabel\")\nHOST_AGENT_LABEL=\"${HOST_AGENT_LABEL:-test-agent}\"\nAGENT_ENROLLED=$(host_api_get \"certs/agent\" | jq -r '[.agents[]? | select(.label == \"'\"${HOST_AGENT_LABEL}\"'\" and (.revoked // false) == false)] | length' 2>/dev/null || echo \"0\")\nif [ \"$AGENT_ENROLLED\" = \"0\" ]; then\n  log_skip \"Agent ${HOST_AGENT_LABEL} is not enrolled on the host — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Agent ${HOST_AGENT_LABEL} is enrolled on the host\"\n\nTIMER_STATE=$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\nassert_eq \"$TIMER_STATE\" \"active\" \"Sync timer ${SYNC_TIMER} is active on the agent VM\" || true\n\nAGENT_LIB_DIR=$(agent_exec \"find \\\"\\$(npm root -g)/@lamalibre/lamaste-agent\\\" -path '*/@lamalibre/lamaste/package.json' -print -quit 2>/dev/null | xargs -r dirname\" 2>/dev/null || echo \"\")\nif [ -z \"$AGENT_LIB_DIR\" ]; then\n  log_fail \"@lamalibre/lamaste not found under the agent VM's global lamaste-agent install\"\n  end_test\n  exit $?\nfi\nAGENT_LIB_PARENT=$(dirname \"$(dirname \"$(dirname \"${AGENT_LIB_DIR}\")\")\")\nlog_info \"Agent VM's @lamalibre/lamaste: ${AGENT_LIB_DIR}\"\n\n# ===========================================================================\n# 1. Install and enable on the host; host on the agent\n# ==========================================================================="
+    },
+    {
+      "id": "install-enable-host-on-host-agent-label",
+      "label": "Install, enable, host on ${HOST_AGENT_LABEL}",
+      "steps": [
+        {
+          "id": "step-13",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-31-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-22",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}"
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[s]tub-registry.mjs' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-25",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit"
+          }
+        },
+        {
+          "id": "step-30",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "Stand-in registry is up on the host VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "STUB_UP"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "Stand-in registry is up on the host VM"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc"
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "POST /api/plugins/install",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/install",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "INSTALL_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "Fixture installed as agent-hosted",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL_RESPONSE"
+              },
+              "path": ".plugin.hosting",
+              "expected": {
+                "kind": "literal",
+                "value": "agent"
+              },
+              "message": "Fixture installed as agent-hosted"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/enable",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/enable",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Plugin enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_RESPONSE"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "enabled"
+              },
+              "message": "Plugin enabled"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_LOG_MARK",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-39",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "HOST_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Plugin hosted on ${HOST_AGENT_LABEL}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Plugin hosted on ${HOST_AGENT_LABEL}"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "Extract PORT",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "PORT",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "expression": ".hosting.port"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "Extract TUNNEL_ID",
+          "target": "local",
+          "op": {
+            "type": "set",
+            "variable": "TUNNEL_ID",
+            "from": {
+              "kind": "jq",
+              "input": {
+                "kind": "var",
+                "name": "HOST_RESPONSE"
+              },
+              "expression": ".hosting.tunnelId"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Port ${PORT} assigned from the internal range",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Port ${PORT} assigned from the internal range"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Port ${PORT} is not in 21000–21999",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Port ${PORT} is not in 21000–21999"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "PORT",
+            "value": ">=21000"
+          }
+        }
+      ],
+      "bash": "log_section \"Install, enable, host on ${HOST_AGENT_LABEL}\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-31-app-plugin-XXXXXXXX)\nwrite_stub_registry \"${LOCAL_TMP}/stub-registry.mjs\"\nwrite_app_plugin_fixture \"${LOCAL_TMP}/fixture\"\nwrite_app_plugin_half \"${LOCAL_TMP}/app-plugin-half.mjs\"\nhost_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR}/fixture && chmod -R a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/stub-registry.mjs\" \"lamaste-host:${REMOTE_DIR}/stub-registry.mjs\"\nmultipass transfer \"${LOCAL_TMP}/fixture/package.json\" \"lamaste-host:${REMOTE_DIR}/fixture/package.json\"\nmultipass transfer \"${LOCAL_TMP}/fixture/index.js\" \"lamaste-host:${REMOTE_DIR}/fixture/index.js\"\nmultipass transfer \"${LOCAL_TMP}/fixture/lamaste-plugin.json\" \"lamaste-host:${REMOTE_DIR}/fixture/lamaste-plugin.json\"\nagent_exec \"rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}\"\nmultipass transfer \"${LOCAL_TMP}/app-plugin-half.mjs\" \"lamaste-agent:${REMOTE_DIR}/app-plugin-half.mjs\"\n\nhost_exec \"pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\"\nhost_exec \"nohup node ${REMOTE_DIR}/stub-registry.mjs --port ${STUB_PORT} --admin-token ${STUB_ADMIN_TOKEN} --issuer https://auth.${DOMAIN} --audience ${STUB_URL} --jwks-url http://127.0.0.1:9091/jwks.json --package ${REMOTE_DIR}/fixture &>/dev/null & exit\"\nSTUB_UP=\"no\"\nfor _ in $(seq 1 30); do\n  if host_exec \"curl -sf --max-time 3 ${STUB_URL}/-/ping > /dev/null 2>&1\"; then\n    STUB_UP=\"yes\"\n    break\n  fi\n  sleep 1\ndone\nassert_eq \"$STUB_UP\" \"yes\" \"Stand-in registry is up on the host VM\" || true\nhost_exec \"printf '@lamalibre:registry=%s/\\n//127.0.0.1:%s/:_authToken=%s\\n' '${STUB_URL}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc /etc/lamalibre/lamaste/.npmrc\"\n\nINSTALL_RESPONSE=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${PLUGIN_PACKAGE}\\\"}\")\nassert_json_field \"$INSTALL_RESPONSE\" '.plugin.hosting' 'agent' \"Fixture installed as agent-hosted\" || true\nENABLE_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/enable\" '{}')\nassert_json_field \"$ENABLE_RESPONSE\" '.status' 'enabled' \"Plugin enabled\" || true\n\n# sync.log outlives a run: count only the lines this run adds.\nSYNC_LOG_MARK=$(agent_exec \"cat ${AGENT_DIR}/logs/sync.log 2>/dev/null | wc -l\" 2>/dev/null || echo \"0\")\nHOST_RESPONSE=$(host_api_post \"plugins/${PLUGIN_NAME}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nassert_json_field \"$HOST_RESPONSE\" '.ok' 'true' \"Plugin hosted on ${HOST_AGENT_LABEL}\" || true\nPORT=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.port' 2>/dev/null || echo \"0\")\nTUNNEL_ID=$(echo \"$HOST_RESPONSE\" | jq -r '.hosting.tunnelId' 2>/dev/null || echo \"\")\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\n\n# ===========================================================================\n# 2. The sync timer delivers the plugin config to the agent\n# ==========================================================================="
+    },
+    {
+      "id": "the-agent-s-sync-timer-fetches-and-acknowledges-the-plugin-config",
+      "label": "The agent's sync timer fetches and acknowledges the plugin config",
+      "steps": [
+        {
+          "id": "step-46",
+          "label": "Plugin config file appeared on the agent VM within 90 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Plugin config file appeared on the agent VM within 90 seconds"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "No plugin config at ${PLUGIN_CONFIG_FILE} after 90 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "No plugin config at ${PLUGIN_CONFIG_FILE} after 90 seconds"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "The file names the plugin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(plugin_config_field '.plugin')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PLUGIN_NAME"
+              },
+              "message": "The file names the plugin"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "The file carries the assigned port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(plugin_config_field '.port')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PORT"
+              },
+              "message": "The file carries the assigned port"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a' ${PLUGIN_CONFIG_FILE}"
+          },
+          "capture": [
+            {
+              "variable": "FILE_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-51",
+          "label": "The file is 0600",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FILE_MODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600"
+              },
+              "message": "The file is 0600"
+            }
+          }
+        },
+        {
+          "id": "step-53",
+          "label": "The agent acknowledged the secret",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent acknowledged the secret"
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "The agent did not acknowledge the secret",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent did not acknowledge the secret"
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "The host records the acknowledgement",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The host records the acknowledgement"
+          }
+        },
+        {
+          "id": "step-57",
+          "label": "The host does not record the acknowledgement",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The host does not record the acknowledgement"
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-59",
+          "label": "sync.log records the fetch",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LOG"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "plugin config fetched: ${PLUGIN_NAME}"
+              },
+              "message": "sync.log records the fetch"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The agent's sync timer fetches and acknowledges the plugin config\"\n\nconfig_present() { agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\nif wait_for 90 config_present; then\n  log_pass \"Plugin config file appeared on the agent VM within 90 seconds\"\nelse\n  log_fail \"No plugin config at ${PLUGIN_CONFIG_FILE} after 90 seconds\"\nfi\nassert_eq \"$(plugin_config_field '.plugin')\" \"${PLUGIN_NAME}\" \"The file names the plugin\" || true\nassert_eq \"$(plugin_config_field '.port')\" \"${PORT}\" \"The file carries the assigned port\" || true\nFILE_MODE=$(agent_exec \"stat -c '%a' ${PLUGIN_CONFIG_FILE}\" 2>/dev/null || echo \"\")\nassert_eq \"$FILE_MODE\" \"600\" \"The file is 0600\" || true\nacked_on_agent() { [ \"$(plugin_config_field '.acknowledged')\" = \"true\" ]; }\nif wait_for 60 acked_on_agent; then\n  log_pass \"The agent acknowledged the secret\"\nelse\n  log_fail \"The agent did not acknowledge the secret\"\nfi\nacked_on_host() { [ \"$(hosting_field '.hosting.secretAcknowledged')\" = \"true\" ]; }\nif wait_for 30 acked_on_host; then\n  log_pass \"The host records the acknowledgement\"\nelse\n  log_fail \"The host does not record the acknowledgement\"\nfi\nSYNC_LOG=$(agent_exec \"tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_LOG\" \"plugin config fetched: ${PLUGIN_NAME}\" \"sync.log records the fetch\" || true\n\n# ===========================================================================\n# 3. The agent half on the agent VM, reached through the tunnel\n# ==========================================================================="
+    },
+    {
+      "id": "forwarding-through-the-internal-tunnel",
+      "label": "Forwarding through the internal tunnel",
+      "steps": [
+        {
+          "id": "step-60",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit"
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Agent half listens on the agent VM's 127.0.0.1:${PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Agent half listens on the agent VM's 127.0.0.1:${PORT}"
+          }
+        },
+        {
+          "id": "step-63",
+          "label": "Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "The host's loopback port ${PORT} reaches the agent half through chisel",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The host's loopback port ${PORT} reaches the agent half through chisel"
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "The internal tunnel did not come up within 90 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The internal tunnel did not come up within 90 seconds"
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-68",
+          "label": "GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs"
+            }
+          }
+        },
+        {
+          "id": "step-69",
+          "label": "The caller assertion names the admin",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".caller.type",
+              "expected": {
+                "kind": "literal",
+                "value": "admin"
+              },
+              "message": "The caller assertion names the admin"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "No cookie crosses the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".cookie",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "No cookie crosses the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "GET /api/${PLUGIN_NAME}/panel.js",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/panel.js"
+          },
+          "capture": [
+            {
+              "variable": "BUNDLE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
+          "label": "The admin bundle comes from the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "BUNDLE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "__lamalibrePlugins"
+              },
+              "message": "The admin bundle comes from the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "The user surface is out of the forwarder's reach",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "404"
+              },
+              "message": "The user surface is out of the forwarder's reach"
+            }
+          }
+        },
+        {
+          "id": "step-74",
+          "label": "Health is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up"
+          }
+        },
+        {
+          "id": "step-75",
+          "label": "Health did not reach up: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not reach up: $(hosting_field '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Forwarding through the internal tunnel\"\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nhalf_up() { [ \"$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 30 half_up; then\n  log_pass \"Agent half listens on the agent VM's 127.0.0.1:${PORT}\"\nelse\n  log_fail \"Agent half did not start: $(agent_exec \"cat ${REMOTE_DIR}/half.out\" 2>/dev/null)\"\nfi\n\n# The chisel client picks the new grant up on its next sync.\ntunnel_up() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; }\nif wait_for 90 tunnel_up; then\n  log_pass \"The host's loopback port ${PORT} reaches the agent half through chisel\"\nelse\n  log_fail \"The internal tunnel did not come up within 90 seconds\"\nfi\n\nPING=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN_NAME}/ping reaches the agent half across VMs\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"The caller assertion names the admin\" || true\nassert_json_field \"$PING\" '.cookie' 'null' \"No cookie crosses the tunnel\" || true\nBUNDLE=$(host_api_get \"${PLUGIN_NAME}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin bundle comes from the agent half\" || true\nassert_eq \"$(host_api_get_status \"${PLUGIN_NAME}/app/secret\")\" \"404\" \"The user surface is out of the forwarder's reach\" || true\n\nif wait_health up 60; then\n  log_pass \"Health is up\"\nelse\n  log_fail \"Health did not reach up: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Rotation, picked up by the sync timer\n# ==========================================================================="
+    },
+    {
+      "id": "secret-rotation-across-the-tunnel",
+      "label": "Secret rotation across the tunnel",
+      "steps": [
+        {
+          "id": "step-76",
+          "label": "Set ISSUED_BEFORE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field '.hosting.secretIssuedAt'"
+          },
+          "capture": [
+            {
+              "variable": "ISSUED_BEFORE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-77",
+          "label": "POST /api/plugins/${PLUGIN_NAME}/hosting/rotate-secret",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "POST",
+            "path": "plugins/${PLUGIN_NAME}/hosting/rotate-secret",
+            "body": {}
+          },
+          "capture": [
+            {
+              "variable": "ROTATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Rotation pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ROTATE"
+              },
+              "path": ".hosting.rotationPending",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Rotation pending"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "STILL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-80",
+          "label": "Calls keep working while the rotation is pending",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STILL"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Calls keep working while the rotation is pending"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "The sync timer fetched and acknowledged the new secret within 90 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The sync timer fetched and acknowledged the new secret within 90 seconds"
+          }
+        },
+        {
+          "id": "step-83",
+          "label": "Rotation not completed: $(host_api_get \"plugins/${PLUGIN_NAME}/hosting\")",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Rotation not completed: $(host_api_get \"plugins/${PLUGIN_NAME}/hosting\")"
+          }
+        },
+        {
+          "id": "step-84",
+          "label": "The agent's file carries the new secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(plugin_config_field '.issuedAt')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "ISSUED_BEFORE"
+              },
+              "message": "The agent's file carries the new secret"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log | grep -c 'plugin config fetched: ${PLUGIN_NAME}'"
+          },
+          "capture": [
+            {
+              "variable": "FETCH_LINES",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-86",
+          "label": "sync.log records the rotation's fetch as well",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "FETCH_LINES"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "2"
+              },
+              "message": "sync.log records the rotation's fetch as well"
+            }
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-88",
+          "label": "Calls work on the new secret",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "AFTER"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Calls work on the new secret"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Secret rotation across the tunnel\"\n\nISSUED_BEFORE=$(hosting_field '.hosting.secretIssuedAt')\nROTATE=$(host_api_post \"plugins/${PLUGIN_NAME}/hosting/rotate-secret\" '{}')\nassert_json_field \"$ROTATE\" '.hosting.rotationPending' 'true' \"Rotation pending\" || true\nSTILL=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$STILL\" '.pong' 'true' \"Calls keep working while the rotation is pending\" || true\nrotation_done() { [ \"$(hosting_field '.hosting.rotationPending')\" = \"false\" ] && [ \"$(hosting_field '.hosting.secretAcknowledged')\" = \"true\" ]; }\nif wait_for 90 rotation_done; then\n  log_pass \"The sync timer fetched and acknowledged the new secret within 90 seconds\"\nelse\n  log_fail \"Rotation not completed: $(host_api_get \"plugins/${PLUGIN_NAME}/hosting\")\"\nfi\nassert_not_eq \"$(plugin_config_field '.issuedAt')\" \"${ISSUED_BEFORE}\" \"The agent's file carries the new secret\" || true\nFETCH_LINES=$(agent_exec \"tail -n +$((SYNC_LOG_MARK + 1)) ${AGENT_DIR}/logs/sync.log | grep -c 'plugin config fetched: ${PLUGIN_NAME}'\" 2>/dev/null || echo \"0\")\nassert_eq \"$FETCH_LINES\" \"2\" \"sync.log records the rotation's fetch as well\" || true\nAFTER=$(host_api_get \"${PLUGIN_NAME}/ping\")\nassert_json_field \"$AFTER\" '.pong' 'true' \"Calls work on the new secret\" || true\n\n# ===========================================================================\n# 5. Health: application down, tunnel down, both back\n# ==========================================================================="
+    },
+    {
+      "id": "health-application-down",
+      "label": "Health: application down",
+      "steps": [
+        {
+          "id": "step-89",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true"
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping",
+            "statusOnly": true
+          },
+          "capture": [
+            {
+              "variable": "DOWN_STATUS",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "A stopped agent half behind a live tunnel is a 502",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "DOWN_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "A stopped agent half behind a live tunnel is a 502"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "Health reports down within 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health reports down within 60 seconds"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Health did not report down: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not report down: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-95",
+          "label": "The tunnel is up, the application is down: reason app",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "app"
+              },
+              "message": "The tunnel is up, the application is down: reason app"
+            }
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "Health is up again with the agent half back",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up again with the agent half back"
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Health did not recover: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not recover: $(hosting_field '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Health: application down\"\n\nagent_exec \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\"\nsleep 1\nDOWN_STATUS=$(host_api_get_status \"${PLUGIN_NAME}/ping\")\nassert_eq \"$DOWN_STATUS\" \"502\" \"A stopped agent half behind a live tunnel is a 502\" || true\nif wait_health down 60; then\n  log_pass \"Health reports down within 60 seconds\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"app\" \"The tunnel is up, the application is down: reason app\" || true\n\nagent_exec \"nohup node ${REMOTE_DIR}/app-plugin-half.mjs --config ${PLUGIN_CONFIG_FILE} --plugin ${PLUGIN_NAME} --lamaste ${AGENT_LIB_DIR} --log ${HALF_LOG} &> ${REMOTE_DIR}/half.out & exit\"\nif wait_for 30 half_up && wait_health up 60; then\n  log_pass \"Health is up again with the agent half back\"\nelse\n  log_fail \"Health did not recover: $(hosting_field '.hosting.health')\"\nfi"
+    },
+    {
+      "id": "health-tunnel-down",
+      "label": "Health: tunnel down",
+      "steps": [
+        {
+          "id": "step-100",
+          "label": "Set CHISEL_STATE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\""
+          },
+          "capture": [
+            {
+              "variable": "CHISEL_STATE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "The agent's tunnel client is stopped",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "CHISEL_STATE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "active"
+              },
+              "message": "The agent's tunnel client is stopped"
+            }
+          }
+        },
+        {
+          "id": "step-102",
+          "label": "Health reports down within 75 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health reports down within 75 seconds"
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "Health did not report down: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not report down: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-104",
+          "label": "Nothing listens on the relay port: reason tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "Nothing listens on the relay port: reason tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "GET /api/${PLUGIN_NAME}/ping",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "${PLUGIN_NAME}/ping"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-106",
+          "label": "The forwarder answers 502 with reason tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "TUNNEL_DOWN"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "The forwarder answers 502 with reason tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-108",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent sync --label ${AGENT_LABEL} > /dev/null 2>&1 || true"
+          }
+        },
+        {
+          "id": "step-109",
+          "label": "Health is up again once the tunnel client runs",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up again once the tunnel client runs"
+          }
+        },
+        {
+          "id": "step-110",
+          "label": "Health did not recover after the tunnel came back: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not recover after the tunnel came back: $(hosting_field '.hosting.health')"
+          }
+        }
+      ],
+      "bash": "log_section \"Health: tunnel down\"\n\nset_tunnels_stopped true\nCHISEL_STATE=$(user_systemctl \"is-active ${CHISEL_SERVICE} 2>/dev/null || true\")\nassert_not_eq \"$CHISEL_STATE\" \"active\" \"The agent's tunnel client is stopped\" || true\nif wait_health down 75; then\n  log_pass \"Health reports down within 75 seconds\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"tunnel\" \"Nothing listens on the relay port: reason tunnel\" || true\nTUNNEL_DOWN=$(host_api_get \"${PLUGIN_NAME}/ping\" 2>/dev/null || host_exec \"${CURL_MTLS} https://127.0.0.1:9292/api/${PLUGIN_NAME}/ping\")\nassert_json_field \"$TUNNEL_DOWN\" '.reason' 'tunnel' \"The forwarder answers 502 with reason tunnel\" || true\n\nset_tunnels_stopped false\nagent_exec \"lamaste-agent sync --label ${AGENT_LABEL} > /dev/null 2>&1 || true\"\nif wait_for 90 tunnel_up && wait_health up 60; then\n  log_pass \"Health is up again once the tunnel client runs\"\nelse\n  log_fail \"Health did not recover after the tunnel came back: $(hosting_field '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 6. Clearing the hosting\n# ==========================================================================="
+    },
+    {
+      "id": "clear-the-hosting",
+      "label": "Clear the hosting",
+      "steps": [
+        {
+          "id": "step-111",
+          "label": "DELETE /api/plugins/${PLUGIN_NAME}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "DELETE",
+            "path": "plugins/${PLUGIN_NAME}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "UNHOST",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-112",
+          "label": "Hosting removed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UNHOST"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Hosting removed"
+            }
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "GET /api/tunnels?limit=500",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "tunnels?limit=500"
+          },
+          "capture": [
+            {
+              "variable": "TUNNEL_LEFT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-114",
+          "label": "The internal tunnel is gone",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TUNNEL_LEFT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "The internal tunnel is gone"
+            }
+          }
+        },
+        {
+          "id": "step-116",
+          "label": "The sync timer removed the agent's plugin config file",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The sync timer removed the agent's plugin config file"
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "The plugin config file is still on the agent VM",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The plugin config file is still on the agent VM"
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "SYNC_LOG",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
+          "label": "sync.log records the removal",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "SYNC_LOG"
+              },
+              "substring": {
+                "kind": "expr",
+                "template": "plugin config removed: ${PLUGIN_NAME}"
+              },
+              "message": "sync.log records the removal"
+            }
+          }
+        },
+        {
+          "id": "step-121",
+          "label": "The relay port no longer reaches the agent half",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay port no longer reaches the agent half"
+          }
+        },
+        {
+          "id": "step-122",
+          "label": "The relay port still reaches the agent half after the grant was withdrawn",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The relay port still reaches the agent half after the grant was withdrawn"
+          }
+        }
+      ],
+      "bash": "log_section \"Clear the hosting\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN_NAME}/hosting\")\nassert_json_field \"$UNHOST\" '.ok' 'true' \"Hosting removed\" || true\nTUNNEL_LEFT=$(host_api_get \"tunnels?limit=500\" | jq \"[.tunnels[] | select(.id == \\\"${TUNNEL_ID}\\\")] | length\" 2>/dev/null || echo \"-1\")\nassert_eq \"$TUNNEL_LEFT\" \"0\" \"The internal tunnel is gone\" || true\nconfig_gone() { ! agent_exec \"test -f ${PLUGIN_CONFIG_FILE}\" 2>/dev/null; }\nif wait_for 90 config_gone; then\n  log_pass \"The sync timer removed the agent's plugin config file\"\nelse\n  log_fail \"The plugin config file is still on the agent VM\"\nfi\nSYNC_LOG=$(agent_exec \"tail -n 20 ${AGENT_DIR}/logs/sync.log 2>/dev/null\" 2>/dev/null || echo \"\")\nassert_contains \"$SYNC_LOG\" \"plugin config removed: ${PLUGIN_NAME}\" \"sync.log records the removal\" || true\ntunnel_down() { [ \"$(host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" != \"401\" ]; }\nif wait_for 90 tunnel_down; then\n  log_pass \"The relay port no longer reaches the agent half\"\nelse\n  log_fail \"The relay port still reaches the agent half after the grant was withdrawn\"\nfi"
+    }
+  ],
+  "apiHelpers": ["host_api_get", "host_api_get_status", "host_api_post", "host_api_delete"],
+  "headerRaw": "# ============================================================================\n# 31 — Agent-hosted plugin through the internal tunnel (Three-VM)\n# ============================================================================\n# The whole path of an agent-hosted plugin with an agent half, across the\n# host and agent VMs:\n#\n# 1. The plugin (fixture @lamalibre/e2e-app-plugin-server) is installed and\n#    enabled on the host, then hosted on the agent VM's agent. The agent's\n#    sync timer fetches the plugin config (port and secret) and acknowledges\n#    it, without any command on the agent VM.\n# 2. The agent half starts on the agent VM on the assigned port; the chisel\n#    client binds the same port on the host (the internal tunnel's grant), and\n#    the panel's forwarder reaches the agent half through it.\n# 3. A secret rotation on the host is picked up by the sync timer: the\n#    forwarder keeps working throughout and the previous secret is dropped\n#    once the agent acknowledges the new one.\n# 4. Health: the agent half stopped is \"down (app)\"; the tunnel client stopped\n#    is \"down (tunnel)\"; both come back up.\n# 5. Clearing the hosting withdraws the tunnel and the sync timer removes the\n#    agent's config file.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nCURL_MTLS=\"curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt\"\n\nhost_api_get() {\n  host_exec \"${CURL_MTLS} -f -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_get_status() {\n  host_exec \"${CURL_MTLS} -o /dev/null -w '%{http_code}' https://127.0.0.1:9292/api/$1\" 2>/dev/null || echo \"000\"\n}\nhost_api_post() {\n  host_exec \"${CURL_MTLS} -f -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\nhost_api_delete() {\n  host_exec \"${CURL_MTLS} -f -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# user_systemctl <args> — systemctl --user for root on the agent VM\nuser_systemctl() {\n  agent_exec \"XDG_RUNTIME_DIR=/run/user/0 systemctl --user $1\"\n}\n\n# agent_config_field <field> — a top-level field of the agent's config.json\n# (node: the agent VM has no jq)\nagent_config_field() {\n  agent_exec \"node -p \\\"require('${AGENT_CONFIG}')['$1'] ?? ''\\\"\" 2>/dev/null || echo \"\"\n}\n\n# plugin_config_field <js expr> — a field of the agent's plugin config file\nplugin_config_field() {\n  agent_exec \"node -p \\\"(JSON.parse(require('fs').readFileSync('${PLUGIN_CONFIG_FILE}','utf8')))$1\\\"\" 2>/dev/null || echo \"\"\n}\n\n# hosting_field <jq expr> — a field of GET /api/plugins/<name>/hosting on the host\nhosting_field() {\n  host_api_get \"plugins/${PLUGIN_NAME}/hosting\" 2>/dev/null | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_health <state> <seconds>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# wait_for <seconds> <command...> — until the command succeeds (every 3 s)\nwait_for() {\n  local deadline=$((SECONDS + $1))\n  shift\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if \"$@\"; then return 0; fi\n    sleep 3\n  done\n  return 1\n}\n\n# set_tunnels_stopped true|false — what the agent daemon's /stop and /start\n# do: remembered by the sync timer, which otherwise restarts the client\nset_tunnels_stopped() {\n  agent_exec \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', $1))\\\"\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nHOST_IP=\"${HOST_IP:-10.13.37.1}\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_threevm_appplugin_00000000\"\nPLUGIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nPLUGIN_NAME=\"e2e-app-plugin\"\nAGENT_LABEL=\"e2e-agent\"\nAGENT_DIR=\"/root/.lamalibre/lamaste/agents/${AGENT_LABEL}\"\nAGENT_CONFIG=\"${AGENT_DIR}/config.json\"\nPLUGIN_CONFIG_FILE=\"${AGENT_DIR}/app-plugins/${PLUGIN_NAME}.json\"\nSYNC_TIMER=\"lamalibre-lamaste-sync-${AGENT_LABEL}.timer\"\nCHISEL_SERVICE=\"lamalibre-lamaste-chisel-${AGENT_LABEL}.service\"\nREMOTE_DIR=\"/tmp/e2e-31-app-plugin\"\nHALF_LOG=\"${REMOTE_DIR}/half.log\"\nLOCAL_TMP=\"\"\nHOST_AGENT_LABEL=\"\"\nPORT=\"\"\nTUNNEL_ID=\"\"\n# Where the agent VM's global lamaste-agent install keeps @lamalibre/lamaste\nAGENT_LIB_DIR=\"\"\nAGENT_LIB_PARENT=\"\"\n\nbegin_test \"31 — Agent-hosted plugin through the internal tunnel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  timed_exec 60 multipass exec lamaste-host -- sudo bash -c \"${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/hosting > /dev/null 2>&1; ${CURL_MTLS} -X POST https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME}/disable > /dev/null 2>&1; ${CURL_MTLS} -X DELETE https://127.0.0.1:9292/api/plugins/${PLUGIN_NAME} > /dev/null 2>&1; rm -f /etc/lamalibre/lamaste/.npmrc; pkill -f '[s]tub-registry.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null; rm -rf ${REMOTE_DIR}; true\" > /dev/null 2>&1\n  if [ -n \"$AGENT_LIB_PARENT\" ]; then\n    timed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"cd ${AGENT_LIB_PARENT} && node --input-type=module -e \\\"import('@lamalibre/lamaste/agent').then((m) => m.setAgentTunnelsStopped('${AGENT_LABEL}', false))\\\" 2>/dev/null; lamaste-agent sync --label ${AGENT_LABEL} 2>/dev/null; true\" > /dev/null 2>&1\n  fi\n  if [ -n \"$LOCAL_TMP\" ]; then rm -rf \"$LOCAL_TMP\"; fi\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}

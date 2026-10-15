@@ -84,9 +84,13 @@ export {
   TUNNEL_MAX_BODY_MB,
   tunnelsCarriedBy,
   bindUnownedTunnels,
+  isInternalTunnel,
+  tunnelLabel,
+  assignInternalPluginPort,
 } from './tunnels.js';
 export type {
   TunnelType,
+  TunnelExposure,
   AccessMode,
   TunnelEntry,
   TunnelLogger,
@@ -362,6 +366,71 @@ export type {
   CreateGrantOptions,
   CreatedGrant,
 } from './user-access.js';
+
+// --- Plugin hosting (agent-hosted plugins with an agent half) ---
+export {
+  PLUGIN_HOSTINGS_FILENAME,
+  PluginHostingError,
+  pluginHostingsPath,
+  readPluginHostings,
+  getPluginHosting,
+  createPluginHosting,
+  removePluginHosting,
+  rotatePluginHostingSecret,
+  acknowledgePluginHostingSecret,
+  updatePluginHostingHealth,
+  signingSecretFor,
+  pluginHostingView,
+  agentPluginConfigFor,
+  agentPluginAssignments,
+} from './plugin-hosting.js';
+export type {
+  PluginHostingSecret,
+  PluginHostingHealthState,
+  PluginHostingHealth,
+  PluginHostingRecord,
+  PluginHostingStore,
+  PluginHostingView,
+  AgentPluginConfig,
+  AgentPluginAssignment,
+  CreatePluginHostingInput,
+} from './plugin-hosting.js';
+
+// --- Agent forwarder (the panel's /api/<route>/* for hosted plugins) ---
+export {
+  AGENT_HALF_ADMIN_PREFIX,
+  AGENT_FORWARD_DEFAULTS,
+  agentForwarderPlugin,
+  forwardToAgentHalf,
+  forwardedRequestHeaders,
+  forwardedResponseHeaders,
+  agentHalfPath,
+} from './agent-forwarder.js';
+export type {
+  AgentForwardTarget,
+  AgentForwardRefusal,
+  AgentForwardResolution,
+  AgentForwarderOptions,
+  AgentForwarderLogger,
+} from './agent-forwarder.js';
+
+// --- Health monitor for hosted plugins ---
+export {
+  PLUGIN_HEALTH_DEFAULTS,
+  AGENT_HALF_HEALTH_PATH,
+  probePluginHosting,
+  applyProbe,
+  startPluginHealthMonitor,
+} from './plugin-health.js';
+export type {
+  PluginProbeResult,
+  PluginProbeTarget,
+  PluginProbeOptions,
+  PluginHealthTracker,
+  MonitoredHosting,
+  PluginHealthMonitorOptions,
+  PluginHealthMonitor,
+} from './plugin-health.js';
 
 // --- Branding ---
 export * from '../branding.js';

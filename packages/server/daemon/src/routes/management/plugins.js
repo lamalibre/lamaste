@@ -10,6 +10,13 @@ import {
 import { setPluginCapabilities, loadAgentRegistry } from '../../lib/mtls.js';
 import { listPluginOidcClients, rotatePluginOidcClientSecret } from '../../lib/plugin-oidc.js';
 import {
+  hostPlugin,
+  unhostPlugin,
+  getHostingView,
+  attachHostings,
+  rotateHostingSecret,
+} from '../../lib/plugin-hosting.js';
+import {
   readPushInstallConfig,
   readPushInstallSessions,
   updatePushInstallConfigFields,
@@ -38,6 +45,14 @@ const OidcClientIdParamSchema = z.object({
     .min(1)
     .max(100)
     .regex(/^[a-z0-9][a-z0-9-]*$/, 'Client id must be lowercase letters, numbers and hyphens'),
+});
+
+const HostingBodySchema = z.object({
+  agentLabel: z
+    .string()
+    .min(1)
+    .max(63)
+    .regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, 'Invalid agent label'),
 });
 
 const InstallBodySchema = z.object({
@@ -160,7 +175,8 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (_request, _reply) => {
       const registry = await readPlugins();
-      return { plugins: registry.plugins };
+      // `agentHosting`: where an agent-hosted plugin's agent half runs, or null.
+      return { plugins: await attachHostings(registry.plugins) };
     },
   );
 
@@ -181,7 +197,103 @@ export default async function pluginRoutes(fastify, _opts) {
         return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
       }
 
-      return { plugin };
+      const [withHosting] = await attachHostings([plugin]);
+      return { plugin: withHosting };
+    },
+  );
+
+  // ===========================================================================
+  // Hosting an agent-hosted plugin's agent half on an agent
+  // ===========================================================================
+
+  // ------------------------------------------------------------------
+  // GET /plugins/:name/hosting — which agent hosts the plugin, port, health
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/hosting',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const registry = await readPlugins();
+      if (!registry.plugins.some((p) => p.name === params.name)) {
+        return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
+      }
+      const hosting = await getHostingView(params.name);
+      if (!hosting) {
+        return reply.code(404).send({ error: `Plugin "${params.name}" is not hosted on an agent` });
+      }
+      return { hosting };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /plugins/:name/hosting — host the plugin on an agent: internal
+  // tunnel (port assigned), installation secret, host capability
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/plugins/:name/hosting',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      const body = HostingBodySchema.parse(request.body);
+      try {
+        const hosting = await hostPlugin(params.name, body.agentLabel, request.log);
+        setPluginCapabilities(await getPluginCapabilities());
+        return reply.code(201).send({ ok: true, hosting });
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply.code(statusCode).send({ error: err.message || 'Failed to host plugin' });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // DELETE /plugins/:name/hosting — remove tunnel, secret and capability
+  // ------------------------------------------------------------------
+  fastify.delete(
+    '/plugins/:name/hosting',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      try {
+        return await unhostPlugin(params.name, request.log);
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply
+          .code(statusCode)
+          .send({ error: err.message || 'Failed to remove plugin hosting' });
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // POST /plugins/:name/hosting/rotate-secret — a new installation secret;
+  // the previous one stays accepted until the hosting agent acknowledges
+  // the new one (its sync does that within about 30 seconds)
+  // ------------------------------------------------------------------
+  fastify.post(
+    '/plugins/:name/hosting/rotate-secret',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      try {
+        const hosting = await rotateHostingSecret(params.name, request.log);
+        return { ok: true, hosting };
+      } catch (err) {
+        const statusCode = err.statusCode || 500;
+        return reply
+          .code(statusCode)
+          .send({ error: err.message || 'Failed to rotate the installation secret' });
+      }
     },
   );
 

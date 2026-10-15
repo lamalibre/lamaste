@@ -51,12 +51,17 @@ async function loadTunnels(): Promise<TunnelInfo[]> {
     const raw = await readFile(tunnelsPath, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((t: Record<string, unknown>) => ({
-      id: String(t.id ?? ''),
-      fqdn: String(t.fqdn ?? ''),
-      accessMode: (t.accessMode as TunnelInfo['accessMode']) ?? 'restricted',
-      enabled: t.enabled !== false,
-    }));
+    return (
+      parsed
+        // An internal plugin tunnel has no hostname: nothing to authorize.
+        .filter((t: Record<string, unknown>) => t.exposure !== 'internal' && t.fqdn)
+        .map((t: Record<string, unknown>) => ({
+          id: String(t.id ?? ''),
+          fqdn: String(t.fqdn ?? ''),
+          accessMode: (t.accessMode as TunnelInfo['accessMode']) ?? 'restricted',
+          enabled: t.enabled !== false,
+        }))
+    );
   } catch {
     return [];
   }
