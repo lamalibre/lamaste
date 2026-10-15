@@ -1,0 +1,77 @@
+# Copies a release that is already on npmjs to Feria (https://feria.samplepark.tr)
+# byte for byte. Feria serves @lamalibre as a closed scope, so every release
+# must land there too. npmjs publishing stays a manual step; run this
+# afterwards on the release tag:
+#
+#   gh workflow run feria.yml -R lamalibre/lamaste --ref v<version>
+#
+# No registry secret is stored in GitHub: the job exchanges its OIDC token
+# (audience = Feria) at Feria's login. Feria grants `publish` only to
+# refs/tags/v* of repositories owned by the lamalibre organisation; the
+# token is revoked when the job ends. See .github/scripts/mirror-to-feria.mjs
+# for what is copied, skipped or refused.
+name: Mirror to Feria
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token exchanged at Feria
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run on a release tag
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != tag ] || [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
+            echo "::error::run this workflow on a release tag (--ref v<version>), not ${GITHUB_REF}"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Feria token from the job's OIDC identity
+        id: feria
+        env:
+          FERIA_URL: https://feria.samplepark.tr
+        run: |
+          set -euo pipefail
+          jwt="$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${FERIA_URL}" | jq -r .value)"
+          echo "::add-mask::${jwt}"
+          # Feria labels allow letters, digits, space and . _ @ / -, up to 64.
+          label="gha ${GITHUB_REPOSITORY} run ${GITHUB_RUN_ID}"
+          status="$(jq -n --arg a "$jwt" --arg l "${label:0:64}" \
+            '{assertion: $a, label: $l}' \
+            | curl -sS -o "${RUNNER_TEMP}/feria-login.json" -w '%{http_code}' -X POST \
+                -H 'content-type: application/json' --data-binary @- "${FERIA_URL}/-/feria/login")"
+          if [ "$status" != 201 ]; then
+            echo "::error::Feria login answered HTTP ${status}: $(jq -c '{error, details}' "${RUNNER_TEMP}/feria-login.json" 2>/dev/null || head -c 500 "${RUNNER_TEMP}/feria-login.json")"
+            rm -f "${RUNNER_TEMP}/feria-login.json"
+            exit 1
+          fi
+          issued="$(cat "${RUNNER_TEMP}/feria-login.json")"
+          rm -f "${RUNNER_TEMP}/feria-login.json"
+          token="$(jq -r .token <<<"$issued")"
+          echo "::add-mask::${token}"
+          echo "Feria token $(jq -r '.id + " for " + .owner + " (" + (.scopes | join(",")) + "), expires " + .expiresAt' <<<"$issued")"
+          echo "id=$(jq -r .id <<<"$issued")" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '//feria.samplepark.tr/:_authToken=%s\n' "$token" > "${RUNNER_TEMP}/feria.npmrc"
+
+      - name: Copy the release from npmjs to Feria
+        run: node .github/scripts/mirror-to-feria.mjs "${GITHUB_REF_NAME#v}" --npmrc "${RUNNER_TEMP}/feria.npmrc"
+
+      - name: Revoke the Feria token
+        if: ${{ always() && steps.feria.outputs.id != '' }}
+        run: |
+          token="$(sed -n 's|^//feria.samplepark.tr/:_authToken=||p' "${RUNNER_TEMP}/feria.npmrc")"
+          curl -sS -o /dev/null -w 'revoke %{http_code}\n' -X DELETE -H @- \
+            "https://feria.samplepark.tr/-/feria/tokens/${{ steps.feria.outputs.id }}" \
+            <<<"Authorization: Bearer ${token}"
+          rm -f "${RUNNER_TEMP}/feria.npmrc"

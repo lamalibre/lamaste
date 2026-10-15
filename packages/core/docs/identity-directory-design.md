@@ -28,15 +28,15 @@ copy to follow Lamaste.
 
 ## What exists today
 
-| Piece | State |
-|---|---|
-| User store | Authelia's `users.yml`, keyed by **username**. No stable id. |
-| `GET /api/identity/users`, `/users/:username`, `/groups` | Read `users.yml`; admin or agent with `identity:query`. |
-| `GET /api/identity/self` | Echoes `Remote-*` headers; only meaningful behind Authelia. |
-| SDK `IdentityClient` | `listUsers`, `getUser`, `listGroups` over mTLS. |
-| SDK `parseIdentity` + Fastify plugin | Parses `Remote-User/Name/Email/Groups` headers. |
-| Tunnel vhosts | **Blank** `Remote-User` and `Remote-Groups` before proxying — apps receive no identity. |
-| Entitlements | Two models: per-plugin grants (`user-plugin-access.json`, by username) and Gatekeeper grants (groups → resources). |
+| Piece                                                    | State                                                                                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| User store                                               | Authelia's `users.yml`, keyed by **username**. No stable id.                                                       |
+| `GET /api/identity/users`, `/users/:username`, `/groups` | Read `users.yml`; admin or agent with `identity:query`.                                                            |
+| `GET /api/identity/self`                                 | Echoes `Remote-*` headers; only meaningful behind Authelia.                                                        |
+| SDK `IdentityClient`                                     | `listUsers`, `getUser`, `listGroups` over mTLS.                                                                    |
+| SDK `parseIdentity` + Fastify plugin                     | Parses `Remote-User/Name/Email/Groups` headers.                                                                    |
+| Tunnel vhosts                                            | **Blank** `Remote-User` and `Remote-Groups` before proxying — apps receive no identity.                            |
+| Entitlements                                             | Two models: per-plugin grants (`user-plugin-access.json`, by username) and Gatekeeper grants (groups → resources). |
 
 So the SDK can list users, but nothing gives an application a stable key, a
 scoped user list, a change feed, or a trustworthy identity on a request.
@@ -53,15 +53,15 @@ The directory record Lamaste owns:
 
 ```ts
 interface DirectoryUser {
-  userId: string;            // UUID, never reused
-  username: string;          // login name, unique, may change
+  userId: string; // UUID, never reused
+  username: string; // login name, unique, may change
   displayName: string;
   email: string;
-  groups: string[];          // Lamaste groups (Gatekeeper tier), not raw Authelia groups
+  groups: string[]; // Lamaste groups (Gatekeeper tier), not raw Authelia groups
   status: 'active' | 'disabled';
-  canSignIn: boolean;        // false = directory-only person (see "People who never sign in")
+  canSignIn: boolean; // false = directory-only person (see "People who never sign in")
   updatedAt: string;
-  version: number;           // per-record, increments on every change
+  version: number; // per-record, increments on every change
 }
 ```
 
@@ -75,9 +75,9 @@ An **entitlement** says a user may use a plugin, optionally with roles:
 
 ```ts
 interface Entitlement {
-  plugin: string;            // "pdks", "apsiyon", …
+  plugin: string; // "pdks", "apsiyon", …
   userId: string;
-  roles: string[];           // plugin-declared roles, e.g. ["viewer"], ["manager"]
+  roles: string[]; // plugin-declared roles, e.g. ["viewer"], ["manager"]
   source: 'direct' | `group:${string}`;
 }
 ```
@@ -111,9 +111,9 @@ only the declared attributes and the plugin's roles.
 interface AudienceMember {
   userId: string;
   username: string;
-  displayName?: string;      // only if declared
-  email?: string;            // only if declared
-  roles: string[];           // this plugin's roles only
+  displayName?: string; // only if declared
+  email?: string; // only if declared
+  roles: string[]; // this plugin's roles only
   status: 'active' | 'disabled';
   version: number;
 }
@@ -187,9 +187,10 @@ Today's surface stays; three pieces are added.
 ```ts
 const subscriber = new IdentitySubscriber({
   plugin: 'pdks',
-  client,                                  // existing IdentityClient (mTLS)
-  cursorStore,                             // where the subscriber keeps { directoryId, seq }
-  apply: async (changes, tx) => {          // the plugin decides what to do with each change
+  client, // existing IdentityClient (mTLS)
+  cursorStore, // where the subscriber keeps { directoryId, seq }
+  apply: async (changes, tx) => {
+    // the plugin decides what to do with each change
     for (const c of changes) {
       if (c.kind === 'upsert') upsertPerson(tx, c.member);
       else markRemoved(tx, c.userId, c.reason);
@@ -197,8 +198,8 @@ const subscriber = new IdentitySubscriber({
   },
   reconcileEvery: '24h',
 });
-await subscriber.start();                  // initial snapshot or catch-up, then waits for notify()
-subscriber.notify(seq);                    // called by the plugin's /admin/identity/notify route
+await subscriber.start(); // initial snapshot or catch-up, then waits for notify()
+subscriber.notify(seq); // called by the plugin's /admin/identity/notify route
 ```
 
 Guarantees:
@@ -217,8 +218,8 @@ Requests reach applications with a **signed identity assertion** instead of
 bare `Remote-*` headers:
 
 - **Through the app-plugin forwarder:** the server half adds the caller to
-  the caller assertion it already signs (app-plugin design, *Authentication
-  between the halves*).
+  the caller assertion it already signs (app-plugin design, _Authentication
+  between the halves_).
 - **Through a plain tunnel** (`authenticated` / `restricted`): Gatekeeper,
   already the `auth_request` target, returns
   `X-Lamalibre-Identity: <JWT>` on allow; nginx copies it to the upstream
@@ -272,11 +273,11 @@ entitlement to end one thing).
 A user can hold several **credentials**, each of which proves "this is that
 user" in a different place:
 
-| Credential | Where it is presented | Verified by |
-|---|---|---|
-| Password + TOTP | Browser (Authelia) | Authelia |
-| Badges (card ids) | Card readers at kiosks, the portal, doors | The site agent, from its local projection |
-| Registry / API tokens | Terminals, machines | The service that issued them (e.g. Feria) |
+| Credential            | Where it is presented                     | Verified by                               |
+| --------------------- | ----------------------------------------- | ----------------------------------------- |
+| Password + TOTP       | Browser (Authelia)                        | Authelia                                  |
+| Badges (card ids)     | Card readers at kiosks, the portal, doors | The site agent, from its local projection |
+| Registry / API tokens | Terminals, machines                       | The service that issued them (e.g. Feria) |
 
 Badges are managed in Lamaste on the user's page: enrol (scan or type the
 id), label (e.g. "13.56 MHz", "125 kHz"), revoke. A person may hold several —
@@ -315,13 +316,13 @@ card read ─► site agent: badge id → userId (local projection)
 "One action ends everything" is only true once the change reaches each
 place that enforces it:
 
-| Enforcer | Reached by | Typical latency |
-|---|---|---|
-| Authelia (web sign-in) | Lamaste writes it directly | immediate |
-| Tunnelled web apps | Gatekeeper, per request | immediate (within its cache lifetime) |
-| Agent-hosted app plugins | Notify through the internal tunnel | seconds |
-| Site agents (badges, doors) | Notify, else next 30 s sync | seconds; **unbounded while the site is offline** |
-| GitLab | Connector (below) | seconds |
+| Enforcer                    | Reached by                         | Typical latency                                  |
+| --------------------------- | ---------------------------------- | ------------------------------------------------ |
+| Authelia (web sign-in)      | Lamaste writes it directly         | immediate                                        |
+| Tunnelled web apps          | Gatekeeper, per request            | immediate (within its cache lifetime)            |
+| Agent-hosted app plugins    | Notify through the internal tunnel | seconds                                          |
+| Site agents (badges, doors) | Notify, else next 30 s sync        | seconds; **unbounded while the site is offline** |
+| GitLab                      | Connector (below)                  | seconds                                          |
 
 Offline sites are the hard case. A badge decision taken from a projection
 that has not heard about a revocation will allow a dismissed employee in.
@@ -373,7 +374,7 @@ HR system — each is a subscriber with its own projection and its own idea of
 "block".
 
 **Feria** is one too. Its design (`feria/docs/design/networked-registry-and-login.md`)
-asks Lamaste for a *group-change hook* that revokes or downgrades a person's
+asks Lamaste for a _group-change hook_ that revokes or downgrades a person's
 registry tokens when their `feria-*` membership changes. In this model that
 hook is Feria's identity subscription: Feria declares the roles `reader`,
 `publisher` and `admin`, entitlements grant them, and a `remove` or a role
@@ -412,24 +413,24 @@ directory and one out of it.
 
 ## Lamaste changes required
 
-| # | Change |
-|---|---|
-| 1 | Directory store in SQLite with `userId`, versions, `seq` triggers, `directoryId`; `users.yml` becomes derived. Migration assigns ids to existing users. |
-| 2 | One entitlement model: migrate `user-plugin-access.json` into Gatekeeper grants with roles. |
-| 3 | `identity` block in the plugin manifest (roles, attributes). |
-| 4 | Audience snapshot and change-feed endpoints, scoped per plugin. |
-| 5 | Notification fan-out: app-plugin forwarder, in-process event, `seq` in agent sync responses. |
-| 6 | Identity assertions: signing key, JWKS endpoint, Gatekeeper returns the assertion, nginx forwards it. |
-| 7 | Bulk user import (CSV) and a directory import API for external systems of record. |
-| 8 | SDK: `IdentitySubscriber`, `verifyIdentity` plugin, SQLite projection helpers. |
-| 9 | Badges as user credentials: enrol, label, revoke; `badges` attribute for card-reading plugins. |
-| 10 | Audit log: events forwarded by plugins and agents (`userId`, credential, action, result). |
-| 11 | Projection age reported by agents; offline policy declared by badge-reading plugins. |
-| 12 | Authelia OIDC provider (shared with Feria) and a GitLab connector plugin. |
+| #   | Change                                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Directory store in SQLite with `userId`, versions, `seq` triggers, `directoryId`; `users.yml` becomes derived. Migration assigns ids to existing users. |
+| 2   | One entitlement model: migrate `user-plugin-access.json` into Gatekeeper grants with roles.                                                             |
+| 3   | `identity` block in the plugin manifest (roles, attributes).                                                                                            |
+| 4   | Audience snapshot and change-feed endpoints, scoped per plugin.                                                                                         |
+| 5   | Notification fan-out: app-plugin forwarder, in-process event, `seq` in agent sync responses.                                                            |
+| 6   | Identity assertions: signing key, JWKS endpoint, Gatekeeper returns the assertion, nginx forwards it.                                                   |
+| 7   | Bulk user import (CSV) and a directory import API for external systems of record.                                                                       |
+| 8   | SDK: `IdentitySubscriber`, `verifyIdentity` plugin, SQLite projection helpers.                                                                          |
+| 9   | Badges as user credentials: enrol, label, revoke; `badges` attribute for card-reading plugins.                                                          |
+| 10  | Audit log: events forwarded by plugins and agents (`userId`, credential, action, result).                                                               |
+| 11  | Projection age reported by agents; offline policy declared by badge-reading plugins.                                                                    |
+| 12  | Authelia OIDC provider (shared with Feria) and a GitLab connector plugin.                                                                               |
 
 ## Open questions
 
-1. *(Decided 2026-10-13: employees are Lamaste users; badges are credentials on the user.)*
+1. _(Decided 2026-10-13: employees are Lamaste users; badges are credentials on the user.)_
 2. **PDKS's source of truth:** samplepark pushes into Lamaste, or Lamaste
    mirrors samplepark?
 3. **Erasure:** which plugins hold data that must be anonymised on request,
