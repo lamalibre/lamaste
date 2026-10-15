@@ -21,6 +21,7 @@ import {
   generatePanelServiceConfig,
   writePanelServiceConfig,
   removePanelServiceConfig,
+  repairPanelServiceInstallTarget,
 } from '../lib/panel-service.js';
 import { exposePanelTunnel, retractPanelTunnel, fetchPanelTunnelStatus } from '../lib/panel-api.js';
 import { fetchPanelServerCertDigests } from '../lib/panel-cert.js';
@@ -126,9 +127,18 @@ async function resetPin(label, config, isJson) {
 }
 
 async function enablePanel(label, config, port, isJson, localOnly = false) {
-  // 1. Check if already enabled
+  // 1. Check if already enabled — a unit from before 4.3 is repaired so it
+  //    starts at boot (see repairPanelServiceInstallTarget)
   const loaded = await isPanelServiceLoaded(label);
   if (loaded) {
+    try {
+      await repairPanelServiceInstallTarget(label);
+    } catch (err) {
+      if (!isJson) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.log(chalk.yellow(`Warning: Could not check the panel unit: ${msg}`));
+      }
+    }
     if (isJson) {
       console.log(
         JSON.stringify({ ok: true, alreadyRunning: true, port: config.panelPort || port }),

@@ -592,6 +592,41 @@ Mints a new credential for the named agent, rewrites the authfile and restarts C
 
 ---
 
+## Agent Daemon Authorization Endpoints
+
+An agent's lamaste-agentd accepts a request from the relay only with a relay assertion (`X-Lamalibre-Relay-Assertion`, Ed25519) — see [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions).
+
+### `GET /api/agents/me/relay-keys` (admin and agent)
+
+The public keys relay assertions are signed with, and the label this relay knows the calling agent by — the audience of the assertions made for it, which its local registry name need not equal. lamaste-agentd fetches this over its pinned mTLS channel on the first request from the relay and again when an assertion names a key it does not know (at most every 30 seconds). Public material; rate limited to 60 per minute.
+
+**Response (200):**
+
+```json
+{
+  "keys": [{ "kid": "<32 hex>", "publicKey": "<base64 DER SubjectPublicKeyInfo, Ed25519>" }],
+  "agentLabel": "macbook-pro"
+}
+```
+
+`kid` is the first 16 bytes of the SHA-256 of the DER key, hex; the daemon derives it from the key and refuses a response where they disagree. `agentLabel` is `null` for an admin or plugin-agent certificate.
+
+| Status | When                                                            |
+| ------ | --------------------------------------------------------------- |
+| 503    | The relay's signing key file is unusable (permissions, content) |
+
+### `GET /api/agent-panel/authz/:label` (nginx only)
+
+The `auth_request` target of the agent-panel vhost `agent-<label>.<domain>`, called by nginx for every request on it — not by clients. nginx sends the client certificate's verification result (`X-SSL-Client-*`, so the mTLS middleware refuses a revoked or unknown certificate), and the request's `X-Original-Method` and `X-Original-URI` (`$request_uri`). Admitted: the admin certificate and the certificate of the agent the panel belongs to, when that agent has an enabled panel tunnel. The answer is `200` with the assertion for exactly that request in `X-Lamalibre-Relay-Assertion` (and `Cache-Control: no-store`), which nginx forwards to the daemon. Exempt from panel 2FA — the browser is on the agent's hostname and has no 2FA cookie; agent panels are guarded by the client certificate alone. Reachable through the panel's own vhosts as well, where it gains nothing: it only ever asserts the caller's own, verified certificate, for a panel that certificate may use.
+
+| Status | When                                                                    |
+| ------ | ----------------------------------------------------------------------- |
+| 400    | Missing or malformed `X-Original-Method` / `X-Original-URI`             |
+| 403    | Another agent's certificate, a plugin-agent, or no enabled panel tunnel |
+| 503    | The relay's signing key file is unusable                                |
+
+---
+
 ## Hardware-Bound Certificate Endpoints
 
 Hardware-bound certificates use a CSR-based enrollment flow where the private key never leaves the agent machine. Instead of generating a P12 bundle on the server, the agent generates a key pair locally and submits a Certificate Signing Request (CSR) to the panel. The panel signs the CSR and returns the certificate.
@@ -1010,29 +1045,31 @@ curl -s --cert agent.p12:password \
 
 ## Quick Reference
 
-| Method | Path                                          | Description                                             |
-| ------ | --------------------------------------------- | ------------------------------------------------------- |
-| GET    | `/api/certs`                                  | List all certs (sorted by expiry)                       |
-| GET    | `/api/certs/auto-renew-status`                | Check certbot timer status                              |
-| POST   | `/api/certs/:domain/renew`                    | Force-renew a Let's Encrypt cert                        |
-| POST   | `/api/certs/mtls/rotate`                      | Rotate mTLS client certificate                          |
-| GET    | `/api/certs/mtls/download`                    | Download client.p12 file                                |
-| POST   | `/api/certs/agent`                            | Generate agent certificate (P12)                        |
-| GET    | `/api/certs/agent`                            | List agent certificates                                 |
-| GET    | `/api/certs/agent/:label/download`            | Download agent .p12 file                                |
-| PATCH  | `/api/certs/agent/:label/capabilities`        | Update agent capabilities                               |
-| PATCH  | `/api/certs/agent/:label/allowed-sites`       | Update agent site access                                |
-| DELETE | `/api/certs/agent/:label`                     | Revoke agent certificate (releases its tunnels)         |
-| GET    | `/api/agents/me/chisel-credential`            | Own Chisel credential (agent-only)                      |
-| POST   | `/api/agents/me/chisel-credential/rotate`     | Rotate own Chisel credential (agent-only, 10-min floor) |
-| POST   | `/api/agents/:label/chisel-credential/rotate` | Rotate an agent's Chisel credential (admin-only)        |
-| POST   | `/api/certs/agent/enroll`                     | Generate enrollment token (admin-only)                  |
-| POST   | `/api/certs/agent/enroll-delegated`           | Delegated enrollment token (agent-only)                 |
-| DELETE | `/api/certs/agent/enroll/:label`              | Revoke unused enrollment token                          |
-| POST   | `/api/certs/agent/upgrade-cert`               | Upgrade agent cert to hardware-bound                    |
-| POST   | `/api/enroll`                                 | Enroll agent with token (public)                        |
-| POST   | `/api/certs/admin/upgrade-to-hardware-bound`  | Upgrade admin to hardware-bound                         |
-| GET    | `/api/certs/admin/auth-mode`                  | Get admin auth mode                                     |
+| Method | Path                                          | Description                                              |
+| ------ | --------------------------------------------- | -------------------------------------------------------- |
+| GET    | `/api/certs`                                  | List all certs (sorted by expiry)                        |
+| GET    | `/api/certs/auto-renew-status`                | Check certbot timer status                               |
+| POST   | `/api/certs/:domain/renew`                    | Force-renew a Let's Encrypt cert                         |
+| POST   | `/api/certs/mtls/rotate`                      | Rotate mTLS client certificate                           |
+| GET    | `/api/certs/mtls/download`                    | Download client.p12 file                                 |
+| POST   | `/api/certs/agent`                            | Generate agent certificate (P12)                         |
+| GET    | `/api/certs/agent`                            | List agent certificates                                  |
+| GET    | `/api/certs/agent/:label/download`            | Download agent .p12 file                                 |
+| PATCH  | `/api/certs/agent/:label/capabilities`        | Update agent capabilities                                |
+| PATCH  | `/api/certs/agent/:label/allowed-sites`       | Update agent site access                                 |
+| DELETE | `/api/certs/agent/:label`                     | Revoke agent certificate (releases its tunnels)          |
+| GET    | `/api/agents/me/chisel-credential`            | Own Chisel credential (agent-only)                       |
+| POST   | `/api/agents/me/chisel-credential/rotate`     | Rotate own Chisel credential (agent-only, 10-min floor)  |
+| POST   | `/api/agents/:label/chisel-credential/rotate` | Rotate an agent's Chisel credential (admin-only)         |
+| GET    | `/api/agents/me/relay-keys`                   | Relay assertion public keys and the caller's relay label |
+| GET    | `/api/agent-panel/authz/:label`               | Agent-panel vhost authorization (nginx `auth_request`)   |
+| POST   | `/api/certs/agent/enroll`                     | Generate enrollment token (admin-only)                   |
+| POST   | `/api/certs/agent/enroll-delegated`           | Delegated enrollment token (agent-only)                  |
+| DELETE | `/api/certs/agent/enroll/:label`              | Revoke unused enrollment token                           |
+| POST   | `/api/certs/agent/upgrade-cert`               | Upgrade agent cert to hardware-bound                     |
+| POST   | `/api/enroll`                                 | Enroll agent with token (public)                         |
+| POST   | `/api/certs/admin/upgrade-to-hardware-bound`  | Upgrade admin to hardware-bound                          |
+| GET    | `/api/certs/admin/auth-mode`                  | Get admin auth mode                                      |
 
 ### Certificate Object Shape
 

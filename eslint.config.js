@@ -45,6 +45,7 @@ export default [
       'packages/provisioners/agent/**/*.js',
       'packages/provisioners/e2e/**/*.js',
       'packages/sdks/cloud/bin/**/*.js',
+      'packages/sdks/gatekeeper/test/**/*.js',
       'packages/core/docs/scripts/**/*.js',
       'packages/tools/lamaste-rodeo/**/*.js',
       'website/**/*.js',

@@ -4,7 +4,7 @@
 
 ## Authentication
 
-All Gatekeeper endpoints proxied through the panel require admin mTLS authentication. The internal `authz/check` endpoint on `127.0.0.1:9294` is called by nginx only and is not exposed externally.
+All Gatekeeper endpoints proxied through the panel require admin mTLS authentication. The internal `authz/tunnel/<fqdn>` endpoint on `127.0.0.1:9294` is called by nginx only and is not exposed externally.
 
 If the Gatekeeper service is unavailable, proxied endpoints return `503 Service Unavailable`.
 
@@ -574,12 +574,14 @@ These endpoints are not proxied through the lamalibre-lamaste-serverd and are no
 ### Authorization Check (nginx auth_request)
 
 ```
-GET /authz/check
+GET /authz/tunnel/:fqdn
 ```
 
 **Host:** `127.0.0.1:9294`
 
-This is the nginx `auth_request` target. nginx calls this endpoint on every request to a Gatekeeper-protected resource. It validates the user's Authelia session cookie and checks the corresponding grant.
+This is the nginx `auth_request` target. nginx calls this endpoint on every request to a Gatekeeper-protected resource. The tunnel vhost names its tunnel in the path (`proxy_pass http://127.0.0.1:9294/authz/tunnel/<fqdn>;`) and sends the same hostname in `X-Original-URL` (with the request's path and query) and `Host`; a request whose `X-Original-URL` or `Host` names another hostname, or has no `Host`, is refused with 401. Gatekeeper validates the user's Authelia session cookie for that URL and checks the corresponding grant.
+
+`GET /authz/check` — what tunnel vhosts written before 4.3 call, with `X-Original-URL` and `Host` taken from the client's `Host` header — answers `403` (logged as `vhost_predates_host_binding`): such a vhost closes its tunnel until the panel rewrites it, which it does at startup. See [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname).
 
 **Response codes:**
 

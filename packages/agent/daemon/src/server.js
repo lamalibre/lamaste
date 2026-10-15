@@ -5,9 +5,12 @@
  * the full AgentClient interface. Runs as a separate system service
  * from chisel, so the panel remains accessible even when tunnels are down.
  *
- * Authentication: nginx terminates mTLS upstream and passes client cert
- * headers (X-SSL-Client-Verify, X-SSL-Client-DN). This server validates
- * that the cert belongs to the owning agent or an admin.
+ * Authentication (lib/auth.js): the owner's Bearer token (agentd.token), or a
+ * relay assertion the relay signs per request on the agent-panel vhost
+ * (admin or this agent's certificate) and on plugin tunnels (an Authelia
+ * user). Headers that only claim a caller (X-SSL-Client-*, Remote-*) are
+ * never trusted: this port, and the tunnel's port on the relay, can be
+ * reached without going through nginx.
  */
 
 import Fastify from 'fastify';
@@ -28,13 +31,10 @@ import {
 
 import routes from './routes.js';
 import { createPanelApiClient } from './panel-api.js';
-import {
-  agentdTokenPath,
-  loadOrCreateAgentdToken,
-  verifyAgentdToken,
-  extractBearerToken,
-} from './lib/agentd-token.js';
+import { agentdTokenPath, loadOrCreateAgentdToken } from './lib/agentd-token.js';
 import { loadCapabilities } from './lib/capability-cache.js';
+import { createAuthHook, PUBLIC_ROUTE } from './lib/auth.js';
+import { createRelayVerifier } from './lib/relay-verifier.js';
 import { loadAgentConfig } from '@lamalibre/lamaste/agent';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,11 +42,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /**
  * Start the agent panel HTTP server.
  *
- * @param {string} label - Agent label (used for cert CN validation and API routing)
- * @param {{ port?: number }} [options]
+ * @param {string} label - Agent label (the audience of relay assertions, and API routing)
+ * @param {{ port?: number, panelApi?: ReturnType<typeof createPanelApiClient> }} [options]
+ *        `panelApi` replaces the mTLS client of the panel (tests pass a stand-in).
  * @returns {Promise<import('fastify').FastifyInstance>}
  */
-export async function startPanelServer(label, { port = 9393 } = {}) {
+export async function startPanelServer(label, { port = 9393, panelApi: panelApiOverride } = {}) {
   const server = Fastify({
     logger: {
       level: 'info',
@@ -79,155 +80,72 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   });
 
   // --- Panel API client (mTLS proxy to panel server) ---
-  // Constructed before the auth hook so the hook can use it to fetch
-  // capabilities from the panel for non-Bearer mTLS callers.
-  const panelApi = createPanelApiClient(label);
+  // Constructed before the auth hook: it fetches the relay's verification
+  // keys and, for this agent's own certificate, its capabilities.
+  const panelApi = panelApiOverride ?? createPanelApiClient(label);
 
-  // --- mTLS validation middleware ---
-  // nginx sets X-SSL-Client-Verify, X-SSL-Client-DN, and X-SSL-Client-Serial
-  // after TLS handshake. We validate the CN and check revocation.
-  //
-  // Revocation note: The agent panel runs on the agent machine, not the server.
-  // It cannot directly read the server-side revoked.json. A compromised cert
-  // that has been revoked server-side will still be accepted here until the
-  // panel tunnel is retracted. The primary defense is revoking the cert on the
-  // panel server (which blocks API calls the agent panel proxies) and retracting
-  // the panel tunnel (which removes the nginx vhost).
-  server.addHook('onRequest', async (request, reply) => {
-    // Allow health check without auth
-    if (request.url === '/api/health') return;
-
-    // Plugin bundles are intentionally public (loaded via <script> tag)
-    if (request.url.startsWith('/plugin-bundles/')) return;
-
-    // Auth is required for /api/* management routes AND all plugin routes
-    // (/<pluginName>/..., including non-/api/ sub-paths). Static assets (SPA
-    // files served by fastify-static from root) don't need auth.
-    const needsAuth = request.url.startsWith('/api') || /^\/[a-z0-9-]+\//.test(request.url);
-    if (!needsAuth) return;
-
-    const verify = request.headers['x-ssl-client-verify'];
-    if (verify !== 'SUCCESS') {
-      // Loopback caller authentication — Bearer token from ~/.lamalibre/lamaste/agentd.token.
-      //
-      // The previous implementation accepted any localhost-like Origin header
-      // as proof of being the agent owner. That trusts a header that any local
-      // OS user can forge with curl, allowing privilege escalation on shared
-      // hosts. The Bearer token replaces it: only processes that can read the
-      // mode-0600 token file (the agent's owning user) can authenticate.
-      const presented = extractBearerToken(request.headers.authorization);
-      if (presented && verifyAgentdToken(presented, agentdToken)) {
-        // Token authenticates "you are this user". The daemon serves a single
-        // label, so attribute the call to that label. The owning OS user has
-        // full access by definition (they own the agent's filesystem) — null
-        // means "all capabilities" to requireCap.
-        request.certCN = `agent:${label}`;
-        request.certRole = 'agent';
-        request.certLabel = label;
-        request.certCapabilities = null;
-        request.certAllowedSites = null;
-        return;
-      }
-
-      // Authelia-authenticated user (plugin tunnel access).
-      // When nginx routes through an Authelia-protected plugin vhost,
-      // Remote-User is set after successful Authelia forward auth. The header
-      // is cleared then re-injected by nginx — cannot be forged from outside.
-      // Port 9393 binds 127.0.0.1, so external traffic only arrives via nginx.
-      //
-      // Authelia users are restricted to plugin routes only (/{pluginName}/...).
-      // They must NOT access agent management API (/api/*) — those require
-      // mTLS (admin/agent cert) or a valid Bearer token (desktop app).
-      const remoteUser = request.headers['remote-user'];
-      if (remoteUser) {
-        // Validate username format (defense-in-depth against header injection)
-        if (!/^[a-z0-9_.-]+$/i.test(remoteUser)) {
-          return reply.code(403).send({ error: 'Invalid user identity' });
-        }
-
-        // Block access to /api/* management endpoints — Authelia users
-        // may only access plugin routes (/{pluginName}/api/...)
-        if (request.url.startsWith('/api')) {
-          return reply
-            .code(403)
-            .send({ error: 'Management API requires certificate authentication' });
-        }
-
-        request.certCN = `user:${remoteUser}`;
-        request.certRole = 'user';
-        request.autheliaUser = remoteUser;
-        // Authelia users only reach plugin routes (the management /api/*
-        // path is rejected above). Plugin authorization is gated upstream
-        // by gatekeeper grants — no agent-side capability check applies.
-        request.certCapabilities = [];
-        request.certAllowedSites = null;
-        return;
-      }
-
-      // No usable credential. Return 401 with a generic message — do not
-      // disclose which auth paths exist.
-      return reply.code(401).send({ error: 'Unauthorized' });
-    }
-
-    const dn = request.headers['x-ssl-client-dn'] || '';
-    const cnMatch = dn.match(/CN=([^,/]+)/);
-    const cn = cnMatch ? cnMatch[1] : '';
-
-    // Allow: this agent's cert or admin cert only
-    const isOwner = cn === `agent:${label}`;
-    const isAdmin = cn === 'admin';
-
-    if (!isOwner && !isAdmin) {
-      return reply.code(403).send({ error: 'Certificate not authorized for this agent panel' });
-    }
-
-    request.certCN = cn;
-    request.certRole = isAdmin ? 'admin' : 'agent';
-    request.certLabel = isOwner ? label : null;
-
-    if (isAdmin) {
-      // Admin cert is the master key — full access, no capability check.
-      request.certCapabilities = null;
-      request.certAllowedSites = null;
-      return;
-    }
-
-    // Agent cert: fetch capabilities from the panel server (the canonical
-    // source) and cache for 60 seconds. On panel-fetch failure we deny
-    // (return 503) — never default to allow. The cache helper logs the
-    // underlying error; the response stays generic.
-    let agentConfig;
-    try {
-      agentConfig = await loadAgentConfig(label);
-    } catch (err) {
-      request.log.warn(
-        { errMsg: String(err?.message ?? '') },
-        'Failed to load agent config for capability fetch',
-      );
-      return reply.code(503).send({ error: 'Capability check temporarily unavailable' });
-    }
-    if (!agentConfig) {
-      // No config means the agent isn't fully provisioned — block access
-      // rather than silently allow.
-      return reply.code(503).send({ error: 'Agent not configured' });
-    }
-
-    const result = await loadCapabilities(
-      label,
-      () => panelApi.fetchSelfCapabilities(agentConfig),
-      request.log,
-    );
-    if (!result) {
-      return reply.code(503).send({ error: 'Capability check temporarily unavailable' });
-    }
-    request.certCapabilities = result.capabilities;
-    request.certAllowedSites = result.allowedSites;
+  // --- Authentication (see lib/auth.js) ---
+  // Plugins are mounted once, at startup (enable/disable restart the daemon),
+  // so the installed names read here are the prefixes plugin code may answer.
+  const registryPath = agentPluginsFile(label);
+  const pluginNames = new Set(
+    (await readPluginRegistry(registryPath)).plugins.map((plugin) => plugin.name),
+  );
+  const relayVerifier = createRelayVerifier({
+    port,
+    logger: server.log,
+    fetchKeys: async () => {
+      const agentConfig = await loadAgentConfig(label);
+      if (!agentConfig) throw new Error('Agent not configured');
+      return panelApi.fetchRelayKeys(agentConfig);
+    },
   });
+
+  // Revocation: the relay's panel refuses a revoked certificate before it
+  // signs an assertion for it, so a revoked admin or agent certificate no
+  // longer reaches this daemon through the agent-panel vhost.
+  server.addHook(
+    'onRequest',
+    createAuthHook({
+      label,
+      agentdToken,
+      relayVerifier,
+      pluginNames,
+      loadAgentCapabilities: async (request) => {
+        // Capabilities come from the panel (the canonical source), cached
+        // for 60 seconds. Any failure denies (503); the cache helper logs
+        // the underlying error and the response stays generic.
+        let agentConfig;
+        try {
+          agentConfig = await loadAgentConfig(label);
+        } catch (err) {
+          request.log.warn(
+            { errMsg: String(err?.message ?? '') },
+            'Failed to load agent config for capability fetch',
+          );
+          return { ok: false, error: 'Capability check temporarily unavailable' };
+        }
+        if (!agentConfig) {
+          // Not fully provisioned — block rather than silently allow.
+          return { ok: false, error: 'Agent not configured' };
+        }
+        const result = await loadCapabilities(
+          label,
+          () => panelApi.fetchSelfCapabilities(agentConfig),
+          request.log,
+        );
+        if (!result) return { ok: false, error: 'Capability check temporarily unavailable' };
+        return { ok: true, capabilities: result.capabilities, allowedSites: result.allowedSites };
+      },
+    }),
+  );
 
   // --- Health check (no label to avoid info leakage) ---
   // Empty `rateLimit: {}` opts the route into the globally-registered limiter
   // and satisfies the CodeQL js/missing-rate-limiting dataflow.
-  server.get('/api/health', { config: { rateLimit: {} } }, async () => ({ status: 'ok' }));
+  server.get('/api/health', { config: { rateLimit: {}, [PUBLIC_ROUTE]: true } }, async () => ({
+    status: 'ok',
+  }));
 
   // --- REST API routes ---
   await server.register(routes, { prefix: '/api', label, panelApi });
@@ -235,7 +153,6 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   // --- Agent plugin routes (unified plugin host) ---
   // Mounts enabled plugin server routes at /<name>/... (root level),
   // matching the local plugin host pattern that plugins expect.
-  const registryPath = agentPluginsFile(label);
   await server.register(pluginHostPlugin, {
     baseDir: agentDataDir(label),
     pluginsDataDir: agentPluginsDir(label),
@@ -329,7 +246,7 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   };
   server.get(
     '/plugin-bundles/:name/panel.js',
-    { config: { rateLimit: {} } },
+    { config: { rateLimit: {}, [PUBLIC_ROUTE]: true } },
     async (request, reply) => {
       const { name } = request.params;
       if (!PLUGIN_NAME_RE.test(name)) {
@@ -349,12 +266,22 @@ export async function startPanelServer(label, { port = 9393 } = {}) {
   );
 
   // --- Static SPA files ---
+  // Public, and nothing else is: the files are registered in a scope of
+  // their own whose onRoute hook marks exactly its routes. The root
+  // registration only gives the SPA fallback below `reply.sendFile`.
   const staticRoot = path.resolve(__dirname, '..', 'panel-dist');
   try {
-    await server.register(fastifyStatic, {
-      root: staticRoot,
-      prefix: '/',
-      wildcard: false,
+    await server.register(fastifyStatic, { root: staticRoot, serve: false });
+    await server.register(async function spaFiles(scope) {
+      scope.addHook('onRoute', (routeOptions) => {
+        routeOptions.config = { ...routeOptions.config, [PUBLIC_ROUTE]: true };
+      });
+      await scope.register(fastifyStatic, {
+        root: staticRoot,
+        prefix: '/',
+        wildcard: false,
+        decorateReply: false,
+      });
     });
   } catch (err) {
     server.log.warn(

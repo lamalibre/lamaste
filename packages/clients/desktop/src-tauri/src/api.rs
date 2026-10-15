@@ -45,6 +45,44 @@ pub(crate) fn agentd_token() -> Result<&'static str, String> {
     Ok(AGENTD_TOKEN.get().expect("just set").as_str())
 }
 
+/// Run `curl <args>` against the local agentd as its owner. The Bearer token
+/// reaches curl on stdin (`-H @-`), never in its arguments: other local users
+/// can read a process's command line (`/proc/<pid>/cmdline` on Linux), and
+/// the token is all that separates them from the daemon's owner — and its
+/// plugin install. `args` must not make curl read stdin themselves (`@-`, `-`).
+pub(crate) fn curl_agentd_as_owner(args: &[String]) -> Result<std::process::Output, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    if args.iter().any(|a| a == "@-" || a == "-") {
+        return Err("curl arguments must not read stdin: it carries the agentd token".to_string());
+    }
+    let token = agentd_token()?;
+    let mut child = Command::new("curl")
+        .arg("-H")
+        .arg("@-")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    {
+        // curl reads the header file before it connects; closing stdin (end
+        // of this block) ends it.
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Failed to open curl stdin".to_string())?;
+        stdin
+            .write_all(format!("Authorization: Bearer {}\n", token).as_bytes())
+            .map_err(|e| format!("Failed to pass the agentd token to curl: {}", e))?;
+    }
+    child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to run curl: {}", e))
+}
+
 // --- Curl config file helper (keeps P12 password out of process args) ---
 
 /// RAII guard that creates a temporary curl config file with cert credentials
@@ -233,8 +271,9 @@ pub(crate) fn curl_panel(
 ///
 /// The agent panel server binds 127.0.0.1 only and authenticates loopback
 /// callers via a Bearer token stored at `~/.lamalibre/lamaste/agentd.token`. The token
-/// is mode 0600, so only the agent's owning OS user can read it. Forging
-/// `X-SSL-Client-*` headers from a local user is no longer accepted.
+/// is mode 0600, so only the agent's owning OS user can read it, and it is
+/// handed to curl on stdin (`curl_agentd_as_owner`). Headers claiming a
+/// caller (`X-SSL-Client-*`, `Remote-User`) prove nothing to the daemon.
 ///
 /// `agent_label` is unused at the wire level (the daemon attributes the call
 /// to its own `--label` once the token matches), but kept in the signature
@@ -247,15 +286,8 @@ pub(crate) fn curl_agent_local_panel(
     body: Option<&str>,
 ) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}{}", port, path);
-    let token = agentd_token()?;
 
-    let mut args = vec![
-        "-s".to_string(),
-        "-H".to_string(),
-        format!("Authorization: Bearer {}", token),
-        "-X".to_string(),
-        method.to_string(),
-    ];
+    let mut args = vec!["-s".to_string(), "-X".to_string(), method.to_string()];
 
     if let Some(json_body) = body {
         args.push("-H".to_string());
@@ -266,10 +298,7 @@ pub(crate) fn curl_agent_local_panel(
 
     args.push(url);
 
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = curl_agentd_as_owner(&args)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

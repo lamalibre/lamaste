@@ -10,6 +10,10 @@
 #   2. User authenticates but has no grant → 403 (Gatekeeper access-request)
 #   3. Admin revokes the grant     → previously-allowed user now 403
 #
+# And that another tunnel's Host header opens nothing: a request line for
+# this tunnel sent with the Host of a tunnel the user may reach is denied,
+# also after the panel rewrites a vhost written the old way at startup.
+#
 # Verifies both that the default posture holds (a fresh tunnel is not
 # accessible to any authenticated user) and that the grant lifecycle
 # actually drives the nginx/Gatekeeper decision — the surface we regressed
@@ -54,6 +58,14 @@ GRANT_ID=""
 MARKER="LAMASTE_RESTRICTED_OK_$(date +%s)"
 OUTSIDER_USER="e2eoutsider"
 OUTSIDER_PASSWORD="Outsider-E2E-Password-123"
+OUTSIDER_READY=""
+# A second tunnel, `authenticated`: every Authelia user may reach it. Nothing
+# needs to listen behind it — its hostname is only ever sent as a Host header.
+AUTHED_SUBDOMAIN="e2ehostconfusion"
+AUTHED_PORT=18091
+AUTHED_FQDN="${AUTHED_SUBDOMAIN}.${TEST_DOMAIN}"
+AUTHED_TUNNEL_ID=""
+TUNNEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-app-${TUNNEL_SUBDOMAIN}"
 
 # ---------------------------------------------------------------------------
 # Cleanup on exit — runs even when assertions fail
@@ -83,9 +95,12 @@ cleanup() {
     cleanup_host_delete "gatekeeper/grants/${GRANT_ID}"
   fi
 
-  # Delete tunnel
+  # Delete tunnels
   if [ -n "${TUNNEL_ID}" ]; then
     cleanup_host_delete "tunnels/${TUNNEL_ID}"
+  fi
+  if [ -n "${AUTHED_TUNNEL_ID}" ]; then
+    cleanup_host_delete "tunnels/${AUTHED_TUNNEL_ID}"
   fi
 
   # Remove outsider user so repeat runs are idempotent
@@ -147,6 +162,16 @@ assert_json_field "$CREATE_RESPONSE" '.tunnel.accessMode' 'restricted' \
   "Default accessMode is 'restricted' (security posture)" || true
 
 log_info "Created restricted tunnel: ${TUNNEL_FQDN} (ID: ${TUNNEL_ID})"
+
+STALE_AUTHED_ID=$(echo "$EXISTING_TUNNELS" | jq -r --arg sd "${AUTHED_SUBDOMAIN}" '.tunnels[]? | select(.subdomain==$sd) | .id' 2>/dev/null | head -1)
+if [ -n "${STALE_AUTHED_ID}" ] && [ "${STALE_AUTHED_ID}" != "null" ]; then
+  log_info "Removing stale tunnel ${STALE_AUTHED_ID} (subdomain ${AUTHED_SUBDOMAIN}) from a prior run"
+  cleanup_host_delete "tunnels/${STALE_AUTHED_ID}"
+fi
+AUTHED_RESPONSE=$(host_api_post "tunnels" "{\"subdomain\":\"${AUTHED_SUBDOMAIN}\",\"port\":${AUTHED_PORT},\"accessMode\":\"authenticated\",\"agentLabel\":\"${TUNNEL_AGENT}\"}")
+AUTHED_TUNNEL_ID=$(echo "$AUTHED_RESPONSE" | jq -r '.tunnel.id' 2>/dev/null || echo "")
+assert_json_field "$AUTHED_RESPONSE" '.tunnel.accessMode' 'authenticated' \
+  "Second tunnel ${AUTHED_FQDN} is 'authenticated' (any Authelia user)" || true
 
 # ---------------------------------------------------------------------------
 log_section "Step 2: Wire up host entries and start a marker HTTP server"
@@ -271,6 +296,9 @@ else
   OUTSIDER_CODE=$(visitor_exec "oathtool --totp --base32 ${OUTSIDER_SECRET}" 2>/dev/null || echo "")
   TOTP_OUT=$(visitor_exec "curl -sk --max-time 15 -b /tmp/restricted-outsider-cookies.txt -c /tmp/restricted-outsider-cookies.txt -X POST -H 'Content-Type: application/json' -d '{\"token\":\"${OUTSIDER_CODE}\",\"targetURL\":\"https://${TUNNEL_FQDN}/\"}' https://auth.${TEST_DOMAIN}/api/secondfactor/totp 2>/dev/null" || echo '{}')
   assert_json_field "$TOTP_OUT" '.status' 'OK' "outsider TOTP OK" || true
+  if echo "$TOTP_OUT" | jq -e '.status == "OK"' >/dev/null 2>&1; then
+    OUTSIDER_READY="yes"
+  fi
 
   OUTSIDER_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-outsider-cookies.txt https://${TUNNEL_FQDN}/index.html" 2>/dev/null || echo "000")
   assert_eq "$OUTSIDER_STATUS" "403" "Outsider authenticated but ungranted receives 403" || true
@@ -284,6 +312,87 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+log_section "Step 8b: Another tunnel's Host header does not open this tunnel"
+# ---------------------------------------------------------------------------
+# nginx selects the vhost from an absolute-form request line
+# (`GET https://<this tunnel>/ HTTP/1.1`), but $http_host is the client's Host
+# header. Vhosts that named $http_host to Gatekeeper let a user allowed on one
+# tunnel into any other: the request line named this tunnel, Host the one
+# Gatekeeper authorized. A vhost now names its tunnel in the subrequest path
+# (/authz/tunnel/<fqdn>) and in X-Original-URL and Host; Gatekeeper refuses
+# the old /authz/check, so a vhost written the old way closes its tunnel until
+# the panel rewrites it — which it does when it starts.
+
+# Prints the response body, then `HTTP_STATUS=<code> LOCATION=<url>`.
+probe() {
+  # $1 = curl cookie args (may be empty), $2 = extra curl args (may be empty)
+  visitor_exec "curl -sk --max-time 15 $1 $2 -w '\nHTTP_STATUS=%{http_code} LOCATION=%{redirect_url}' https://${TUNNEL_FQDN}/index.html" 2>/dev/null || echo "HTTP_STATUS=000"
+}
+WITH_AUTHED_HOST="--request-target 'https://${TUNNEL_FQDN}/index.html' -H 'Host: ${AUTHED_FQDN}'"
+TESTUSER_COOKIES="-b /tmp/restricted-testuser-cookies.txt"
+OUTSIDER_COOKIES="-b /tmp/restricted-outsider-cookies.txt"
+
+if [ -z "$OUTSIDER_READY" ] || [ -z "$AUTHED_TUNNEL_ID" ] || [ "$AUTHED_TUNNEL_ID" = "null" ]; then
+  log_skip "Outsider session or second tunnel missing — skipping the Host header checks"
+else
+  # A vhost as written before the fix: /authz/check, X-Original-URL and Host
+  # from $http_host.
+  host_exec "sed -i -e 's|proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};|proxy_pass http://127.0.0.1:9294/authz/check;|' -e 's|X-Original-URL https://${TUNNEL_FQDN}\$request_uri;|X-Original-URL \$scheme://\$http_host\$request_uri;|' -e 's|proxy_set_header Host ${TUNNEL_FQDN};|proxy_set_header Host \$http_host;|' ${TUNNEL_VHOST} && nginx -t 2>/dev/null && systemctl reload nginx" >/dev/null 2>&1 || true
+  OLD_VHOST=$(host_exec "cat ${TUNNEL_VHOST}" 2>/dev/null || echo "")
+  assert_contains "$OLD_VHOST" "proxy_pass http://127.0.0.1:9294/authz/check;" \
+    "Restricted tunnel vhost set back to the old form" || true
+  sleep 1
+
+  # Gatekeeper refuses the old vhost's subrequest: closed, even to the grantee.
+  OLD_GRANTEE=$(probe "$TESTUSER_COOKIES" "")
+  assert_contains "$OLD_GRANTEE" "HTTP_STATUS=403" \
+    "A vhost written the old way closes its tunnel (grantee gets 403)" || true
+  OLD_OUTSIDER=$(probe "$OUTSIDER_COOKIES" "$WITH_AUTHED_HOST")
+  assert_not_contains "$OLD_OUTSIDER" "$MARKER" \
+    "Old vhost: the outsider does not get in with Host ${AUTHED_FQDN}" || true
+
+  # The panel rewrites the vhost at startup.
+  host_exec "systemctl restart lamalibre-lamaste-serverd" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    if host_exec "grep -qF 'proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};' ${TUNNEL_VHOST}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  NEW_VHOST=$(host_exec "cat ${TUNNEL_VHOST}" 2>/dev/null || echo "")
+  assert_contains "$NEW_VHOST" "proxy_pass http://127.0.0.1:9294/authz/tunnel/${TUNNEL_FQDN};" \
+    "Panel startup rewrote the vhost: the subrequest path names ${TUNNEL_FQDN}" || true
+  assert_contains "$NEW_VHOST" "proxy_set_header X-Original-URL https://${TUNNEL_FQDN}\$request_uri;" \
+    "Panel startup rewrote the vhost: X-Original-URL names ${TUNNEL_FQDN}" || true
+  assert_contains "$NEW_VHOST" "proxy_set_header Host ${TUNNEL_FQDN};" \
+    "Panel startup rewrote the vhost: Host names ${TUNNEL_FQDN}" || true
+  assert_not_contains "$NEW_VHOST" "\$http_host" \
+    "The rewritten vhost names no client Host header" || true
+  sleep 1
+
+  NEW_GRANTEE=$(probe "$TESTUSER_COOKIES" "")
+  assert_contains "$NEW_GRANTEE" "$MARKER" "Rewritten vhost: the grantee gets in again" || true
+
+  # Control: the probe reaches this tunnel and is authorized as this tunnel —
+  # the grantee gets in with another tunnel's Host too.
+  CONTROL=$(probe "$TESTUSER_COOKIES" "$WITH_AUTHED_HOST")
+  assert_contains "$CONTROL" "$MARKER" \
+    "Control: the grantee's request line for ${TUNNEL_FQDN} with Host ${AUTHED_FQDN} is served" || true
+
+  PROBE_NEW=$(probe "$OUTSIDER_COOKIES" "$WITH_AUTHED_HOST")
+  assert_contains "$PROBE_NEW" "HTTP_STATUS=403" \
+    "Outsider with Host ${AUTHED_FQDN} is denied this tunnel (403)" || true
+  assert_not_contains "$PROBE_NEW" "$MARKER" \
+    "Outsider with another tunnel's Host does not see tunnel content" || true
+
+  # Without a session the login redirect returns to this tunnel, not the Host sent.
+  PROBE_ANON=$(probe "" "$WITH_AUTHED_HOST")
+  assert_contains "$PROBE_ANON" "HTTP_STATUS=302" "Anonymous request is sent to the login portal" || true
+  assert_contains "$PROBE_ANON" "rd=https://${TUNNEL_FQDN}/index.html" \
+    "Login redirect returns to ${TUNNEL_FQDN}, not the Host header" || true
+fi
+
+# ---------------------------------------------------------------------------
 log_section "Step 9: Revoke testuser's grant → previously-allowed user 403"
 # ---------------------------------------------------------------------------
 # Use cleanup_host_delete (timeout-wrapped) — the plain host_api_delete
@@ -291,12 +400,10 @@ log_section "Step 9: Revoke testuser's grant → previously-allowed user 403"
 cleanup_host_delete "gatekeeper/grants/${GRANT_ID}"
 GRANT_ID=""  # prevent the cleanup trap from trying to re-delete
 
-# Gatekeeper's in-memory session cache is busted on grant changes, but nginx
-# has its own `proxy_cache` zone keyed on $cookie_authelia_session$http_host
-# (NOT URI) — snippet sets `proxy_cache_valid 200 10s`. Just wait past that
-# 10s TTL so the test observes the eventual-consistency behaviour the system
-# promises. (The /gatekeeper/cache/bust endpoint only clears gatekeeper's
-# own in-memory cache; nginx's layer still replays the cached allow.)
+# Gatekeeper checks grants on every request, and no vhost caches its answers
+# (the installer's nginx cache snippet is not included). An allow still
+# carries `Cache-Control: max-age=10`, so wait past it: the test holds the
+# eventual consistency the system promises even if caching is switched on.
 sleep 12
 
 REVOKED_STATUS=$(visitor_exec "curl -sk -o /dev/null -w '%{http_code}' --max-time 15 -b /tmp/restricted-testuser-cookies.txt https://${TUNNEL_FQDN}/index.html" 2>/dev/null || echo "000")

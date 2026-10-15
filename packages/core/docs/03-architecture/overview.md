@@ -176,7 +176,7 @@ The Gatekeeper is a dedicated Fastify service on `127.0.0.1:9294` that acts as a
 **Architecture:**
 
 ```
-End User → nginx :443 → auth_request → 127.0.0.1:9294/authz/check
+End User → nginx :443 → auth_request → 127.0.0.1:9294/authz/tunnel/<fqdn>
                                               │
                                     ┌─────────┴──────────┐
                                     │     Gatekeeper      │
@@ -198,8 +198,8 @@ End User → nginx :443 → auth_request → 127.0.0.1:9294/authz/check
 
 **Two-layer caching:**
 
-1. **nginx `proxy_cache`** — the `lamaste_authz` cache zone (1m keys, 10m storage) caches authorization responses. Cache key is `$cookie_authelia_session$http_host`. Positive responses (200) are cached for 30 seconds, negative responses (401/403) for 10 seconds. This eliminates redundant auth_request subrequests for rapid page loads.
-2. **In-memory session cache** — the Gatekeeper maintains a `Map` of recent authorization decisions keyed by session + host. This avoids re-reading state files on every check within the cache TTL.
+1. **nginx `proxy_cache`** — the installer defines the `lamaste_authz` cache zone (1m keys, 10m storage) and a location-level policy (key `$server_name|$cookie_authelia_session`, `200` cached for 10 seconds, `403` never), but the generated vhosts do not include it today (see [nginx Configuration](nginx-configuration.md#nginx-cache-zone-lamaste_authz)).
+2. **In-memory session cache** — the Gatekeeper keeps validated Authelia sessions in a `Map` keyed by an HMAC of the session cookie, so a check within the TTL does not ask Authelia again. It caches the identity, not the decision: grants are checked on every request.
 
 **State files:** All stored in `/etc/lamalibre/lamaste/` with 0600 permissions, `lamaste:lamaste` ownership, and atomic writes (tmp, fsync, rename):
 

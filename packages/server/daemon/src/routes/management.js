@@ -16,6 +16,7 @@ import gatekeeperProxyRoutes from './management/gatekeeper-proxy.js';
 import agentsRoutes from './management/agents.js';
 import registryCredentialRoutes from './management/registry-credential.js';
 import auditRoutes from './management/audit.js';
+import agentPanelAuthzRoutes from './management/agent-panel-authz.js';
 
 export default async function managementRoutes(fastify, _opts) {
   fastify.addHook('onRequest', managementOnly());
@@ -37,4 +38,5 @@ export default async function managementRoutes(fastify, _opts) {
   await fastify.register(agentsRoutes);
   await fastify.register(registryCredentialRoutes);
   await fastify.register(auditRoutes);
+  await fastify.register(agentPanelAuthzRoutes);
 }

@@ -149,25 +149,29 @@ HEALTH=$(curl -sf --max-time 5 "http://127.0.0.1:${PANEL_PORT}/api/health" 2>/de
 if [ -z "$HEALTH" ]; then
   log_skip "Agent panel not running on port ${PANEL_PORT} — skipping Remote-User tests"
 else
-  # Remote-User blocked from /api/* management endpoints
+  # The daemon takes an Authelia user only from a relay assertion Gatekeeper
+  # signs on a plugin tunnel. A Remote-User header anything on this machine
+  # can send proves nothing. No plugin is installed on this daemon, so the
+  # routes probed are its own; plugin routes are covered by lamaste-agentd's
+  # tests and three-VM spec 32.
   MGMT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
     -H "Remote-User: testuser" \
+    -H "Remote-Groups: admins" \
     --max-time 5 \
     "http://127.0.0.1:${PANEL_PORT}/api/status" 2>/dev/null || echo "000")
-  assert_eq "$MGMT_STATUS" "403" "Remote-User blocked from /api/status management endpoint" || true
+  assert_eq "$MGMT_STATUS" "401" "Forged Remote-User refused on the management API" || true
 
-  # Invalid Remote-User format rejected on plugin routes
-  BAD_USER_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
-    -H "Remote-User: bad<user>name" \
-    --max-time 5 \
-    "http://127.0.0.1:${PANEL_PORT}/herd/api/test" 2>/dev/null || echo "000")
-  assert_eq "$BAD_USER_STATUS" "403" "Invalid Remote-User format rejected" || true
-
-  # No auth at all rejected for plugin routes
+  # No auth at all — however the path is spelled (the router decodes %61 as a)
   NOAUTH_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
     --max-time 5 \
-    "http://127.0.0.1:${PANEL_PORT}/herd/api/test" 2>/dev/null || echo "000")
-  assert_eq "$NOAUTH_STATUS" "403" "No auth rejected for plugin routes" || true
+    "http://127.0.0.1:${PANEL_PORT}/api/status" 2>/dev/null || echo "000")
+  assert_eq "$NOAUTH_STATUS" "401" "No auth rejected on the management API" || true
+
+  ESCAPED_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Remote-User: testuser" \
+    --max-time 5 \
+    "http://127.0.0.1:${PANEL_PORT}/%61pi/status" 2>/dev/null || echo "000")
+  assert_eq "$ESCAPED_STATUS" "401" "Forged Remote-User refused on a percent-escaped /api path" || true
 fi
 
 # ---------------------------------------------------------------------------

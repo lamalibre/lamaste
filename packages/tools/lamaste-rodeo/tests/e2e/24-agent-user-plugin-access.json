@@ -808,7 +808,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' -H \"Remote-User: testuser\" --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' -H \"Remote-User: testuser\" -H \"Remote-Groups: admins\" --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -825,7 +825,7 @@
         },
         {
           "id": "step-44",
-          "label": "Remote-User blocked from /api/status management endpoint",
+          "label": "Forged Remote-User refused on the management API",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -838,9 +838,9 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "401"
               },
-              "message": "Remote-User blocked from /api/status management endpoint"
+              "message": "Forged Remote-User refused on the management API"
             }
           },
           "when": {
@@ -850,57 +850,11 @@
         },
         {
           "id": "step-45",
-          "label": "Set BAD_USER_STATUS",
-          "target": "local",
-          "op": {
-            "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' -H \"Remote-User: bad<user>name\" --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/herd/api/test\" 2>/dev/null || echo \"000\""
-          },
-          "capture": [
-            {
-              "variable": "BAD_USER_STATUS",
-              "from": {
-                "kind": "body"
-              }
-            }
-          ],
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "HEALTH"
-          }
-        },
-        {
-          "id": "step-46",
-          "label": "Invalid Remote-User format rejected",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "eq",
-              "actual": {
-                "kind": "var",
-                "name": "BAD_USER_STATUS"
-              },
-              "expected": {
-                "kind": "literal",
-                "value": "403"
-              },
-              "message": "Invalid Remote-User format rejected"
-            }
-          },
-          "when": {
-            "kind": "var_not_empty",
-            "variable": "HEALTH"
-          }
-        },
-        {
-          "id": "step-47",
           "label": "Set NOAUTH_STATUS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/herd/api/test\" 2>/dev/null || echo \"000\""
+            "command": "curl -s -o /dev/null -w '%{http_code}' --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\""
           },
           "capture": [
             {
@@ -916,8 +870,8 @@
           }
         },
         {
-          "id": "step-48",
-          "label": "No auth rejected for plugin routes",
+          "id": "step-46",
+          "label": "No auth rejected on the management API",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -930,9 +884,55 @@
               },
               "expected": {
                 "kind": "literal",
-                "value": "403"
+                "value": "401"
               },
-              "message": "No auth rejected for plugin routes"
+              "message": "No auth rejected on the management API"
+            }
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "HEALTH"
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Set ESCAPED_STATUS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "curl -s -o /dev/null -w '%{http_code}' -H \"Remote-User: testuser\" --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/%61pi/status\" 2>/dev/null || echo \"000\""
+          },
+          "capture": [
+            {
+              "variable": "ESCAPED_STATUS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "HEALTH"
+          }
+        },
+        {
+          "id": "step-48",
+          "label": "Forged Remote-User refused on a percent-escaped /api path",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "ESCAPED_STATUS"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged Remote-User refused on a percent-escaped /api path"
             }
           },
           "when": {
@@ -941,7 +941,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. Agent panel Remote-User auth\"\n# ---------------------------------------------------------------------------\n\nPANEL_PORT=9393\nHEALTH=$(curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\")\n\nif [ -z \"$HEALTH\" ]; then\n  log_skip \"Agent panel not running on port ${PANEL_PORT} — skipping Remote-User tests\"\nelse\n  # Remote-User blocked from /api/* management endpoints\n  MGMT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    -H \"Remote-User: testuser\" \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\")\n  assert_eq \"$MGMT_STATUS\" \"403\" \"Remote-User blocked from /api/status management endpoint\" || true\n\n  # Invalid Remote-User format rejected on plugin routes\n  BAD_USER_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    -H \"Remote-User: bad<user>name\" \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/herd/api/test\" 2>/dev/null || echo \"000\")\n  assert_eq \"$BAD_USER_STATUS\" \"403\" \"Invalid Remote-User format rejected\" || true\n\n  # No auth at all rejected for plugin routes\n  NOAUTH_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/herd/api/test\" 2>/dev/null || echo \"000\")\n  assert_eq \"$NOAUTH_STATUS\" \"403\" \"No auth rejected for plugin routes\" || true\nfi"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"5. Agent panel Remote-User auth\"\n# ---------------------------------------------------------------------------\n\nPANEL_PORT=9393\nHEALTH=$(curl -sf --max-time 5 \"http://127.0.0.1:${PANEL_PORT}/api/health\" 2>/dev/null || echo \"\")\n\nif [ -z \"$HEALTH\" ]; then\n  log_skip \"Agent panel not running on port ${PANEL_PORT} — skipping Remote-User tests\"\nelse\n  # The daemon takes an Authelia user only from a relay assertion Gatekeeper\n  # signs on a plugin tunnel. A Remote-User header anything on this machine\n  # can send proves nothing. No plugin is installed on this daemon, so the\n  # routes probed are its own; plugin routes are covered by lamaste-agentd's\n  # tests and three-VM spec 32.\n  MGMT_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    -H \"Remote-User: testuser\" \\\n    -H \"Remote-Groups: admins\" \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\")\n  assert_eq \"$MGMT_STATUS\" \"401\" \"Forged Remote-User refused on the management API\" || true\n\n  # No auth at all — however the path is spelled (the router decodes %61 as a)\n  NOAUTH_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/api/status\" 2>/dev/null || echo \"000\")\n  assert_eq \"$NOAUTH_STATUS\" \"401\" \"No auth rejected on the management API\" || true\n\n  ESCAPED_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \\\n    -H \"Remote-User: testuser\" \\\n    --max-time 5 \\\n    \"http://127.0.0.1:${PANEL_PORT}/%61pi/status\" 2>/dev/null || echo \"000\")\n  assert_eq \"$ESCAPED_STATUS\" \"401\" \"Forged Remote-User refused on a percent-escaped /api path\" || true\nfi"
     },
     {
       "id": "6-cleanup",

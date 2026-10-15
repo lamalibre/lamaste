@@ -86,15 +86,8 @@ fn curl_agentd(
     body: Option<&str>,
 ) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}{}", AGENTD_PORT, path);
-    let token = crate::api::agentd_token()?;
 
-    let mut args = vec![
-        "-s".to_string(),
-        "-H".to_string(),
-        format!("Authorization: Bearer {}", token),
-        "-X".to_string(),
-        method.to_string(),
-    ];
+    let mut args = vec!["-s".to_string(), "-X".to_string(), method.to_string()];
 
     if let Some(json_body) = body {
         args.push("-H".to_string());
@@ -105,10 +98,7 @@ fn curl_agentd(
 
     args.push(url);
 
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = crate::api::curl_agentd_as_owner(&args)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

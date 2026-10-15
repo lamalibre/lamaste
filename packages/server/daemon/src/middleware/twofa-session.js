@@ -14,6 +14,15 @@ import {
  */
 const EXEMPT_PATHS = new Set(['/api/health', '/api/settings/2fa', '/api/settings/2fa/verify']);
 
+/**
+ * The agent-panel vhost's authorization subrequest
+ * (`/api/agent-panel/authz/<label>`). It is answered for a browser on
+ * `agent-<label>.<domain>`, which never carries the panel's host-only 2FA
+ * cookie; agent panels are guarded by the client certificate alone, as they
+ * were before the panel took part in their authorization.
+ */
+const AGENT_PANEL_AUTHZ_RE = /^\/api\/agent-panel\/authz\/[a-z0-9-]{1,63}$/;
+
 async function twofaSessionPlugin(fastify, _opts) {
   fastify.addHook('onRequest', async (request, reply) => {
     const config = getConfig();
@@ -30,7 +39,8 @@ async function twofaSessionPlugin(fastify, _opts) {
     }
 
     // Exempt paths
-    if (EXEMPT_PATHS.has(request.url) || EXEMPT_PATHS.has(request.url.split('?')[0])) {
+    const urlPath = request.url.split('?')[0];
+    if (EXEMPT_PATHS.has(urlPath) || AGENT_PANEL_AUTHZ_RE.test(urlPath)) {
       return;
     }
 

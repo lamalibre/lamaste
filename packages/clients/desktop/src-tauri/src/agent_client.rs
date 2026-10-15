@@ -153,9 +153,6 @@ pub async fn download_certificate(label: String) -> Result<Vec<u8>, String> {
 }
 
 fn download_certificate_blocking(label: &str) -> Result<Vec<u8>, String> {
-    use std::process::Command;
-
-    let token = crate::api::agentd_token()?;
     let url = format!(
         "http://127.0.0.1:{}/api/certificate/download",
         AGENT_PANEL_PORT
@@ -163,17 +160,12 @@ fn download_certificate_blocking(label: &str) -> Result<Vec<u8>, String> {
 
     // Capture HTTP status and body separately so we can detect a JSON error
     // (which indicates the daemon returned a 4xx instead of P12 bytes).
-    let output = Command::new("curl")
-        .args([
-            "-s",
-            "-H",
-            &format!("Authorization: Bearer {}", token),
-            "-w",
-            "\n%{http_code}",
-            &url,
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = crate::api::curl_agentd_as_owner(&[
+        "-s".to_string(),
+        "-w".to_string(),
+        "\n%{http_code}".to_string(),
+        url,
+    ])?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

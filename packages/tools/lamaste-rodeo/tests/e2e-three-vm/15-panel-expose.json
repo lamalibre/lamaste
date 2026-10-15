@@ -764,16 +764,92 @@
               "message": "nginx -t passes after panel expose"
             }
           }
+        },
+        {
+          "id": "step-41",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "VHOST_AUTHZ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-42",
+          "label": "Panel vhost asks the panel to authorize every request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_AUTHZ"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Panel vhost asks the panel to authorize every request"
+            }
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \\$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "VHOST_ASSERTION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-44",
+          "label": "Panel vhost forwards the relay assertion",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_ASSERTION"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Panel vhost forwards the relay assertion"
+            }
+          }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify mTLS nginx vhost on host\"\n# ---------------------------------------------------------------------------\n\n# Panel vhosts use lamalibre-lamaste-agent-panel- prefix (not lamalibre-lamaste-app-)\nVHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"yes\" \"mTLS panel vhost exists in sites-enabled\" || true\n\n# Verify no app vhost was created (panel uses mTLS, not Authelia)\nAPP_VHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$APP_VHOST_EXISTS\" \"no\" \"No Authelia app vhost created for panel tunnel\" || true\n\nNGINX_TEST=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Verify mTLS nginx vhost on host\"\n# ---------------------------------------------------------------------------\n\n# Panel vhosts use lamalibre-lamaste-agent-panel- prefix (not lamalibre-lamaste-app-)\nVHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$VHOST_EXISTS\" \"yes\" \"mTLS panel vhost exists in sites-enabled\" || true\n\n# Verify no app vhost was created (panel uses mTLS, not Authelia)\nAPP_VHOST_EXISTS=$(host_exec \"test -f /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} -o -L /etc/nginx/sites-enabled/lamalibre-lamaste-app-${PANEL_SUBDOMAIN} && echo yes || echo no\")\nassert_eq \"$APP_VHOST_EXISTS\" \"no\" \"No Authelia app vhost created for panel tunnel\" || true\n\nNGINX_TEST=$(host_exec \"nginx -t 2>&1 || true\")\nassert_contains \"$NGINX_TEST\" \"syntax is ok\" \"nginx -t passes after panel expose\" || true\n\n# lamaste-agentd trusts no header the relay sends but the relay assertion\nPANEL_VHOST=\"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}\"\nVHOST_AUTHZ=$(host_exec \"grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_AUTHZ\" \"1\" \"Panel vhost asks the panel to authorize every request\" || true\nVHOST_ASSERTION=$(host_exec \"grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \\$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_ASSERTION\" \"1\" \"Panel vhost forwards the relay assertion\" || true"
     },
     {
       "id": "verify-agent-panel-status-after-expose",
       "label": "Verify agent-panel-status after expose",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-45",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -791,7 +867,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-46",
           "label": "Panel shows as enabled",
           "target": "local",
           "continueOnError": true,
@@ -813,7 +889,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-47",
           "label": "Status FQDN matches",
           "target": "local",
           "continueOnError": true,
@@ -842,7 +918,7 @@
       "label": "Start panel HTTP server on agent — the sync timer carries it",
       "steps": [
         {
-          "id": "step-43",
+          "id": "step-48",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -851,7 +927,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-49",
           "label": "Added ${PANEL_FQDN} to agent /etc/hosts",
           "target": "local",
           "op": {
@@ -861,7 +937,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-51",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -870,7 +946,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-52",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -879,7 +955,7 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-53",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -888,7 +964,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-54",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -897,7 +973,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-55",
           "label": "HTTP request on agent",
           "target": "agent",
           "op": {
@@ -917,7 +993,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-56",
           "label": "Panel HTTP server running on agent at port ${PANEL_PORT}",
           "target": "local",
           "continueOnError": true,
@@ -938,7 +1014,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-57",
           "label": "Waiting for the sync timer to carry the panel tunnel...",
           "target": "local",
           "op": {
@@ -948,7 +1024,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-62",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -957,7 +1033,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-64",
           "label": "Panel tunnel carried within 60 seconds with no lamaste-agent update",
           "target": "local",
           "op": {
@@ -972,7 +1048,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-65",
           "label": "Panel tunnel not carried within 60 seconds",
           "target": "local",
           "op": {
@@ -987,7 +1063,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-66",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1009,7 +1085,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-67",
           "label": "Agent sync log: $AGENT_LOG",
           "target": "local",
           "op": {
@@ -1031,7 +1107,7 @@
       "label": "Verify panel content through chisel tunnel (direct)",
       "steps": [
         {
-          "id": "step-63",
+          "id": "step-68",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1050,7 +1126,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-69",
           "label": "Direct tunnel traffic returns panel content",
           "target": "local",
           "continueOnError": true,
@@ -1078,7 +1154,7 @@
       "label": "Verify mTLS vhost serves panel via FQDN (no Authelia needed)",
       "steps": [
         {
-          "id": "step-65",
+          "id": "step-70",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1099,7 +1175,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-71",
           "label": "mTLS vhost serves panel content via FQDN",
           "target": "local",
           "continueOnError": true,
@@ -1120,7 +1196,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-72",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1140,7 +1216,7 @@
           ]
         },
         {
-          "id": "step-68",
+          "id": "step-73",
           "label": "Panel content served through the mTLS vhost",
           "target": "local",
           "continueOnError": true,
@@ -1161,7 +1237,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-74",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1182,7 +1258,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-75",
           "label": "Panel FQDN rejects access without mTLS cert (HTTP $NO_CERT_STATUS)",
           "target": "local",
           "op": {
@@ -1212,7 +1288,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-76",
           "label": "Panel FQDN should reject without mTLS cert (got HTTP $NO_CERT_STATUS, expected 496/400/403)",
           "target": "local",
           "op": {
@@ -1249,7 +1325,7 @@
       "label": "Retract panel tunnel",
       "steps": [
         {
-          "id": "step-72",
+          "id": "step-77",
           "label": "DELETE /api/tunnels/retract-panel",
           "target": "agent",
           "op": {
@@ -1267,7 +1343,7 @@
           ]
         },
         {
-          "id": "step-73",
+          "id": "step-78",
           "label": "Retract panel returned ok: true",
           "target": "local",
           "continueOnError": true,
@@ -1296,7 +1372,7 @@
       "label": "Verify vhost removed after retract",
       "steps": [
         {
-          "id": "step-74",
+          "id": "step-79",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1305,7 +1381,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-80",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1322,7 +1398,7 @@
           ]
         },
         {
-          "id": "step-76",
+          "id": "step-81",
           "label": "mTLS panel vhost removed after retract",
           "target": "local",
           "continueOnError": true,
@@ -1343,7 +1419,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-82",
           "label": "Exec on host",
           "target": "host",
           "op": {
@@ -1360,7 +1436,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-83",
           "label": "nginx -t passes after panel retract",
           "target": "local",
           "continueOnError": true,
@@ -1388,7 +1464,7 @@
       "label": "Verify status after retract",
       "steps": [
         {
-          "id": "step-79",
+          "id": "step-84",
           "label": "GET /api/tunnels/agent-panel-status",
           "target": "agent",
           "op": {
@@ -1406,7 +1482,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-85",
           "label": "Panel shows as disabled after retract",
           "target": "local",
           "continueOnError": true,
@@ -1428,7 +1504,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-86",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -1448,7 +1524,7 @@
           ]
         },
         {
-          "id": "step-82",
+          "id": "step-87",
           "label": "Panel content not accessible via FQDN after retract",
           "target": "local",
           "op": {
@@ -1458,7 +1534,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-88",
           "label": "Panel content still accessible via FQDN after retract",
           "target": "local",
           "op": {
@@ -1468,7 +1544,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-92",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1485,7 +1561,7 @@
           ]
         },
         {
-          "id": "step-92",
+          "id": "step-97",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1494,7 +1570,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-99",
           "label": "Agent's chisel client no longer carries the retracted panel's remote (sync timer)",
           "target": "local",
           "op": {
@@ -1509,7 +1585,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-100",
           "label": "Agent's running chisel client still asks for the retracted panel's remote after 60 seconds",
           "target": "local",
           "op": {
@@ -1524,7 +1600,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-101",
           "label": "Set PANEL_PORT_AFTER",
           "target": "local",
           "op": {
@@ -1541,7 +1617,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-102",
           "label": "Panel port closed on the host after retract",
           "target": "local",
           "continueOnError": true,
@@ -1574,7 +1650,7 @@
     "agent_api_post",
     "agent_api_delete"
   ],
-  "headerRaw": "# ============================================================================\n# 15 — Panel Expose (Three-VM)\n# ============================================================================\n# Tests the full agent panel expose feature across VMs. A panel tunnel is\n# carried by the agent that exposes it, so the agent running on the agent VM\n# (panel label test-agent, local label e2e-agent) exposes its own panel with\n# its own certificate:\n#\n# 1. Admin grants test-agent the panel:expose capability (restored on exit)\n# 2. The agent VM exposes its panel via POST /api/tunnels/expose-panel with\n#    test-agent's certificate\n# 3. Verify mTLS nginx vhost created on host (lamalibre-lamaste-agent-panel-* prefix)\n# 4. Agent starts a stand-in panel HTTP server on localhost:9393\n# 5. With no `lamaste-agent update`, the agent's sync timer adds the panel\n#    remote within 60 seconds and the panel is reachable through chisel\n# 6. Verify mTLS vhost serves panel content via FQDN (mTLS, not Authelia)\n# 7. Agent retracts the panel via DELETE /api/tunnels/retract-panel\n# 8. Verify vhost removed, status disabled, and the sync timer drops the\n#    panel remote so the port closes\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 15 — Panel Expose (Three-VM)\n# ============================================================================\n# Tests the full agent panel expose feature across VMs. A panel tunnel is\n# carried by the agent that exposes it, so the agent running on the agent VM\n# (panel label test-agent, local label e2e-agent) exposes its own panel with\n# its own certificate:\n#\n# 1. Admin grants test-agent the panel:expose capability (restored on exit)\n# 2. The agent VM exposes its panel via POST /api/tunnels/expose-panel with\n#    test-agent's certificate\n# 3. Verify mTLS nginx vhost created on host (lamalibre-lamaste-agent-panel-* prefix),\n#    which asks the panel to authorize every request (auth_request) and\n#    forwards the relay assertion it signs\n# 4. Agent starts a stand-in panel HTTP server on localhost:9393\n# 5. With no `lamaste-agent update`, the agent's sync timer adds the panel\n#    remote within 60 seconds and the panel is reachable through chisel\n# 6. Verify mTLS vhost serves panel content via FQDN (mTLS, not Authelia)\n# 7. Agent retracts the panel via DELETE /api/tunnels/retract-panel\n# 8. Verify vhost removed, status disabled, and the sync timer drops the\n#    panel remote so the port closes\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_post() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_delete() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X DELETE -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\n# Agent-cert API helpers — run on the agent VM with test-agent's own\n# certificate (extracted from its P12 below), against the panel on the host\nagent_api_get() {\n  agent_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PEM} --key ${AGENT_KEY_PEM} -H 'Accept: application/json' https://${HOST_IP}:9292/api/$1\"\n}\n\nagent_api_post() {\n  agent_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PEM} --key ${AGENT_KEY_PEM} -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://${HOST_IP}:9292/api/$1\"\n}\n\nagent_api_delete() {\n  agent_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PEM} --key ${AGENT_KEY_PEM} -X DELETE -H 'Accept: application/json' https://${HOST_IP}:9292/api/$1\"\n}\n\n# panel_direct_status — HTTP status of the stand-in panel page through the\n# host's chisel listener for the panel port (bypassing nginx)\npanel_direct_status() {\n  host_exec \"curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${PANEL_PORT}/panel-test-index.html 2>/dev/null\" || echo \"000\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\n# The agent on the agent VM: its panel label and its local label\nPANEL_AGENT=\"test-agent\"\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nAGENT_CONFIG=\"/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/config.json\"\nAGENT_CERT_PEM=\"/tmp/e2e-15-agent-cert.pem\"\nAGENT_KEY_PEM=\"/tmp/e2e-15-agent-key.pem\"\nPANEL_PORT=9393\nPANEL_SUBDOMAIN=\"agent-${PANEL_AGENT}\"\nPANEL_FQDN=\"${PANEL_SUBDOMAIN}.${TEST_DOMAIN}\"\nPANEL_REMOTE=\"R:127.0.0.1:${PANEL_PORT}:127.0.0.1:${PANEL_PORT}\"\nPANEL_TUNNEL_ID=\"\"\nORIGINAL_CAPS=\"\"\n\nbegin_test \"15 — Panel Expose (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n\n  # Stop the stand-in panel HTTP server on agent\n  agent_exec \"pkill -f 'python3 -m http.server ${PANEL_PORT}' 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"rm -f /tmp/panel-test-index.html 2>/dev/null; rm -rf /tmp/panel-api 2>/dev/null || true\" 2>/dev/null || true\n\n  # Retract the panel tunnel with the agent's cert, then fall back to admin\n  agent_api_delete \"tunnels/retract-panel\" > /dev/null 2>&1 || true\n  if [ -n \"$PANEL_TUNNEL_ID\" ] && [ \"$PANEL_TUNNEL_ID\" != \"null\" ]; then\n    host_api_delete \"tunnels/${PANEL_TUNNEL_ID}\" 2>/dev/null || true\n  fi\n\n  # Give test-agent back exactly the capabilities it had\n  if [ -n \"$ORIGINAL_CAPS\" ] && [ \"$ORIGINAL_CAPS\" != \"null\" ]; then\n    host_api_patch \"certs/agent/${PANEL_AGENT}/capabilities\" \"{\\\"capabilities\\\":${ORIGINAL_CAPS}}\" > /dev/null 2>&1 || true\n  fi\n\n  # Remove /etc/hosts entry and the extracted PEM files on agent\n  agent_exec \"sed -i '/${PANEL_FQDN}/d' /etc/hosts 2>/dev/null || true\" 2>/dev/null || true\n  agent_exec \"shred -u ${AGENT_CERT_PEM} ${AGENT_KEY_PEM} 2>/dev/null || rm -f ${AGENT_CERT_PEM} ${AGENT_KEY_PEM}\" 2>/dev/null || true\n\n  # Converge now so the next test starts from an idle agent\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

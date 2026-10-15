@@ -389,7 +389,7 @@ than fragmenting this binary.
 - Separate Fastify HTTP server in `lamaste-agentd` serves SPA + REST API (`/api/*`)
 - Runs as independent system service: `com.lamalibre.lamaste.panel-<label>` (macOS) / `lamalibre-lamaste-panel-<label>` (Linux)
 - Default port 9393, configurable via `--port`
-- mTLS nginx vhost (same CA as main panel) — agent panel server validates cert CN is `agent:<label>` (owning agent) or `admin`
+- mTLS nginx vhost (same CA as main panel) whose every request nginx first sends to the panel (`auth_request` → `GET /api/agent-panel/authz/<label>`: revocation checked, only `admin` or the owning `agent:<label>` admitted, 2FA-exempt); the panel answers with a **relay assertion** nginx forwards as `X-Lamalibre-Relay-Assertion`. lamaste-agentd trusts nothing else from the relay — see Agent Daemon below
 - Tunnel type `panel` in `tunnels.json` — auto-created by `POST /api/tunnels/expose-panel`, removed by `DELETE /api/tunnels/retract-panel`
 - `agent-` subdomain prefix reserved for panel tunnels — regular tunnels cannot use it
 - CLI: `lamaste-agent panel --enable [--port 9393]`, `--disable`, `--status [--json]`, `panel reset-pin` (re-capture panel TLS server cert pin after rotation)
@@ -413,6 +413,8 @@ than fragmenting this binary.
 - Serves web SPA built from `lamaste-agent-ui`
 - REST endpoints for operations desktop consumes: `GET /api/agents`, `POST /api/agents/:label/start|stop|restart`, `PATCH /api/agents/current`, `DELETE /api/agents/:label`, `GET /api/local-plugins`, `GET /api/services/scan`, etc.
 - Plugin CRUD endpoints: `GET /plugins`, `POST /plugins/install`, `POST /plugins/:name/enable`, `POST /plugins/:name/disable`, `DELETE /plugins/:name`, `POST /plugins/:name/update`, `GET /plugins/:name/bundle`
+- Auth (`src/lib/auth.js`): binding to loopback is not a boundary, so headers that only claim a caller (`X-SSL-Client-*`, `Remote-*`) are stripped from every request and never trusted. Callers: the owner's Bearer token (`~/.lamalibre/lamaste/agentd.token`, 0600 — desktop, scripts), or a **relay assertion** (core `relay-assertion.ts`: `X-Lamalibre-Relay-Assertion` = base64url payload `{v,kid,aud,port,caller,method,target,iat,nonce}` + Ed25519; 60 s + 5 s skew; `NonceStore`) — `aud` is the label the relay knows the agent by and `port` the daemon's port; `target` is the exact `$request_uri` for admin/agent callers (agent-panel vhost) and the plugin route for Authelia users (plugin tunnels). Keys and the relay label come from `GET /api/agents/me/relay-keys` over the pinned mTLS channel (`lib/relay-verifier.js`, in memory, refetched on an unknown `kid` at most every 30 s). The relay's key is `/etc/lamalibre/lamaste/relay-signing-key.json` (0600 lamaste; serverd creates it, Gatekeeper reads it). Whether a request needs a caller follows the **matched route** (`request.routeOptions`), never the URL — the router decodes `%61pi` as `api`; public routes carry `config.lamastePublic` (health, plugin bundles, the SPA files, registered in their own scope); an unmatched path under an installed plugin's (decoded) name needs a caller too. Claim headers are stripped from `rawHeaders` as well. serverd's startup `lib/vhost-reconcile.js` rewrites agent-panel and plugin tunnel vhosts that differ from the generators. Upgrade order for this: relay first (new agents refuse old relays' headers)
+- Linux panel unit is a user unit enabled into `default.target` (not `multi-user.target`, which a user manager lacks); `lamaste-agent update` / `panel --enable` repair pre-4.3 units
 
 **Server CLI (`lamaste-server`) — NEW, CLI only, no Fastify:**
 
@@ -530,7 +532,7 @@ than fragmenting this binary.
 - Uses the access-mode vhost writers (`writeRestrictedVhost` / `writeAuthenticatedVhost` / `writePublicVhost`) with the `pathPrefix` option — nginx rewrites `herd.example.com/path` → `127.0.0.1:9393/herd/path`, matching the plugin mount point on the agent daemon
 - Tunnel state gains fields: `pluginName` (full `@lamalibre/` package name), `agentLabel`, `pluginRoute` (derived short name, e.g., `herd` from `@lamalibre/herd-server`)
 - Authelia access control: `syncAllAccessControl()` in `@lamalibre/lamaste/server` merges site rules + plugin tunnel grant rules. Called on grant create/revoke, tunnel create/delete/toggle, and site updates. Admins group always allowed on restricted subdomains
-- Agent daemon auth: recognizes `Remote-User` header (set by nginx after Authelia forward auth) as a third auth path. Sets `request.certRole = 'user'` and `request.autheliaUser`. Trusts nginx/Authelia — port 9393 binds `127.0.0.1`, external traffic only arrives via nginx
+- Agent daemon auth: an Authelia user arrives with a relay assertion Gatekeeper signs on `/authz/check` for `type: 'plugin'` tunnels (never cached); the plugin vhost forwards it. The daemon sets `request.certRole = 'user'`, `request.autheliaUser`, and `Remote-*` from the assertion only — a `Remote-User` header proves nothing, since 9393 on `127.0.0.1` is reachable by every local user and the tunnel port by every relay process
 - Flow: admin creates plugin tunnel → admin creates agent-side grant → `syncAllAccessControl` updates Authelia rules → user visits plugin URL → Authelia authenticates + authorizes → nginx proxies with path rewrite + Remote-User header → agent daemon serves plugin
 
 **Certificate scoping:**

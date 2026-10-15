@@ -28,6 +28,7 @@ import {
   completeAgentJob,
   findAgentJob,
 } from '../../lib/agent-jobs.js';
+import { relayVerifyKeys } from '../../lib/relay-signing.js';
 
 /**
  * An agent may rotate its own chisel credential at most this often. Every
@@ -454,6 +455,40 @@ export default async function agentsRoutes(fastify, _opts) {
       const capabilities = await getAgentCapabilities(label);
       const allowedSites = await getAgentAllowedSites(label);
       return { capabilities, allowedSites, role: request.certRole };
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // GET /agents/me/relay-keys
+  //
+  // The public keys relay assertions are signed with
+  // (`X-Lamalibre-Relay-Assertion`, see relay-assertion.ts), and the label
+  // this relay knows the calling agent by — the audience of the assertions
+  // made for it, which the agent's local registry name need not equal.
+  // lamaste-agentd fetches both over its pinned mTLS channel and accepts a
+  // request from the relay only with an assertion one of the keys verifies,
+  // made for that label. The keys are public material: any agent or admin
+  // certificate may read them (`agentLabel` is null for non-agent callers).
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/agents/me/relay-keys',
+    {
+      preHandler: fastify.requireRole(['admin', 'agent']),
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      try {
+        return {
+          keys: await relayVerifyKeys(),
+          agentLabel: request.certRole === 'agent' ? request.certLabel : null,
+        };
+      } catch (err) {
+        request.log.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          'Relay signing key unusable',
+        );
+        return reply.code(503).send({ error: 'Relay signing key unavailable' });
+      }
     },
   );
 

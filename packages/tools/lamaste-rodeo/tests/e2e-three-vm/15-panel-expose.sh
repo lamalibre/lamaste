@@ -10,7 +10,9 @@
 # 1. Admin grants test-agent the panel:expose capability (restored on exit)
 # 2. The agent VM exposes its panel via POST /api/tunnels/expose-panel with
 #    test-agent's certificate
-# 3. Verify mTLS nginx vhost created on host (lamalibre-lamaste-agent-panel-* prefix)
+# 3. Verify mTLS nginx vhost created on host (lamalibre-lamaste-agent-panel-* prefix),
+#    which asks the panel to authorize every request (auth_request) and
+#    forwards the relay assertion it signs
 # 4. Agent starts a stand-in panel HTTP server on localhost:9393
 # 5. With no `lamaste-agent update`, the agent's sync timer adds the panel
 #    remote within 60 seconds and the panel is reachable through chisel
@@ -241,6 +243,13 @@ assert_eq "$APP_VHOST_EXISTS" "no" "No Authelia app vhost created for panel tunn
 
 NGINX_TEST=$(host_exec "nginx -t 2>&1 || true")
 assert_contains "$NGINX_TEST" "syntax is ok" "nginx -t passes after panel expose" || true
+
+# lamaste-agentd trusts no header the relay sends but the relay assertion
+PANEL_VHOST="/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-${PANEL_SUBDOMAIN}"
+VHOST_AUTHZ=$(host_exec "grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true")
+assert_eq "$VHOST_AUTHZ" "1" "Panel vhost asks the panel to authorize every request" || true
+VHOST_ASSERTION=$(host_exec "grep -cF 'proxy_set_header X-Lamalibre-Relay-Assertion \$relay_assertion;' ${PANEL_VHOST} 2>/dev/null || true")
+assert_eq "$VHOST_ASSERTION" "1" "Panel vhost forwards the relay assertion" || true
 
 # ---------------------------------------------------------------------------
 log_section "Verify agent-panel-status after expose"

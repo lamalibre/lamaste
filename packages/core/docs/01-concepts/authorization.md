@@ -95,25 +95,37 @@ Gatekeeper watches its state files (`groups.json`, `access-grants.json`) for cha
 
 ### Architecture
 
-Gatekeeper runs as an independent Fastify service on `127.0.0.1:9294`. nginx uses `auth_request` to delegate authorization decisions to it, similar to how Authelia handles authentication via the same pattern.
+Gatekeeper runs as an independent Fastify service on `127.0.0.1:9294`. The vhost of every `authenticated` and `restricted` tunnel delegates each request to it with an nginx `auth_request` to `/authz/tunnel/<fqdn>` — the vhost names its tunnel in the path; Gatekeeper validates the Authelia session itself and decides.
 
 The request flow for a restricted tunnel:
 
 ```
 1. Visitor requests staging.example.com
-2. nginx sends auth_request to Authelia (127.0.0.1:9091)
-3. Authelia validates session cookie:
-   a. No valid session -> 401 -> nginx redirects to auth.example.com
-   b. Valid session -> 200 with Remote-User/Remote-Groups headers
-4. nginx sends auth_request to Gatekeeper (127.0.0.1:9294)
-   - Forwards Remote-User, Remote-Groups, and Host headers
-5. Gatekeeper checks for a matching grant:
-   a. Grant exists (user or group match) -> 200
+2. nginx sends auth_request to Gatekeeper
+   (127.0.0.1:9294/authz/tunnel/staging.example.com) with
+   - X-Original-URL https://staging.example.com<request URI> and
+     Host staging.example.com — the vhost's own hostname, from its configuration
+   - X-Original-Method and the visitor's Cookie header
+3. Gatekeeper takes the tunnel named in the path (X-Original-URL and Host
+   must agree) and validates the Authelia session cookie with Authelia for
+   that URL:
+   a. No valid session -> 401 -> nginx redirects to
+      auth.example.com/?rd=https://staging.example.com<request URI>
+   b. Valid session -> the user (cached, see Session caching)
+4. Gatekeeper checks for a matching grant:
+   a. Grant exists (user or group match) -> 200 with Remote-User, Remote-Groups,
+      Remote-Name and Remote-Email
    b. No grant -> 403 with access request HTML page
-6. If both return 200: nginx proxies to the tunnel backend
+5. On 200 nginx proxies to the tunnel backend with those identity headers
 ```
 
-For public tunnels, nginx skips both auth_request directives. For authenticated tunnels, nginx uses only the Authelia auth_request and skips Gatekeeper.
+Public tunnel vhosts have no `auth_request`. For authenticated tunnels Gatekeeper answers 200 for any valid session without looking for a grant.
+
+### Which tunnel is authorized
+
+Gatekeeper authorizes the tunnel the vhost names, never one the client names. nginx selects the vhost from the request line when a request is in absolute form (`GET https://staging.example.com/ HTTP/1.1`) and from `Host` otherwise, so a client can send the request line of one tunnel with the `Host` header of another. Vhosts written before 4.3 called `/authz/check` with `X-Original-URL` and `Host` built from the client's `Host` header (`$http_host`): an Authelia user allowed on any tunnel — and every user is allowed on an `authenticated` one — reached any `restricted` tunnel, app or plugin, by naming the allowed tunnel in `Host`, without a grant, and Authelia evaluated that other URL as well.
+
+Generated vhosts now name their tunnel in the subrequest's path, `/authz/tunnel/<fqdn>`, as the agent-panel vhost names its agent, and write the same hostname into `X-Original-URL`, `Host` and the login redirect. Gatekeeper authorizes the tunnel in the path and refuses a check whose `X-Original-URL` or `Host` names another hostname, or has no `Host` (401), before asking Authelia. It refuses `/authz/check` outright (403): a vhost written before 4.3 that the panel has not rewritten closes its tunnel instead of opening it. The panel rewrites tunnel vhosts when it starts. Authelia-protected static sites, which ask Authelia directly, had the same flaw towards Authelia's per-site rules and are rewritten the same way; the auth portal's subrequest is rewritten too, as hardening. See [nginx Configuration](../03-architecture/nginx-configuration.md#authorization-subrequests-name-their-own-hostname).
 
 ### Grant model
 
@@ -170,7 +182,7 @@ State files use the same atomic write pattern as the rest of Lamaste (temp file 
 When Gatekeeper denies a request (no matching grant), it returns a 403 response with an HTML page instead of a bare status code. The page is generated from templates in `packages/lamaste-gatekeeper/src/lib/templates.ts` and includes:
 
 - The username (from `Remote-User` header)
-- The resource they attempted to access (from `Host` header)
+- The resource they attempted to access (the tunnel's hostname, from `X-Original-URL` — written by the vhost)
 - A human-readable timestamp
 - Pre-filled message templates for email (mailto link), Slack, Teams, WhatsApp, and a generic plain-text format
 
@@ -212,11 +224,11 @@ The HTML is self-contained (inline CSS, no external dependencies) so it renders 
 
 ### Access modes
 
-| Mode          | Authelia | Gatekeeper | Who can access              |
-| ------------- | -------- | ---------- | --------------------------- |
-| Public        | No       | No         | Anyone on the internet      |
-| Authenticated | Yes      | No         | Any logged-in Authelia user |
-| Restricted    | Yes      | Yes        | Users with a matching grant |
+| Mode          | Authelia | Gatekeeper           | Who can access              |
+| ------------- | -------- | -------------------- | --------------------------- |
+| Public        | No       | No                   | Anyone on the internet      |
+| Authenticated | Yes      | Yes (session only)   | Any logged-in Authelia user |
+| Restricted    | Yes      | Yes (session, grant) | Users with a matching grant |
 
 ### Cache TTLs
 

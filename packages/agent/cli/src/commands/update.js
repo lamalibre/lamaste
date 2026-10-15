@@ -11,6 +11,7 @@ import {
 } from '@lamalibre/lamaste/agent';
 import { curlAuthenticatedJson } from '../lib/panel-api.js';
 import { convergeWithPanel, describeConverge } from '../lib/converge.js';
+import { repairPanelServiceInstallTarget } from '../lib/panel-service.js';
 
 /**
  * Converge with the panel now and restart the tunnel client, and make sure
@@ -44,6 +45,33 @@ export async function runUpdate({ label }) {
         task: async (_ctx, task) => {
           await installSyncService(label, program);
           task.output = 'Tunnel changes on the panel apply within 30 seconds';
+        },
+        rendererOptions: { persistentOutput: true },
+      },
+      {
+        // Panel units written before 4.3 were enabled into multi-user.target,
+        // which a user manager does not have: the panel never started at boot.
+        title: 'Checking the panel service unit',
+        task: async (_ctx, task) => {
+          let outcome;
+          try {
+            outcome = await repairPanelServiceInstallTarget(label);
+          } catch (err) {
+            // The tunnels are converged already; a unit that cannot be
+            // checked is reported, not a failed update.
+            task.skip(
+              `Could not check the panel unit: ${err instanceof Error ? err.message : err}`,
+            );
+            return;
+          }
+          const { repaired, reenabled } = outcome;
+          if (!repaired) {
+            task.skip('Nothing to repair');
+            return;
+          }
+          task.output = reenabled
+            ? 'Panel service now starts at boot (enabled into default.target)'
+            : 'Panel unit install target set to default.target';
         },
         rendererOptions: { persistentOutput: true },
       },

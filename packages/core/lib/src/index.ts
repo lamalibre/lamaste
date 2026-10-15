@@ -225,6 +225,35 @@ export type {
   AgentHookCallResult,
 } from './agent-hook-call.js';
 
+// Relay assertions (relay vhosts → lamaste-agentd on the agent's loopback)
+export {
+  RELAY_ASSERTION_HEADER,
+  RELAY_ASSERTION_MAX_AGE_MS,
+  RELAY_ASSERTION_CLOCK_SKEW_MS,
+  RELAY_ASSERTION_VERSION,
+  RELAY_SIGNING_KEY_FILE,
+  relayKeyId,
+  relayVerifyKeyOf,
+  parseRelayVerifyKey,
+  createRelaySigner,
+  signRelayAssertion,
+  verifyRelayAssertion,
+  urlIsUnderRoute,
+} from './relay-assertion.js';
+
+export type {
+  RelayCaller,
+  RelayTarget,
+  RelayAssertionPayload,
+  RelaySigningKey,
+  RelayVerifyKey,
+  RelaySigner,
+  RelaySignerOptions,
+  RelayAssertionRejection,
+  VerifyRelayAssertionResult,
+  VerifyRelayAssertionOptions,
+} from './relay-assertion.js';
+
 // Plugin host
 export { pluginHostPlugin, invalidatePluginHostCache } from './plugin-host.js';
 

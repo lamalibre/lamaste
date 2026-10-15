@@ -11,7 +11,11 @@
 # 4. Plugin name validation (reserved names, invalid chars)
 # 5. Enable/disable/delete nonexistent plugin
 # 6. Check-update/bundle for nonexistent plugin
-# 7. Auth validation (no headers, wrong label, admin allowed)
+# 7. Auth validation: the daemon's port is reachable by every process on the
+#    machine, so headers that only claim a caller (X-SSL-Client-*,
+#    Remote-User, a made-up relay assertion) and percent-escaped paths get
+#    401; the owner's Bearer token (agentd.token) is admitted. The relay's
+#    signed assertions are covered by three-VM spec 32.
 # ============================================================================
 
 set -euo pipefail
@@ -73,26 +77,31 @@ else
   fi
 fi
 
-# Helpers for agent panel API (local, no mTLS — header-based auth)
+# Helpers for the agent panel API — local, as the daemon's owner: the Bearer
+# token in ~/.lamalibre/lamaste/agentd.token (0600), as the desktop app does.
+# The header comes from a file descriptor so the token is never in curl's
+# arguments.
+AGENTD_TOKEN_FILE="${HOME}/.lamalibre/lamaste/agentd.token"
+agentd_auth_header() {
+  printf 'Authorization: Bearer %s\n' "$(jq -r '.token' "$AGENTD_TOKEN_FILE")"
+}
+
 ap_get() {
   curl -sf --max-time 30 \
-    -H "X-SSL-Client-Verify: SUCCESS" \
-    -H "X-SSL-Client-DN: CN=agent:${AGENT_LABEL}" \
+    -H @<(agentd_auth_header) \
     -H "Accept: application/json" \
     "http://127.0.0.1:${PANEL_PORT}/api/$1"
 }
 
 ap_get_status() {
   curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
-    -H "X-SSL-Client-Verify: SUCCESS" \
-    -H "X-SSL-Client-DN: CN=agent:${AGENT_LABEL}" \
+    -H @<(agentd_auth_header) \
     "http://127.0.0.1:${PANEL_PORT}/api/$1"
 }
 
 ap_post_status() {
   curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
-    -H "X-SSL-Client-Verify: SUCCESS" \
-    -H "X-SSL-Client-DN: CN=agent:${AGENT_LABEL}" \
+    -H @<(agentd_auth_header) \
     -X POST -H "Content-Type: application/json" \
     -d "$2" \
     "http://127.0.0.1:${PANEL_PORT}/api/$1"
@@ -100,8 +109,7 @@ ap_post_status() {
 
 ap_delete_status() {
   curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
-    -H "X-SSL-Client-Verify: SUCCESS" \
-    -H "X-SSL-Client-DN: CN=agent:${AGENT_LABEL}" \
+    -H @<(agentd_auth_header) \
     -X DELETE \
     "http://127.0.0.1:${PANEL_PORT}/api/$1"
 }
@@ -169,24 +177,32 @@ assert_eq "$(ap_get_status "plugins/nosuch/bundle")" "404" "Bundle nonexistent �
 
 log_section "Auth validation"
 
-# No auth headers → 403
-NO_AUTH=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \
-  "http://127.0.0.1:${PANEL_PORT}/api/plugins")
-assert_eq "$NO_AUTH" "403" "No mTLS headers → 403" || true
+# status_of <path> [curl args...] — HTTP status of an unauthenticated-looking request
+status_of() {
+  local path="$1"
+  shift
+  curl -s --max-time 10 -o /dev/null -w '%{http_code}' "$@" "http://127.0.0.1:${PANEL_PORT}${path}"
+}
 
-# Wrong agent label → 403
-WRONG_LABEL=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \
-  -H "X-SSL-Client-Verify: SUCCESS" \
-  -H "X-SSL-Client-DN: CN=agent:wrong-label" \
-  "http://127.0.0.1:${PANEL_PORT}/api/plugins")
-assert_eq "$WRONG_LABEL" "403" "Wrong agent label → 403" || true
+assert_eq "$(status_of /api/plugins)" "401" "No credential → 401" || true
 
-# Admin cert → 200
-ADMIN_OK=$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' \
-  -H "X-SSL-Client-Verify: SUCCESS" \
-  -H "X-SSL-Client-DN: CN=admin" \
-  "http://127.0.0.1:${PANEL_PORT}/api/plugins")
-assert_eq "$ADMIN_OK" "200" "Admin cert → 200" || true
+# Anything on this machine can open 127.0.0.1:${PANEL_PORT} and send these
+# headers — they prove nothing to the daemon
+assert_eq "$(status_of /api/plugins -H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin')" \
+  "401" "Forged admin certificate headers → 401" || true
+assert_eq "$(status_of /api/plugins -H 'X-SSL-Client-Verify: SUCCESS' -H "X-SSL-Client-DN: CN=agent:${AGENT_LABEL}")" \
+  "401" "Forged agent certificate headers → 401" || true
+assert_eq "$(status_of /api/status -H 'Remote-User: admin' -H 'Remote-Groups: admins')" \
+  "401" "Forged Authelia identity headers → 401" || true
+assert_eq "$(status_of /api/plugins -H 'X-Lamalibre-Relay-Assertion: forged.assertion')" \
+  "401" "Made-up relay assertion → 401" || true
+
+# The router decodes percent-escapes: /%61pi/... is routed as /api/...
+# and must be authenticated like it
+assert_eq "$(status_of /%61pi/status)" "401" "Percent-escaped /api path without credential → 401" || true
+
+# The owner's token → 200
+assert_eq "$(ap_get_status plugins)" "200" "Owner Bearer token → 200" || true
 
 # Health endpoint — no auth needed
 HEALTH_OK=$(curl -sf --max-time 10 "http://127.0.0.1:${PANEL_PORT}/api/health" | jq -r '.status' 2>/dev/null || echo "fail")

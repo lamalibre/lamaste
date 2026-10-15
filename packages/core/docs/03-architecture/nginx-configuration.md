@@ -312,10 +312,40 @@ All three also declare the same request headers inside their `location /` (`TUNN
 - **Per location, not per server.** nginx inherits `proxy_set_header` from the enclosing level only when a level declares none of its own. Every tunnel location declares some (`Upgrade`, `Remote-*`), so headers placed at server level never reached the app — it saw `Host: 127.0.0.1:<port>` and no client address. Declared in the location, `Host`, `X-Real-IP`, `X-Forwarded-For` and `X-Forwarded-Proto` now reach the app.
 - **Client-certificate headers are always cleared.** The panel treats `X-SSL-Client-*` from nginx as proof of an mTLS client certificate. A tunnel vhost never passes client-supplied values through, whatever listens on its port.
 - **Identity headers.** Public vhosts also clear `Remote-User`, `Remote-Groups`, `Remote-Name` and `Remote-Email` — a public tunnel has no authenticated user, and an app might trust those headers from an authenticated vhost. Authenticated and restricted vhosts set them from the Gatekeeper's answer, which replaces anything the client sent.
+- **Relay assertions on plugin tunnels.** A plugin tunnel (a vhost with a `pathPrefix`) ends at the agent's lamaste-agentd, which takes the user only from a relay assertion — its port can be reached without nginx, so a `Remote-User` header proves nothing to it. Authenticated and restricted plugin vhosts forward the one Gatekeeper signs for the request (`auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;` and `proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;`); public plugin vhosts clear the header. App tunnel vhosts are unchanged. See [Security Model](../01-concepts/security-model.md#5c-the-agent-daemon-lamaste-agentd-and-relay-assertions).
 
 A tunnel created before `maxBodySizeMb` existed has no value and its vhost has no directive, so nginx applies its built-in 1 MiB limit until a body limit is set on it (`PATCH /api/tunnels/:id` with `maxBodySizeMb`, or **Edit** in the panel). Changing the access mode or body limit re-renders the vhost in place through the write-with-rollback pattern below; a disabled tunnel's vhost stays disabled.
 
-Agent panel tunnels (`type: 'panel'`) use a separate mTLS vhost (`writeAgentPanelVhost()`) with no body limit setting.
+Agent panel tunnels (`type: 'panel'`) use a separate mTLS vhost (`writeAgentPanelVhost()`) with no body limit setting. Every request on it is authorized by the panel, which signs the relay assertion the agent's lamaste-agentd requires:
+
+```nginx
+# Authorization by the panel: refuses revoked and foreign certificates,
+# otherwise answers with the relay assertion for this one request
+location = /internal/lamaste/agent-panel-authz {
+    internal;
+    proxy_pass http://127.0.0.1:3100/api/agent-panel/authz/<label>;
+    proxy_pass_request_body off;
+    proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+    proxy_set_header X-SSL-Client-DN $ssl_client_s_dn;
+    proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+    proxy_set_header X-Original-Method $request_method;
+    proxy_set_header X-Original-URI $request_uri;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    # ... Cookie, Authorization and Remote-* cleared
+}
+
+location / {
+    if ($ssl_client_verify != SUCCESS) { return 496; }
+    auth_request /internal/lamaste/agent-panel-authz;
+    auth_request_set $relay_assertion $upstream_http_x_lamalibre_relay_assertion;
+    proxy_pass http://127.0.0.1:<port>;
+    proxy_set_header X-Lamalibre-Relay-Assertion $relay_assertion;
+    # X-SSL-Client-* are still sent for agents older than 4.3; lamaste-agentd 4.3 removes them unread
+    # ...
+}
+```
+
+`location /` has no rewrite: the daemon must receive exactly the `$request_uri` the assertion names. The panel admits the admin certificate and the agent's own (`403` otherwise, also when the agent has no enabled panel tunnel); the panel's 2FA does not apply to this subrequest.
 
 ### 6. Static Site Vhost (`lamalibre-lamaste-site-<id>`)
 
@@ -336,7 +366,8 @@ server {
     add_header X-Frame-Options SAMEORIGIN always;
     add_header X-Content-Type-Options nosniff always;
 
-    # Optional Authelia forward auth (auth_request to 127.0.0.1:9091/api/authz/auth-request)
+    # Optional Authelia forward auth (auth_request to 127.0.0.1:9091/api/authz/auth-request,
+    # X-Original-URL https://blog.example.com$request_uri — the site's own hostname)
 
     location / {
         try_files $uri $uri/ =404;       # Standard mode
@@ -362,7 +393,7 @@ Two serving modes based on the `spaMode` flag:
 - **Standard**: `try_files $uri $uri/ =404` — serves files as-is, 404 for missing paths
 - **SPA**: `try_files $uri $uri/ /index.html` — falls back to `index.html` for client-side routing
 
-Optional Authelia protection is controlled by the `autheliaProtected` flag on the site object.
+Optional Authelia protection is controlled by the `autheliaProtected` flag on the site object. Authelia's rules for a site restricted to some users (`allowedUsers`) are keyed by the site's hostname, so the subrequest names that hostname, never the client's `Host` header (see [below](#authorization-subrequests-name-their-own-hostname)).
 
 A custom-domain site may list `aliases` (e.g. `www.myblog.net`). They are served by a second server block that answers with a 301 to the primary host. One certificate lineage, named after the site's domain (`certbot certonly --nginx --cert-name <fqdn> -d <fqdn> -d <alias> ...`), covers the primary name and every alias, so both blocks point at the same `live/<fqdn>/` directory.
 
@@ -417,19 +448,21 @@ server {
     # ... standard SSL settings
     client_max_body_size 10m;
 
-    # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
+    # Gatekeeper authorization subrequest (handles Authelia validation + grant check).
+    # The tunnel is named in the path — never by the client's Host header.
     location /internal/lamaste/authz {
         internal;
 
-        proxy_pass http://127.0.0.1:9294/authz/check;
+        proxy_pass http://127.0.0.1:9294/authz/tunnel/app.example.com;
         proxy_pass_request_body off;
 
         proxy_set_header Content-Length "";
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+        proxy_set_header X-Original-URL https://app.example.com$request_uri;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header Host $http_host;
+        # ... X-Forwarded-Host, -Proto, -Uri and -Method cleared ("")
+        proxy_set_header Host app.example.com;
         proxy_set_header Cookie $http_cookie;
 
         proxy_http_version 1.1;
@@ -459,15 +492,16 @@ server {
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login
-        error_page 401 =302 https://auth.<domain>/?rd=$scheme://$http_host$request_uri;
+        # Authentication failure -> redirect to Authelia login, back to this vhost
+        error_page 401 =302 https://auth.<domain>/?rd=https://app.example.com$request_uri;
     }
 }
 ```
 
 Key characteristics:
 
-- `auth_request` targets the Gatekeeper at `127.0.0.1:9294/authz/check` instead of Authelia directly
+- `auth_request` targets the Gatekeeper at `127.0.0.1:9294/authz/tunnel/<fqdn>` instead of Authelia directly
+- The subrequest names the tunnel by the vhost's own hostname, written into the configuration — in its path, `X-Original-URL` and `Host` — never by the client's `Host` header (see [below](#authorization-subrequests-name-their-own-hostname))
 - The Gatekeeper validates the Authelia session cookie and returns 200 (authenticated) or 401 (unauthenticated)
 - The upstream receives `Remote-*` headers only as set from the Gatekeeper's response; client-supplied values under those names are replaced
 - 401 redirects to the Authelia login portal
@@ -489,19 +523,21 @@ server {
     # ... standard SSL settings
     client_max_body_size 10m;
 
-    # Gatekeeper authorization subrequest (handles Authelia validation + grant check)
+    # Gatekeeper authorization subrequest (handles Authelia validation + grant check).
+    # The tunnel is named in the path — never by the client's Host header.
     location /internal/lamaste/authz {
         internal;
 
-        proxy_pass http://127.0.0.1:9294/authz/check;
+        proxy_pass http://127.0.0.1:9294/authz/tunnel/restricted-app.example.com;
         proxy_pass_request_body off;
 
         proxy_set_header Content-Length "";
         proxy_set_header Connection "";
         proxy_set_header X-Original-Method $request_method;
-        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+        proxy_set_header X-Original-URL https://restricted-app.example.com$request_uri;
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header Host $http_host;
+        # ... X-Forwarded-Host, -Proto, -Uri and -Method cleared ("")
+        proxy_set_header Host restricted-app.example.com;
         proxy_set_header Cookie $http_cookie;
 
         proxy_http_version 1.1;
@@ -531,8 +567,8 @@ server {
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
 
-        # Authentication failure -> redirect to Authelia login
-        error_page 401 =302 https://auth.<domain>/?rd=$scheme://$http_host$request_uri;
+        # Authentication failure -> redirect to Authelia login, back to this vhost
+        error_page 401 =302 https://auth.<domain>/?rd=https://restricted-app.example.com$request_uri;
 
         # Authorization failure -> Gatekeeper serves inline access-request page
         error_page 403 = /internal/lamaste/authz;
@@ -545,6 +581,16 @@ Key differences from the authenticated vhost:
 - The Gatekeeper checks both the Authelia session and the access grant. If the user is authenticated but has no grant for this resource, the Gatekeeper returns 403 instead of 200
 - `error_page 403 = /internal/lamaste/authz` replays the request to the Gatekeeper internal location. The `=` prefix causes nginx to use the response body and status code from the Gatekeeper, which serves an inline HTML access-request page with pre-filled message templates
 - 401 (unauthenticated) still redirects to Authelia login as before
+
+### Authorization subrequests name their own hostname
+
+Every authorization subrequest — to Gatekeeper from an `authenticated` or `restricted` tunnel vhost (app and plugin tunnels), to Authelia from a protected static site and from the auth portal's `/api/user-access/authorize` — names the vhost by its own hostname, written into the configuration: `X-Original-URL https://<fqdn>$request_uri`; for Gatekeeper also the path, `/authz/tunnel/<fqdn>`, and `Host <fqdn>`. A tunnel's 401 login redirect returns to `https://<fqdn>$request_uri`. The client's `X-Forwarded-Host`, `-Proto`, `-Uri` and `-Method` are cleared in these subrequests. Generated vhosts contain no `$http_host`.
+
+nginx selects the vhost from the request line when a request is in absolute form (`GET https://a.example.com/x HTTP/1.1`) and from `Host` otherwise, so a client can send the request line of one hostname with the `Host` header of another. Vhosts written before 4.3 built `X-Original-URL` and `Host` from `$http_host` — the client's `Host` header — so the subrequest asked about the other hostname while nginx served this one: an Authelia user allowed on any tunnel (every user, on an `authenticated` tunnel) reached any `restricted` tunnel, app or plugin, without a grant, and any Authelia user reached a static site restricted to other users. `$host` would not fix it — on the default server it is whatever `Host` the client sent. `$request_uri` is what follows the host in the request target — it starts with `/`, or with `?` for an absolute-form target without a path — so it cannot change the URL's host; the scheme is fixed because every such vhost listens on 443 with TLS only. The generators refuse a hostname that is not a plain DNS name, so nothing but a literal reaches these headers. For the auth portal the change is hardening: no rule Lamaste writes for Authelia is more permissive than the portal's own (the default, `two_factor`), so naming another hostname there gained nothing.
+
+Gatekeeper authorizes the tunnel named in the path, and refuses a check whose `X-Original-URL` or `Host` names another hostname, or has no `Host` (401). It refuses `/authz/check` — what vhosts written before 4.3 call, with the client's `Host` in both headers — outright (403, logged as `vhost_predates_host_binding`): a tunnel vhost the panel has not rewritten is closed, not open to the users of other tunnels. The panel rewrites them at startup (see [Rewritten at Startup](#rewritten-at-startup)).
+
+Authelia evaluates the raw `$request_uri`, while nginx serves the normalized `$uri` (`/a/../b` is `/b`, `%2e` is `.`). Lamaste writes no path (`resources`) rules into Authelia's `access_control`, only hostname rules; a path rule added by hand would see a different path than nginx serves.
 
 ## nginx Cache Zone (`lamaste_authz`)
 
@@ -562,12 +608,19 @@ proxy_cache_path /var/cache/nginx/authz levels=1:2 keys_zone=lamaste_authz:1m ma
 | `max_size`  | `10m` | 10 MB maximum disk storage for cached responses           |
 | `inactive`  | `5m`  | Evict entries not accessed within 5 minutes               |
 
-**Cache key:** `$cookie_authelia_session$http_host` — ensures each user session gets its own cache entry per host, preventing authorization decisions from leaking across users or subdomains.
+The installer also writes the location-level policy, `/etc/nginx/snippets/lamalibre-lamaste-authz-cache-loc.conf`:
 
-**Cache TTLs (when used):**
+```nginx
+proxy_cache lamaste_authz;
+proxy_cache_key "$server_name|$cookie_authelia_session";
+proxy_cache_valid 200 10s;
+proxy_cache_valid 403 0;
+proxy_cache_use_stale off;
+```
 
-- `200` (authorized): 30 seconds — reduces subrequests during rapid page loads
-- `401` / `403` (denied): 10 seconds — allows quick re-check after login or grant changes
+**Cache key:** `$server_name|$cookie_authelia_session` — one entry per vhost and user session. `$server_name` is the vhost's own name, first and followed by a character no hostname contains, so no other vhost and session give the same key. `$http_host` (in the key before 4.3) is the client's `Host` header, which can name another tunnel than the vhost serving the request (see [above](#authorization-subrequests-name-their-own-hostname)), so a decision cached for that other tunnel would have been replayed. A relay installed before 4.3 keeps the old snippet until it is reinstalled; no vhost includes it.
+
+**Cache TTLs (when used):** `200` (authorized) for 10 seconds, matching the `Cache-Control: max-age=10` Gatekeeper sends; `403` never, so a new grant takes effect at once. Gatekeeper marks a plugin tunnel's answer `no-store` — it carries a single-use relay assertion.
 
 > **Note:** The cache zone is installed by the Gatekeeper installer task, but the generated vhosts (`buildGatekeeperVhost()`) do not currently include `proxy_cache` directives in the internal location block. Authorization caching currently relies on the Gatekeeper's in-memory session cache (30-second TTL). The nginx cache zone is available for future use if nginx-level caching is needed.
 
@@ -674,14 +727,15 @@ Adding a directive to a generator therefore means adding it to the allow-list in
 
 ## Forward Auth Block
 
-The Authelia forward auth integration uses nginx's `auth_request` module. Protected static sites call Authelia directly as shown below; `restricted` and `authenticated` tunnels send the same subrequest to Gatekeeper (`127.0.0.1:9294/authz/check`), which validates the Authelia session and, for restricted tunnels, the grant (sections 8 and 9). Here is the flow:
+The Authelia forward auth integration uses nginx's `auth_request` module. Protected static sites call Authelia directly as shown below; `restricted` and `authenticated` tunnels send the same subrequest to Gatekeeper (`127.0.0.1:9294/authz/tunnel/<fqdn>`), which validates the Authelia session and, for restricted tunnels, the grant (sections 8 and 9). Here is the flow:
 
 ```
 1. User requests https://myapp.example.com/page
    │
 2. nginx sends internal subrequest to /internal/lamaste/authz
    │  ├── proxy_pass → http://127.0.0.1:9091/api/authz/auth-request
-   │  ├── Sends X-Original-URL, X-Original-Method headers
+   │  ├── Sends X-Original-URL (https://myapp.example.com/page — the vhost's
+   │  │   own hostname, never the client's Host header), X-Original-Method
    │  └── Strips request body (Content-Length: "")
    │
 3. Authelia checks the session cookie
@@ -783,12 +837,23 @@ Without it nothing listens on port 80 and `http://` links to the relay's hostnam
 
 ### Created/Removed at Runtime
 
-| Vhost                          | Created           | Removed                 |
-| ------------------------------ | ----------------- | ----------------------- |
-| `lamalibre-lamaste-app-<name>` | POST /api/tunnels | DELETE /api/tunnels/:id |
+| Vhost                           | Created           | Removed                 |
+| ------------------------------- | ----------------- | ----------------------- |
+| `lamalibre-lamaste-app-<name>`  | POST /api/tunnels | DELETE /api/tunnels/:id |
+| `lamalibre-lamaste-site-<uuid>` | POST /api/sites   | DELETE /api/sites/:id   |
 
 `PATCH /api/tunnels/:id` removes or restores the `sites-enabled` symlink when a tunnel is disabled or enabled (the file in `sites-available` is kept), and re-renders the vhost in place when `accessMode` or `maxBodySizeMb` changes. `PATCH /api/sites/:id` re-renders a site vhost when `spaMode`, `autheliaProtected` or `aliases` change.
-| `lamalibre-lamaste-site-<uuid>` | POST /api/sites | DELETE /api/sites/:id |
+
+### Rewritten at Startup
+
+A vhost is written when its tunnel or site is created or changed, so a generator change does not reach existing vhosts by itself. At startup, once onboarding is complete, the panel (`lib/vhost-reconcile.js`) renders installed vhosts again and rewrites each one whose text differs through the write-with-rollback pattern, on the certificate directory the installed file names (a wildcard certificate stays a wildcard certificate). A rewrite never links a vhost that is not linked now; a disabled tunnel's vhost is unlinked:
+
+- **Before it listens:** the auth portal (`lamalibre-lamaste-auth`) and every static site, from `sites.json` and the domain. Site changes take no lock, so this runs while none can arrive.
+- **Once it listens**, under the tunnel lock: every agent-panel, app and plugin tunnel, from `tunnels.json` — the stored access mode (`restricted` when absent, as Gatekeeper reads it), the plugin route, and the body limit only when the tunnel has one. After listen because a rewritten agent-panel vhost asks the panel about every request.
+
+That is how vhosts written before 4.3 start forwarding relay assertions (agent-panel and plugin tunnels) and start naming their own hostname to Gatekeeper and Authelia (see [above](#authorization-subrequests-name-their-own-hostname)). A rewrite never adds or removes authentication: a tunnel or site vhost whose `auth_request` disagrees with its state (a public vhost for a restricted tunnel, say) is logged and left alone until the tunnel or site is reconfigured — the agent-panel vhost, which gains the panel's `auth_request` beside its mTLS check, is the exception. Missing vhosts are logged (a site still waiting for its certificate has none yet); a failed rewrite restores the previous file and the others still run.
+
+A tunnel vhost left as it was fails closed: Gatekeeper refuses its `/authz/check` subrequests, so the tunnel answers 403 until it is rewritten. A static site or auth portal vhost left as it was still names the client's `Host` to Authelia. After an upgrade, check the panel's startup log for `Left tunnel vhosts as they are`, `Left site vhosts as they are` and `Failed to rewrite … vhost`, fix what they name (a failing `nginx -t`, a missing certificate) and restart `lamalibre-lamaste-serverd`.
 
 ## Key Files
 

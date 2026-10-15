@@ -130,7 +130,12 @@ export function gatekeeperTasks(ctx, task) {
         // immediately. Successful auth (200) is cached for 10s — matching
         // the Cache-Control max-age Gatekeeper sets on the response. Omitting
         // `proxy_ignore_headers Cache-Control` means nginx will honor the
-        // upstream max-age as a further shortening signal.
+        // upstream max-age as a further shortening signal. The key names the
+        // vhost by `$server_name`, never `$http_host`: an absolute-form request
+        // line selects one vhost while the client's Host header names another,
+        // and a decision cached for that other tunnel would be replayed here.
+        // The hostname comes first and `|` separates it: a hostname cannot
+        // contain `|`, so no other session and hostname make the same key.
         const cacheConfig = `# Lamaste Gatekeeper auth response cache zone
 # Scope: http{}. Included from nginx.conf.
 proxy_cache_path /var/cache/nginx/authz levels=1:2
@@ -139,9 +144,9 @@ proxy_cache_path /var/cache/nginx/authz levels=1:2
     inactive=5m;
 `;
         const cacheLocConfig = `# Lamaste Gatekeeper auth_request cache policy
-# Scope: location{} using auth_request /authz/check.
+# Scope: the location{} a tunnel vhost's auth_request targets.
 proxy_cache lamaste_authz;
-proxy_cache_key "$cookie_authelia_session$http_host";
+proxy_cache_key "$server_name|$cookie_authelia_session";
 proxy_cache_valid 200 10s;
 proxy_cache_valid 403 0;
 proxy_cache_use_stale off;

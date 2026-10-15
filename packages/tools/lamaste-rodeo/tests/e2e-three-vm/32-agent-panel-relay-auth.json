@@ -1,0 +1,928 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 32,
+    "name": "Agent Panel Relay Auth",
+    "suite": "e2e-three-vm",
+    "description": "32 — Agent Panel Relay Auth (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq"]
+  },
+  "env": {
+    "HOST_IP": {
+      "description": "HOST_IP"
+    },
+    "TEST_DOMAIN": {
+      "description": "TEST_DOMAIN"
+    }
+  },
+  "constants": {
+    "AGENT_LOCAL_LABEL": {
+      "value": "e2e-agent"
+    },
+    "AGENT_CONFIG": {
+      "value": "/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/config.json",
+      "expression": true
+    },
+    "AGENT_CERT_PEM": {
+      "value": "/tmp/e2e-32-agent-cert.pem"
+    },
+    "AGENT_KEY_PEM": {
+      "value": "/tmp/e2e-32-agent-key.pem"
+    },
+    "PANEL_PORT": {
+      "value": "9393"
+    },
+    "FORGED_ADMIN": {
+      "value": "-H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' -H 'X-SSL-Client-Serial: 01'"
+    }
+  },
+  "cleanup": [
+    {
+      "id": "cleanup-0",
+      "label": "PATCH certs/agent/${PANEL_AGENT}/capabilities",
+      "target": "host",
+      "continueOnError": true,
+      "op": {
+        "type": "api",
+        "method": "PATCH",
+        "path": "certs/agent/${PANEL_AGENT}/capabilities",
+        "body": "{\\"
+      }
+    },
+    {
+      "id": "cleanup-1",
+      "label": "Delete ${AGENT_CERT_PEM}",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "file",
+        "action": "delete",
+        "path": "${AGENT_CERT_PEM}"
+      }
+    },
+    {
+      "id": "cleanup-2",
+      "label": "Cleanup exec on agent",
+      "target": "agent",
+      "continueOnError": true,
+      "op": {
+        "type": "exec",
+        "command": "lamaste-agent sync --label ${AGENT_LOCAL_LABEL}|| true",
+        "ignoreExit": true
+      }
+    }
+  ],
+  "sections": [
+    {
+      "id": "pre-flight-onboarding-complete-test-agent-enrolled",
+      "label": "Pre-flight: onboarding complete, test-agent enrolled",
+      "steps": [
+        {
+          "id": "step-0",
+          "label": "GET /api/onboarding/status",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "onboarding/status"
+          },
+          "capture": [
+            {
+              "variable": "ONBOARDING_STATUS",
+              "from": {
+                "kind": "jq",
+                "expression": ".status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-1",
+          "label": "Onboarding is complete",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Onboarding is complete"
+          }
+        },
+        {
+          "id": "step-2",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "node -p \\"
+          },
+          "capture": [
+            {
+              "variable": "PANEL_AGENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-5",
+          "label": "GET /api/certs/agent",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "certs/agent"
+          },
+          "capture": [
+            {
+              "variable": "AGENTS_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-6",
+          "label": "Set ORIGINAL_CAPS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$AGENTS_JSON\" | jq -c --arg l \"$PANEL_AGENT\" '[.agents[] | select(.label == $l and .revoked == false)] | last | .capabilities' 2>/dev/null || echo \"\""
+          },
+          "capture": [
+            {
+              "variable": "ORIGINAL_CAPS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-7",
+          "label": "${PANEL_AGENT} is not an enrolled, non-revoked agent",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${PANEL_AGENT} is not an enrolled, non-revoked agent"
+          },
+          "when": {
+            "kind": "or",
+            "conditions": [
+              {
+                "kind": "not",
+                "condition": {
+                  "kind": "var_not_empty",
+                  "variable": "ORIGINAL_CAPS"
+                }
+              },
+              {
+                "kind": "var_eq",
+                "variable": "ORIGINAL_CAPS",
+                "value": "null"
+              }
+            ]
+          }
+        },
+        {
+          "id": "step-8",
+          "label": "${PANEL_AGENT} is enrolled",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${PANEL_AGENT} is enrolled"
+          }
+        }
+      ],
+      "when": {
+        "kind": "var_eq",
+        "variable": "ONBOARDING_STATUS",
+        "value": "COMPLETED"
+      },
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: onboarding complete, test-agent enrolled\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(host_api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed (status: $ONBOARDING_STATUS) — skipping\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\n# The host knows the agent by the label its enrollment token carried\nPANEL_AGENT=$(agent_exec \"node -p \\\"require('${AGENT_CONFIG}').agentLabel ?? ''\\\"\" 2>/dev/null || echo \"\")\nPANEL_AGENT=\"${PANEL_AGENT:-test-agent}\"\nPANEL_FQDN=\"agent-${PANEL_AGENT}.${TEST_DOMAIN}\"\n\nAGENTS_JSON=$(host_api_get \"certs/agent\" || echo '{\"agents\":[]}')\nORIGINAL_CAPS=$(echo \"$AGENTS_JSON\" | jq -c --arg l \"$PANEL_AGENT\" '[.agents[] | select(.label == $l and .revoked == false)] | last | .capabilities' 2>/dev/null || echo \"\")\nif [ -z \"$ORIGINAL_CAPS\" ] || [ \"$ORIGINAL_CAPS\" = \"null\" ]; then\n  log_fail \"${PANEL_AGENT} is not an enrolled, non-revoked agent\"\n  end_test\n  exit 1\nfi\nlog_pass \"${PANEL_AGENT} is enrolled\""
+    },
+    {
+      "id": "expose-the-real-agent-panel",
+      "label": "Expose the real agent panel",
+      "steps": [
+        {
+          "id": "step-9",
+          "label": "Set WITH_EXPOSE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$ORIGINAL_CAPS\" | jq -c '. + [\"panel:expose\"] | unique'"
+          },
+          "capture": [
+            {
+              "variable": "WITH_EXPOSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-10",
+          "label": "PATCH /api/certs/agent/${PANEL_AGENT}/capabilities",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "PATCH",
+            "path": "certs/agent/${PANEL_AGENT}/capabilities",
+            "body": "{\\"
+          },
+          "capture": [
+            {
+              "variable": "CAPS_RESPONSE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-11",
+          "label": "${PANEL_AGENT} granted panel:expose",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "contains",
+              "actual": {
+                "kind": "var",
+                "name": "CAPS_RESPONSE"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "panel:expose"
+              },
+              "message": "${PANEL_AGENT} granted panel:expose"
+            }
+          }
+        },
+        {
+          "id": "step-12",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no"
+          },
+          "capture": [
+            {
+              "variable": "AGENTD_PRESENT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ],
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "AGENTD_PRESENT",
+            "value": "yes"
+          }
+        },
+        {
+          "id": "step-15",
+          "label": "lamaste-agentd is installed on the agent VM",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "AGENTD_PRESENT"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "yes"
+              },
+              "message": "lamaste-agentd is installed on the agent VM"
+            }
+          }
+        },
+        {
+          "id": "step-17",
+          "label": "Set ENABLE_OUT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "timed_exec 120 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --enable --port ${PANEL_PORT} --json 2>/dev/null\" || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "ENABLE_OUT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-18",
+          "label": "lamaste-agent panel --enable exposed the panel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "ENABLE_OUT"
+              },
+              "path": ".ok",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "lamaste-agent panel --enable exposed the panel"
+            }
+          }
+        },
+        {
+          "id": "step-21",
+          "label": "HTTP request on host",
+          "target": "host",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${PANEL_PORT}/api/health",
+            "timeout": 3
+          },
+          "capture": [
+            {
+              "variable": "HEALTH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-24",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-26",
+          "label": "The panel tunnel reaches lamaste-agentd from the host's loopback",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The panel tunnel reaches lamaste-agentd from the host's loopback"
+          },
+          "when": {
+            "kind": "var_eq",
+            "variable": "TUNNEL_READY",
+            "value": "true"
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "lamaste-agentd not reachable through the panel tunnel after 60 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "lamaste-agentd not reachable through the panel tunnel after 60 seconds"
+          },
+          "when": {
+            "kind": "var_not_eq",
+            "variable": "TUNNEL_READY",
+            "value": "true"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Expose the real agent panel\"\n# ---------------------------------------------------------------------------\n\nWITH_EXPOSE=$(echo \"$ORIGINAL_CAPS\" | jq -c '. + [\"panel:expose\"] | unique')\nCAPS_RESPONSE=$(host_api_patch \"certs/agent/${PANEL_AGENT}/capabilities\" \"{\\\"capabilities\\\":${WITH_EXPOSE}}\" 2>/dev/null || echo '{}')\nassert_contains \"$CAPS_RESPONSE\" \"panel:expose\" \"${PANEL_AGENT} granted panel:expose\" || true\n\n# The agent VM is set up with @lamalibre/lamaste-agent only; lamaste-agentd is\n# installed on demand from the registry /root/.npmrc points @lamalibre at\nAGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\nif [ \"$AGENTD_PRESENT\" != \"yes\" ]; then\n  timed_exec 180 multipass exec lamaste-agent -- sudo bash -c \"npm install -g @lamalibre/lamaste-agentd > /tmp/e2e-agentd-install.log 2>&1\"\n  AGENTD_PRESENT=$(agent_exec \"command -v lamaste-agentd > /dev/null 2>&1 && echo yes || echo no\")\nfi\nassert_eq \"$AGENTD_PRESENT\" \"yes\" \"lamaste-agentd is installed on the agent VM\" || true\n\n# A daemon left running local-only would make `panel --enable` return early\n# without exposing it\ntimed_exec 60 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --disable --local-only 2>/dev/null; true\" > /dev/null 2>&1 || true\nENABLE_OUT=$(timed_exec 120 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --enable --port ${PANEL_PORT} --json 2>/dev/null\" || echo '{}')\nassert_json_field \"$ENABLE_OUT\" '.ok' 'true' \"lamaste-agent panel --enable exposed the panel\" || true\n\n# The CLI converges at once; allow the sync timer as a fallback\nTUNNEL_READY=false\nfor _ in $(seq 1 30); do\n  HEALTH=$(host_exec \"curl -sf --max-time 3 http://127.0.0.1:${PANEL_PORT}/api/health 2>/dev/null\" || echo \"\")\n  if echo \"$HEALTH\" | jq -e '.status == \"ok\"' &>/dev/null; then\n    TUNNEL_READY=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$TUNNEL_READY\" = \"true\" ]; then\n  log_pass \"The panel tunnel reaches lamaste-agentd from the host's loopback\"\nelse\n  log_fail \"lamaste-agentd not reachable through the panel tunnel after 60 seconds\"\n  end_test\n  exit 1\nfi"
+    },
+    {
+      "id": "the-vhost-the-signing-key-the-public-key",
+      "label": "The vhost, the signing key, the public key",
+      "steps": [
+        {
+          "id": "step-29",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true"
+          },
+          "capture": [
+            {
+              "variable": "VHOST_AUTHZ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Panel vhost asks the panel to authorize every request",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "VHOST_AUTHZ"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "Panel vhost asks the panel to authorize every request"
+            }
+          }
+        },
+        {
+          "id": "step-31",
+          "label": "Exec on host",
+          "target": "host",
+          "op": {
+            "type": "exec",
+            "command": "stat -c '%a %U' /etc/lamalibre/lamaste/relay-signing-key.json 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "KEY_MODE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-32",
+          "label": "Relay signing key is 0600 and the panel user's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "KEY_MODE"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "600 lamaste"
+              },
+              "message": "Relay signing key is 0600 and the panel user's"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "GET /api/agents/me/relay-keys",
+          "target": "agent",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "agents/me/relay-keys"
+          },
+          "capture": [
+            {
+              "variable": "RELAY_KEYS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "The agent reads the relay's public key",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "RELAY_KEYS"
+              },
+              "path": ".keys | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The agent reads the relay's public key"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"The vhost, the signing key, the public key\"\n# ---------------------------------------------------------------------------\n\nPANEL_VHOST=\"/etc/nginx/sites-available/lamalibre-lamaste-agent-panel-agent-${PANEL_AGENT}\"\nVHOST_AUTHZ=$(host_exec \"grep -cF 'auth_request /internal/lamaste/agent-panel-authz;' ${PANEL_VHOST} 2>/dev/null || true\")\nassert_eq \"$VHOST_AUTHZ\" \"1\" \"Panel vhost asks the panel to authorize every request\" || true\n\nKEY_MODE=$(host_exec \"stat -c '%a %U' /etc/lamalibre/lamaste/relay-signing-key.json 2>/dev/null\" || echo \"\")\nassert_eq \"$KEY_MODE\" \"600 lamaste\" \"Relay signing key is 0600 and the panel user's\" || true\n\n# test-agent's certificate, extracted from its P12 (0600 PEMs, removed on exit)\nagent_exec \"P12=\\$(node -p \\\"require('${AGENT_CONFIG}').p12Path\\\"); PW=\\$(node -p \\\"require('${AGENT_CONFIG}').p12Password\\\"); umask 077; \\\n  openssl pkcs12 -in \\\"\\$P12\\\" -clcerts -nokeys -out '${AGENT_CERT_PEM}' -passin \\\"pass:\\$PW\\\" -legacy 2>/dev/null || \\\n  openssl pkcs12 -in \\\"\\$P12\\\" -clcerts -nokeys -out '${AGENT_CERT_PEM}' -passin \\\"pass:\\$PW\\\"; \\\n  openssl pkcs12 -in \\\"\\$P12\\\" -nocerts -nodes -out '${AGENT_KEY_PEM}' -passin \\\"pass:\\$PW\\\" -legacy 2>/dev/null || \\\n  openssl pkcs12 -in \\\"\\$P12\\\" -nocerts -nodes -out '${AGENT_KEY_PEM}' -passin \\\"pass:\\$PW\\\"\" 2>/dev/null || true\n\nRELAY_KEYS=$(agent_api_get \"agents/me/relay-keys\" || echo '{}')\nassert_json_field \"$RELAY_KEYS\" '.keys | length' '1' \"The agent reads the relay's public key\" || true"
+    },
+    {
+      "id": "through-the-vhost-relay-assertions",
+      "label": "Through the vhost: relay assertions",
+      "steps": [
+        {
+          "id": "step-36",
+          "label": "Set STATUS_JSON",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "vhost_admin_get \"/api/status\""
+          },
+          "capture": [
+            {
+              "variable": "STATUS_JSON",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-37",
+          "label": "Admin certificate: /api/status answered by lamaste-agentd",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STATUS_JSON"
+              },
+              "path": ".installed",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Admin certificate: /api/status answered by lamaste-agentd"
+            }
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Admin certificate: owner-only /api/plugins → 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vhost_admin_status /api/plugins)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Admin certificate: owner-only /api/plugins → 200"
+            }
+          }
+        },
+        {
+          "id": "step-39",
+          "label": "A client-sent assertion header is replaced by the panel's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vhost_admin_status /api/plugins \"-H 'X-Lamalibre-Relay-Assertion: forged.assertion'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A client-sent assertion header is replaced by the panel's"
+            }
+          }
+        },
+        {
+          "id": "step-40",
+          "label": "${PANEL_AGENT}'s certificate: /api/status → 200",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vhost_agent_status /api/status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "${PANEL_AGENT}'s certificate: /api/status → 200"
+            }
+          }
+        },
+        {
+          "id": "step-41",
+          "label": "${PANEL_AGENT}'s certificate: owner-only /api/plugins → 403",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vhost_agent_status /api/plugins)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${PANEL_AGENT}'s certificate: owner-only /api/plugins → 403"
+            }
+          }
+        },
+        {
+          "id": "step-42",
+          "label": "${PANEL_AGENT}'s certificate claiming admin in headers is still ${PANEL_AGENT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vhost_agent_status /api/plugins \"${FORGED_ADMIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "403"
+              },
+              "message": "${PANEL_AGENT}'s certificate claiming admin in headers is still ${PANEL_AGENT}"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Through the vhost: relay assertions\"\n# ---------------------------------------------------------------------------\n\nSTATUS_JSON=$(vhost_admin_get \"/api/status\")\nassert_json_field \"$STATUS_JSON\" '.installed' 'true' \"Admin certificate: /api/status answered by lamaste-agentd\" || true\nassert_eq \"$(vhost_admin_status /api/plugins)\" \"200\" \"Admin certificate: owner-only /api/plugins → 200\" || true\n\n# nginx sets the assertion itself: one a client sends never reaches the daemon\nassert_eq \"$(vhost_admin_status /api/plugins \"-H 'X-Lamalibre-Relay-Assertion: forged.assertion'\")\" \\\n  \"200\" \"A client-sent assertion header is replaced by the panel's\" || true\n\nassert_eq \"$(vhost_agent_status /api/status)\" \"200\" \"${PANEL_AGENT}'s certificate: /api/status → 200\" || true\nassert_eq \"$(vhost_agent_status /api/plugins)\" \"403\" \"${PANEL_AGENT}'s certificate: owner-only /api/plugins → 403\" || true\nassert_eq \"$(vhost_agent_status /api/plugins \"${FORGED_ADMIN}\")\" \\\n  \"403\" \"${PANEL_AGENT}'s certificate claiming admin in headers is still ${PANEL_AGENT}\" || true"
+    },
+    {
+      "id": "from-the-host-s-loopback-no-header-is-proof",
+      "label": "From the host's loopback: no header is proof",
+      "steps": [
+        {
+          "id": "step-43",
+          "label": "Forged admin certificate headers → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(relay_loopback_status /api/plugins \"${FORGED_ADMIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged admin certificate headers → 401"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Forged admin headers cannot reach plugin install → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(relay_loopback_status /api/plugins/install \"${FORGED_ADMIN} -X POST -H 'Content-Type: application/json' -d '{}'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged admin headers cannot reach plugin install → 401"
+            }
+          }
+        },
+        {
+          "id": "step-45",
+          "label": "Forged Authelia identity headers → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(relay_loopback_status /api/status \"-H 'Remote-User: admin' -H 'Remote-Groups: admins'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged Authelia identity headers → 401"
+            }
+          }
+        },
+        {
+          "id": "step-46",
+          "label": "Made-up relay assertion → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(relay_loopback_status /api/status \"-H 'X-Lamalibre-Relay-Assertion: forged.assertion'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Made-up relay assertion → 401"
+            }
+          }
+        },
+        {
+          "id": "step-47",
+          "label": "Percent-escaped /api path → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(relay_loopback_status /%61pi/status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Percent-escaped /api path → 401"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"From the host's loopback: no header is proof\"\n# ---------------------------------------------------------------------------\n\nassert_eq \"$(relay_loopback_status /api/plugins \"${FORGED_ADMIN}\")\" \"401\" \"Forged admin certificate headers → 401\" || true\nassert_eq \"$(relay_loopback_status /api/plugins/install \"${FORGED_ADMIN} -X POST -H 'Content-Type: application/json' -d '{}'\")\" \\\n  \"401\" \"Forged admin headers cannot reach plugin install → 401\" || true\nassert_eq \"$(relay_loopback_status /api/status \"-H 'Remote-User: admin' -H 'Remote-Groups: admins'\")\" \\\n  \"401\" \"Forged Authelia identity headers → 401\" || true\nassert_eq \"$(relay_loopback_status /api/status \"-H 'X-Lamalibre-Relay-Assertion: forged.assertion'\")\" \\\n  \"401\" \"Made-up relay assertion → 401\" || true\nassert_eq \"$(relay_loopback_status /%61pi/status)\" \"401\" \"Percent-escaped /api path → 401\" || true"
+    },
+    {
+      "id": "on-the-agent-vm-as-an-unprivileged-user-no-header-is-proof",
+      "label": "On the agent VM, as an unprivileged user: no header is proof",
+      "steps": [
+        {
+          "id": "step-48",
+          "label": "Forged admin certificate headers → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_nobody_status /api/plugins \"${FORGED_ADMIN}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged admin certificate headers → 401"
+            }
+          }
+        },
+        {
+          "id": "step-49",
+          "label": "Forged Remote-User → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_nobody_status /api/status \"-H 'Remote-User: admin'\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Forged Remote-User → 401"
+            }
+          }
+        },
+        {
+          "id": "step-50",
+          "label": "Percent-escaped /api path → 401",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(agent_nobody_status /%61pi/status)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "Percent-escaped /api path → 401"
+            }
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "runuser -u nobody -- cat /root/.lamalibre/lamaste/agentd.token > /dev/null 2>&1 && echo readable || echo denied"
+          },
+          "capture": [
+            {
+              "variable": "TOKEN_READ",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-52",
+          "label": "agentd.token is not readable by other users",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "TOKEN_READ"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "denied"
+              },
+              "message": "agentd.token is not readable by other users"
+            }
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"On the agent VM, as an unprivileged user: no header is proof\"\n# ---------------------------------------------------------------------------\n\nassert_eq \"$(agent_nobody_status /api/plugins \"${FORGED_ADMIN}\")\" \"401\" \"Forged admin certificate headers → 401\" || true\nassert_eq \"$(agent_nobody_status /api/status \"-H 'Remote-User: admin'\")\" \"401\" \"Forged Remote-User → 401\" || true\nassert_eq \"$(agent_nobody_status /%61pi/status)\" \"401\" \"Percent-escaped /api path → 401\" || true\n\nTOKEN_READ=$(agent_exec \"runuser -u nobody -- cat /root/.lamalibre/lamaste/agentd.token > /dev/null 2>&1 && echo readable || echo denied\")\nassert_eq \"$TOKEN_READ\" \"denied\" \"agentd.token is not readable by other users\" || true"
+    }
+  ],
+  "apiHelpers": ["host_api_get", "host_api_patch", "agent_api_get"],
+  "headerRaw": "# ============================================================================\n# 32 — Agent Panel Relay Auth (Three-VM)\n# ============================================================================\n# lamaste-agentd behind the real agent-panel vhost. The daemon listens on the\n# agent's loopback, and the panel tunnel ends on the host's loopback: both can\n# be reached without going through nginx, so the daemon trusts no header that\n# only claims a caller. It accepts the relay only with the relay assertion the\n# panel signs for each request (the vhost's auth_request), and the owner only\n# with the Bearer token of agentd.token:\n#\n# 1. Admin grants test-agent panel:expose (restored on exit); lamaste-agentd\n#    is installed on demand and the panel exposed with\n#    `lamaste-agent panel --enable` (the agent's own certificate)\n# 2. The vhost asks the panel to authorize every request; the relay signing\n#    key is 0600 and the panel user's; the agent can read the public key\n# 3. Through the vhost: the admin certificate has full access; test-agent's\n#    own certificate its capabilities (owner-only routes refused, also when it\n#    sends headers claiming admin); a client-sent assertion is replaced\n# 4. From the host's loopback — any relay process — and as an unprivileged\n#    user on the agent VM: forged X-SSL-Client-*, Remote-User and assertion\n#    headers and percent-escaped paths are refused with 401, and agentd.token\n#    is not readable\n# 5. The panel is disabled again (tunnel retracted, service stopped)\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n\nrequire_commands multipass curl jq\n\n# ---------------------------------------------------------------------------\n# VM exec helpers\n# ---------------------------------------------------------------------------\n\nhost_exec() { multipass exec lamaste-host -- sudo bash -c \"$1\"; }\nagent_exec() { multipass exec lamaste-agent -- sudo bash -c \"$1\"; }\n\nhost_api_get() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -H 'Accept: application/json' https://127.0.0.1:9292/api/$1\"\n}\n\nhost_api_patch() {\n  host_exec \"curl -skf --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key --cacert /etc/lamalibre/lamaste/pki/ca.crt -X PATCH -H 'Content-Type: application/json' -H 'Accept: application/json' -d '$2' https://127.0.0.1:9292/api/$1\"\n}\n\n# agent_api_get — the panel API with test-agent's own certificate, from the agent VM\nagent_api_get() {\n  agent_exec \"curl -skf --max-time 30 --cert ${AGENT_CERT_PEM} --key ${AGENT_KEY_PEM} -H 'Accept: application/json' https://${HOST_IP}:9292/api/$1\"\n}\n\n# vhost_admin_status <path> [curl args] — through the agent-panel vhost with\n# the admin certificate (on the host, the vhost's name resolved to itself)\nvhost_admin_status() {\n  host_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve ${PANEL_FQDN}:443:127.0.0.1 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key ${2:-} https://${PANEL_FQDN}$1\" 2>/dev/null || echo \"000\"\n}\n\nvhost_admin_get() {\n  host_exec \"curl -skf --max-time 15 --resolve ${PANEL_FQDN}:443:127.0.0.1 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key -H 'Accept: application/json' https://${PANEL_FQDN}$1\" 2>/dev/null || echo \"\"\n}\n\n# vhost_agent_status <path> [curl args] — through the vhost with test-agent's certificate\nvhost_agent_status() {\n  agent_exec \"curl -sk -o /dev/null -w '%{http_code}' --max-time 15 --resolve ${PANEL_FQDN}:443:${HOST_IP} --cert ${AGENT_CERT_PEM} --key ${AGENT_KEY_PEM} ${2:-} https://${PANEL_FQDN}$1\" 2>/dev/null || echo \"000\"\n}\n\n# relay_loopback_status <path> [curl args] — straight to the panel tunnel's\n# port on the host's loopback, as any process on the host could\nrelay_loopback_status() {\n  host_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 10 ${2:-} http://127.0.0.1:${PANEL_PORT}$1\" 2>/dev/null || echo \"000\"\n}\n\n# agent_nobody_status <path> [curl args] — straight to the daemon on the\n# agent VM, as an unprivileged local user\nagent_nobody_status() {\n  agent_exec \"runuser -u nobody -- curl -s -o /dev/null -w '%{http_code}' --max-time 10 ${2:-} http://127.0.0.1:${PANEL_PORT}$1\" 2>/dev/null || echo \"000\"\n}\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nAGENT_LOCAL_LABEL=\"e2e-agent\"\nAGENT_CONFIG=\"/root/.lamalibre/lamaste/agents/${AGENT_LOCAL_LABEL}/config.json\"\nAGENT_CERT_PEM=\"/tmp/e2e-32-agent-cert.pem\"\nAGENT_KEY_PEM=\"/tmp/e2e-32-agent-key.pem\"\nPANEL_PORT=9393\nPANEL_AGENT=\"\"\nPANEL_FQDN=\"\"\nORIGINAL_CAPS=\"\"\nFORGED_ADMIN=\"-H 'X-SSL-Client-Verify: SUCCESS' -H 'X-SSL-Client-DN: CN=admin' -H 'X-SSL-Client-Serial: 01'\"\n\nbegin_test \"32 — Agent Panel Relay Auth (Three-VM)\"\n\n# ---------------------------------------------------------------------------\n# Cleanup function — always runs on exit\n# ---------------------------------------------------------------------------\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  # Retract the panel tunnel and stop the daemon (the agent's own certificate)\n  timed_exec 90 multipass exec lamaste-agent -- sudo bash -c \"lamaste-agent panel --disable 2>/dev/null; true\" > /dev/null 2>&1 || true\n  if [ -n \"$ORIGINAL_CAPS\" ] && [ \"$ORIGINAL_CAPS\" != \"null\" ] && [ -n \"$PANEL_AGENT\" ]; then\n    host_api_patch \"certs/agent/${PANEL_AGENT}/capabilities\" \"{\\\"capabilities\\\":${ORIGINAL_CAPS}}\" > /dev/null 2>&1 || true\n  fi\n  agent_exec \"shred -u ${AGENT_CERT_PEM} ${AGENT_KEY_PEM} 2>/dev/null || rm -f ${AGENT_CERT_PEM} ${AGENT_KEY_PEM}\" 2>/dev/null || true\n  agent_exec \"lamaste-agent sync --label ${AGENT_LOCAL_LABEL} 2>/dev/null || true\" 2>/dev/null || true\n}\ntrap cleanup EXIT\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}
