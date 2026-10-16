@@ -9,7 +9,7 @@
  */
 
 import crypto from 'node:crypto';
-import { readFile, writeFile, rename, open, mkdir, unlink } from 'node:fs/promises';
+import { readFile, rename, open, mkdir, unlink, lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -95,13 +95,21 @@ export interface AtomicWriteOptions {
   dirMode?: number;
   /** Whether to create parent directories if they do not exist (default: false). */
   mkdirp?: boolean;
+  /**
+   * Refuse to replace a target that is a symbolic link or anything but a
+   * regular file (default: false). For files holding secrets: a link
+   * planted where the file belongs is an error to report, not something to
+   * write past.
+   */
+  refuseSymlink?: boolean;
 }
 
 /**
  * Atomically write a JSON object to disk.
  *
- * Writes to a unique temporary file (`.tmp-<random>`), fsyncs the file, renames
- * into place, then fsyncs the parent directory so the rename itself survives a
+ * Writes to a unique temporary file (`.tmp-<random>`) created exclusively
+ * (`wx`: never through an existing file or link), fsyncs it, renames it into
+ * place, then fsyncs the parent directory so the rename itself survives a
  * crash. If any step fails the temp file is best-effort unlinked.
  *
  * The random suffix avoids collisions when two processes (e.g. CLI + daemon)
@@ -116,7 +124,7 @@ export async function atomicWriteJSON(
   data: unknown,
   options: AtomicWriteOptions = {},
 ): Promise<void> {
-  const { mode = 0o600, dirMode = 0o700, mkdirp = false } = options;
+  const { mode = 0o600, dirMode = 0o700, mkdirp = false, refuseSymlink = false } = options;
   const dir = path.dirname(filePath);
   const tmpPath = `${filePath}.tmp-${crypto.randomBytes(6).toString('hex')}`;
 
@@ -124,13 +132,18 @@ export async function atomicWriteJSON(
     await mkdir(dir, { recursive: true, mode: dirMode });
   }
 
+  if (refuseSymlink) {
+    await assertReplaceableFile(filePath);
+  }
+
   const content = JSON.stringify(data, null, 2) + '\n';
 
+  let created = false;
   try {
-    await writeFile(tmpPath, content, { encoding: 'utf-8', mode });
-
-    const fd = await open(tmpPath, 'r');
+    const fd = await open(tmpPath, 'wx', mode);
+    created = true;
     try {
+      await fd.writeFile(content, 'utf-8');
       await fd.sync();
     } finally {
       await fd.close();
@@ -138,9 +151,9 @@ export async function atomicWriteJSON(
 
     await rename(tmpPath, filePath);
   } catch (err) {
-    // Best-effort cleanup of the temp file. Swallow ENOENT — the rename may
-    // already have succeeded, or writeFile may never have created it.
-    await unlink(tmpPath).catch(() => {});
+    // Best-effort cleanup of the temp file this call created (never one it
+    // found in place). Swallow ENOENT — the rename may already have succeeded.
+    if (created) await unlink(tmpPath).catch(() => {});
     throw err;
   }
 
@@ -186,6 +199,23 @@ export async function readJSONFile<T>(filePath: string, defaultValue: T): Promis
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/** Throws unless `filePath` is missing or a regular file (not a link, not a directory). */
+async function assertReplaceableFile(filePath: string): Promise<void> {
+  let info;
+  try {
+    info = await lstat(filePath);
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return;
+    throw err;
+  }
+  if (info.isSymbolicLink()) {
+    throw new Error(`Refusing to write ${filePath}: it is a symbolic link`);
+  }
+  if (!info.isFile()) {
+    throw new Error(`Refusing to write ${filePath}: it is not a regular file`);
+  }
+}
 
 interface NodeError extends Error {
   code?: string;

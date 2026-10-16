@@ -41,6 +41,7 @@ import {
   SHARED_HOOKS,
   parseRoutePattern,
 } from './hooks/index.js';
+import { SettingsBlockSchema } from './plugin-settings.js';
 
 // ---------------------------------------------------------------------------
 // Capability string
@@ -723,6 +724,11 @@ export const ManifestSchema = z
      * around a hosting.
      */
     hooks: HooksBlockSchema.optional(),
+    /**
+     * What an admin configures (see `SettingsBlockSchema`). Only with an
+     * agent half: the agent half stores the values, the relay a cache.
+     */
+    settings: SettingsBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
@@ -739,6 +745,14 @@ export const ManifestSchema = z
         path: ['hooks'],
         message:
           'Lifecycle hooks need an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block)',
+      });
+    }
+
+    if (manifest.settings !== undefined && manifest.agent === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['settings'],
+        message: 'settings needs an agent block',
       });
     }
 

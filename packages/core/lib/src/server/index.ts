@@ -415,6 +415,7 @@ export {
   forwardedResponseHeaders,
   agentHalfPath,
   isAgentHalfHooksPath,
+  isAgentHalfReservedPath,
   callerLabel,
 } from './agent-forwarder.js';
 export type {
@@ -543,3 +544,10 @@ export type {
   AgentHookCallOptions,
   AgentHookCallResult,
 } from '../agent-hook-call.js';
+export { callAgentHalf } from '../agent-half-call.js';
+export type {
+  AgentHalfCallFailure,
+  AgentHalfCallMethod,
+  AgentHalfCallOptions,
+  AgentHalfCallResult,
+} from '../agent-half-call.js';

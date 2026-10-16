@@ -8,6 +8,12 @@
  * (`caller-assertion.ts`) naming who the panel admitted. Only `/admin/*` of
  * the agent half is reachable this way; its `/app/*` (the user surface) is
  * not, because the forwarder prefixes `/admin` to whatever it is given.
+ * Within `/admin`, two subtrees are Lamaste's own and answered 404 however
+ * they are spelled ({@link isAgentHalfReservedPath}): `/admin/hooks/*`, the
+ * lifecycle hook calls, and `/admin/settings*`, where Lamaste writes the
+ * plugin's settings and secrets after validating them — no forwarded
+ * caller reads or changes them behind the panel's back, so the relay's
+ * cache cannot drift from the agent half.
  *
  * Streaming both ways over Node's own HTTP client (no dependency): bodies
  * are piped, never buffered, so uploads, downloads and server-sent events
@@ -56,6 +62,7 @@ import {
 } from '../hooks/index.js';
 import type { PreForwardDecision, RoutePattern, TunnelFallback } from '../hooks/index.js';
 import type { RequestHook } from '../hook-set.js';
+import { AGENT_HALF_SETTINGS_PATH } from '../plugin-settings.js';
 import { isHookEditableHeader } from './hook-decisions.js';
 import type { ValidatedDecision } from './hook-decisions.js';
 
@@ -261,8 +268,29 @@ export function agentHalfPath(rawUrl: string, apiPrefix: string, route: string):
   return `${AGENT_HALF_ADMIN_PREFIX}${rest}`;
 }
 
-/** `hooks`, the segment after `/admin` that Lamaste keeps for itself. */
+/** `hooks`, a segment after `/admin` that Lamaste keeps for itself. */
 const AGENT_HALF_HOOKS_SEGMENT = AGENT_HALF_HOOKS_PREFIX.split('/')[2] ?? 'hooks';
+
+/** `settings`, the other one. */
+const AGENT_HALF_SETTINGS_SEGMENT = AGENT_HALF_SETTINGS_PATH.split('/')[2] ?? 'settings';
+
+/**
+ * The segment after `/admin` of an agent-half path, decoded and lower
+ * case; undefined when there is none, null when it does not decode (which
+ * the callers treat as reserved — a path no one can read is no one's).
+ */
+function reservableSegment(targetPath: string): string | null | undefined {
+  const query = targetPath.indexOf('?');
+  const pathOnly = query === -1 ? targetPath : targetPath.slice(0, query);
+  const segments = pathOnly.split('/').filter((s) => s.length > 0);
+  const second = segments[1];
+  if (second === undefined) return undefined;
+  try {
+    return decodeURIComponent(second).toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Whether an agent-half path is under `/admin/hooks` — Lamaste's lifecycle
@@ -271,16 +299,24 @@ const AGENT_HALF_HOOKS_SEGMENT = AGENT_HALF_HOOKS_PREFIX.split('/')[2] ?? 'hooks
  * for tests.
  */
 export function isAgentHalfHooksPath(targetPath: string): boolean {
-  const query = targetPath.indexOf('?');
-  const pathOnly = query === -1 ? targetPath : targetPath.slice(0, query);
-  const segments = pathOnly.split('/').filter((s) => s.length > 0);
-  const second = segments[1];
-  if (second === undefined) return false;
-  try {
-    return decodeURIComponent(second).toLowerCase() === AGENT_HALF_HOOKS_SEGMENT;
-  } catch {
-    return true;
-  }
+  const segment = reservableSegment(targetPath);
+  return segment === null || segment === AGENT_HALF_HOOKS_SEGMENT;
+}
+
+/**
+ * Whether an agent-half path is one the forwarder must never reach:
+ * `/admin/hooks*` (lifecycle hook calls) or `/admin/settings*` (settings
+ * and secrets, written only by Lamaste after its own validation). Compared
+ * decoded and case-insensitively, so `/admin/Settings` and
+ * `/admin/%73ettings/x` are reserved too. Pure; exported for tests.
+ */
+export function isAgentHalfReservedPath(targetPath: string): boolean {
+  const segment = reservableSegment(targetPath);
+  return (
+    segment === null ||
+    segment === AGENT_HALF_HOOKS_SEGMENT ||
+    segment === AGENT_HALF_SETTINGS_SEGMENT
+  );
 }
 
 /** How a caller appears in logs and hook inputs. */
@@ -1031,7 +1067,7 @@ export async function agentForwarderPlugin(
     if (targetPath === null) {
       return reply.code(400).send({ error: 'Invalid plugin path' });
     }
-    if (isAgentHalfHooksPath(targetPath)) {
+    if (isAgentHalfReservedPath(targetPath)) {
       return reply.callNotFound();
     }
 

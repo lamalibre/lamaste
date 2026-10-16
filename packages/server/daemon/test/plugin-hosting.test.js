@@ -26,6 +26,7 @@ import {
   agentForwarderPlugin,
   agentHalfPath,
   isAgentHalfHooksPath,
+  isAgentHalfReservedPath,
   forwardedRequestHeaders,
   forwardedResponseHeaders,
   createPluginHosting,
@@ -332,6 +333,28 @@ test('forwarder: /admin/hooks is Lamaste-only, however it is spelled', () => {
   assert.equal(isAgentHalfHooksPath('/admin'), false);
 });
 
+test('forwarder: /admin/hooks and /admin/settings are reserved, however they are spelled', () => {
+  for (const reserved of [
+    '/admin/hooks/install:pre-tunnel',
+    '/admin/%68ooks/x',
+    '/admin/settings',
+    '/admin/settings/reload',
+    '/admin/Settings',
+    '/admin/SETTINGS?x=1',
+    '/admin/%73ettings/x',
+    '/admin/%53ETTINGS',
+    '/admin//settings',
+    '/admin/%E0%A4%A',
+  ]) {
+    assert.equal(isAgentHalfReservedPath(reserved), true, reserved);
+  }
+  for (const open of ['/admin', '/admin/settingsx', '/admin/jobs/settings', '/admin/setting']) {
+    assert.equal(isAgentHalfReservedPath(open), false, open);
+  }
+  // The hooks predicate keeps its own meaning.
+  assert.equal(isAgentHalfHooksPath('/admin/settings'), false);
+});
+
 test('forwarder: credentials and proxy verdicts are stripped, cookies never pass back', () => {
   const out = forwardedRequestHeaders(
     {
@@ -475,6 +498,42 @@ test('forwarder: /app of the agent half is unreachable, and a path cannot climb 
       assert.deepEqual(JSON.parse(climb.body), { plugins: [] }, 'answered by the core route');
       assert.equal(halfSeen, null, 'the agent half never saw it');
     }
+  } finally {
+    await app.close();
+  }
+});
+
+test('forwarder: /api/<route>/settings and /api/<route>/hooks never reach the agent half', async () => {
+  const app = await forwarderApp();
+  try {
+    for (const [method, url] of [
+      ['GET', '/api/fx/settings'],
+      ['PUT', '/api/fx/settings'],
+      ['GET', '/api/fx/Settings'],
+      ['POST', '/api/fx/%73ettings/x'],
+      ['POST', '/api/fx/settings/reload'],
+      ['GET', '/api/fx/settings?x=1'],
+      ['POST', '/api/fx/hooks/install:pre-tunnel'],
+      ['POST', '/api/fx/HOOKS/tunnel:down'],
+    ]) {
+      halfSeen = null;
+      const res = await app.inject({
+        method,
+        url,
+        headers: { 'x-test-role': 'admin', 'content-type': 'application/json' },
+        payload: method === 'GET' ? undefined : JSON.stringify({ secrets: { apiKey: 'x' } }),
+      });
+      assert.equal(res.statusCode, 404, `${method} ${url}`);
+      assert.equal(halfSeen, null, `${method} ${url}: the agent half never saw it`);
+    }
+    // A path that only starts like a reserved one is forwarded.
+    const near = await app.inject({
+      method: 'GET',
+      url: '/api/fx/settingsx',
+      headers: { 'x-test-role': 'admin' },
+    });
+    assert.equal(near.statusCode, 200);
+    assert.equal(halfSeen.url, '/admin/settingsx');
   } finally {
     await app.close();
   }

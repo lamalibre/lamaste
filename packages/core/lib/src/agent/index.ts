@@ -207,6 +207,19 @@ export type {
   AgentHookResponse,
   AgentHookHandlerOptions,
 } from './app-plugin-hooks.js';
+// Plugin settings in the agent half: the store (settings.json, secrets.json
+// in its data directory) and its /admin/settings handler for Lamaste
+export {
+  settingsFromManifest,
+  createSettingsStore,
+  createSettingsHandler,
+} from './plugin-settings-store.js';
+export type {
+  SettingsStore,
+  SettingsStoreOptions,
+  SettingsUpdateOutcome,
+  SettingsHandlerOptions,
+} from './plugin-settings-store.js';
 // App host helper (slice 3): running lamaste-apphost, the record of the agent
 // halves it installed here, and the host facts the relay checks hosting against
 export { appServiceAccountComment } from '../agent-half.js';

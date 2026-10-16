@@ -119,6 +119,45 @@ export type {
   OidcAccessTokenClaim,
 } from './schemas.js';
 
+// Plugin settings (agent-hosted plugins): the manifest's settings block,
+// update validation, and the wire contract between the relay and the agent
+// half, which stores the values (`createSettingsStore` in /agent)
+export {
+  SETTINGS_FIELD_TYPES,
+  SETTINGS_MAX_FIELDS,
+  SETTINGS_KEY_RE,
+  SETTINGS_STRING_MAX_LENGTH,
+  SETTINGS_DEFAULT_MAX_LENGTH,
+  SETTINGS_PATTERN_MAX_LENGTH,
+  SETTINGS_ENUM_MAX_OPTIONS,
+  AGENT_HALF_SETTINGS_PATH,
+  AGENT_HALF_SETTINGS_RELOAD_PATH,
+  AGENT_HALF_SETTINGS_MAX_BYTES,
+  SettingsFieldSchema,
+  SettingsBlockSchema,
+  validateSettingsUpdate,
+  settingsStatus,
+  effectiveSettingsValues,
+  settingsSchemaDiff,
+  parseAgentHalfSettingsState,
+  parseAgentHalfSettingsUpdate,
+} from './plugin-settings.js';
+
+export type {
+  SettingsFieldType,
+  SettingsField,
+  SettingsBlock,
+  SettingsValue,
+  SettingsValues,
+  SettingsCheckOptions,
+  SettingsUpdateInput,
+  SettingsUpdateValidation,
+  SettingsStatus,
+  SettingsSchemaDiff,
+  AgentHalfSettingsState,
+  AgentHalfSettingsUpdate,
+} from './plugin-settings.js';
+
 // Hook sets (lifecycle hooks of agent-hosted plugins; the contract itself is
 // `@lamalibre/lamaste/hooks`)
 export {
@@ -261,6 +300,15 @@ export type {
   AgentHookCallOptions,
   AgentHookCallResult,
 } from './agent-hook-call.js';
+
+// Lamaste's own calls to an agent half's admin surface (settings through the tunnel)
+export { callAgentHalf } from './agent-half-call.js';
+export type {
+  AgentHalfCallFailure,
+  AgentHalfCallMethod,
+  AgentHalfCallOptions,
+  AgentHalfCallResult,
+} from './agent-half-call.js';
 
 // Relay assertions (relay vhosts → lamaste-agentd on the agent's loopback)
 export {

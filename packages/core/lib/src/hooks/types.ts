@@ -92,8 +92,14 @@ export interface LifecycleHookInput {
   readonly previousVersion?: string;
   readonly phase: LifecyclePhase;
   readonly agent: HostingAgentInfo;
-  /** The plugin's non-secret settings (empty until settings arrive). */
-  readonly settings: { readonly [key: string]: JsonValue };
+  /**
+   * The plugin's settings without its secrets. A relay hook receives the
+   * effective non-secret values — each field's stored value or its default
+   * (`SettingsValues` in the root, spelled out here because this subpath
+   * imports nothing from outside it); an agent hook receives `{}`, since
+   * the agent half holds the settings itself. Never a secret.
+   */
+  readonly settings: { readonly [key: string]: string | number | boolean };
   /** Outputs of the stages that ran before this one, keyed `relay:install:pre-tunnel`, `agent:install:pre-tunnel`, … */
   readonly outputs: { readonly [stage: string]: JsonValue };
   /** The relay-loopback port of the internal tunnel, once it is assigned. */
