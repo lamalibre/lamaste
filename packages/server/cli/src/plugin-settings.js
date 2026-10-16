@@ -16,6 +16,11 @@
  * manifest's `pattern`: the CLI runs as root on the relay, which never runs
  * a plugin's regular expression; the agent half tests it and answers per
  * field (422).
+ *
+ * Labels, descriptions, options, defaults and values come from a plugin's
+ * manifest or its agent half, and the panel's messages may quote them: the
+ * text these functions build passes them through {@link terminalText}, so
+ * none can drive the administrator's terminal or reorder what it shows.
  */
 
 import {
@@ -167,6 +172,14 @@ function parseSetValue(field, raw) {
   }
 }
 
+/** Why `--set` refuses a secret. */
+const SECRET_ON_COMMAND_LINE =
+  'Is a secret — never on the command line: pipe it in with --secrets-stdin, or run configure without flags to be asked for it';
+
+/** What follows when the refused `--set` carried a value: where it is now, and what to do. */
+export const SECRET_LEAKED =
+  "The value is now in your shell history and in sudo's log — rotate that secret.";
+
 /** The settings block of a view, for the core validator. */
 function blockOf(view) {
   return { schemaVersion: view.schemaVersion, fields: view.fields };
@@ -256,9 +269,10 @@ export function buildSettingsUpdate(view, { sets = [], clears = [], secrets = {}
     const field = fields.get(key);
     if (!field) fail(key, 'Unknown setting');
     else if (field.type === 'secret') {
+      // Refused, but too late for the value itself: it was typed on the command line.
       fail(
         key,
-        'Is a secret — never on the command line: pipe it in with --secrets-stdin, or run configure without flags to be asked for it',
+        raw === '' ? SECRET_ON_COMMAND_LINE : `${SECRET_ON_COMMAND_LINE}. ${SECRET_LEAKED}`,
       );
     } else {
       const parsed = parseSetValue(field, raw);
@@ -340,6 +354,28 @@ export function updateChangesSomething(body) {
 // Words
 // ---------------------------------------------------------------------------
 
+/**
+ * Control characters — C0 and C1, DEL among them: ESC and CSI start the
+ * sequences that move the cursor, recolour or rewrite the screen, set the
+ * window title — and the bidirectional formatting characters (U+061C,
+ * U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), which reorder what is
+ * shown around them.
+ */
+const UNPRINTABLE_RE = /[\p{Cc}\p{Bidi_Control}]/gu;
+
+/**
+ * `value` as text for the terminal: without control or bidirectional
+ * formatting characters. Every string from a manifest, an agent half or the
+ * panel goes through this before it is printed or shown in a prompt; the
+ * NDJSON of `--json` carries the data as it is.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function terminalText(value) {
+  return String(value ?? '').replace(UNPRINTABLE_RE, '');
+}
+
 /** "12m ago" — how long before `now` (epoch ms) an ISO moment was. */
 export function relativeTime(iso, now) {
   const diffMs = now - Date.parse(iso);
@@ -357,7 +393,7 @@ export function relativeTime(iso, now) {
 /** `2026-10-16T14:05:12.000Z (12m ago)`, or "an unknown time". */
 export function formatMoment(iso, now) {
   if (typeof iso !== 'string' || !Number.isFinite(Date.parse(iso))) return 'an unknown time';
-  return `${iso} (${relativeTime(iso, now)})`;
+  return `${terminalText(iso)} (${relativeTime(iso, now)})`;
 }
 
 /**
@@ -372,7 +408,7 @@ export function formatMoment(iso, now) {
  */
 export function hostingText(hosting, now) {
   if (!hosting) return { offline: false, text: 'Not hosted on an agent yet' };
-  const agent = hosting.agentLabel;
+  const agent = terminalText(hosting.agentLabel);
   if (hosting.phase === 'installing') {
     return { offline: false, text: `The hosting on ${agent} is being set up` };
   }
@@ -401,7 +437,10 @@ export function hostingText(hosting, now) {
       text: `Hosted on agent ${agent}, up${hosting.since ? ` since ${since}` : ''}`,
     };
   }
-  return { offline: false, text: `Hosted on agent ${agent}, health ${hosting.state ?? 'unknown'}` };
+  return {
+    offline: false,
+    text: `Hosted on agent ${agent}, health ${terminalText(hosting.state ?? 'unknown')}`,
+  };
 }
 
 /**
@@ -466,15 +505,21 @@ export function secretIsSet(value) {
   return value !== null && typeof value === 'object' && value.set === true;
 }
 
-/** A value as the CLI shows it: strings quoted, numbers and booleans as they are. */
+/**
+ * A value as the CLI shows it: strings quoted (JSON escapes C0 controls
+ * visibly; the rest of what {@link terminalText} drops goes), numbers and
+ * booleans as they are.
+ */
 function valueText(field, value) {
   if (value === undefined || value === null) return 'not set';
-  if (field.type === 'string') return JSON.stringify(value);
+  if (field.type === 'string') return terminalText(JSON.stringify(value));
   if (field.type === 'enum') {
     const option = (field.options ?? []).find((o) => o.value === value);
-    return option && option.label !== value ? `${value} (${option.label})` : String(value);
+    return terminalText(
+      option && option.label !== value ? `${value} (${option.label})` : String(value),
+    );
   }
-  return String(value);
+  return terminalText(value);
 }
 
 /**
@@ -487,7 +532,7 @@ function valueText(field, value) {
 export function fieldValueText(field, value) {
   if (field.type === 'secret') {
     if (!secretIsSet(value)) return 'not set';
-    return typeof value.setAt === 'string' ? `set ${value.setAt}` : 'set';
+    return typeof value.setAt === 'string' ? `set ${terminalText(value.setAt)}` : 'set';
   }
   return valueText(field, value);
 }
@@ -509,7 +554,7 @@ export function fieldNote(field) {
     parts.push(values.length > 6 ? `${values.slice(0, 6).join(' | ')} | …` : values.join(' | '));
   }
   if (field.default !== undefined) parts.push(`default ${valueText(field, field.default)}`);
-  return parts.join(' · ');
+  return terminalText(parts.join(' · '));
 }
 
 /**
@@ -542,7 +587,7 @@ export function describeChanges(view, body) {
         : `${key}: ${before} → ${valueText(field, next)}`,
     );
   }
-  return lines;
+  return lines.map(terminalText);
 }
 
 /**
@@ -550,7 +595,7 @@ export function describeChanges(view, body) {
  * that say what to do — the panel's per-field messages, and for a stale
  * revision, an offline hosting, a running operation or no answer in time,
  * what comes next. Never a value of the change (the panel's messages hold
- * none).
+ * none), and every line as {@link terminalText}.
  *
  * @param {Error & { code?: string, errors?: Record<string, string>, hosting?: object | null, operationId?: string }} err
  * @param {string} name
@@ -559,7 +604,7 @@ export function describeChanges(view, body) {
  */
 export function settingsRefusal(err, name, now) {
   const details = Object.entries(err.errors ?? {}).map(([key, message]) =>
-    key === '_' ? message : `${key}: ${message}`,
+    key === '_' ? String(message) : `${key}: ${message}`,
   );
   switch (err.code) {
     case 'revision_mismatch':
@@ -584,5 +629,5 @@ export function settingsRefusal(err, name, now) {
     default:
       break;
   }
-  return { message: err.message, details };
+  return { message: terminalText(err.message), details: details.map(terminalText) };
 }

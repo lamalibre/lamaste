@@ -18,6 +18,10 @@
  * into a password prompt or piped in with --secrets-stdin, and reaches the
  * panel only in the request body, which curl reads on stdin. It is never
  * printed, echoed or put into an error.
+ *
+ * What a manifest, an agent half or the panel says is printed and prompted
+ * only as `terminalText` — no control or bidirectional formatting
+ * character reaches the terminal; `--json` emits the data as it is.
  */
 
 import chalk from 'chalk';
@@ -40,6 +44,7 @@ import {
   settingsReadOnlyReason,
   settingsRefusal,
   settingsSourceText,
+  terminalText,
   updateBody,
   updateChangesSomething,
   updateSummary,
@@ -60,7 +65,7 @@ function settingsPath(name) {
  */
 function fail(message, json, details = {}) {
   if (json) emitError(message, false, details);
-  else console.error(`\n  ${chalk.red(message)}\n`);
+  else console.error(`\n  ${chalk.red(terminalText(message))}\n`);
   process.exit(1);
 }
 
@@ -102,34 +107,37 @@ function failRefused(err, name, json) {
  * @param {object} view
  * @param {number} now
  */
-function printSettingsView(name, view, now) {
+export function printSettingsView(name, view, now) {
   const d = chalk.dim;
   const revision = Number.isSafeInteger(view.revision) ? `, revision ${view.revision}` : '';
   console.log('');
   console.log(
-    chalk.bold(`  Settings of ${name}`) + d(`  (schema ${view.schemaVersion}${revision})`),
+    chalk.bold(`  Settings of ${terminalText(name)}`) +
+      d(`  (schema ${terminalText(view.schemaVersion)}${revision})`),
   );
   console.log(d('  ' + '─'.repeat(40)));
   const rows = view.fields.map((field) => ({
     field,
+    key: terminalText(field.key),
+    type: terminalText(field.type),
     value: fieldValueText(field, view.values?.[field.key]),
   }));
-  const keyWidth = Math.max(0, ...rows.map((r) => r.field.key.length));
-  const typeWidth = Math.max(0, ...rows.map((r) => r.field.type.length));
+  const keyWidth = Math.max(0, ...rows.map((r) => r.key.length));
+  const typeWidth = Math.max(0, ...rows.map((r) => r.type.length));
   const valueWidth = Math.min(40, Math.max(0, ...rows.map((r) => r.value.length)));
-  for (const { field, value } of rows) {
+  for (const { field, key, type, value } of rows) {
     const missing = view.missing.includes(field.key);
     const shown = value.padEnd(valueWidth);
     const coloured = missing ? chalk.yellow(shown) : value === 'not set' ? d(shown) : shown;
     console.log(
-      `  ${chalk.cyan(field.key.padEnd(keyWidth))}  ${d(field.type.padEnd(typeWidth))}  ${coloured}  ${d(fieldNote(field))}`,
+      `  ${chalk.cyan(key.padEnd(keyWidth))}  ${d(type.padEnd(typeWidth))}  ${coloured}  ${d(fieldNote(field))}`,
     );
   }
   console.log('');
   console.log(
     view.configured
       ? `  ${chalk.green('Configured')}`
-      : `  ${chalk.yellow('Needs configuration')} — missing: ${view.missing.join(', ')}`,
+      : `  ${chalk.yellow('Needs configuration')} — missing: ${terminalText(view.missing.join(', '))}`,
   );
   console.log(`  ${d(settingsSourceText(view, now))}`);
   const hosting = hostingText(view.hosting, now);
@@ -162,7 +170,9 @@ export async function settingsCmd(args, { json }) {
   const now = Date.now();
   printSettingsView(name, view, now);
   if (settingsReadOnlyReason(view, now) === null) {
-    console.log(chalk.dim(`  Change them with: lamaste-server plugins configure ${name}\n`));
+    console.log(
+      chalk.dim(`  Change them with: lamaste-server plugins configure ${terminalText(name)}\n`),
+    );
   }
 }
 
@@ -307,7 +317,7 @@ export async function configureCmd(args, { json }) {
       if (json) emitComplete({ name, ...updateSummary({}), settings: result.before });
       else
         console.log(
-          `\n  Nothing to change — the settings of ${chalk.cyan(name)} stay as they are.\n`,
+          `\n  Nothing to change — the settings of ${chalk.cyan(terminalText(name))} stay as they are.\n`,
         );
       break;
     default:
@@ -316,7 +326,7 @@ export async function configureCmd(args, { json }) {
         break;
       }
       console.log(
-        `\n  ${chalk.green('Saved')} the settings of ${chalk.cyan(name)} (revision ${result.after.revision}): ${summaryText(result.body)}`,
+        `\n  ${chalk.green('Saved')} the settings of ${chalk.cyan(terminalText(name))} (revision ${terminalText(result.after.revision)}): ${terminalText(summaryText(result.body))}`,
       );
       printSettingsView(name, result.after, Date.now());
   }
@@ -343,8 +353,13 @@ function answerOf(result) {
 
 /** A field's prompt: its label and key, and its description below. */
 function promptMessage(field) {
-  const title = `${field.label} ${chalk.dim(`(${field.key})`)}`;
-  return field.description ? `${title}\n${chalk.dim(field.description)}` : title;
+  const title = `${terminalText(field.label)} ${chalk.dim(`(${terminalText(field.key)})`)}`;
+  return field.description ? `${title}\n${chalk.dim(terminalText(field.description))}` : title;
+}
+
+/** A prompt's `validate` answer: the message, as the terminal may show it, or none. */
+function shownError(message) {
+  return message ? terminalText(message) : undefined;
 }
 
 /**
@@ -352,13 +367,14 @@ function promptMessage(field) {
  * prompt, never shown) or cleared; a boolean is a yes/no; an enum a choice
  * among its options; anything else a text prefilled with the current value
  * (empty puts it back to its default). Resolves with whether it changes and
- * to what (`null` clears it).
+ * to what (`null` clears it). `ui` asks (`@clack/prompts`, or a stand-in).
  *
  * @param {object} view
  * @param {object} field
+ * @param {Pick<typeof prompts, 'select' | 'password' | 'confirm' | 'text'>} [ui]
  * @returns {Promise<{ change: false } | { change: true, value: string | number | boolean | null }>}
  */
-async function askField(view, field) {
+export async function askField(view, field, ui = prompts) {
   const message = promptMessage(field);
   const current = view.values?.[field.key];
 
@@ -382,15 +398,15 @@ async function askField(view, field) {
             },
           ];
       const action = answerOf(
-        await prompts.select({ message, options, initialValue: set ? 'keep' : 'replace' }),
+        await ui.select({ message, options, initialValue: set ? 'keep' : 'replace' }),
       );
       if (action === 'keep') return UNCHANGED;
       if (action === 'clear') return { change: true, value: null };
       const secret = answerOf(
-        await prompts.password({
-          message: `${field.label} — the new value`,
+        await ui.password({
+          message: `${terminalText(field.label)} — the new value`,
           clearOnError: true,
-          validate: (value) => answerError(view, field, value ?? '') ?? undefined,
+          validate: (value) => shownError(answerError(view, field, value ?? '')),
         }),
       );
       return { change: true, value: secret };
@@ -398,7 +414,7 @@ async function askField(view, field) {
 
     case 'boolean': {
       const answer = answerOf(
-        await prompts.confirm({
+        await ui.confirm({
           message,
           initialValue: typeof current === 'boolean' ? current : false,
         }),
@@ -407,20 +423,23 @@ async function askField(view, field) {
     }
 
     case 'enum': {
+      // An option's value is what goes back to the panel; only what is shown is made safe.
       const options = (field.options ?? []).map((o) => ({
         value: o.value,
-        label: o.label,
-        ...(o.label !== o.value ? { hint: o.value } : {}),
+        label: terminalText(o.label),
+        ...(o.label !== o.value ? { hint: terminalText(o.value) } : {}),
       }));
       if (canClear(field) && current !== undefined && current !== field.default) {
         options.push({
           value: CLEAR_CHOICE,
           label:
-            field.default !== undefined ? `Back to the default (${field.default})` : 'Unset it',
+            field.default !== undefined
+              ? `Back to the default (${terminalText(field.default)})`
+              : 'Unset it',
         });
       }
       const answer = answerOf(
-        await prompts.select({
+        await ui.select({
           message,
           options,
           ...(current !== undefined ? { initialValue: current } : {}),
@@ -434,20 +453,27 @@ async function askField(view, field) {
       // string, integer, number
       const placeholder = canClear(field)
         ? field.default !== undefined
-          ? `empty: back to the default, ${field.default}`
+          ? `empty: back to the default, ${terminalText(field.default)}`
           : 'empty: not set'
         : undefined;
+      // The current value as the terminal may show it. When that dropped a
+      // character, the value cannot be typed back: answered as shown, it stays.
+      const shown = current === undefined ? '' : terminalText(current);
+      const keptAsShown = (answer) =>
+        current !== undefined && shown !== String(current) && answer === shown;
       const text = answerOf(
-        await prompts.text({
+        await ui.text({
           message,
-          initialValue: current === undefined ? '' : String(current),
+          initialValue: shown,
           ...(placeholder ? { placeholder } : {}),
           validate: (value) => {
+            if (keptAsShown(value ?? '')) return undefined;
             const parsed = parseTextAnswer(view, field, value ?? '');
-            return parsed.ok ? undefined : parsed.message;
+            return parsed.ok ? undefined : shownError(parsed.message);
           },
         }),
       );
+      if (keptAsShown(text ?? '')) return UNCHANGED;
       const parsed = parseTextAnswer(view, field, text ?? '');
       // The prompt accepted only an answer that parses.
       if (!parsed.ok) return UNCHANGED;
@@ -478,7 +504,7 @@ async function configureInteractively(name) {
   const readOnly = settingsReadOnlyReason(view, Date.now());
   if (readOnly) fail(readOnly.message, false);
 
-  prompts.intro(`Settings of ${name}`);
+  prompts.intro(`Settings of ${terminalText(name)}`);
   let values = {};
   let secrets = {};
   for (const field of view.fields) {
@@ -510,6 +536,6 @@ async function configureInteractively(name) {
   } finally {
     body = null;
   }
-  prompts.outro(`Saved (revision ${after.revision})`);
+  prompts.outro(`Saved (revision ${terminalText(after.revision)})`);
   printSettingsView(name, after, Date.now());
 }

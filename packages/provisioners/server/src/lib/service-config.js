@@ -43,6 +43,8 @@ SyslogIdentifier=lamalibre-lamaste-serverd
 ProtectHome=true
 ReadWritePaths=${ctx.configDir} /var/www/lamaste
 PrivateTmp=true
+# No core dumps: the panel holds the CA key and every plugin's installation secret.
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target
@@ -149,6 +151,8 @@ ProtectHome=true
 ReadWritePaths=${ctx.configDir}
 PrivateTmp=true
 NoNewPrivileges=true
+# No core dumps: the gatekeeper holds its API secret and cached Authelia sessions.
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target
@@ -411,6 +415,8 @@ MemorySwapMax=0
 CPUQuota=50%
 TasksMax=32
 LimitNOFILE=1024
+# No core dumps: a hook sees application data.
+LimitCORE=0
 `;
 }
 

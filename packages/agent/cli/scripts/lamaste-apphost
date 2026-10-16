@@ -15,7 +15,8 @@
  *                                  stdin: the relay's signature (one line of
  *                                  JSON), "\n", the service spec (one line of
  *                                  JSON), "\n", then the package .tgz
- *   config <label> <route>         stdin: the plugin config (port, secret)
+ *   config <label> <route>         stdin: the plugin config (port, secret);
+ *                                  the unit may then bind that port only
  *   activate <label> <route> <version>
  *                                  stdin: the relay's signature; point the
  *                                  agent half at a kept version
@@ -68,6 +69,14 @@
  * 5 refused: not a job the relay signed for this agent and command (no
  * signature, no pinned key, another key, a bad, expired or reused one, or
  * one for other arguments).
+ *
+ * **Its own port, nothing else.** An agent half runs under a hardened unit
+ * and, beside it, a drop-in that lets it bind() only the port of its
+ * plugin config — so, where systemd enforces it, it cannot take the
+ * loopback port of another agent half, the agent or a tunnelled
+ * application. The drop-in is written from the validated config before the
+ * unit is (re)started, loaded (daemon-reload) and the unit restarted when
+ * it changed, and deleted with the unit (see {@link renderBindDropIn}).
  *
  * The names, paths and patterns below must equal those of
  * `@lamalibre/lamaste` (`src/agent-half.ts`, `src/agent/registry.ts`,
@@ -122,6 +131,7 @@ const RELAYS_DIR = `${APPHOST_ETC}/relays`;
 /** The ids of the signed jobs run (root 0700), each until its signature expires. */
 const JOBS_DIR = `${APPS_DATA}/.jobs`;
 const JOBS_FILE = `${JOBS_DIR}/used.json`;
+const UNITS_DIR = '/etc/systemd/system';
 
 const PATHS = Object.freeze({
   helper: '/usr/local/sbin/lamaste-apphost',
@@ -134,6 +144,10 @@ const PATHS = Object.freeze({
   relaysDir: RELAYS_DIR,
   relayPinFile: (label) => `${RELAYS_DIR}/${label}.json`,
   jobsDir: JOBS_DIR,
+  /** The unit's drop-in directory (root 0755), deleted with the unit. */
+  dropInDir: (route) => `${UNITS_DIR}/${unitName(route)}.d`,
+  /** The ports the agent half may bind: its config's, nothing else (root 0644). */
+  bindDropIn: (route) => `${UNITS_DIR}/${unitName(route)}.d/50-bind.conf`,
 });
 
 // ---------------------------------------------------------------------------
@@ -185,7 +199,6 @@ function unitName(route) {
   return `lamalibre-app-${route}.service`;
 }
 
-const UNITS_DIR = '/etc/systemd/system';
 const LOCK_FILE = '/run/lamaste-apphost.lock';
 const SYSTEMD_RUNTIME = '/run/systemd/system';
 const OS_RELEASE = ['/etc/os-release', '/usr/lib/os-release'];
@@ -1679,6 +1692,10 @@ function ensureSystemPackages(ctx, packages) {
  * applications use to size worker pools — hiding them breaks them quietly.
  * RestrictAddressFamilies leaves out AF_NETLINK, so os.networkInterfaces()
  * is unavailable; an agent half binds loopback and needs no interface list.
+ * LimitCORE=0: no core dump of a process that holds the installation
+ * secret (hard limit too — the agent half cannot raise it). The ports it
+ * may bind are in its drop-in ({@link renderBindDropIn}), not here: they
+ * come from the plugin config, which arrives after the unit.
  */
 function renderUnit(route, spec) {
   const user = serviceUser(route);
@@ -1735,6 +1752,7 @@ function renderUnit(route, spec) {
     'SystemCallErrorNumber=EPERM',
     'CapabilityBoundingSet=',
     'UMask=0077',
+    'LimitCORE=0',
     ...(spec.service.memoryMax !== null ? [`MemoryMax=${spec.service.memoryMax}`] : []),
     'StandardOutput=journal',
     'StandardError=journal',
@@ -1773,11 +1791,81 @@ function readVersionSpec(ctx, route, version) {
   return isFile(file) ? parseSpecLine(fs.readFileSync(file, 'utf8')) : null;
 }
 
-/** Start (or restart) the unit when its config is in place; without one it cannot run. */
+/**
+ * The drop-in that lets the agent half bind() its config's port and nothing
+ * else — systemd's SocketBindAllow/SocketBindDeny, cgroup BPF programs on
+ * the bind4/bind6 hooks. `any` matches every port, 0 included, so the agent
+ * half can neither listen on another port nor bind a source address or
+ * port. A client is unaffected: the kernel's implicit bind on connect() or
+ * sendto() does not run the hook, and Node's net, http and fetch, glibc's
+ * resolver and c-ares bind nothing unless given a local address. Node's
+ * dgram, though, binds port 0 explicitly before its first send or connect:
+ * an agent half has no UDP.
+ *
+ * Enforced by systemd 249 or later built with its BPF framework
+ * (`+BPF_FRAMEWORK` in `systemctl --version`) on the unified cgroup
+ * hierarchy. An older systemd logs the directives as unknown and ignores
+ * them; one built without the framework skips them. The unit runs either
+ * way — without the restriction.
+ */
+function renderBindDropIn(port) {
+  // The caller's port is validated already; this file is root's to trust.
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('not a TCP port');
+  return `[Service]\nSocketBindAllow=tcp:${port}\nSocketBindDeny=any\n`;
+}
+
+/** Make the bind drop-in allow `port`; true when it changed (a daemon-reload is due). */
+function writeBindDropIn(ctx, route, port) {
+  const content = renderBindDropIn(port);
+  const file = at(ctx, PATHS.bindDropIn(route));
+  if (isFile(file) && fs.readFileSync(file, 'utf8') === content) return false;
+  ensureRootDirectory(ctx, at(ctx, PATHS.dropInDir(route)));
+  atomicWrite(ctx, file, content, 0o644);
+  return true;
+}
+
+/**
+ * The port of the agent half's plugin config, checked as `config` checks
+ * it; null without one. A config this helper did not write (it does not
+ * parse) is none: no port can be taken from it.
+ */
+function configuredPort(ctx, route) {
+  const file = at(ctx, PATHS.configFile(route));
+  if (!isFile(file)) return null;
+  try {
+    return parsePluginConfig(fs.readFileSync(file), route).port;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether systemd's copy of the unit is older than its files on disk
+ * (NeedDaemonReload) — a drop-in written by a run whose daemon-reload
+ * failed, or that was cut short before it.
+ */
+function unitNeedsReload(ctx, route) {
+  const result = ctx.run(
+    SYSTEMCTL,
+    ['show', '--property=NeedDaemonReload', '--value', unitName(route)],
+    { timeoutMs: 30_000 },
+  );
+  return !result.error && result.status === 0 && result.stdout.trim() === 'yes';
+}
+
+/**
+ * Start (or restart) the unit when its config is in place — without one it
+ * cannot run — once its drop-in allows the config's port. A drop-in that
+ * changed, now or by a run that never got it loaded, is loaded and restarts
+ * the unit, so the agent half runs under what it says.
+ */
 function startWhenConfigured(ctx, route, { restart }) {
-  if (!isFile(at(ctx, PATHS.configFile(route)))) return;
+  const port = configuredPort(ctx, route);
+  if (port === null) return;
+  const rebound = writeBindDropIn(ctx, route, port) || unitNeedsReload(ctx, route);
+  if (rebound) systemctl(ctx, ['daemon-reload']);
   systemctl(ctx, ['enable', unitName(route)]);
-  systemctl(ctx, [restart ? 'restart' : 'start', unitName(route)]);
+  systemctl(ctx, [restart || rebound ? 'restart' : 'start', unitName(route)]);
 }
 
 /** Point `current` at `version`; the version it pointed at becomes `previous`. */
@@ -2048,6 +2136,7 @@ function rollBackInstall(ctx, route, { version, before, created }) {
   if (before === null) {
     attempt(() => systemctl(ctx, ['disable', '--now', unitName(route)], { allowFailure: true }));
     attempt(() => fs.rmSync(unitPath(ctx, route), { force: true }));
+    attempt(() => removeTree(ctx, at(ctx, PATHS.dropInDir(route))));
     attempt(() => systemctl(ctx, ['daemon-reload'], { allowFailure: true }));
     attempt(() => removeTree(ctx, codeDir));
     undoCreated(ctx, route, created);
@@ -2091,19 +2180,18 @@ function config(ctx, args) {
       throw new NotInstalledError(`the agent half of ${route} is not installed`);
     }
     ensureConfigDir(ctx, route, account);
-    const file = at(ctx, PATHS.configFile(route));
-    let previousPort = null;
-    if (isFile(file)) {
-      try {
-        previousPort = JSON.parse(fs.readFileSync(file, 'utf8')).port ?? null;
-      } catch {
-        previousPort = null;
-      }
-    }
-    atomicWrite(ctx, file, `${JSON.stringify(pluginConfig, null, 2)}\n`, 0o600, account);
+    const previousPort = configuredPort(ctx, route);
+    atomicWrite(
+      ctx,
+      at(ctx, PATHS.configFile(route)),
+      `${JSON.stringify(pluginConfig, null, 2)}\n`,
+      0o600,
+      account,
+    );
     if (isFile(unitPath(ctx, route))) {
       // A rotated secret needs no restart (the agent half re-reads the file
-      // on a signature it cannot verify); a new port does.
+      // on a signature it cannot verify); a new port does — and the drop-in
+      // that allows it, written on the way, restarts it as well.
       const moved = previousPort !== null && previousPort !== pluginConfig.port;
       startWhenConfigured(ctx, route, { restart: moved });
     }
@@ -2200,10 +2288,15 @@ function remove(ctx, args) {
 
     const unit = unitName(route);
     systemctl(ctx, ['disable', '--now', unit], { allowFailure: true });
+    let unloaded = false;
     if (isFile(unitPath(ctx, route))) {
       fs.rmSync(unitPath(ctx, route), { force: true });
-      systemctl(ctx, ['daemon-reload']);
+      unloaded = true;
     }
+    // Its drop-ins go with it: an agent half installed on this route later
+    // — after a purge, perhaps another package — inherits none.
+    if (removeTree(ctx, at(ctx, PATHS.dropInDir(route)))) unloaded = true;
+    if (unloaded) systemctl(ctx, ['daemon-reload']);
     systemctl(ctx, ['reset-failed', unit], { allowFailure: true });
     if (lstatOrNull(at(ctx, APPS_CODE)) !== null) removeStaging(ctx, route);
     removeTree(ctx, at(ctx, PATHS.codeDir(route)));
@@ -2351,6 +2444,7 @@ if (require.main === module) {
     acquireLock,
     createContext,
     renderUnit,
+    renderBindDropIn,
     scanTarball,
     extractEntries,
     validateTree,
