@@ -201,6 +201,11 @@ export const webAdminClient = {
     jsonDelete(
       `/api/plugins/${encodeURIComponent(name)}/retained-data${toQuery({ agentLabel, forget: 'true' })}`,
     ),
+  getPluginSettings: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/settings`),
+  // The body carries the secrets the administrator typed: it goes in the
+  // request body only, never into the URL.
+  updatePluginSettings: (name, body) =>
+    jsonPut(`/api/plugins/${encodeURIComponent(name)}/settings`, body),
   getPluginOperations: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations`),
   getPluginOperation: (name, id) =>
     apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations/${encodeURIComponent(id)}`),

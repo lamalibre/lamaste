@@ -10,7 +10,9 @@ import { createContext, useContext } from 'react';
  * All methods return promises. The page components call useAdminClient()
  * and are completely host-agnostic. A refused plugin operation rejects with
  * an Error carrying the panel's message and, when the panel sent them, its
- * `code`, `reasons` and `operationId` (see `lib/errorMessage.js` refusalOf).
+ * `code`, `reasons` and `operationId` (see `lib/errorMessage.js` refusalOf);
+ * a refused settings update also carries the per-field `errors` (see
+ * `lib/pluginSettings.js` settingsErrorsOf).
  */
 const AdminClientContext = createContext(null);
 
@@ -82,7 +84,7 @@ const AdminClientContext = createContext(null);
  * @property {(id: string) => Promise<{ok}>} killTicketSession
  *
  * Plugins:
- * @property {() => Promise<{plugins: Array, retainedData: Array}>} getPlugins — each plugin with the data agents keep of its agent half (`retainedData`); the top-level `retainedData` covers uninstalled plugins too
+ * @property {() => Promise<{plugins: Array, retainedData: Array}>} getPlugins — each plugin with the data agents keep of its agent half (`retainedData`), its hosting (`agentHosting`, with `health` and the hosting agent's last sync `agentLastSeenAt`) and, when its manifest declares settings, `settings: {configured, missing, syncedAt}` (no values); the top-level `retainedData` covers uninstalled plugins too
  * @property {(packageName: string) => Promise<any>} installPlugin
  * @property {(name: string) => Promise<{ok}>} enablePlugin
  * @property {(name: string) => Promise<{ok}>} disablePlugin
@@ -96,6 +98,8 @@ const AdminClientContext = createContext(null);
  * @property {(name: string) => Promise<{retainedData: Array<{agentLabel, route, plugin, package, since, operation, dataDir, serviceUser}>}>} getPluginRetainedData — what agents keep of the plugin's agent half, by its name (after an uninstall too)
  * @property {(name: string, agentLabel: string) => Promise<{ok, operation}>} purgePluginRetainedData — an operation (kind purge-data); refused with `code` push_install_refused, retained_data_in_use or agent_not_enrolled
  * @property {(name: string, agentLabel: string) => Promise<{ok, forgotten}>} forgetPluginRetainedData — drops the relay's record only; the data stays on the agent
+ * @property {(name: string) => Promise<{fields, values, configured, missing, revision, source, syncedAt, hosting}>} getPluginSettings — the settings of a plugin whose manifest declares them: field definitions, the effective non-secret values and, for a secret, only `{set, setAt?}` (never a value); `source` live (read from the agent half while its hosting is up) | cache | none; `hosting: {agentLabel, state, reason, since, agentLastSeenAt}` or null; refused with `code` no_settings for a plugin without settings
+ * @property {(name: string, body: {revision: number, values?: Object, secrets?: Object}) => Promise<Object>} updatePluginSettings — a partial update (`null` clears an optional field), answered with the new settings view. The body carries secrets: a host sends it only as the request body — never in a URL, a process argument, a log line or any store. Refused with `code` revision_mismatch, schema_mismatch, hosting_offline, settings_unsupported, and with `errors` (field key, or `_`, to message) for invalid values
  * @property {(name: string) => Promise<{operations: Array}>} getPluginOperations
  * @property {(name: string, id: string) => Promise<{operation}>} getPluginOperation
  * @property {(name: string) => Promise<{hooks}>} getPluginHooks — relay hook set, agent hooks, agent half, approval (`approval.digest` is what to approve), pending update

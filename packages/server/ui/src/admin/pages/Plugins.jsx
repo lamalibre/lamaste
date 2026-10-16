@@ -20,10 +20,12 @@ import {
 import { useToast } from '../components/Toast.jsx';
 import { PluginHooks, PluginOperation, PluginUpdate } from '../components/PluginLifecycle.jsx';
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
+import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
 import PushInstallSection from '../components/PushInstallSection.jsx';
 import { PluginRetainedData, UninstalledRetainedData } from '../components/RetainedData.jsx';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { hostingOutage, outageMessage } from '../lib/hostingState.js';
 import { refusalText } from '../lib/pluginRefusal.js';
 
 function StatusBadge({ status }) {
@@ -109,10 +111,11 @@ function PurgeOption({ hosting, dataDir, checked, onChange }) {
 
 /**
  * Where an agent-hosted plugin's agent half runs: the hosting agent, the
- * assigned port and its health, the agent half Lamaste installed there, or
- * the dialog to host it on an agent.
+ * assigned port and its health — while it is down, since when and the
+ * hosting agent's last sync — the agent half Lamaste installed there, or
+ * the dialog to host it on an agent. `now` is when the list was fetched.
  */
-function HostingSection({ plugin, dataDir, onHost, onUnhost, onRotate, isActing }) {
+function HostingSection({ plugin, dataDir, now, onHost, onUnhost, onRotate, isActing }) {
   const [hostDialog, setHostDialog] = useState(false);
   const [confirmUnhost, setConfirmUnhost] = useState(false);
   const [force, setForce] = useState(false);
@@ -120,6 +123,9 @@ function HostingSection({ plugin, dataDir, onHost, onUnhost, onRotate, isActing 
   const hosting = plugin.agentHosting;
   const lamasteInstalls = plugin.hooks?.agentHalf === true;
   const hooksPending = plugin.hooks?.approval === 'pending';
+  // Health is shown for an active hosting only (as the badge below).
+  const outage =
+    hosting && (!hosting.phase || hosting.phase === 'active') ? hostingOutage(hosting) : null;
 
   if (hosting) {
     return (
@@ -144,6 +150,7 @@ function HostingSection({ plugin, dataDir, onHost, onUnhost, onRotate, isActing 
           )}
           {hosting.rotationPending && <span className="text-yellow-400">rotation pending</span>}
         </div>
+        {outage && <p className="mb-2 text-red-400">{outageMessage(outage, now)}</p>}
         {hosting.agentHalf && (
           <p className="mb-2 text-zinc-500">
             Agent half <span className="font-mono text-zinc-300">{hosting.agentHalf.version}</span>{' '}
@@ -258,6 +265,7 @@ function HostingSection({ plugin, dataDir, onHost, onUnhost, onRotate, isActing 
 
 function PluginCard({
   plugin,
+  now,
   onEnable,
   onDisable,
   onUninstall,
@@ -294,13 +302,14 @@ function PluginCard({
 
   return (
     <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Package size={16} className="text-cyan-400" />
           <span className="text-white font-semibold">{plugin.displayName || plugin.name}</span>
           <span className="text-zinc-500 text-xs">v{plugin.version}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <NeedsConfigurationBadge summary={plugin.settings} />
           {agentHosted && <HostingBadge />}
           <StatusBadge status={plugin.status} />
         </div>
@@ -357,12 +366,15 @@ function PluginCard({
         <HostingSection
           plugin={plugin}
           dataDir={dataDir}
+          now={now}
           onHost={onHost}
           onUnhost={onUnhost}
           onRotate={onRotate}
           isActing={isActing}
         />
       )}
+
+      {plugin.settings && <PluginSettings plugin={plugin} />}
 
       {agentHosted && <PluginRetainedData plugin={plugin} isActing={isActing} />}
 
@@ -932,6 +944,7 @@ export default function Plugins() {
             <PluginCard
               key={plugin.name}
               plugin={plugin}
+              now={pluginsQuery.dataUpdatedAt}
               onEnable={handleEnable}
               onDisable={handleDisable}
               onUninstall={handleUninstall}

@@ -5,6 +5,8 @@
  * which the TwoFaProvider listens for to show the verification modal.
  */
 
+import { settingsErrorsOf } from '../admin/lib/pluginSettings.js';
+
 export const TWO_FA_REQUIRED_EVENT = 'lamaste:2fa-required';
 
 /**
@@ -31,8 +33,9 @@ function errorText(data, status) {
  * The Error thrown for a refused request carries the panel's `error` (and
  * what a failed validation found) as its message, the HTTP `status`, and
  * what a client acts on beyond the message
- * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons` and
- * a running operation's `operationId`.
+ * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons`,
+ * a running operation's `operationId` and a refused settings update's
+ * per-field `errors`.
  *
  * @param {string} url - The API URL (e.g., '/api/settings/2fa')
  * @param {RequestInit} [opts] - Fetch options
@@ -58,11 +61,14 @@ export async function apiFetch(url, opts) {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const data = body !== null && typeof body === 'object' ? body : {};
+    // A refused settings update's per-field messages (they never contain a value).
+    const errors = settingsErrorsOf(data);
     throw Object.assign(new Error(errorText(data, res.status)), {
       status: res.status,
       ...(typeof data.code === 'string' ? { code: data.code } : {}),
       ...(Array.isArray(data.reasons) ? { reasons: data.reasons } : {}),
       ...(typeof data.operationId === 'string' ? { operationId: data.operationId } : {}),
+      ...(errors ? { errors } : {}),
     });
   }
 

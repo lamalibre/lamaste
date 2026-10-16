@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
 import { useAdminClient } from '../../admin/index.js';
+import { hostingOutage, outageMessage } from '../../admin/lib/hostingState.js';
 
 const iconMap = {
   activity: Activity,
@@ -87,23 +88,28 @@ const baseNavItems = [
 function SidebarContent({ onLinkClick }) {
   const client = useAdminClient();
 
-  const { data: enabledPlugins } = useQuery({
-    queryKey: ['sidebar-plugins'],
-    queryFn: async () => {
-      try {
-        const data = await client.getPlugins();
-        return (data.plugins || []).filter(
-          (p) => p.status === 'enabled' && (p.panel?.label || p.panel?.pages?.length),
-        );
-      } catch {
-        return [];
-      }
-    },
+  // The plugin list the Plugins page and the plugin pages read too; a list
+  // that cannot be read shows no plugin pages.
+  const pluginsQuery = useQuery({
+    queryKey: ['plugins'],
+    queryFn: () => client.getPlugins(),
+    select: (data) =>
+      (data.plugins || []).filter(
+        (p) => p.status === 'enabled' && (p.panel?.label || p.panel?.pages?.length),
+      ),
     refetchInterval: 30000,
     staleTime: 15000,
   });
+  const enabledPlugins = pluginsQuery.data;
+
+  // Why an agent-hosted plugin's pages cannot reach its agent half, or null.
+  const offlineReason = (p) => {
+    const outage = p.hosting === 'agent' ? hostingOutage(p.agentHosting) : null;
+    return outage ? outageMessage(outage, pluginsQuery.dataUpdatedAt) : null;
+  };
 
   const pluginNavItems = (enabledPlugins || []).flatMap((p) => {
+    const offline = offlineReason(p);
     if (p.panel?.pages?.length) {
       const groupLabel = p.displayName || p.name;
       return [
@@ -113,6 +119,7 @@ function SidebarContent({ onLinkClick }) {
           to: `/plugins/${p.name}${page.path}`,
           icon: resolveIcon(page.icon),
           label: page.title,
+          offline,
         })),
       ];
     }
@@ -123,6 +130,7 @@ function SidebarContent({ onLinkClick }) {
           to: `/plugins/${p.name}`,
           icon: resolveIcon(p.panel?.icon),
           label: p.panel.label,
+          offline,
         },
       ];
     }
@@ -151,6 +159,7 @@ function SidebarContent({ onLinkClick }) {
               to={item.to}
               icon={item.icon}
               label={item.label}
+              offline={item.offline ?? null}
               onClick={onLinkClick}
             />
           ),

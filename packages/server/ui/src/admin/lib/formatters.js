@@ -33,11 +33,12 @@ export function formatUptime(seconds) {
 }
 
 /**
- * Format an ISO date string to a relative time (e.g., "5m ago", "2h ago").
+ * Format an ISO date string to a relative time (e.g., "5m ago", "2h ago"),
+ * measured against `now` (epoch milliseconds; the current time by default —
+ * a component passes the time its data was fetched, so rendering stays pure).
  */
-export function relativeTime(dateStr) {
+export function relativeTime(dateStr, now = Date.now()) {
   if (!dateStr) return '';
-  const now = Date.now();
   const then = new Date(dateStr).getTime();
   const diffMs = now - then;
 

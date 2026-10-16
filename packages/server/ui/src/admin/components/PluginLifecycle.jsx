@@ -351,6 +351,38 @@ function ApprovalContents({ relay, agentHalf }) {
 }
 
 /**
+ * What an update changes in the plugin's settings schema
+ * (`pendingUpdate.settings`) — outside the approval, which covers code:
+ * fields added and removed, fields whose type changed (their stored values
+ * are dropped on both sides, never converted) and fields it newly requires
+ * without a default (the plugin needs configuring after the update).
+ */
+function SettingsSchemaChanges({ diff }) {
+  if (!diff) return null;
+  const rows = [
+    { label: 'added', keys: diff.added, note: null },
+    { label: 'removed', keys: diff.removed, note: 'their values are dropped' },
+    { label: 'type changed', keys: diff.retyped, note: 'their values are dropped, not converted' },
+    { label: 'newly required', keys: diff.newRequired, note: 'to be set after the update' },
+  ].filter((row) => Array.isArray(row.keys) && row.keys.length > 0);
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-1 text-zinc-500">Settings — what this version changes in them:</p>
+      <div className="space-y-0.5 text-zinc-400">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <span className="text-zinc-500">{row.label} </span>
+            <span className="font-mono text-zinc-300">{row.keys.join(', ')}</span>
+            {row.note && <span className="text-yellow-400"> — {row.note}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * A plugin's lifecycle hooks and what needs approval: the relay hook set
  * (code Lamaste runs on the relay, in a sandbox) and the agent half Lamaste
  * installs on the hosting agent — run and installed only once approved —
@@ -519,6 +551,7 @@ export function PluginHooks({ plugin, isActing }) {
                 relay={hooks.pendingUpdate.relay}
                 agentHalf={hooks.pendingUpdate.agentHalf}
               />
+              <SettingsSchemaChanges diff={hooks.pendingUpdate.settings} />
               <div className="flex items-center gap-2">
                 {approveButton(
                   hooks.pendingUpdate.digest,
