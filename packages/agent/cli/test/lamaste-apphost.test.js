@@ -2182,5 +2182,8 @@ test("contract: the helper's status parses with the core library's schema", () =
   install('1.0.0', tgzOf(packageEntries()));
   const parsed = agentLib.parseAppHostStatus(JSON.stringify(call(['status'])));
   assert.deepEqual(parsed.apps.fx.owner, { package: PKG, label: LABEL });
+  // The socket unit's state survives the core parser, for `apphost status`.
+  assert.equal(parsed.apps.fx.socket, call(['status']).apps.fx.socket);
+  assert.ok(['active', 'inactive', 'absent'].includes(parsed.apps.fx.socket));
   assert.equal(parsed.node, process.versions.node);
 });

@@ -634,16 +634,21 @@ async function status(json) {
   for (const route of routes) {
     const app = apps[route];
     const previous = app.previous ? chalk.dim(` (previous ${app.previous})`) : '';
-    const unit =
-      app.unit === 'active'
-        ? chalk.green(app.unit)
-        : app.unit === 'inactive'
-          ? chalk.yellow(app.unit)
-          : chalk.dim(app.unit);
+    const stateText = (state) =>
+      state === 'active'
+        ? chalk.green(state)
+        : state === 'inactive'
+          ? chalk.yellow(state)
+          : chalk.dim(state);
+    const unit = stateText(app.unit);
+    // The socket holding the half's port; helpers before socket activation report none.
+    const socket = app.socket ? `  socket ${stateText(app.socket)}` : '';
     const owner = app.owner
       ? chalk.dim(`  ${app.owner.package}, agent ${app.owner.label}`)
       : chalk.red('  no owner record');
-    console.log(`    ${route.padEnd(24)} ${app.current ?? '-'}${previous}  ${unit}${owner}`);
+    console.log(
+      `    ${route.padEnd(24)} ${app.current ?? '-'}${previous}  ${unit}${socket}${owner}`,
+    );
   }
   console.log('');
 }

@@ -139,6 +139,11 @@ const AppHostAppSchema = z.object({
   current: AgentHalfVersionSchema.nullable(),
   previous: AgentHalfVersionSchema.nullable(),
   unit: z.enum(APP_UNIT_STATES),
+  /**
+   * The socket unit that holds the agent half's port (`lamalibre-app-<route>.socket`);
+   * absent from helpers before socket activation.
+   */
+  socket: z.enum(APP_UNIT_STATES).optional(),
   /** Who owns the route on this machine (the helper's owner record); null when there is none. */
   owner: z
     .object({ package: AgentHalfPackageNameSchema, label: z.string().regex(AGENT_LABEL_RE) })
