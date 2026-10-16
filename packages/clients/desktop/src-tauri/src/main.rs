@@ -354,6 +354,8 @@ fn main() {
             admin_commands::admin_set_plugin_hooks_auto_approve,
             admin_commands::admin_update_plugin,
             admin_commands::admin_discard_plugin_update,
+            admin_commands::admin_get_plugin_settings,
+            admin_commands::admin_update_plugin_settings,
             admin_commands::admin_get_audit_log,
             admin_commands::admin_get_notifications,
             admin_commands::admin_mark_notifications_read,

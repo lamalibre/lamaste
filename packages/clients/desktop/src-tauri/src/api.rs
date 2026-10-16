@@ -555,13 +555,55 @@ pub(crate) fn curl_panel_admin_response(
     path: &str,
     body: Option<&str>,
 ) -> Result<String, String> {
+    run_admin_curl(cfg, method, path, body, &[])
+}
+
+/// The `--write-out` that puts the HTTP status on a line of its own after
+/// the body, for `split_status`.
+const WRITE_OUT_STATUS: &str = "\n%{http_code}";
+
+/// Split curl's output written with `-w WRITE_OUT_STATUS` into the body and
+/// the HTTP status — 0 when curl reported none it could parse.
+pub(crate) fn split_status(stdout: &str) -> (&str, u16) {
+    let (body, status) = stdout.rsplit_once('\n').unwrap_or(("", stdout));
+    (body, status.trim().parse().unwrap_or(0))
+}
+
+/// Make an admin API request to the panel and return its HTTP status with
+/// the body as it came, a refusal included: only a request that did not
+/// complete is an error. For callers that answer a refusal by its status
+/// and the fields the panel sent with it (`code`, `errors`, ...).
+/// Includes the 2FA session cookie if one is stored for the active server.
+pub(crate) fn curl_panel_admin_status(
+    cfg: &config::AdminApiConfig,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<(u16, String), String> {
+    let stdout = run_admin_curl(cfg, method, path, body, &["-w", WRITE_OUT_STATUS])?;
+    let (payload, status) = split_status(&stdout);
+    Ok((status, payload.to_string()))
+}
+
+/// One admin request with curl: the client certificate and the 2FA session
+/// cookie in a private config file, the body on stdin, `extra` arguments
+/// before the URL. Returns curl's output; an error only when curl failed.
+fn run_admin_curl(
+    cfg: &config::AdminApiConfig,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    extra: &[&str],
+) -> Result<String, String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
     // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
+    args.extend(["-k".to_string(), "-X".to_string(), method.to_string()]);
+    args.extend(extra.iter().map(|a| a.to_string()));
+    args.push(url);
 
     let output = run_curl(&args, CurlStdin::json(body))?;
 
@@ -872,8 +914,19 @@ mod tests {
     /// A loopback HTTP server answering one request; the handle yields the
     /// request's head and body.
     fn one_request_server() -> (String, std::thread::JoinHandle<(String, String)>) {
+        let (base, handle) = one_request_server_answering(
+            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+        );
+        (format!("{}/api/test", base), handle)
+    }
+
+    /// A loopback HTTP server answering one request with `response`; returns
+    /// its base URL, and the handle yields the request's head and body.
+    fn one_request_server_answering(
+        response: &'static str,
+    ) -> (String, std::thread::JoinHandle<(String, String)>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/api/test", listener.local_addr().unwrap());
+        let base = format!("http://{}", listener.local_addr().unwrap());
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -899,12 +952,10 @@ mod tests {
                 .unwrap_or(0);
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}")
-                .unwrap();
+            stream.write_all(response.as_bytes()).unwrap();
             (head, String::from_utf8(body).unwrap())
         });
-        (url, handle)
+        (base, handle)
     }
 
     #[test]
@@ -977,5 +1028,40 @@ mod tests {
         assert_eq!(received, "");
         drop(file);
         std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_status_is_split_from_the_body() {
+        assert_eq!(split_status("{\"a\":1}\n409"), ("{\"a\":1}", 409));
+        assert_eq!(split_status("line one\nline two\n200"), ("line one\nline two", 200));
+        assert_eq!(split_status("\n204"), ("", 204));
+        // No status curl could report.
+        assert_eq!(split_status("\n000"), ("", 0));
+        assert_eq!(split_status(""), ("", 0));
+    }
+
+    #[test]
+    fn an_admin_request_answers_the_status_with_the_refusal_and_sends_the_body_on_stdin() {
+        let (base, server) = one_request_server_answering(
+            "HTTP/1.1 422 Unprocessable Entity\r\nContent-Type: application/json\r\nContent-Length: 49\r\nConnection: close\r\n\r\n{\"error\":\"Invalid settings\",\"errors\":{\"a\":\"Bad\"}}",
+        );
+        // curl presents a client certificate only over TLS: this plain-HTTP
+        // request checks the status, the answer and the body.
+        let cfg = config::AdminApiConfig {
+            panel_url: base,
+            auth_method: "keychain".to_string(),
+            p12_path: None,
+            p12_password: None,
+            keychain_identity: Some("unused".to_string()),
+        };
+        let body = serde_json::json!({ "revision": 1, "secrets": { "apiKey": SECRET } }).to_string();
+        let (status, answer) =
+            curl_panel_admin_status(&cfg, "PUT", "/api/plugins/fx/settings", Some(&body)).unwrap();
+        assert_eq!(status, 422);
+        assert_eq!(answer, "{\"error\":\"Invalid settings\",\"errors\":{\"a\":\"Bad\"}}");
+        let (head, received) = server.join().unwrap();
+        assert!(head.starts_with("PUT /api/plugins/fx/settings "), "{}", head);
+        assert!(head.contains("Content-Type: application/json\r\n"), "{}", head);
+        assert_eq!(received, body);
     }
 }

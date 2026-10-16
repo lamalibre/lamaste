@@ -45,6 +45,12 @@
  *                        followed to its end
  *   forget-data <name> --agent <label>
  *                        Drop only the relay's record of it; the data stays on the agent
+ *   settings <name>      An agent-hosted plugin's settings: each field's value (a secret
+ *                        only as set or not), whether it still needs configuration,
+ *                        where the values come from, the hosting
+ *   configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]
+ *                        Change them (kept by its agent half); in a terminal without
+ *                        flags, field by field — a secret never on the command line
  *
  * Every subcommand goes through the running panel (`/api/plugins/*`, admin
  * certificate): the panel owns the plugin registry (SQLite `state.db`), runs
@@ -61,6 +67,7 @@ import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import { PANEL_SERVICE } from '../config.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
+import { configureCmd, settingsCmd } from './plugin-settings.js';
 
 /** npm runs inside the panel for install and uninstall (its own limit is 120 s). */
 const NPM_CALL_TIMEOUT_MS = 180_000;
@@ -115,6 +122,10 @@ export async function runPlugins(args, { json }) {
       return purgeDataCmd(args.slice(1), { json });
     case 'forget-data':
       return forgetDataCmd(args.slice(1), { json });
+    case 'settings':
+      return settingsCmd(args.slice(1), { json });
+    case 'configure':
+      return configureCmd(args.slice(1), { json });
     default:
       printPluginUsage();
       process.exit(sub ? 1 : 0);
@@ -164,6 +175,13 @@ ${b('Subcommands:')}
                        Delete it on the agent — its data directory and account (a push)
   ${c('forget-data <name> --agent <label>')}
                        Drop only the relay's record; the data stays on the agent
+  ${c('settings <name>')}      Settings of an agent-hosted plugin: values (secrets only as set or
+                       not), what is missing, where they come from, the hosting
+  ${c('configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]')}
+                       Change them: --set parses by the field's type (never a secret),
+                       --clear puts a field back to its default or clears a secret,
+                       --secrets-stdin reads {"key": "value" | null} from stdin;
+                       in a terminal without flags, asked field by field
 `);
 }
 

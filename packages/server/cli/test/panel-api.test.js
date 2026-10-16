@@ -10,12 +10,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
 import { readdir, stat } from 'node:fs/promises';
-import http from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { execa } from 'execa';
 
 import {
   buildPanelCurlRequest,
@@ -24,6 +21,7 @@ import {
   parsePanelResponse,
   withCurlConfig,
 } from '../src/panel-api.js';
+import { standInPanel } from './stand-in-panel.js';
 
 const base = { p12Path: '/pki/client.p12', configPath: '/tmp/curl-cfg' };
 const TOKEN = 'feria_tok_0123456789abcdefSECRET';
@@ -106,39 +104,6 @@ test('the config file is 0600 in a private 0700 directory, removed after success
   );
   await assert.rejects(stat(seen), { code: 'ENOENT' });
 });
-
-/**
- * A stand-in panel on loopback (plain HTTP — curl uses the client
- * certificate only for TLS). It records each request and, while curl is
- * still waiting for the answer, the command lines `ps` shows for the
- * process requesting its port.
- *
- * @param {(req: { method: string, url: string, headers: http.IncomingHttpHeaders, body: string }) => { status: number, body: string }} answer
- */
-async function standInPanel(answer) {
-  const seen = [];
-  const server = http.createServer((req, res) => {
-    let body = '';
-    req.setEncoding('utf-8');
-    req.on('data', (chunk) => (body += chunk));
-    req.on('end', async () => {
-      const { port } = server.address();
-      const ps = await execa('ps', ['axww', '-o', 'args='], { reject: false });
-      const commandLines =
-        ps.exitCode === 0
-          ? ps.stdout.split('\n').filter((line) => line.includes(`127.0.0.1:${port}`))
-          : null;
-      const request = { method: req.method, url: req.url, headers: req.headers, body };
-      seen.push({ ...request, commandLines });
-      const { status, body: reply } = answer(request);
-      res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end(reply);
-    });
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  return { panelUrl: `http://127.0.0.1:${server.address().port}`, seen, server };
-}
 
 /** The private config directories present in the temporary directory. */
 async function curlConfigDirs() {
@@ -318,5 +283,85 @@ test('a failed validation names what to correct, not just that it failed', () =>
     () =>
       parsePanelResponse('{"error":"Internal server error","details":{"x":1}}\n500', 'GET', '/p'),
     /HTTP 500\): Internal server error$/,
+  );
+});
+
+test("a refused settings change keeps each field's message, the revision and the hosting", () => {
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        JSON.stringify({
+          error: 'Invalid settings',
+          errors: {
+            retries: 'Must be at most 10',
+            _: 'The body carries only revision, values and secrets',
+            'not a key': 'dropped: not a key a setting can have',
+            __proto__x: 'dropped too',
+            region: { message: 'dropped: not a string' },
+          },
+        }) + '\n400',
+        'PUT',
+        '/api/plugins/fx/settings',
+      ),
+    (err) => {
+      assert.equal(err.statusCode, 400);
+      assert.equal(err.message, 'PUT /api/plugins/fx/settings failed (HTTP 400): Invalid settings');
+      assert.deepEqual(err.errors, {
+        retries: 'Must be at most 10',
+        _: 'The body carries only revision, values and secrets',
+      });
+      assert.equal(err.revision, undefined);
+      assert.equal(err.hosting, undefined);
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        '{"error":"The settings changed","code":"revision_mismatch","revision":7}\n409',
+        'PUT',
+        '/api/plugins/fx/settings',
+      ),
+    (err) => {
+      assert.equal(err.code, 'revision_mismatch');
+      assert.equal(err.revision, 7);
+      assert.equal(err.errors, undefined);
+      return true;
+    },
+  );
+  const hosting = { agentLabel: 'vm1', phase: 'active', state: 'down', reason: 'tunnel' };
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        JSON.stringify({ error: 'offline', code: 'hosting_offline', hosting }) + '\n503',
+        'PUT',
+        '/api/plugins/fx/settings',
+      ),
+    (err) => {
+      assert.equal(err.code, 'hosting_offline');
+      assert.deepEqual(err.hosting, hosting);
+      return true;
+    },
+  );
+  // Not hosted at all: the hosting is null, and still carried.
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        '{"error":"not hosted","code":"hosting_offline","hosting":null}\n503',
+        'PUT',
+        '/p',
+      ),
+    (err) => err.hosting === null,
+  );
+  // Errors with nothing usable, a negative revision and a non-object hosting are left out.
+  assert.throws(
+    () =>
+      parsePanelResponse(
+        '{"error":"x","errors":{"bad key":"m"},"revision":-1,"hosting":"vm1"}\n409',
+        'PUT',
+        '/p',
+      ),
+    (err) =>
+      err.errors === undefined && err.revision === undefined && !Object.hasOwn(err, 'hosting'),
   );
 });

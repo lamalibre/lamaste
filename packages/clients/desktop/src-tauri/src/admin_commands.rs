@@ -826,6 +826,119 @@ pub async fn admin_discard_plugin_update(name: String) -> Result<serde_json::Val
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+// --- Settings of an agent-hosted plugin (kept by its agent half) ---
+
+/// A refused panel request as the settings commands reject with it: the
+/// panel's message (`error`, with what a failed validation found), the HTTP
+/// `status`, and what the panel UI acts on — `code`, `reasons`,
+/// `operationId`, `errors` (a message per setting, or `_`), the current
+/// `revision` (`revision_mismatch`) and the `hosting` (`hosting_offline`).
+/// Built from the panel's answer only, never from the request, so a secret
+/// of the change cannot end up in it (the panel's messages hold no value).
+fn panel_refusal(status: u16, body: &str) -> serde_json::Value {
+    let value = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .filter(|v| v.is_object());
+    let error = value
+        .as_ref()
+        .and_then(api::panel_error_text)
+        .unwrap_or_else(|| {
+            let text = body.trim();
+            if text.is_empty() {
+                format!("Request failed with status {}", status)
+            } else {
+                format!("Request failed with status {}: {}", status, safe_error_body(text))
+            }
+        });
+    let mut answer = serde_json::Map::new();
+    answer.insert("error".to_string(), serde_json::Value::String(error));
+    answer.insert("status".to_string(), serde_json::Value::from(status));
+    if let Some(value) = value {
+        for key in REFUSAL_FIELDS {
+            if let Some(field) = value.get(key).filter(|f| refusal_field_kept(key, f)) {
+                answer.insert(key.to_string(), field.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(answer)
+}
+
+/// What `panel_refusal` passes on beyond the message and the status.
+const REFUSAL_FIELDS: [&str; 6] = ["code", "reasons", "operationId", "errors", "revision", "hosting"];
+
+/// Whether a field of a refusal has the shape the panel UI reads it in.
+fn refusal_field_kept(key: &str, field: &serde_json::Value) -> bool {
+    match key {
+        "code" | "operationId" => field.is_string(),
+        "reasons" => field.is_array(),
+        "errors" => field.is_object(),
+        "revision" => field.is_u64(),
+        "hosting" => field.is_object() || field.is_null(),
+        _ => false,
+    }
+}
+
+/// Helper: a panel request whose refusal the panel UI answers by what the
+/// panel sent with it. Resolves with the panel's JSON body on a 2xx status;
+/// rejects with `panel_refusal` otherwise, or with `{ error }` when the
+/// request did not complete.
+fn admin_refusable(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let cfg = config::load_admin_config().map_err(refusal)?;
+    let (status, resp) = api::curl_panel_admin_status(&cfg, method, path, body).map_err(refusal)?;
+    if !(200..300).contains(&status) {
+        return Err(panel_refusal(status, &resp));
+    }
+    serde_json::from_str(&resp).map_err(|e| {
+        refusal(format!("Failed to parse response: {} — body: {}", e, safe_error_body(&resp)))
+    })
+}
+
+/// `/api/plugins/<name>/settings`, for a name the panel could have given a plugin.
+fn plugin_settings_path(name: &str) -> Result<String, serde_json::Value> {
+    crate::local_plugins::validate_plugin_name(name).map_err(refusal)?;
+    Ok(format!("/api/plugins/{}/settings", url_encode(name)))
+}
+
+/// The settings of a plugin whose manifest declares them: the fields, each
+/// non-secret field's effective value, a secret only as `{ set, setAt }`,
+/// and the hosting. Rejects with the panel's refusal (`code` `no_settings`).
+#[tauri::command]
+pub async fn admin_get_plugin_settings(name: String) -> Result<serde_json::Value, serde_json::Value> {
+    let path = plugin_settings_path(&name)?;
+    tokio::task::spawn_blocking(move || admin_refusable("GET", &path, None))
+        .await
+        .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
+/// A partial change `{ revision, values?, secrets? }`, answered with the new
+/// settings. The body carries secrets: it reaches curl on stdin (never an
+/// argument), and nothing here logs it or puts it into an error. Rejects
+/// with the panel's refusal — `code` (`revision_mismatch` with `revision`,
+/// `hosting_offline` with `hosting`, …) and `errors` per setting.
+#[tauri::command]
+pub async fn admin_update_plugin_settings(
+    name: String,
+    data: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    let path = plugin_settings_path(&name)?;
+    if !data.is_object() {
+        return Err(refusal(
+            "A settings change is a JSON object: { revision, values?, secrets? }".to_string(),
+        ));
+    }
+    tokio::task::spawn_blocking(move || {
+        let body = data.to_string();
+        drop(data);
+        admin_refusable("PUT", &path, Some(&body))
+    })
+    .await
+    .map_err(|e| refusal(format!("Task failed: {}", e)))?
+}
+
 // --- Audit log and panel notifications ---
 
 /// `?key=value&…` from a JSON object of query values (strings, numbers, booleans).
@@ -1373,4 +1486,89 @@ pub async fn admin_get_access_request_log(limit: Option<u32>, offset: Option<u32
 pub async fn admin_clear_access_request_log() -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(|| admin_delete("/api/gatekeeper/access-log", None))
         .await.map_err(|e| format!("Task failed: {}", e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_settings_refusal_keeps_what_the_panel_ui_acts_on() {
+        let body = serde_json::json!({
+            "error": "Invalid settings",
+            "errors": { "retries": "Must be at most 10", "_": "Something about the whole" },
+            "code": "revision_mismatch",
+            "revision": 7,
+            "operationId": "op-1",
+            "reasons": ["a reason"],
+            "hosting": null,
+            // Nothing else of the answer is passed on.
+            "values": { "apiKey": "never-passed-on" },
+        })
+        .to_string();
+        assert_eq!(
+            panel_refusal(422, &body),
+            serde_json::json!({
+                "error": "Invalid settings",
+                "status": 422,
+                "errors": { "retries": "Must be at most 10", "_": "Something about the whole" },
+                "code": "revision_mismatch",
+                "revision": 7,
+                "operationId": "op-1",
+                "reasons": ["a reason"],
+                "hosting": null,
+            })
+        );
+        let hosting = serde_json::json!({ "agentLabel": "vm1", "state": "down", "reason": "tunnel" });
+        let offline = serde_json::json!({
+            "error": "Hosting agent \"vm1\" is offline",
+            "code": "hosting_offline",
+            "hosting": hosting,
+        })
+        .to_string();
+        assert_eq!(panel_refusal(503, &offline)["hosting"], hosting);
+    }
+
+    #[test]
+    fn a_settings_refusal_leaves_out_fields_of_the_wrong_shape() {
+        let body = serde_json::json!({
+            "error": "x",
+            "errors": "not per setting",
+            "code": 7,
+            "revision": -1,
+            "hosting": "vm1",
+            "operationId": ["op"],
+        })
+        .to_string();
+        assert_eq!(
+            panel_refusal(409, &body),
+            serde_json::json!({ "error": "x", "status": 409 })
+        );
+    }
+
+    #[test]
+    fn a_refusal_without_a_json_error_says_the_status() {
+        assert_eq!(
+            panel_refusal(502, "<html>Bad Gateway</html>"),
+            serde_json::json!({
+                "error": "Request failed with status 502: <html>Bad Gateway</html>",
+                "status": 502,
+            })
+        );
+        assert_eq!(
+            panel_refusal(0, ""),
+            serde_json::json!({ "error": "Request failed with status 0", "status": 0 })
+        );
+        // An object without an error message.
+        assert_eq!(panel_refusal(500, "{}")["error"], "Request failed with status 500: {}");
+    }
+
+    #[test]
+    fn a_settings_path_takes_only_a_plugin_name() {
+        assert_eq!(plugin_settings_path("fx-2").unwrap(), "/api/plugins/fx-2/settings");
+        for bad in ["", "../fx", "fx/settings", "Fx", "fx?x=1", "fx%2F", "settings"] {
+            let err = plugin_settings_path(bad).unwrap_err();
+            assert!(err["error"].is_string(), "{}", bad);
+        }
+    }
 }

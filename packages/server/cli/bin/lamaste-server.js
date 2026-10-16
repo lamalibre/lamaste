@@ -59,7 +59,7 @@ ${b('COMMANDS')}
   ${c('status')}          Server health, uptime, services, certificate status
   ${c('logs')}            View server log output (journalctl wrapper)
   ${c('restart')}         Restart panel server and optionally gatekeeper
-  ${c('plugins')}         Manage plugins (list, install, enable, disable, uninstall, update, hosting, hooks, operations, …)
+  ${c('plugins')}         Manage plugins (list, install, enable, disable, uninstall, update, hosting, hooks, settings, …)
   ${c('push-install')}    Push install: on/off, default policy, open/close an agent's window
   ${c('audit')}           The panel's audit log (approvals, hostings, updates, hook events)
   ${c('tunnels')}         Manage tunnels (list, create, delete, toggle)
@@ -96,6 +96,9 @@ ${b('EXAMPLES')}
 
   ${d('# Install a plugin')}
   ${c('lamaste-server plugins install @lamalibre/herd-server')}
+
+  ${d("# Change an agent-hosted plugin's settings; secrets come on stdin, never as arguments")}
+  ${c('lamaste-server plugins configure myplugin --set retries=5 --secrets-stdin < secrets.json')}
 
   ${d("# Let the panel install an app plugin's agent half on agent vm1 for the next hour")}
   ${c('lamaste-server push-install on')}

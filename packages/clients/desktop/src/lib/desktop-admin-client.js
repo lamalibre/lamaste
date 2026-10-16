@@ -5,16 +5,20 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { settingsErrorsOf } from '@lamalibre/lamaste-server-ui/lib/pluginSettings.js';
 
 /**
- * Invoke a command that starts a plugin operation (hosting, removing a
- * hosting, uninstalling, updating, approving an update, purging retained
- * data) or settles one's leftovers (forgetting retained data). It rejects with
- * the panel's refusal — `{ error, code?, reasons?, operationId? }` — which
- * is rethrown as the Error the web client throws for it, so the panel UI
- * can explain it (an ineligible agent's reasons, closed push install).
+ * Invoke a command whose refusal the panel UI explains: one that starts a
+ * plugin operation (hosting, removing a hosting, uninstalling, updating,
+ * approving an update, purging retained data), settles one's leftovers
+ * (forgetting retained data), or reads or changes a plugin's settings. It
+ * rejects with the panel's refusal — `{ error, status?, code?, reasons?,
+ * operationId?, errors? }` — which is rethrown as the Error the web client
+ * throws for it, so the panel UI can explain it (an ineligible agent's
+ * reasons, closed push install, a stale settings revision, a message per
+ * setting). The panel's messages never contain a setting's value.
  */
-async function invokeOperation(command, args) {
+async function invokeRefusable(command, args) {
   try {
     return await invoke(command, args);
   } catch (rejection) {
@@ -23,12 +27,15 @@ async function invokeOperation(command, args) {
       typeof rejection === 'object' &&
       typeof rejection.error === 'string'
     ) {
+      const errors = settingsErrorsOf(rejection);
       throw Object.assign(new Error(rejection.error), {
+        ...(Number.isInteger(rejection.status) ? { status: rejection.status } : {}),
         ...(typeof rejection.code === 'string' ? { code: rejection.code } : {}),
         ...(Array.isArray(rejection.reasons) ? { reasons: rejection.reasons } : {}),
         ...(typeof rejection.operationId === 'string'
           ? { operationId: rejection.operationId }
           : {}),
+        ...(errors ? { errors } : {}),
       });
     }
     throw rejection;
@@ -140,29 +147,34 @@ export const desktopAdminClient = {
   enablePlugin: (name) => invoke('admin_enable_plugin', { name }),
   disablePlugin: (name) => invoke('admin_disable_plugin', { name }),
   uninstallPlugin: (name, options = {}) =>
-    invokeOperation('admin_uninstall_plugin', removalArgs(name, options)),
+    invokeRefusable('admin_uninstall_plugin', removalArgs(name, options)),
   getPluginHosting: (name) => invoke('admin_get_plugin_hosting', { name }),
   getPluginHostingEligibility: (name) => invoke('admin_get_plugin_hosting_eligibility', { name }),
   setPluginHosting: (name, agentLabel) =>
-    invokeOperation('admin_set_plugin_hosting', { name, agentLabel }),
+    invokeRefusable('admin_set_plugin_hosting', { name, agentLabel }),
   clearPluginHosting: (name, options = {}) =>
-    invokeOperation('admin_clear_plugin_hosting', removalArgs(name, options)),
+    invokeRefusable('admin_clear_plugin_hosting', removalArgs(name, options)),
   rotatePluginHostingSecret: (name) => invoke('admin_rotate_plugin_hosting_secret', { name }),
   getPluginRetainedData: (name) => invoke('admin_get_plugin_retained_data', { name }),
   purgePluginRetainedData: (name, agentLabel) =>
-    invokeOperation('admin_purge_plugin_retained_data', { name, agentLabel }),
+    invokeRefusable('admin_purge_plugin_retained_data', { name, agentLabel }),
   forgetPluginRetainedData: (name, agentLabel) =>
-    invokeOperation('admin_forget_plugin_retained_data', { name, agentLabel }),
+    invokeRefusable('admin_forget_plugin_retained_data', { name, agentLabel }),
   getPluginOperations: (name) => invoke('admin_get_plugin_operations', { name }),
   getPluginOperation: (name, id) => invoke('admin_get_plugin_operation', { name, id }),
   getPluginHooks: (name) => invoke('admin_get_plugin_hooks', { name }),
   approvePluginHooks: (name, digest) =>
-    invokeOperation('admin_approve_plugin_hooks', { name, digest }),
+    invokeRefusable('admin_approve_plugin_hooks', { name, digest }),
   setPluginHooksAutoApprove: (name, enabled) =>
     invoke('admin_set_plugin_hooks_auto_approve', { name, enabled }),
   updatePlugin: (name, version) =>
-    invokeOperation('admin_update_plugin', { name, version: version ?? null }),
+    invokeRefusable('admin_update_plugin', { name, version: version ?? null }),
   discardPluginUpdate: (name) => invoke('admin_discard_plugin_update', { name }),
+  getPluginSettings: (name) => invokeRefusable('admin_get_plugin_settings', { name }),
+  // The body carries secrets: it goes to the Rust command and on to curl's
+  // stdin as the request body, and nowhere else.
+  updatePluginSettings: (name, body) =>
+    invokeRefusable('admin_update_plugin_settings', { name, data: body }),
   fetchPluginBundle: (name) => invoke('admin_fetch_plugin_bundle', { name }),
   getPushInstallConfig: () => invoke('admin_get_push_install_config'),
   updatePushInstallConfig: (data) => invoke('admin_update_push_install_config', { data }),

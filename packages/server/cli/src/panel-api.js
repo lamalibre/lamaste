@@ -16,6 +16,7 @@ import { mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execa } from 'execa';
+import { SETTINGS_KEY_RE } from '@lamalibre/lamaste';
 import { PKI_DIR } from './config.js';
 
 const PANEL_URL = 'https://127.0.0.1:9292';
@@ -135,11 +136,30 @@ function detailsText(details) {
 }
 
 /**
+ * The per-field messages of a refused settings change (`errors`: a setting
+ * key, or `_` for the change as a whole, to a message), or null when the
+ * panel sent none. Only string messages under a key a setting can have are
+ * kept — the panel's and the agent half's messages never contain a value.
+ *
+ * @param {unknown} errors
+ * @returns {Record<string, string> | null}
+ */
+function settingsErrors(errors) {
+  if (errors === null || typeof errors !== 'object' || Array.isArray(errors)) return null;
+  const kept = Object.entries(errors).filter(
+    ([key, message]) => (key === '_' || SETTINGS_KEY_RE.test(key)) && typeof message === 'string',
+  );
+  return kept.length > 0 ? Object.fromEntries(kept) : null;
+}
+
+/**
  * Split curl's output (`<payload>\n<status>`) and turn a non-2xx status
  * into an error carrying the panel's `error` (and `details`) in its message,
  * the status as `statusCode`, and what a caller acts on beyond the message
- * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons` and
- * a running operation's `operationId`. Pure, exported for tests.
+ * when the panel sent it: `code` (e.g. `agent_not_eligible`), `reasons`, a
+ * running operation's `operationId`, and for a refused settings change its
+ * per-field `errors`, the current `revision` (`revision_mismatch`) and the
+ * `hosting` (`hosting_offline`). Pure, exported for tests.
  *
  * @param {string} stdout
  * @param {string} method
@@ -172,6 +192,17 @@ export function parsePanelResponse(stdout, method, path) {
       err.reasons = parsed.reasons.filter((r) => typeof r === 'string');
     }
     if (typeof parsed.operationId === 'string') err.operationId = parsed.operationId;
+    const errors = settingsErrors(parsed.errors);
+    if (errors) err.errors = errors;
+    if (Number.isSafeInteger(parsed.revision) && parsed.revision >= 0) {
+      err.revision = parsed.revision;
+    }
+    if (
+      parsed.hosting === null ||
+      (typeof parsed.hosting === 'object' && !Array.isArray(parsed.hosting))
+    ) {
+      err.hosting = parsed.hosting;
+    }
     throw err;
   }
 
@@ -220,7 +251,8 @@ export async function curlPanelRequest({
  * password nor the body is ever in curl's arguments (see the top of this
  * file). Resolves with the JSON body; rejects with an Error (`statusCode`,
  * the panel's `error` in the message, a refusal's `code`, `reasons` and
- * `operationId`) for any non-2xx answer.
+ * `operationId`, a refused settings change's `errors`, `revision` and
+ * `hosting`) for any non-2xx answer.
  *
  * @param {string} method
  * @param {string} path  e.g. '/api/tunnels'
