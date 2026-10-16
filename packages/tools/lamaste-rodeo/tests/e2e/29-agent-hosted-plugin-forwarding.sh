@@ -231,7 +231,7 @@ MISSING_AGENT_STATUS=$(api_post_status "plugins/${PLUGIN_NAME}/hosting" '{"agent
 assert_eq "$MISSING_AGENT_STATUS" "400" "Hosting on an unknown agent is refused" || true
 
 HOST_RESPONSE=$(api_post "plugins/${PLUGIN_NAME}/hosting" "{\"agentLabel\":\"${AGENT_LABEL}\"}")
-assert_json_field "$HOST_RESPONSE" '.ok' 'true' "Hosting on ${AGENT_LABEL} started" || true
+assert_json_field "$HOST_RESPONSE" '.ok' 'true' "Hosting on ${AGENT_LABEL} started" || log_info "The panel answered: ${HOST_RESPONSE}"
 assert_json_field "$HOST_RESPONSE" '.operation.kind' 'host' "…as an operation" || true
 HOST_OP_ID=$(echo "$HOST_RESPONSE" | jq -r '.operation.id' 2>/dev/null || echo "")
 
