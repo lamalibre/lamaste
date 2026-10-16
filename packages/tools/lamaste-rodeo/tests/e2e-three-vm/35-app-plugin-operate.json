@@ -25,6 +25,9 @@
     "UNIT": {
       "value": "lamalibre-app-e2e-apphost-ops.service"
     },
+    "SOCKET_UNIT": {
+      "value": "lamalibre-app-e2e-apphost-ops.socket"
+    },
     "CONFIG_FILE": {
       "value": "/etc/lamalibre/apps/e2e-apphost-ops/plugin-config.json"
     },
@@ -33,6 +36,9 @@
     },
     "REMOTE_DIR": {
       "value": "/var/tmp/e2e-35-app-plugin"
+    },
+    "SQUATTER_USER": {
+      "value": "nobody"
     },
     "CLEAN_PLUGINS": {
       "value": "${PLUGIN}",
@@ -242,16 +248,33 @@
               }
             }
           ]
+        },
+        {
+          "id": "step-21",
+          "label": "Set PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field \"${PLUGIN}\" '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
         }
       ],
-      "bash": "log_section \"Install and host the plugin (1.0.0)\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-35-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v100\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v110\" \"${PLUGIN}\" 1.1.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v120\" \"${PLUGIN}\" 1.2.0 failpost \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0 and 1.2.0 (a bad release) with their agent packages\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v100/server fixtures/v100/agent fixtures/v110/server fixtures/v110/agent \\\n  fixtures/v120/server fixtures/v120/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"update\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.version) \\(.user)\"' \"1.0.0 ${SERVICE_USER}\" \"Agent half 1.0.0 answers through the tunnel as ${SERVICE_USER}\" || true\nINSTANCE=$(json_get \"$PING\" '.data.instance')\n\n# ===========================================================================\n# 2. Rotation\n# ==========================================================================="
+      "bash": "log_section \"Install and host the plugin (1.0.0)\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-35-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v100\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v110\" \"${PLUGIN}\" 1.1.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v120\" \"${PLUGIN}\" 1.2.0 failpost \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nif [ \"$FIXTURES\" != \"built\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixtures built: ${SERVER_PACKAGE} 1.0.0, 1.1.0 and 1.2.0 (a bad release) with their agent packages\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v100/server fixtures/v100/agent fixtures/v110/server fixtures/v110/agent \\\n  fixtures/v120/server fixtures/v120/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"update\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.version) \\(.user)\"' \"1.0.0 ${SERVICE_USER}\" \"Agent half 1.0.0 answers through the tunnel as ${SERVICE_USER}\" || true\nINSTANCE=$(json_get \"$PING\" '.data.instance')\nPORT=$(hosting_field \"${PLUGIN}\" '.hosting.port')\nFACTS_PORT=\"${PORT}\"\n\n# ===========================================================================\n# 2. Rotation\n# ==========================================================================="
     },
     {
       "id": "a-rotation-reaches-the-service-s-copy-before-it-is-acknowledged",
       "label": "A rotation reaches the service's copy before it is acknowledged",
       "steps": [
         {
-          "id": "step-21",
+          "id": "step-23",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -268,7 +291,7 @@
           ]
         },
         {
-          "id": "step-22",
+          "id": "step-24",
           "label": "Set PID_BEFORE",
           "target": "local",
           "op": {
@@ -285,7 +308,63 @@
           ]
         },
         {
-          "id": "step-23",
+          "id": "step-25",
+          "label": "Set SOCKET_SHA",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.socket.sha256'"
+          },
+          "capture": [
+            {
+              "variable": "SOCKET_SHA",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set SOCKET_SINCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.socket.props.ActiveEnterTimestamp'"
+          },
+          "capture": [
+            {
+              "variable": "SOCKET_SINCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "${SOCKET_UNIT} listens on 127.0.0.1:${PORT} (since ${SOCKET_SINCE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props | \"\\(.ActiveState) \\(.Listen)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "active 127.0.0.1:${PORT} (Stream)"
+              },
+              "message": "${SOCKET_UNIT} listens on 127.0.0.1:${PORT} (since ${SOCKET_SINCE})"
+            }
+          }
+        },
+        {
+          "id": "step-28",
           "label": "Set ISSUED_BEFORE",
           "target": "local",
           "op": {
@@ -302,7 +381,7 @@
           ]
         },
         {
-          "id": "step-24",
+          "id": "step-29",
           "label": "The service's copy holds the current secret",
           "target": "local",
           "continueOnError": true,
@@ -324,7 +403,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-30",
           "label": "Set SYNC_MARK",
           "target": "local",
           "op": {
@@ -341,7 +420,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-31",
           "label": "POST /api/plugins/${PLUGIN}/hosting/rotate-secret",
           "target": "host",
           "op": {
@@ -360,7 +439,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-32",
           "label": "Rotation pending",
           "target": "local",
           "continueOnError": true,
@@ -382,7 +461,7 @@
           }
         },
         {
-          "id": "step-28",
+          "id": "step-33",
           "label": "Set ISSUED_NEW",
           "target": "local",
           "op": {
@@ -399,7 +478,7 @@
           ]
         },
         {
-          "id": "step-29",
+          "id": "step-34",
           "label": "A new secret was issued",
           "target": "local",
           "continueOnError": true,
@@ -420,7 +499,7 @@
           }
         },
         {
-          "id": "step-30",
+          "id": "step-35",
           "label": "Calls keep working while the rotation is pending",
           "target": "local",
           "continueOnError": true,
@@ -442,7 +521,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-44",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -451,7 +530,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-46",
           "label": "The relay has the new secret acknowledged",
           "target": "local",
           "continueOnError": true,
@@ -472,7 +551,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-47",
           "label": "…and by then the service's copy held it: written before the acknowledgement",
           "target": "local",
           "continueOnError": true,
@@ -493,7 +572,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-48",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -510,7 +589,7 @@
           ]
         },
         {
-          "id": "step-44",
+          "id": "step-49",
           "label": "${CONFIG_FILE} carries the new secret",
           "target": "local",
           "continueOnError": true,
@@ -532,7 +611,7 @@
           }
         },
         {
-          "id": "step-45",
+          "id": "step-50",
           "label": "…the one the agent holds",
           "target": "local",
           "continueOnError": true,
@@ -554,7 +633,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-51",
           "label": "…still 0600, the account's",
           "target": "local",
           "continueOnError": true,
@@ -576,7 +655,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-52",
           "label": "The service was not restarted: it re-reads its config on a signature it cannot verify",
           "target": "local",
           "continueOnError": true,
@@ -598,7 +677,51 @@
           }
         },
         {
-          "id": "step-48",
+          "id": "step-53",
+          "label": "The socket unit's file is unchanged: a rotation does not move the port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.sha256",
+              "expected": {
+                "kind": "var",
+                "name": "SOCKET_SHA"
+              },
+              "message": "The socket unit's file is unchanged: a rotation does not move the port"
+            }
+          }
+        },
+        {
+          "id": "step-54",
+          "label": "…and the socket kept listening (active since ${SOCKET_SINCE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props.ActiveEnterTimestamp",
+              "expected": {
+                "kind": "var",
+                "name": "SOCKET_SINCE"
+              },
+              "message": "…and the socket kept listening (active since ${SOCKET_SINCE})"
+            }
+          }
+        },
+        {
+          "id": "step-55",
           "label": "The agent's sync delivered it (sync.log)",
           "target": "local",
           "continueOnError": true,
@@ -619,7 +742,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-56",
           "label": "Calls work on the new secret",
           "target": "local",
           "continueOnError": true,
@@ -641,14 +764,522 @@
           }
         }
       ],
-      "bash": "log_section \"A rotation reaches the service's copy before it is acknowledged\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nPID_BEFORE=$(json_get \"$FACTS\" '.unit.props.MainPID')\nISSUED_BEFORE=$(hosting_field \"${PLUGIN}\" '.hosting.secretIssuedAt')\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_BEFORE}\" \"The service's copy holds the current secret\" || true\nSYNC_MARK=$(sync_log_lines)\nROTATE=$(host_api_post \"plugins/${PLUGIN}/hosting/rotate-secret\" '{}')\nassert_json_field \"$ROTATE\" '.hosting.rotationPending' 'true' \"Rotation pending\" || true\nISSUED_NEW=$(json_get \"$ROTATE\" '.hosting.secretIssuedAt')\nassert_not_eq \"$ISSUED_NEW\" \"$ISSUED_BEFORE\" \"A new secret was issued\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Calls keep working while the rotation is pending\" || true\n\n# Each round reads the relay first, then the service's copy: a copy still\n# old once the relay has the acknowledgement would mean the agent\n# acknowledged a secret its service did not hold.\nACK_EXPR=\"(.hosting.secretAcknowledged == true) and (.hosting.rotationPending == false) and (.hosting.secretIssuedAt == \\\"${ISSUED_NEW}\\\")\"\nACKED=\"no\"\nORDER=\"kept\"\ndeadline=$((SECONDS + 90))\nwhile [ \"$SECONDS\" -lt \"$deadline\" ]; do\n  nudge_sync\n  if [ \"$(hosting_field \"${PLUGIN}\" \"${ACK_EXPR}\")\" = \"true\" ]; then\n    ACKED=\"yes\"\n    if [ \"$(service_issued_at)\" != \"$ISSUED_NEW\" ]; then ORDER=\"broken\"; fi\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"$ACKED\" \"yes\" \"The relay has the new secret acknowledged\" || true\nassert_eq \"$ORDER\" \"kept\" \"…and by then the service's copy held it: written before the acknowledgement\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_NEW}\" \"${CONFIG_FILE} carries the new secret\" || true\nassert_json_field \"$FACTS\" '.config.secretMatchesAgentCopy' 'true' \"…the one the agent holds\" || true\nassert_json_field \"$FACTS\" '.config.file | \"\\(.mode) \\(.user)\"' \"600 ${SERVICE_USER}\" \"…still 0600, the account's\" || true\nassert_json_field \"$FACTS\" '.unit.props.MainPID' \"${PID_BEFORE}\" \"The service was not restarted: it re-reads its config on a signature it cannot verify\" || true\nassert_contains \"$(sync_log_since \"$SYNC_MARK\")\" \"plugin config delivered to its service: ${PLUGIN}\" \"The agent's sync delivered it (sync.log)\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Calls work on the new secret\" || true\n\n# ===========================================================================\n# 3. Reboot\n# ==========================================================================="
+      "bash": "log_section \"A rotation reaches the service's copy before it is acknowledged\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nPID_BEFORE=$(json_get \"$FACTS\" '.unit.props.MainPID')\nSOCKET_SHA=$(json_get \"$FACTS\" '.socket.sha256')\nSOCKET_SINCE=$(json_get \"$FACTS\" '.socket.props.ActiveEnterTimestamp')\nassert_json_field \"$FACTS\" '.socket.props | \"\\(.ActiveState) \\(.Listen)\"' \"active 127.0.0.1:${PORT} (Stream)\" \"${SOCKET_UNIT} listens on 127.0.0.1:${PORT} (since ${SOCKET_SINCE})\" || true\nISSUED_BEFORE=$(hosting_field \"${PLUGIN}\" '.hosting.secretIssuedAt')\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_BEFORE}\" \"The service's copy holds the current secret\" || true\nSYNC_MARK=$(sync_log_lines)\nROTATE=$(host_api_post \"plugins/${PLUGIN}/hosting/rotate-secret\" '{}')\nassert_json_field \"$ROTATE\" '.hosting.rotationPending' 'true' \"Rotation pending\" || true\nISSUED_NEW=$(json_get \"$ROTATE\" '.hosting.secretIssuedAt')\nassert_not_eq \"$ISSUED_NEW\" \"$ISSUED_BEFORE\" \"A new secret was issued\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Calls keep working while the rotation is pending\" || true\n\n# Each round reads the relay first, then the service's copy: a copy still\n# old once the relay has the acknowledgement would mean the agent\n# acknowledged a secret its service did not hold.\nACK_EXPR=\"(.hosting.secretAcknowledged == true) and (.hosting.rotationPending == false) and (.hosting.secretIssuedAt == \\\"${ISSUED_NEW}\\\")\"\nACKED=\"no\"\nORDER=\"kept\"\ndeadline=$((SECONDS + 90))\nwhile [ \"$SECONDS\" -lt \"$deadline\" ]; do\n  nudge_sync\n  if [ \"$(hosting_field \"${PLUGIN}\" \"${ACK_EXPR}\")\" = \"true\" ]; then\n    ACKED=\"yes\"\n    if [ \"$(service_issued_at)\" != \"$ISSUED_NEW\" ]; then ORDER=\"broken\"; fi\n    break\n  fi\n  sleep 2\ndone\nassert_eq \"$ACKED\" \"yes\" \"The relay has the new secret acknowledged\" || true\nassert_eq \"$ORDER\" \"kept\" \"…and by then the service's copy held it: written before the acknowledgement\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_NEW}\" \"${CONFIG_FILE} carries the new secret\" || true\nassert_json_field \"$FACTS\" '.config.secretMatchesAgentCopy' 'true' \"…the one the agent holds\" || true\nassert_json_field \"$FACTS\" '.config.file | \"\\(.mode) \\(.user)\"' \"600 ${SERVICE_USER}\" \"…still 0600, the account's\" || true\nassert_json_field \"$FACTS\" '.unit.props.MainPID' \"${PID_BEFORE}\" \"The service was not restarted: it re-reads its config on a signature it cannot verify\" || true\nassert_json_field \"$FACTS\" '.socket.sha256' \"${SOCKET_SHA}\" \"The socket unit's file is unchanged: a rotation does not move the port\" || true\nassert_json_field \"$FACTS\" '.socket.props.ActiveEnterTimestamp' \"${SOCKET_SINCE}\" \"…and the socket kept listening (active since ${SOCKET_SINCE})\" || true\nassert_contains \"$(sync_log_since \"$SYNC_MARK\")\" \"plugin config delivered to its service: ${PLUGIN}\" \"The agent's sync delivered it (sync.log)\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"Calls work on the new secret\" || true\n\n# ===========================================================================\n# 3. Systemd holds the port\n# ==========================================================================="
+    },
+    {
+      "id": "systemd-holds-the-port-the-agent-half-stopped-restarted-or-killed",
+      "label": "Systemd holds the port: the agent half stopped, restarted or killed",
+      "steps": [
+        {
+          "id": "step-57",
+          "label": "Set BOUND",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "port_probe bind \"${PORT}\" \"${SQUATTER_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "BOUND",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-58",
+          "label": "While the agent half runs, ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "BOUND"
+              },
+              "path": "\"\\(.[\"127.0.0.1\"]) \\(.[\"0.0.0.0\"])\"",
+              "expected": {
+                "kind": "literal",
+                "value": "EADDRINUSE EADDRINUSE"
+              },
+              "message": "While the agent half runs, ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "Set STOPPED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "port_probe stopped \"${PLUGIN}\" \"${PORT}\" \"${SQUATTER_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "STOPPED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-62",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "systemctl stop ${UNIT}: sampled while it stayed stopped",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STOPPED"
+              },
+              "path": ".valid",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "systemctl stop ${UNIT}: sampled while it stayed stopped"
+            }
+          }
+        },
+        {
+          "id": "step-65",
+          "label": "${SOCKET_UNIT} stays active, listening on 127.0.0.1:${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STOPPED"
+              },
+              "path": ".socket | \"\\(.ActiveState) \\(.SubState) \\(.Listen)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "active listening 127.0.0.1:${PORT} (Stream)"
+              },
+              "message": "${SOCKET_UNIT} stays active, listening on 127.0.0.1:${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "ss: systemd (pid 1) alone holds the port",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STOPPED"
+              },
+              "path": "\"\\(.listeners | length) \\([.listeners[].users[].pid | tostring] | unique | join(\",\"))\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "ss: systemd (pid 1) alone holds the port"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "…and ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}: no window to take it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "STOPPED"
+              },
+              "path": "\"\\(.binds[\"127.0.0.1\"]) \\(.binds[\"0.0.0.0\"])\"",
+              "expected": {
+                "kind": "literal",
+                "value": "EADDRINUSE EADDRINUSE"
+              },
+              "message": "…and ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}: no window to take it"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "HTTP request on agent",
+          "target": "agent",
+          "op": {
+            "type": "http",
+            "method": "GET",
+            "url": "http://127.0.0.1:${PORT}/admin/health",
+            "statusOnly": true,
+            "timeout": 20
+          },
+          "capture": [
+            {
+              "variable": "WOKEN",
+              "from": {
+                "kind": "status"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-69",
+          "label": "A connection to the port finds the agent half again: systemd started it for the connection waiting on its socket",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "var",
+                "name": "WOKEN"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "A connection to the port finds the agent half again: systemd started it for the connection waiting on its socket"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "${UNIT} is active again (MainPID $(main_pid))",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "${UNIT} is active again (MainPID $(main_pid))"
+          }
+        },
+        {
+          "id": "step-71",
+          "label": "${UNIT} did not come back: $(agent_exec \"systemctl is-active ${UNIT}\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "${UNIT} did not come back: $(agent_exec \"systemctl is-active ${UNIT}\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "The pages answer through the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"${PLUGIN}/ping\")"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The pages answer through the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set PID_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "main_pid"
+          },
+          "capture": [
+            {
+              "variable": "PID_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-75",
+          "label": "Sleep 3s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 3
+          }
+        },
+        {
+          "id": "step-78",
+          "label": "systemctl restart: a new agent half (MainPID ${PID_A} → ${PID_B:-none})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${PID_B:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "systemctl restart: a new agent half (MainPID ${PID_A} → ${PID_B:-none})"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "Sleep 2s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 2
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "kill -9: Restart=always brings a new one (MainPID ${PID_B:-none} → ${PID_C:-none})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "${PID_C:-0}"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "kill -9: Restart=always brings a new one (MainPID ${PID_B:-none} → ${PID_C:-none})"
+            }
+          }
+        },
+        {
+          "id": "step-85",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "cat ${REMOTE_DIR}/loop.json"
+          },
+          "capture": [
+            {
+              "variable": "LOOP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-87",
+          "label": "The client made $(json_get \"$LOOP\" '.requests') requests across the restart and the kill (longest wait $(json_get \"$LOOP\" '.longestMs') ms)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOP"
+              },
+              "path": ".requests >= 20",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The client made $(json_get \"$LOOP\" '.requests') requests across the restart and the kill (longest wait $(json_get \"$LOOP\" '.longestMs') ms)"
+            }
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "…none refused: the port was never closed",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOP"
+              },
+              "path": ".errors.ECONNREFUSED // 0",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…none refused: the port was never closed"
+            }
+          }
+        },
+        {
+          "id": "step-89",
+          "label": "…every answer the agent half's (401 to a bare call)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOP"
+              },
+              "path": ".statuses | keys | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "401"
+              },
+              "message": "…every answer the agent half's (401 to a bare call)"
+            }
+          }
+        },
+        {
+          "id": "step-90",
+          "label": "…at most the requests in flight at the two stops cut ($(json_get \"$LOOP\" '.errors | tostring'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LOOP"
+              },
+              "path": "[.errors | to_entries[] | .value] | add // 0 | . <= 2",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…at most the requests in flight at the two stops cut ($(json_get \"$LOOP\" '.errors | tostring'))"
+            }
+          }
+        },
+        {
+          "id": "step-91",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-92",
+          "label": "${SOCKET_UNIT} listened throughout: active since ${SOCKET_SINCE}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props.ActiveEnterTimestamp",
+              "expected": {
+                "kind": "var",
+                "name": "SOCKET_SINCE"
+              },
+              "message": "${SOCKET_UNIT} listened throughout: active since ${SOCKET_SINCE}"
+            }
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "The new agent half was handed the same listening socket (descriptor 3)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The new agent half was handed the same listening socket (descriptor 3)"
+            }
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "The pages answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(host_api_get \"${PLUGIN}/ping\")"
+              },
+              "path": ".pong",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The pages answer"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Systemd holds the port: the agent half stopped, restarted or killed\"\n\nBOUND=$(port_probe bind \"${PORT}\" \"${SQUATTER_USER}\")\nassert_json_field \"$BOUND\" '\"\\(.[\"127.0.0.1\"]) \\(.[\"0.0.0.0\"])\"' 'EADDRINUSE EADDRINUSE' \"While the agent half runs, ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}\" || true\n\n# Stopped by hand, the agent half leaves the port to systemd alone. The\n# relay's health probe — a connection through the tunnel every 10 s — starts\n# it again, so port-probe.mjs stops it and samples at once, and the sample\n# counts only when the service stayed stopped throughout (valid).\nSTOPPED='{}'\nfor _ in 1 2 3; do\n  STOPPED=$(port_probe stopped \"${PLUGIN}\" \"${PORT}\" \"${SQUATTER_USER}\")\n  if [ \"$(json_get \"$STOPPED\" '.valid')\" = \"true\" ]; then break; fi\n  sleep 1\ndone\nassert_json_field \"$STOPPED\" '.valid' 'true' \"systemctl stop ${UNIT}: sampled while it stayed stopped\" || true\nassert_json_field \"$STOPPED\" '.socket | \"\\(.ActiveState) \\(.SubState) \\(.Listen)\"' \"active listening 127.0.0.1:${PORT} (Stream)\" \"${SOCKET_UNIT} stays active, listening on 127.0.0.1:${PORT}\" || true\nassert_json_field \"$STOPPED\" '\"\\(.listeners | length) \\([.listeners[].users[].pid | tostring] | unique | join(\",\"))\"' '1 1' \"ss: systemd (pid 1) alone holds the port\" || true\nassert_json_field \"$STOPPED\" '\"\\(.binds[\"127.0.0.1\"]) \\(.binds[\"0.0.0.0\"])\"' 'EADDRINUSE EADDRINUSE' \"…and ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}: no window to take it\" || true\nWOKEN=$(agent_exec \"curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null || echo \"000\")\nassert_eq \"$WOKEN\" \"401\" \"A connection to the port finds the agent half again: systemd started it for the connection waiting on its socket\" || true\nif wait_for 30 new_main_pid \"${PID_BEFORE}\"; then\n  log_pass \"${UNIT} is active again (MainPID $(main_pid))\"\nelse\n  log_fail \"${UNIT} did not come back: $(agent_exec \"systemctl is-active ${UNIT}\" 2>/dev/null)\"\nfi\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"The pages answer through the tunnel\" || true\n\n# A client calling the agent half without pause (port-probe.mjs loop: a new\n# connection per request) while it is restarted, then killed: connections\n# wait on systemd's socket for the next process — none is refused.\nPID_A=$(main_pid)\nagent_exec \"rm -f ${REMOTE_DIR}/loop.json; nohup node ${REMOTE_DIR}/port-probe.mjs loop ${PORT} 24 ${REMOTE_DIR}/loop.json > /dev/null 2>&1 & exit\" > /dev/null 2>&1 || true\nsleep 3\nagent_exec \"systemctl restart ${UNIT}\" > /dev/null 2>&1 || true\nPID_B=\"\"\nif wait_for 30 new_main_pid \"${PID_A}\"; then PID_B=$(main_pid); fi\nassert_not_eq \"${PID_B:-0}\" \"0\" \"systemctl restart: a new agent half (MainPID ${PID_A} → ${PID_B:-none})\" || true\nsleep 2\nPID_C=\"\"\nif [ -n \"${PID_B}\" ]; then\n  agent_exec \"kill -9 ${PID_B}\" > /dev/null 2>&1 || true\n  if wait_for 40 new_main_pid \"${PID_B}\"; then PID_C=$(main_pid); fi\nfi\nassert_not_eq \"${PID_C:-0}\" \"0\" \"kill -9: Restart=always brings a new one (MainPID ${PID_B:-none} → ${PID_C:-none})\" || true\nloop_done() { [ \"$(agent_exec \"test -s ${REMOTE_DIR}/loop.json && echo done\" 2>/dev/null)\" = \"done\" ]; }\nwait_for 60 loop_done || true\nLOOP=$(agent_exec \"cat ${REMOTE_DIR}/loop.json\" 2>/dev/null || echo '{}')\n[ -n \"$LOOP\" ] || LOOP='{}'\nassert_json_field \"$LOOP\" '.requests >= 20' 'true' \"The client made $(json_get \"$LOOP\" '.requests') requests across the restart and the kill (longest wait $(json_get \"$LOOP\" '.longestMs') ms)\" || true\nassert_json_field \"$LOOP\" '.errors.ECONNREFUSED // 0' '0' \"…none refused: the port was never closed\" || true\nassert_json_field \"$LOOP\" '.statuses | keys | join(\",\")' '401' \"…every answer the agent half's (401 to a bare call)\" || true\nassert_json_field \"$LOOP\" '[.errors | to_entries[] | .value] | add // 0 | . <= 2' 'true' \"…at most the requests in flight at the two stops cut ($(json_get \"$LOOP\" '.errors | tostring'))\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.socket.props.ActiveEnterTimestamp' \"${SOCKET_SINCE}\" \"${SOCKET_UNIT} listened throughout: active since ${SOCKET_SINCE}\" || true\nassert_json_field \"$FACTS\" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' \"The new agent half was handed the same listening socket (descriptor 3)\" || true\nassert_json_field \"$(host_api_get \"${PLUGIN}/ping\")\" '.pong' 'true' \"The pages answer\" || true\n\n# ===========================================================================\n# 4. Reboot\n# ==========================================================================="
     },
     {
       "id": "a-reboot-of-the-agent-vm-brings-it-all-back",
       "label": "A reboot of the agent VM brings it all back",
       "steps": [
         {
-          "id": "step-50",
+          "id": "step-95",
           "label": "Set STARTS_BEFORE",
           "target": "local",
           "op": {
@@ -665,7 +1296,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-96",
           "label": "Restarting ${AGENT_VM}",
           "target": "local",
           "op": {
@@ -675,7 +1306,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-99",
           "label": "The agent VM is back",
           "target": "local",
           "op": {
@@ -685,7 +1316,7 @@
           }
         },
         {
-          "id": "step-55",
+          "id": "step-100",
           "label": "The agent VM did not come back within 180 seconds",
           "target": "local",
           "op": {
@@ -695,7 +1326,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-101",
           "label": "${UNIT} started at boot",
           "target": "local",
           "op": {
@@ -705,7 +1336,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-102",
           "label": "${UNIT} is not active after the reboot",
           "target": "local",
           "op": {
@@ -715,7 +1346,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-104",
           "label": "The tunnel is up again: the pages answer",
           "target": "local",
           "op": {
@@ -725,7 +1356,7 @@
           }
         },
         {
-          "id": "step-61",
+          "id": "step-105",
           "label": "The pages do not answer after the reboot",
           "target": "local",
           "op": {
@@ -735,7 +1366,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-106",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -753,7 +1384,7 @@
           ]
         },
         {
-          "id": "step-63",
+          "id": "step-107",
           "label": "Agent half 1.0.0, as ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -775,7 +1406,7 @@
           }
         },
         {
-          "id": "step-64",
+          "id": "step-108",
           "label": "Its data survived the reboot",
           "target": "local",
           "continueOnError": true,
@@ -797,7 +1428,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-109",
           "label": "…and it was started again (start $(json_get \"$PING\" '.data.starts'))",
           "target": "local",
           "continueOnError": true,
@@ -819,7 +1450,29 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-110",
+          "label": "…on systemd's socket, descriptor 3",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".listen | \"\\(.mode) \\(.fd)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "systemd-socket 3"
+              },
+              "message": "…on systemd's socket, descriptor 3"
+            }
+          }
+        },
+        {
+          "id": "step-111",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -836,7 +1489,7 @@
           ]
         },
         {
-          "id": "step-67",
+          "id": "step-112",
           "label": "Its process is ${SERVICE_USER}'s",
           "target": "local",
           "continueOnError": true,
@@ -858,7 +1511,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-113",
           "label": "The service's copy kept the rotated secret",
           "target": "local",
           "continueOnError": true,
@@ -880,7 +1533,107 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-114",
+          "label": "${SOCKET_UNIT} came back at boot, listening on 127.0.0.1:${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props | \"\\(.ActiveState) \\(.UnitFileState) \\(.Listen)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "active enabled 127.0.0.1:${PORT} (Stream)"
+              },
+              "message": "${SOCKET_UNIT} came back at boot, listening on 127.0.0.1:${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-115",
+          "label": "Set PID_BOOT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.unit.props.MainPID'"
+          },
+          "capture": [
+            {
+              "variable": "PID_BOOT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-116",
+          "label": "ss: the listening socket is systemd's and the agent half's (MainPID ${PID_BOOT})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "[.listen.listeners[0].users[]?.pid] | any(.[]; . == 1) and any(.[]; . == ${PID_BOOT:-0})",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "ss: the listening socket is systemd's and the agent half's (MainPID ${PID_BOOT})"
+            }
+          }
+        },
+        {
+          "id": "step-117",
+          "label": "The agent half's descriptor 3 is that socket",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent half's descriptor 3 is that socket"
+            }
+          }
+        },
+        {
+          "id": "step-118",
+          "label": "Set SOCKET_SINCE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.socket.props.ActiveEnterTimestamp'"
+          },
+          "capture": [
+            {
+              "variable": "SOCKET_SINCE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-119",
           "label": "The agent's sync timer runs again",
           "target": "local",
           "continueOnError": true,
@@ -901,7 +1654,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-121",
           "label": "The relay's health of the hosting is up",
           "target": "local",
           "op": {
@@ -911,7 +1664,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-122",
           "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
           "target": "local",
           "op": {
@@ -921,14 +1674,14 @@
           }
         }
       ],
-      "bash": "log_section \"A reboot of the agent VM brings it all back\"\n\nSTARTS_BEFORE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.starts // 0')\nlog_info \"Restarting ${AGENT_VM}\"\ntimed_exec 180 multipass restart \"${AGENT_VM}\" > /dev/null 2>&1\nvm_up() { [ \"$(timed_exec 20 multipass exec \"${AGENT_VM}\" -- echo up 2>/dev/null)\" = \"up\" ]; }\nif wait_for 180 vm_up; then\n  log_pass \"The agent VM is back\"\nelse\n  log_fail \"The agent VM did not come back within 180 seconds\"\nfi\nunit_active() { [ \"$(agent_exec \"systemctl is-active ${UNIT}\" 2>/dev/null)\" = \"active\" ]; }\nif wait_for 120 unit_active; then\n  log_pass \"${UNIT} started at boot\"\nelse\n  log_fail \"${UNIT} is not active after the reboot\"\nfi\npages_back() { [ \"$(json_get \"$(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)\" '.pong')\" = \"true\" ]; }\nif wait_for 180 pages_back; then\n  log_pass \"The tunnel is up again: the pages answer\"\nelse\n  log_fail \"The pages do not answer after the reboot\"\nfi\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.version) \\(.user)\"' \"1.0.0 ${SERVICE_USER}\" \"Agent half 1.0.0, as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"Its data survived the reboot\" || true\nassert_json_field \"$PING\" \".data.starts > ${STARTS_BEFORE:-0}\" 'true' \"…and it was started again (start $(json_get \"$PING\" '.data.starts'))\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"Its process is ${SERVICE_USER}'s\" || true\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_NEW}\" \"The service's copy kept the rotated secret\" || true\nassert_eq \"$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\" \"active\" \"The agent's sync timer runs again\" || true\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\nif wait_for 90 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 4. Update to 1.1.0\n# ==========================================================================="
+      "bash": "log_section \"A reboot of the agent VM brings it all back\"\n\nSTARTS_BEFORE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.starts // 0')\nlog_info \"Restarting ${AGENT_VM}\"\ntimed_exec 180 multipass restart \"${AGENT_VM}\" > /dev/null 2>&1\nvm_up() { [ \"$(timed_exec 20 multipass exec \"${AGENT_VM}\" -- echo up 2>/dev/null)\" = \"up\" ]; }\nif wait_for 180 vm_up; then\n  log_pass \"The agent VM is back\"\nelse\n  log_fail \"The agent VM did not come back within 180 seconds\"\nfi\nif wait_for 120 unit_active; then\n  log_pass \"${UNIT} started at boot\"\nelse\n  log_fail \"${UNIT} is not active after the reboot\"\nfi\npages_back() { [ \"$(json_get \"$(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)\" '.pong')\" = \"true\" ]; }\nif wait_for 180 pages_back; then\n  log_pass \"The tunnel is up again: the pages answer\"\nelse\n  log_fail \"The pages do not answer after the reboot\"\nfi\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '\"\\(.version) \\(.user)\"' \"1.0.0 ${SERVICE_USER}\" \"Agent half 1.0.0, as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"Its data survived the reboot\" || true\nassert_json_field \"$PING\" \".data.starts > ${STARTS_BEFORE:-0}\" 'true' \"…and it was started again (start $(json_get \"$PING\" '.data.starts'))\" || true\nassert_json_field \"$PING\" '.listen | \"\\(.mode) \\(.fd)\"' 'systemd-socket 3' \"…on systemd's socket, descriptor 3\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '.unit.processUser' \"${SERVICE_USER}\" \"Its process is ${SERVICE_USER}'s\" || true\nassert_json_field \"$FACTS\" '.config.issuedAt' \"${ISSUED_NEW}\" \"The service's copy kept the rotated secret\" || true\nassert_json_field \"$FACTS\" '.socket.props | \"\\(.ActiveState) \\(.UnitFileState) \\(.Listen)\"' \"active enabled 127.0.0.1:${PORT} (Stream)\" \"${SOCKET_UNIT} came back at boot, listening on 127.0.0.1:${PORT}\" || true\nPID_BOOT=$(json_get \"$FACTS\" '.unit.props.MainPID')\nassert_json_field \"$FACTS\" \"[.listen.listeners[0].users[]?.pid] | any(.[]; . == 1) and any(.[]; . == ${PID_BOOT:-0})\" 'true' \"ss: the listening socket is systemd's and the agent half's (MainPID ${PID_BOOT})\" || true\nassert_json_field \"$FACTS\" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' \"The agent half's descriptor 3 is that socket\" || true\n# From here on the socket must outlive every new agent half process.\nSOCKET_SINCE=$(json_get \"$FACTS\" '.socket.props.ActiveEnterTimestamp')\nassert_eq \"$(user_systemctl \"is-active ${SYNC_TIMER} 2>/dev/null || true\")\" \"active\" \"The agent's sync timer runs again\" || true\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\nif wait_for 90 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\n\n# ===========================================================================\n# 5. Update to 1.1.0\n# ==========================================================================="
     },
     {
       "id": "update-to-1-1-0-approved-the-new-agent-half-first",
       "label": "Update to 1.1.0: approved, the new agent half first",
       "steps": [
         {
-          "id": "step-73",
+          "id": "step-123",
           "label": "POST /api/plugins/${PLUGIN}/update",
           "target": "host",
           "op": {
@@ -949,7 +1702,7 @@
           ]
         },
         {
-          "id": "step-74",
+          "id": "step-124",
           "label": "The update waits for approval: its agent half changed",
           "target": "local",
           "continueOnError": true,
@@ -971,7 +1724,7 @@
           }
         },
         {
-          "id": "step-75",
+          "id": "step-125",
           "label": "…pinned to the integrity of ${AGENT_PACKAGE}@1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -993,7 +1746,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-126",
           "label": "Until it is approved, 1.0.0 stays",
           "target": "local",
           "continueOnError": true,
@@ -1015,7 +1768,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-127",
           "label": "Set EPOCH",
           "target": "local",
           "op": {
@@ -1032,7 +1785,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-128",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -1051,7 +1804,7 @@
           ]
         },
         {
-          "id": "step-79",
+          "id": "step-129",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1068,7 +1821,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-130",
           "label": "The update succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1090,7 +1843,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-132",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -1111,7 +1864,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-134",
           "label": "The agent half was switched before the relay package",
           "target": "local",
           "continueOnError": true,
@@ -1132,7 +1885,7 @@
           }
         },
         {
-          "id": "step-85",
+          "id": "step-135",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1149,7 +1902,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-136",
           "label": "current → 1.1.0, previous → 1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -1171,7 +1924,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-137",
           "label": "Both versions are kept",
           "target": "local",
           "continueOnError": true,
@@ -1193,7 +1946,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-138",
           "label": "${UNIT} is active",
           "target": "local",
           "continueOnError": true,
@@ -1215,7 +1968,67 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-139",
+          "label": "Set PID_UPDATED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.unit.props.MainPID'"
+          },
+          "capture": [
+            {
+              "variable": "PID_UPDATED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-140",
+          "label": "…as a new process (MainPID ${PID_BOOT} → ${PID_UPDATED})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "var",
+                "name": "PID_UPDATED"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_BOOT"
+              },
+              "message": "…as a new process (MainPID ${PID_BOOT} → ${PID_UPDATED})"
+            }
+          }
+        },
+        {
+          "id": "step-141",
+          "label": "…on the same socket: ${SOCKET_UNIT} listened throughout the update (since ${SOCKET_SINCE})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props.ActiveEnterTimestamp",
+              "expected": {
+                "kind": "var",
+                "name": "SOCKET_SINCE"
+              },
+              "message": "…on the same socket: ${SOCKET_UNIT} listened throughout the update (since ${SOCKET_SINCE})"
+            }
+          }
+        },
+        {
+          "id": "step-142",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -1233,7 +2046,7 @@
           ]
         },
         {
-          "id": "step-90",
+          "id": "step-143",
           "label": "The pages come from 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1255,7 +2068,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-144",
           "label": "…which found the data 1.0.0 left",
           "target": "local",
           "continueOnError": true,
@@ -1277,7 +2090,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-145",
           "label": "The relay package is 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1299,7 +2112,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-146",
           "label": "The relay records agent half 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1321,7 +2134,7 @@
           }
         },
         {
-          "id": "step-94",
+          "id": "step-147",
           "label": "Set JOURNAL",
           "target": "local",
           "op": {
@@ -1338,7 +2151,7 @@
           ]
         },
         {
-          "id": "step-95",
+          "id": "step-148",
           "label": "1.0.0 answered the pre stage",
           "target": "local",
           "continueOnError": true,
@@ -1359,7 +2172,7 @@
           }
         },
         {
-          "id": "step-96",
+          "id": "step-149",
           "label": "1.1.0 answered the post stage",
           "target": "local",
           "continueOnError": true,
@@ -1380,7 +2193,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-150",
           "label": "Audit: plugin.agent-half.installed for the upgrade",
           "target": "local",
           "continueOnError": true,
@@ -1401,14 +2214,14 @@
           }
         }
       ],
-      "bash": "log_section \"Update to 1.1.0: approved, the new agent half first\"\n\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.1.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '1.1.0' \"The update waits for approval: its agent half changed\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.agentHalf.integrity' \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.1.0)\" \"…pinned to the integrity of ${AGENT_PACKAGE}@1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"Until it is approved, 1.0.0 stays\" || true\nEPOCH=$(agent_epoch)\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The update succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent install:pre-tunnel' 'install the new agent half' 'install the new version' 'agent install:post-tunnel'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'install the new agent half' 'install the new version')\" \"true\" \"The agent half was switched before the relay package\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.code.current) \\(.code.previous)\"' '1.1.0 1.0.0' \"current → 1.1.0, previous → 1.0.0\" || true\nassert_json_field \"$FACTS\" '.code.versions | join(\",\")' '1.0.0,1.1.0' \"Both versions are kept\" || true\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"${UNIT} is active\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.version' '1.1.0' \"The pages come from 1.1.0\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"…which found the data 1.0.0 left\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.1.0' \"The relay package is 1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hosting\")\" '.hosting.agentHalf.version' '1.1.0' \"The relay records agent half 1.1.0\" || true\nJOURNAL=$(unit_journal_since \"${UNIT}\" \"${EPOCH}\")\nassert_contains \"$JOURNAL\" \"hook install:pre-tunnel phase=upgrade version=1.0.0\" \"1.0.0 answered the pre stage\" || true\nassert_contains \"$JOURNAL\" \"hook install:post-tunnel phase=upgrade version=1.1.0\" \"1.1.0 answered the post stage\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.installed '.phase == \"upgrade\" and .version == \"1.1.0\"')\" \"1\" \"Audit: plugin.agent-half.installed for the upgrade\" || true\n\n# ===========================================================================\n# 5. Update to 1.2.0, a bad release\n# ==========================================================================="
+      "bash": "log_section \"Update to 1.1.0: approved, the new agent half first\"\n\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.1.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '1.1.0' \"The update waits for approval: its agent half changed\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.agentHalf.integrity' \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.1.0)\" \"…pinned to the integrity of ${AGENT_PACKAGE}@1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.0.0' \"Until it is approved, 1.0.0 stays\" || true\nEPOCH=$(agent_epoch)\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The update succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent install:pre-tunnel' 'install the new agent half' 'install the new version' 'agent install:post-tunnel'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'install the new agent half' 'install the new version')\" \"true\" \"The agent half was switched before the relay package\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.code.current) \\(.code.previous)\"' '1.1.0 1.0.0' \"current → 1.1.0, previous → 1.0.0\" || true\nassert_json_field \"$FACTS\" '.code.versions | join(\",\")' '1.0.0,1.1.0' \"Both versions are kept\" || true\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"${UNIT} is active\" || true\nPID_UPDATED=$(json_get \"$FACTS\" '.unit.props.MainPID')\nassert_not_eq \"${PID_UPDATED}\" \"${PID_BOOT}\" \"…as a new process (MainPID ${PID_BOOT} → ${PID_UPDATED})\" || true\nassert_json_field \"$FACTS\" '.socket.props.ActiveEnterTimestamp' \"${SOCKET_SINCE}\" \"…on the same socket: ${SOCKET_UNIT} listened throughout the update (since ${SOCKET_SINCE})\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.version' '1.1.0' \"The pages come from 1.1.0\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"…which found the data 1.0.0 left\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.1.0' \"The relay package is 1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hosting\")\" '.hosting.agentHalf.version' '1.1.0' \"The relay records agent half 1.1.0\" || true\nJOURNAL=$(unit_journal_since \"${UNIT}\" \"${EPOCH}\")\nassert_contains \"$JOURNAL\" \"hook install:pre-tunnel phase=upgrade version=1.0.0\" \"1.0.0 answered the pre stage\" || true\nassert_contains \"$JOURNAL\" \"hook install:post-tunnel phase=upgrade version=1.1.0\" \"1.1.0 answered the post stage\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.installed '.phase == \"upgrade\" and .version == \"1.1.0\"')\" \"1\" \"Audit: plugin.agent-half.installed for the upgrade\" || true\n\n# ===========================================================================\n# 6. Update to 1.2.0, a bad release\n# ==========================================================================="
     },
     {
       "id": "update-to-1-2-0-its-post-stage-fails-1-1-0-comes-back",
       "label": "Update to 1.2.0: its post stage fails, 1.1.0 comes back",
       "steps": [
         {
-          "id": "step-98",
+          "id": "step-151",
           "label": "POST /api/plugins/${PLUGIN}/update",
           "target": "host",
           "op": {
@@ -1429,7 +2242,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-152",
           "label": "1.2.0 waits for approval",
           "target": "local",
           "continueOnError": true,
@@ -1451,7 +2264,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-153",
           "label": "Set EPOCH",
           "target": "local",
           "op": {
@@ -1468,7 +2281,7 @@
           ]
         },
         {
-          "id": "step-101",
+          "id": "step-154",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -1487,7 +2300,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-155",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1504,7 +2317,7 @@
           ]
         },
         {
-          "id": "step-103",
+          "id": "step-156",
           "label": "The update was rolled back",
           "target": "local",
           "continueOnError": true,
@@ -1526,7 +2339,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-157",
           "label": "…because the 1.2.0 agent half refused its post stage",
           "target": "local",
           "continueOnError": true,
@@ -1547,7 +2360,7 @@
           }
         },
         {
-          "id": "step-105",
+          "id": "step-158",
           "label": "1.2.0 had been installed and activated",
           "target": "local",
           "continueOnError": true,
@@ -1568,7 +2381,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-159",
           "label": "Its post stage failed",
           "target": "local",
           "continueOnError": true,
@@ -1589,7 +2402,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-160",
           "label": "The relay package was restored",
           "target": "local",
           "continueOnError": true,
@@ -1610,7 +2423,7 @@
           }
         },
         {
-          "id": "step-108",
+          "id": "step-161",
           "label": "The previous agent half was activated",
           "target": "local",
           "continueOnError": true,
@@ -1631,7 +2444,7 @@
           }
         },
         {
-          "id": "step-109",
+          "id": "step-162",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1648,7 +2461,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-163",
           "label": "current → 1.1.0 again (previous → 1.2.0)",
           "target": "local",
           "continueOnError": true,
@@ -1670,7 +2483,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-164",
           "label": "Only the current and the previous version are kept",
           "target": "local",
           "continueOnError": true,
@@ -1692,7 +2505,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-165",
           "label": "${UNIT} is active",
           "target": "local",
           "continueOnError": true,
@@ -1714,7 +2527,50 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-166",
+          "label": "…as a new process again (MainPID ${PID_UPDATED} → $(json_get \"$FACTS\" '.unit.props.MainPID'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(json_get \"$FACTS\" '.unit.props.MainPID')"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "PID_UPDATED"
+              },
+              "message": "…as a new process again (MainPID ${PID_UPDATED} → $(json_get \"$FACTS\" '.unit.props.MainPID'))"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…on the socket from boot: it listened through 1.2.0 and the rollback",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props.ActiveEnterTimestamp",
+              "expected": {
+                "kind": "var",
+                "name": "SOCKET_SINCE"
+              },
+              "message": "…on the socket from boot: it listened through 1.2.0 and the rollback"
+            }
+          }
+        },
+        {
+          "id": "step-168",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -1732,7 +2588,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-169",
           "label": "The pages come from 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1754,7 +2610,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-170",
           "label": "…with the data kept throughout",
           "target": "local",
           "continueOnError": true,
@@ -1776,7 +2632,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-171",
           "label": "The relay package is 1.1.0 again",
           "target": "local",
           "continueOnError": true,
@@ -1798,7 +2654,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-172",
           "label": "The relay records agent half 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1820,7 +2676,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-173",
           "label": "1.1.0's approval stands",
           "target": "local",
           "continueOnError": true,
@@ -1842,7 +2698,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-174",
           "label": "1.2.0 was asked, and refused",
           "target": "local",
           "continueOnError": true,
@@ -1863,7 +2719,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-175",
           "label": "Audit: plugin.agent-half.activated 1.1.0",
           "target": "local",
           "continueOnError": true,
@@ -1884,7 +2740,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-176",
           "label": "Audit: plugin.update.reverted",
           "target": "local",
           "continueOnError": true,
@@ -1905,12 +2761,12 @@
           }
         }
       ],
-      "bash": "log_section \"Update to 1.2.0: its post stage fails, 1.1.0 comes back\"\n\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.2.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '1.2.0' \"1.2.0 waits for approval\" || true\nEPOCH=$(agent_epoch)\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'rolled-back' \"The update was rolled back\" || true\nassert_contains \"$(json_get \"$OP\" '.error')\" \"refuses install:post-tunnel\" \"…because the 1.2.0 agent half refused its post stage\" || true\nassert_eq \"$(step_status \"$OP\" 'install the new agent half')\" \"done\" \"1.2.0 had been installed and activated\" || true\nassert_eq \"$(step_status \"$OP\" 'agent install:post-tunnel')\" \"failed\" \"Its post stage failed\" || true\nassert_eq \"$(step_status \"$OP\" 'restore the previous version')\" \"done\" \"The relay package was restored\" || true\nassert_eq \"$(step_status \"$OP\" 'activate the previous agent half')\" \"done\" \"The previous agent half was activated\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.code.current) \\(.code.previous)\"' '1.1.0 1.2.0' \"current → 1.1.0 again (previous → 1.2.0)\" || true\nassert_json_field \"$FACTS\" '.code.versions | join(\",\")' '1.1.0,1.2.0' \"Only the current and the previous version are kept\" || true\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"${UNIT} is active\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.version' '1.1.0' \"The pages come from 1.1.0\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"…with the data kept throughout\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.1.0' \"The relay package is 1.1.0 again\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hosting\")\" '.hosting.agentHalf.version' '1.1.0' \"The relay records agent half 1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.state' 'approved' \"1.1.0's approval stands\" || true\nassert_contains \"$(unit_journal_since \"${UNIT}\" \"${EPOCH}\")\" \"hook install:post-tunnel phase=upgrade version=1.2.0\" \"1.2.0 was asked, and refused\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.activated '.version == \"1.1.0\" and .from == \"1.2.0\"')\" \"1\" \"Audit: plugin.agent-half.activated 1.1.0\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.update.reverted '.to == \"1.2.0\"')\" \"1\" \"Audit: plugin.update.reverted\" || true"
+      "bash": "log_section \"Update to 1.2.0: its post stage fails, 1.1.0 comes back\"\n\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"1.2.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '1.2.0' \"1.2.0 waits for approval\" || true\nEPOCH=$(agent_epoch)\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'rolled-back' \"The update was rolled back\" || true\nassert_contains \"$(json_get \"$OP\" '.error')\" \"refuses install:post-tunnel\" \"…because the 1.2.0 agent half refused its post stage\" || true\nassert_eq \"$(step_status \"$OP\" 'install the new agent half')\" \"done\" \"1.2.0 had been installed and activated\" || true\nassert_eq \"$(step_status \"$OP\" 'agent install:post-tunnel')\" \"failed\" \"Its post stage failed\" || true\nassert_eq \"$(step_status \"$OP\" 'restore the previous version')\" \"done\" \"The relay package was restored\" || true\nassert_eq \"$(step_status \"$OP\" 'activate the previous agent half')\" \"done\" \"The previous agent half was activated\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.code.current) \\(.code.previous)\"' '1.1.0 1.2.0' \"current → 1.1.0 again (previous → 1.2.0)\" || true\nassert_json_field \"$FACTS\" '.code.versions | join(\",\")' '1.1.0,1.2.0' \"Only the current and the previous version are kept\" || true\nassert_json_field \"$FACTS\" '.unit.props.ActiveState' 'active' \"${UNIT} is active\" || true\nassert_not_eq \"$(json_get \"$FACTS\" '.unit.props.MainPID')\" \"${PID_UPDATED}\" \"…as a new process again (MainPID ${PID_UPDATED} → $(json_get \"$FACTS\" '.unit.props.MainPID'))\" || true\nassert_json_field \"$FACTS\" '.socket.props.ActiveEnterTimestamp' \"${SOCKET_SINCE}\" \"…on the socket from boot: it listened through 1.2.0 and the rollback\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.version' '1.1.0' \"The pages come from 1.1.0\" || true\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"…with the data kept throughout\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '1.1.0' \"The relay package is 1.1.0 again\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hosting\")\" '.hosting.agentHalf.version' '1.1.0' \"The relay records agent half 1.1.0\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.approval.state' 'approved' \"1.1.0's approval stands\" || true\nassert_contains \"$(unit_journal_since \"${UNIT}\" \"${EPOCH}\")\" \"hook install:post-tunnel phase=upgrade version=1.2.0\" \"1.2.0 was asked, and refused\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.activated '.version == \"1.1.0\" and .from == \"1.2.0\"')\" \"1\" \"Audit: plugin.agent-half.activated 1.1.0\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.update.reverted '.to == \"1.2.0\"')\" \"1\" \"Audit: plugin.update.reverted\" || true"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 35 — App plugin agent half: rotation, reboot, update (Three-VM)\n# ============================================================================\n# An app plugin whose agent half Lamaste installs (fixture\n# @lamalibre/e2e-apphost-ops-server, helpers.sh: 1.0.0, 1.1.0 and a bad\n# 1.2.0 whose agent half refuses install:post-tunnel) is hosted on the agent\n# VM from the panel as in spec 34, then operated:\n#\n# 1. A secret rotation reaches the service's copy of the plugin config before\n#    the relay sees it acknowledged; the service is not restarted for it and\n#    calls keep working.\n# 2. A reboot of the agent VM brings the unit, the tunnel and the pages back\n#    by themselves; the agent half's data and the rotated secret are kept.\n# 3. An update to 1.1.0 waits for approval (its agent half changed), then the\n#    new agent half is installed and activated before the relay package:\n#    current → 1.1.0, previous 1.0.0, data kept; the old version answered\n#    the pre stage, the new one the post stage.\n# 4. An update to 1.2.0 whose post stage fails is rolled back: the helper\n#    activates 1.1.0 again and the relay package is restored.\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes; spec 34 shows the\n# timer alone hosting a plugin. The cleanup uninstalls with purge.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-ops\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-ops-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-ops-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost-ops\"\nUNIT=\"lamalibre-app-e2e-apphost-ops.service\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost-ops/plugin-config.json\"\nPOLICY_ID=\"e2e-apphost-35\"\nREMOTE_DIR=\"/var/tmp/e2e-35-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\n# service_issued_at — issuedAt of the service's copy of the plugin config\n# (that field only: the file holds the secret)\nservice_issued_at() {\n  agent_exec \"node -p \\\"JSON.parse(require('fs').readFileSync('${CONFIG_FILE}', 'utf8')).issuedAt\\\"\" 2>/dev/null || echo \"\"\n}\n\nbegin_test \"35 — App plugin agent half: rotation, reboot, update (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 35 — App plugin agent half: rotation, reboot, update (Three-VM)\n# ============================================================================\n# An app plugin whose agent half Lamaste installs (fixture\n# @lamalibre/e2e-apphost-ops-server, helpers.sh: 1.0.0, 1.1.0 and a bad\n# 1.2.0 whose agent half refuses install:post-tunnel) is hosted on the agent\n# VM from the panel as in spec 34, then operated:\n#\n# 1. A secret rotation reaches the service's copy of the plugin config before\n#    the relay sees it acknowledged; the service is not restarted for it,\n#    the socket unit not touched (same file, listening since before), and\n#    calls keep working.\n# 2. Systemd holds the port (the socket unit beside the agent half's): an\n#    unprivileged process can bind neither 127.0.0.1:<port> nor\n#    0.0.0.0:<port> (EADDRINUSE) while the agent half runs, nor while its\n#    service is stopped — the socket stays active, systemd alone holds the\n#    port — and a connection starts the agent half again. Restarted, then\n#    killed with SIGKILL (Restart=always) while a client calls it without\n#    pause, it refuses no connection and comes back with a new MainPID.\n# 3. A reboot of the agent VM brings the socket, the unit, the tunnel and\n#    the pages back by themselves, the agent half on systemd's socket\n#    (descriptor 3); its data and the rotated secret are kept.\n# 4. An update to 1.1.0 waits for approval (its agent half changed), then the\n#    new agent half is installed and activated before the relay package:\n#    current → 1.1.0, previous 1.0.0, data kept; the old version answered\n#    the pre stage, the new one the post stage. A new process, the same\n#    socket: it listened throughout.\n# 5. An update to 1.2.0 whose post stage fails is rolled back: the helper\n#    activates 1.1.0 again and the relay package is restored — the socket\n#    still the one from boot.\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes; spec 34 shows the\n# timer alone hosting a plugin. The cleanup uninstalls with purge.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-ops\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-ops-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-ops-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost-ops\"\nUNIT=\"lamalibre-app-e2e-apphost-ops.service\"\nSOCKET_UNIT=\"lamalibre-app-e2e-apphost-ops.socket\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost-ops/plugin-config.json\"\nPOLICY_ID=\"e2e-apphost-35\"\nREMOTE_DIR=\"/var/tmp/e2e-35-app-plugin\"\n# Another local process: it must get nothing of the agent half's port\nSQUATTER_USER=\"nobody\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\n# service_issued_at — issuedAt of the service's copy of the plugin config\n# (that field only: the file holds the secret)\nservice_issued_at() {\n  agent_exec \"node -p \\\"JSON.parse(require('fs').readFileSync('${CONFIG_FILE}', 'utf8')).issuedAt\\\"\" 2>/dev/null || echo \"\"\n}\n\n# main_pid — the agent half's MainPID (0 while it is not running)\nmain_pid() { agent_exec \"systemctl show -p MainPID --value ${UNIT}\" 2>/dev/null || echo \"0\"; }\n\n# unit_active — the agent half's service is active\nunit_active() { [ \"$(agent_exec \"systemctl is-active ${UNIT}\" 2>/dev/null)\" = \"active\" ]; }\n\n# new_main_pid <pid> — the service is active under another MainPID than <pid>\nnew_main_pid() {\n  local pid\n  pid=$(main_pid)\n  [ -n \"$pid\" ] && [ \"$pid\" != \"0\" ] && [ \"$pid\" != \"$1\" ] && unit_active\n}\n\nbegin_test \"35 — App plugin agent half: rotation, reboot, update (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

@@ -25,6 +25,9 @@
     "UNIT": {
       "value": "lamalibre-app-e2e-apphost.service"
     },
+    "SOCKET_UNIT": {
+      "value": "lamalibre-app-e2e-apphost.socket"
+    },
     "CODE_DIR": {
       "value": "/opt/lamalibre/apps/e2e-apphost"
     },
@@ -1799,7 +1802,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-110",
           "label": "The hosting is active",
           "target": "local",
           "continueOnError": true,
@@ -1821,7 +1824,7 @@
           }
         },
         {
-          "id": "step-110",
+          "id": "step-111",
           "label": "The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -1843,7 +1846,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-112",
           "label": "Port ${PORT} assigned from the internal range",
           "target": "local",
           "op": {
@@ -1858,7 +1861,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-113",
           "label": "Port ${PORT} is not in 21000–21999",
           "target": "local",
           "op": {
@@ -1873,7 +1876,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-114",
           "label": "GET /api/plugins/push-install/sessions",
           "target": "host",
           "op": {
@@ -1891,7 +1894,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-115",
           "label": "The push is in the push-install session log",
           "target": "local",
           "continueOnError": true,
@@ -1913,7 +1916,7 @@
           }
         },
         {
-          "id": "step-115",
+          "id": "step-116",
           "label": "Audit: plugin.agent-half.installed, with the pinned integrity",
           "target": "local",
           "continueOnError": true,
@@ -1934,7 +1937,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-117",
           "label": "Set SYNC_EVENTS",
           "target": "local",
           "op": {
@@ -1951,7 +1954,7 @@
           ]
         },
         {
-          "id": "step-117",
+          "id": "step-118",
           "label": "The agent's sync ran the app-install job (sync.log)",
           "target": "local",
           "continueOnError": true,
@@ -1972,7 +1975,7 @@
           }
         },
         {
-          "id": "step-118",
+          "id": "step-119",
           "label": "…then the pre-tunnel hook job",
           "target": "local",
           "continueOnError": true,
@@ -1993,7 +1996,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-120",
           "label": "Set JOURNAL",
           "target": "local",
           "op": {
@@ -2010,7 +2013,7 @@
           ]
         },
         {
-          "id": "step-120",
+          "id": "step-121",
           "label": "The installed service answered install:pre-tunnel (its journal)",
           "target": "local",
           "continueOnError": true,
@@ -2031,7 +2034,7 @@
           }
         },
         {
-          "id": "step-121",
+          "id": "step-122",
           "label": "…and install:post-tunnel through the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -2052,14 +2055,14 @@
           }
         }
       ],
-      "bash": "log_section \"Hosting: nothing more is done on the agent VM\"\n\nSYNC_MARK=$(sync_log_lines)\nHOST_EPOCH=$(agent_epoch)\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nlog_pass \"Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})\"\n# Only the relay is polled while it runs: the agent's own sync timer fetches\n# the config, runs the app-install and hook jobs and takes up the grant.\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'reserve port, secret and capability' 'install the agent half' 'agent install:pre-tunnel' 'grant the tunnel and wait for the agent half' 'agent install:post-tunnel' 'activate'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'install the agent half' 'agent install:pre-tunnel')\" \"true\" \"The agent half was installed before its first hook ran\" || true\n\nHOSTING=$(host_api_get \"plugins/${PLUGIN}/hosting\")\nPORT=$(json_get \"$HOSTING\" '.hosting.port')\nassert_json_field \"$HOSTING\" '.hosting.phase' 'active' \"The hosting is active\" || true\nassert_json_field \"$HOSTING\" '.hosting.agentHalf.version' '1.0.0' \"The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}\" || true\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nSESSION=$(host_api_get \"plugins/push-install/sessions\" | jq -c \"[.sessions[]? | select(.operationId == \\\"${OP_ID}\\\")] | last // {}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SESSION\" '\"\\(.action) \\(.packageName) \\(.policyId)\"' \"install ${AGENT_PACKAGE} ${POLICY_ID}\" \"The push is in the push-install session log\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.installed \".version == \\\"1.0.0\\\" and .integrity == \\\"${PINNED}\\\"\")\" \"1\" \"Audit: plugin.agent-half.installed, with the pinned integrity\" || true\nSYNC_EVENTS=$(sync_log_since \"$SYNC_MARK\")\nassert_contains \"$SYNC_EVENTS\" \"app install ran: ${PLUGIN}\" \"The agent's sync ran the app-install job (sync.log)\" || true\nassert_contains \"$SYNC_EVENTS\" \"hook install:pre-tunnel ran: ${PLUGIN}\" \"…then the pre-tunnel hook job\" || true\nJOURNAL=$(unit_journal_since \"${UNIT}\" \"${HOST_EPOCH}\")\nassert_contains \"$JOURNAL\" \"hook install:pre-tunnel phase=install version=1.0.0\" \"The installed service answered install:pre-tunnel (its journal)\" || true\nassert_contains \"$JOURNAL\" \"hook install:post-tunnel phase=install version=1.0.0\" \"…and install:post-tunnel through the tunnel\" || true\n\n# ===========================================================================\n# 7. The agent half on the agent VM\n# ==========================================================================="
+      "bash": "log_section \"Hosting: nothing more is done on the agent VM\"\n\nSYNC_MARK=$(sync_log_lines)\nHOST_EPOCH=$(agent_epoch)\nHOSTED=$(host_api_post \"plugins/${PLUGIN}/hosting\" \"{\\\"agentLabel\\\":\\\"${HOST_AGENT_LABEL}\\\"}\")\nOP_ID=$(json_get \"$HOSTED\" '.operation.id // empty')\nif [ -z \"$OP_ID\" ]; then\n  log_fail \"Hosting did not start: ${HOSTED}\"\n  end_test\n  exit $?\nfi\nlog_pass \"Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})\"\n# Only the relay is polled while it runs: the agent's own sync timer fetches\n# the config, runs the app-install and hook jobs and takes up the grant.\nOP=$(wait_operation \"${PLUGIN}\" \"${OP_ID}\" 360)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'reserve port, secret and capability' 'install the agent half' 'agent install:pre-tunnel' 'grant the tunnel and wait for the agent half' 'agent install:post-tunnel' 'activate'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'install the agent half' 'agent install:pre-tunnel')\" \"true\" \"The agent half was installed before its first hook ran\" || true\n\nHOSTING=$(host_api_get \"plugins/${PLUGIN}/hosting\")\nPORT=$(json_get \"$HOSTING\" '.hosting.port')\n# Who listens on it is read on the agent VM from now on — after the purge too.\nFACTS_PORT=\"${PORT}\"\nassert_json_field \"$HOSTING\" '.hosting.phase' 'active' \"The hosting is active\" || true\nassert_json_field \"$HOSTING\" '.hosting.agentHalf.version' '1.0.0' \"The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}\" || true\nif [ \"$PORT\" -ge 21000 ] 2>/dev/null && [ \"$PORT\" -le 21999 ] 2>/dev/null; then\n  log_pass \"Port ${PORT} assigned from the internal range\"\nelse\n  log_fail \"Port ${PORT} is not in 21000–21999\"\nfi\nSESSION=$(host_api_get \"plugins/push-install/sessions\" | jq -c \"[.sessions[]? | select(.operationId == \\\"${OP_ID}\\\")] | last // {}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SESSION\" '\"\\(.action) \\(.packageName) \\(.policyId)\"' \"install ${AGENT_PACKAGE} ${POLICY_ID}\" \"The push is in the push-install session log\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.installed \".version == \\\"1.0.0\\\" and .integrity == \\\"${PINNED}\\\"\")\" \"1\" \"Audit: plugin.agent-half.installed, with the pinned integrity\" || true\nSYNC_EVENTS=$(sync_log_since \"$SYNC_MARK\")\nassert_contains \"$SYNC_EVENTS\" \"app install ran: ${PLUGIN}\" \"The agent's sync ran the app-install job (sync.log)\" || true\nassert_contains \"$SYNC_EVENTS\" \"hook install:pre-tunnel ran: ${PLUGIN}\" \"…then the pre-tunnel hook job\" || true\nJOURNAL=$(unit_journal_since \"${UNIT}\" \"${HOST_EPOCH}\")\nassert_contains \"$JOURNAL\" \"hook install:pre-tunnel phase=install version=1.0.0\" \"The installed service answered install:pre-tunnel (its journal)\" || true\nassert_contains \"$JOURNAL\" \"hook install:post-tunnel phase=install version=1.0.0\" \"…and install:post-tunnel through the tunnel\" || true\n\n# ===========================================================================\n# 7. The agent half on the agent VM\n# ==========================================================================="
     },
     {
       "id": "on-the-agent-vm-account-files-unit-system-package",
       "label": "On the agent VM: account, files, unit, system package",
       "steps": [
         {
-          "id": "step-122",
+          "id": "step-123",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -2076,7 +2079,7 @@
           ]
         },
         {
-          "id": "step-123",
+          "id": "step-124",
           "label": "${UNIT} is active and enabled (it starts at boot)",
           "target": "local",
           "continueOnError": true,
@@ -2098,7 +2101,7 @@
           }
         },
         {
-          "id": "step-124",
+          "id": "step-125",
           "label": "It runs as User=${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2120,7 +2123,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-126",
           "label": "…and its process is owned by ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2142,7 +2145,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-127",
           "label": "The account is not root",
           "target": "local",
           "continueOnError": true,
@@ -2164,7 +2167,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-128",
           "label": "…a system account without login shell or home",
           "target": "local",
           "continueOnError": true,
@@ -2186,7 +2189,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-129",
           "label": "${CODE_DIR}: root's, 0755",
           "target": "local",
           "continueOnError": true,
@@ -2208,7 +2211,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-130",
           "label": "current → 1.0.0, the version installed",
           "target": "local",
           "continueOnError": true,
@@ -2230,7 +2233,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-131",
           "label": "Every file of the code is root's and writable by root only",
           "target": "local",
           "continueOnError": true,
@@ -2252,7 +2255,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-132",
           "label": "${DATA_DIR}: 0700, the account's",
           "target": "local",
           "continueOnError": true,
@@ -2274,7 +2277,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-133",
           "label": "…where the agent half keeps its state",
           "target": "local",
           "continueOnError": true,
@@ -2296,7 +2299,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-134",
           "label": "$(dirname \"${CONFIG_FILE}\"): 0750 root:${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2318,7 +2321,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-135",
           "label": "${CONFIG_FILE}: 0600, the account's",
           "target": "local",
           "continueOnError": true,
@@ -2340,7 +2343,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-136",
           "label": "…for this plugin and its port",
           "target": "local",
           "continueOnError": true,
@@ -2362,7 +2365,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-137",
           "label": "…holding the secret the agent holds (compared on the VM, never printed)",
           "target": "local",
           "continueOnError": true,
@@ -2384,7 +2387,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-138",
           "label": "The agent records the agent half it had installed",
           "target": "local",
           "continueOnError": true,
@@ -2406,7 +2409,7 @@
           }
         },
         {
-          "id": "step-140",
+          "id": "step-141",
           "label": "${SYSTEM_PACKAGE} was installed before this spec: its installation by Lamaste is not shown",
           "target": "local",
           "op": {
@@ -2423,7 +2426,7 @@
       "label": "The unit: as written, and as systemd applies it",
       "steps": [
         {
-          "id": "step-142",
+          "id": "step-143",
           "label": "Unit: ${line}",
           "target": "local",
           "continueOnError": true,
@@ -2444,7 +2447,7 @@
           }
         },
         {
-          "id": "step-146",
+          "id": "step-147",
           "label": "systemctl show: ${prop}",
           "target": "local",
           "continueOnError": true,
@@ -2463,16 +2466,407 @@
               "message": "systemctl show: ${prop}"
             }
           }
+        },
+        {
+          "id": "step-150",
+          "label": "true",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FACTS\" | jq -r --arg k \"$dep\" --arg s \"${SOCKET_UNIT}\" '(.unit.props[$k] // \"\") | split("
+              },
+              "expected": {
+                "kind": "expr",
+                "template": ") | index($s) != null' 2>/dev/null || echo false)"
+              },
+              "message": "true"
+            }
+          }
+        },
+        {
+          "id": "step-152",
+          "label": "No ${UNIT}.d drop-in directory: the unit is all there is",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".dropInDir",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "No ${UNIT}.d drop-in directory: the unit is all there is"
+            }
+          }
         }
       ],
-      "bash": "log_section \"The unit: as written, and as systemd applies it\"\n\nfor line in \"User=${SERVICE_USER}\" \"Group=${SERVICE_USER}\" \\\n  \"ExecStart=/usr/bin/node ${CODE_DIR}/current/package/dist/agentd.mjs\" \\\n  \"Environment=LAMASTE_APP_CONFIG=${CONFIG_FILE}\" \"Environment=LAMASTE_APP_DATA_DIR=${DATA_DIR}\" \\\n  \"WorkingDirectory=${DATA_DIR}\" 'Restart=on-failure' 'NoNewPrivileges=yes' 'ProtectSystem=strict' \\\n  \"ReadWritePaths=${DATA_DIR}\" 'ProtectHome=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \\\n  'ProtectControlGroups=yes' 'ProtectClock=yes' 'ProtectHostname=yes' 'RestrictSUIDSGID=yes' \\\n  'RestrictRealtime=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' \\\n  'SystemCallArchitectures=native' 'CapabilityBoundingSet=' 'UMask=0077' 'MemoryMax=256M' \\\n  'WantedBy=multi-user.target'; do\n  assert_eq \"$(echo \"$FACTS\" | jq --arg l \"$line\" '.unit.lines | index($l) != null' 2>/dev/null || echo false)\" \"true\" \"Unit: ${line}\" || true\ndone\nassert_eq \"$(echo \"$FACTS\" | jq '[.unit.lines[] | select(test(\"[0-9a-f]{64}\"))] | length' 2>/dev/null || echo \"-1\")\" \"0\" \"The unit names paths, never the secret\" || true\nfor prop in 'ProtectSystem=strict' 'ProtectHome=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'RestrictSUIDSGID=yes' 'LockPersonality=yes' \"ReadWritePaths=${DATA_DIR}\" 'MemoryMax=268435456' \\\n  'CapabilityBoundingSet=' 'UMask=0077'; do\n  assert_eq \"$(echo \"$FACTS\" | jq -r --arg k \"${prop%%=*}\" '.unit.props[$k] // \"unset\"' 2>/dev/null || echo unset)\" \"${prop#*=}\" \"systemctl show: ${prop}\" || true\ndone\n\n# ===========================================================================\n# 8. Through the tunnel: the admin pages and the sandbox\n# ==========================================================================="
+      "bash": "log_section \"The unit: as written, and as systemd applies it\"\n\nfor line in \"User=${SERVICE_USER}\" \"Group=${SERVICE_USER}\" \\\n  \"Requires=${SOCKET_UNIT}\" \"After=${SOCKET_UNIT}\" \"Sockets=${SOCKET_UNIT}\" \\\n  \"ExecStart=/usr/bin/node ${CODE_DIR}/current/package/dist/agentd.mjs\" \\\n  \"Environment=LAMASTE_APP_CONFIG=${CONFIG_FILE}\" \"Environment=LAMASTE_APP_DATA_DIR=${DATA_DIR}\" \\\n  \"WorkingDirectory=${DATA_DIR}\" 'Restart=always' 'NoNewPrivileges=yes' 'ProtectSystem=strict' \\\n  \"ReadWritePaths=${DATA_DIR}\" 'ProtectHome=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \\\n  'ProtectControlGroups=yes' 'ProtectClock=yes' 'ProtectHostname=yes' 'RestrictSUIDSGID=yes' \\\n  'RestrictRealtime=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' \\\n  'SystemCallArchitectures=native' 'CapabilityBoundingSet=' 'UMask=0077' 'LimitCORE=0' 'MemoryMax=256M' \\\n  'WantedBy=multi-user.target'; do\n  assert_eq \"$(echo \"$FACTS\" | jq --arg l \"$line\" '.unit.lines | index($l) != null' 2>/dev/null || echo false)\" \"true\" \"Unit: ${line}\" || true\ndone\nassert_eq \"$(echo \"$FACTS\" | jq '[.unit.lines[] | select(test(\"[0-9a-f]{64}\"))] | length' 2>/dev/null || echo \"-1\")\" \"0\" \"The unit names paths, never the secret\" || true\nfor prop in 'ProtectSystem=strict' 'ProtectHome=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \\\n  'RestrictSUIDSGID=yes' 'LockPersonality=yes' \"ReadWritePaths=${DATA_DIR}\" 'MemoryMax=268435456' \\\n  'CapabilityBoundingSet=' 'UMask=0077' 'Restart=always' 'LimitCORE=0' \"Sockets=${SOCKET_UNIT}\" \\\n  \"TriggeredBy=${SOCKET_UNIT}\"; do\n  assert_eq \"$(echo \"$FACTS\" | jq -r --arg k \"${prop%%=*}\" '.unit.props[$k] // \"unset\"' 2>/dev/null || echo unset)\" \"${prop#*=}\" \"systemctl show: ${prop}\" || true\ndone\nfor dep in Requires After; do\n  assert_eq \"$(echo \"$FACTS\" | jq -r --arg k \"$dep\" --arg s \"${SOCKET_UNIT}\" '(.unit.props[$k] // \"\") | split(\" \") | index($s) != null' 2>/dev/null || echo false)\" \"true\" \"systemctl show: ${dep}= names ${SOCKET_UNIT}\" || true\ndone\nassert_json_field \"$FACTS\" '.dropInDir' 'null' \"No ${UNIT}.d drop-in directory: the unit is all there is\" || true"
+    },
+    {
+      "id": "the-socket-unit-systemd-holds-the-port",
+      "label": "The socket unit: systemd holds the port",
+      "steps": [
+        {
+          "id": "step-153",
+          "label": "/etc/systemd/system/${SOCKET_UNIT}: root:root 0644",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.stat | \"\\(.type) \\(.mode) \\(.user):\\(.group)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "file 644 root:root"
+              },
+              "message": "/etc/systemd/system/${SOCKET_UNIT}: root:root 0644"
+            }
+          }
+        },
+        {
+          "id": "step-154",
+          "label": "…its sections: [Unit], [Socket], [Install]",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "[.socket.lines[] | select(startswith(\"[\"))] | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "[Unit],[Socket],[Install]"
+              },
+              "message": "…its sections: [Unit], [Socket], [Install]"
+            }
+          }
+        },
+        {
+          "id": "step-155",
+          "label": "…its directives: Description, ListenStream, Accept, NoDelay, Service, WantedBy — nothing else",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "[.socket.lines[] | select(startswith(\"[\") | not) | split(\"=\")[0]] | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "Description,ListenStream,Accept,NoDelay,Service,WantedBy"
+              },
+              "message": "…its directives: Description, ListenStream, Accept, NoDelay, Service, WantedBy — nothing else"
+            }
+          }
+        },
+        {
+          "id": "step-157",
+          "label": "Socket unit: ${line}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(echo \"$FACTS\" | jq --arg l \"$line\" '.socket.lines | index($l) != null' 2>/dev/null || echo false)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "Socket unit: ${line}"
+            }
+          }
+        },
+        {
+          "id": "step-159",
+          "label": "…and no secret in it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.secretLines",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and no secret in it"
+            }
+          }
+        },
+        {
+          "id": "step-160",
+          "label": "${SOCKET_UNIT} is active (running: its service has it) and enabled",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props | \"\\(.LoadState) \\(.ActiveState) \\(.SubState) \\(.UnitFileState)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "loaded active running enabled"
+              },
+              "message": "${SOCKET_UNIT} is active (running: its service has it) and enabled"
+            }
+          }
+        },
+        {
+          "id": "step-161",
+          "label": "systemctl show: Listen=127.0.0.1:${PORT} (Stream)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props.Listen",
+              "expected": {
+                "kind": "expr",
+                "template": "127.0.0.1:${PORT} (Stream)"
+              },
+              "message": "systemctl show: Listen=127.0.0.1:${PORT} (Stream)"
+            }
+          }
+        },
+        {
+          "id": "step-162",
+          "label": "systemctl show: Accept=no, NoDelay=yes, Triggers=${UNIT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".socket.props | \"\\(.Accept) \\(.NoDelay) \\(.Triggers)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "no yes ${UNIT}"
+              },
+              "message": "systemctl show: Accept=no, NoDelay=yes, Triggers=${UNIT}"
+            }
+          }
+        },
+        {
+          "id": "step-163",
+          "label": "Set MAIN_PID",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$FACTS\" '.unit.props.MainPID'"
+          },
+          "capture": [
+            {
+              "variable": "MAIN_PID",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-164",
+          "label": "ss: one listening socket on port ${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.listeners | length",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "ss: one listening socket on port ${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-165",
+          "label": "…on 127.0.0.1:${PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.listeners[0] | \"\\(.state) \\(.local)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "LISTEN 127.0.0.1:${PORT}"
+              },
+              "message": "…on 127.0.0.1:${PORT}"
+            }
+          }
+        },
+        {
+          "id": "step-166",
+          "label": "…held by systemd (pid 1)…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "[.listen.listeners[0].users[]? | select(.pid == 1 and .name == \"systemd\")] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…held by systemd (pid 1)…"
+            }
+          }
+        },
+        {
+          "id": "step-167",
+          "label": "…and by the agent half (MainPID ${MAIN_PID}), the same socket",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "[.listen.listeners[0].users[]? | select(.pid == ${MAIN_PID:-0})] | length > 0",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…and by the agent half (MainPID ${MAIN_PID}), the same socket"
+            }
+          }
+        },
+        {
+          "id": "step-168",
+          "label": "The agent half's descriptor 3 is that listening socket (inode $(json_get \"$FACTS\" '.listen.fd3Inode'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "The agent half's descriptor 3 is that listening socket (inode $(json_get \"$FACTS\" '.listen.fd3Inode'))"
+            }
+          }
+        },
+        {
+          "id": "step-169",
+          "label": "Exec on agent",
+          "target": "agent",
+          "op": {
+            "type": "exec",
+            "command": "lamaste-agent apphost status --json 2>/dev/null"
+          },
+          "capture": [
+            {
+              "variable": "APPHOST_APP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-170",
+          "label": "lamaste-agent apphost status: unit active, socket active",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "APPHOST_APP"
+              },
+              "path": "\"\\(.unit) \\(.socket)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "active active"
+              },
+              "message": "lamaste-agent apphost status: unit active, socket active"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The socket unit: systemd holds the port\"\n\n# Exactly what the helper writes: three sections, six directives, the\n# hosting's port, the service it starts — and nothing secret.\nassert_json_field \"$FACTS\" '.socket.stat | \"\\(.type) \\(.mode) \\(.user):\\(.group)\"' 'file 644 root:root' \"/etc/systemd/system/${SOCKET_UNIT}: root:root 0644\" || true\nassert_json_field \"$FACTS\" '[.socket.lines[] | select(startswith(\"[\"))] | join(\",\")' '[Unit],[Socket],[Install]' \"…its sections: [Unit], [Socket], [Install]\" || true\nassert_json_field \"$FACTS\" '[.socket.lines[] | select(startswith(\"[\") | not) | split(\"=\")[0]] | join(\",\")' 'Description,ListenStream,Accept,NoDelay,Service,WantedBy' \"…its directives: Description, ListenStream, Accept, NoDelay, Service, WantedBy — nothing else\" || true\nfor line in \"ListenStream=127.0.0.1:${PORT}\" 'Accept=no' 'NoDelay=true' \"Service=${UNIT}\" 'WantedBy=sockets.target'; do\n  assert_eq \"$(echo \"$FACTS\" | jq --arg l \"$line\" '.socket.lines | index($l) != null' 2>/dev/null || echo false)\" \"true\" \"Socket unit: ${line}\" || true\ndone\nassert_json_field \"$FACTS\" '.socket.secretLines' '0' \"…and no secret in it\" || true\nassert_json_field \"$FACTS\" '.socket.props | \"\\(.LoadState) \\(.ActiveState) \\(.SubState) \\(.UnitFileState)\"' 'loaded active running enabled' \"${SOCKET_UNIT} is active (running: its service has it) and enabled\" || true\nassert_json_field \"$FACTS\" '.socket.props.Listen' \"127.0.0.1:${PORT} (Stream)\" \"systemctl show: Listen=127.0.0.1:${PORT} (Stream)\" || true\nassert_json_field \"$FACTS\" '.socket.props | \"\\(.Accept) \\(.NoDelay) \\(.Triggers)\"' \"no yes ${UNIT}\" \"systemctl show: Accept=no, NoDelay=yes, Triggers=${UNIT}\" || true\nMAIN_PID=$(json_get \"$FACTS\" '.unit.props.MainPID')\nassert_json_field \"$FACTS\" '.listen.listeners | length' '1' \"ss: one listening socket on port ${PORT}\" || true\nassert_json_field \"$FACTS\" '.listen.listeners[0] | \"\\(.state) \\(.local)\"' \"LISTEN 127.0.0.1:${PORT}\" \"…on 127.0.0.1:${PORT}\" || true\nassert_json_field \"$FACTS\" '[.listen.listeners[0].users[]? | select(.pid == 1 and .name == \"systemd\")] | length > 0' 'true' \"…held by systemd (pid 1)…\" || true\nassert_json_field \"$FACTS\" \"[.listen.listeners[0].users[]? | select(.pid == ${MAIN_PID:-0})] | length > 0\" 'true' \"…and by the agent half (MainPID ${MAIN_PID}), the same socket\" || true\nassert_json_field \"$FACTS\" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' \"The agent half's descriptor 3 is that listening socket (inode $(json_get \"$FACTS\" '.listen.fd3Inode'))\" || true\nAPPHOST_APP=$(agent_exec \"lamaste-agent apphost status --json 2>/dev/null\" 2>/dev/null | grep -E '^\\{' | tail -n 1 | jq -c \".apps[\\\"${PLUGIN}\\\"] // {}\" 2>/dev/null || echo '{}')\nassert_json_field \"$APPHOST_APP\" '\"\\(.unit) \\(.socket)\"' 'active active' \"lamaste-agent apphost status: unit active, socket active\" || true\n\n# ===========================================================================\n# 8. Through the tunnel: the admin pages and the sandbox\n# ==========================================================================="
     },
     {
       "id": "through-the-tunnel-the-installed-version-answers",
       "label": "Through the tunnel: the installed version answers",
       "steps": [
         {
-          "id": "step-148",
+          "id": "step-171",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -2490,7 +2884,7 @@
           ]
         },
         {
-          "id": "step-149",
+          "id": "step-172",
           "label": "GET /api/${PLUGIN}/ping reaches the service on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -2512,7 +2906,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-173",
           "label": "…the installed version, 1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -2534,7 +2928,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-174",
           "label": "…running as ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2556,7 +2950,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-175",
           "label": "…which sees the admin as its caller",
           "target": "local",
           "continueOnError": true,
@@ -2578,7 +2972,29 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-176",
+          "label": "…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PING"
+              },
+              "path": ".listen | \"\\(.mode) \\(.fd) \\(.listenFdsCleared)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "systemd-socket 3 true"
+              },
+              "message": "…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment"
+            }
+          }
+        },
+        {
+          "id": "step-177",
           "label": "GET /api/${PLUGIN}/panel.js",
           "target": "host",
           "op": {
@@ -2596,7 +3012,7 @@
           ]
         },
         {
-          "id": "step-154",
+          "id": "step-178",
           "label": "The admin page's bundle comes from the agent half",
           "target": "local",
           "continueOnError": true,
@@ -2617,7 +3033,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-179",
           "label": "GET /api/${PLUGIN}/sandbox",
           "target": "host",
           "op": {
@@ -2635,7 +3051,7 @@
           ]
         },
         {
-          "id": "step-156",
+          "id": "step-180",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -2652,7 +3068,7 @@
           ]
         },
         {
-          "id": "step-157",
+          "id": "step-181",
           "label": "Sandbox: the service is ${SERVICE_USER}, not root",
           "target": "local",
           "continueOnError": true,
@@ -2674,7 +3090,7 @@
           }
         },
         {
-          "id": "step-158",
+          "id": "step-182",
           "label": "Sandbox: it writes its data directory",
           "target": "local",
           "continueOnError": true,
@@ -2696,7 +3112,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-186",
           "label": "Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)",
           "target": "local",
           "continueOnError": true,
@@ -2718,7 +3134,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-187",
           "label": "/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out",
           "target": "local",
           "op": {
@@ -2728,7 +3144,7 @@
           }
         },
         {
-          "id": "step-164",
+          "id": "step-188",
           "label": "Sandbox: it has a /tmp…",
           "target": "local",
           "continueOnError": true,
@@ -2750,7 +3166,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-189",
           "label": "…of its own (PrivateTmp): nothing appears in the machine's /tmp",
           "target": "local",
           "continueOnError": true,
@@ -2772,7 +3188,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-190",
           "label": "Sandbox: it has a /var/tmp…",
           "target": "local",
           "continueOnError": true,
@@ -2794,7 +3210,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-191",
           "label": "…of its own: nothing appears in the machine's /var/tmp",
           "target": "local",
           "continueOnError": true,
@@ -2816,7 +3232,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-193",
           "label": "…and nothing appears in the machine's /dev/shm",
           "target": "local",
           "continueOnError": true,
@@ -2838,7 +3254,7 @@
           }
         },
         {
-          "id": "step-170",
+          "id": "step-194",
           "label": "Sandbox: no new privileges, no capabilities",
           "target": "local",
           "continueOnError": true,
@@ -2858,16 +3274,38 @@
               "message": "Sandbox: no new privileges, no capabilities"
             }
           }
+        },
+        {
+          "id": "step-197",
+          "label": "Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SANDBOX"
+              },
+              "path": ".network.udpSend",
+              "expected": {
+                "kind": "literal",
+                "value": "ALLOWED"
+              },
+              "message": "Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it"
+            }
+          }
         }
       ],
-      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.writes.privateShm')\" \"Sandbox: its /dev/shm is an empty one it cannot write (TemporaryFileSystem)…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…and nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
+      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nassert_json_field \"$PING\" '.listen | \"\\(.mode) \\(.fd) \\(.listenFdsCleared)\"' 'systemd-socket 3 true' \"…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.writes.privateShm')\" \"Sandbox: its /dev/shm is an empty one it cannot write (TemporaryFileSystem)…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…and nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\nassert_json_field \"$SANDBOX\" '.network.udpSend' 'ALLOWED' \"Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
     },
     {
       "id": "feria-s-record-the-agent-pulled-the-package-itself",
       "label": "Feria's record: the agent pulled the package itself",
       "steps": [
         {
-          "id": "step-173",
+          "id": "step-198",
           "label": "Set REQUESTS",
           "target": "local",
           "op": {
@@ -2884,7 +3322,7 @@
           ]
         },
         {
-          "id": "step-176",
+          "id": "step-201",
           "label": "Set TOKENS",
           "target": "local",
           "op": {
@@ -2901,7 +3339,7 @@
           ]
         },
         {
-          "id": "step-177",
+          "id": "step-202",
           "label": "Its token: an agent token, read scope",
           "target": "local",
           "continueOnError": true,
@@ -2923,7 +3361,7 @@
           }
         },
         {
-          "id": "step-178",
+          "id": "step-203",
           "label": "…brokered by the panel's OIDC identity",
           "target": "local",
           "continueOnError": true,
@@ -2952,7 +3390,7 @@
       "label": "Uninstall with purge leaves nothing",
       "steps": [
         {
-          "id": "step-179",
+          "id": "step-204",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -2963,7 +3401,7 @@
           }
         },
         {
-          "id": "step-180",
+          "id": "step-205",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -2981,7 +3419,7 @@
           ]
         },
         {
-          "id": "step-181",
+          "id": "step-206",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -2998,7 +3436,7 @@
           ]
         },
         {
-          "id": "step-182",
+          "id": "step-207",
           "label": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -3020,7 +3458,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-209",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -3041,7 +3479,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-211",
           "label": "The agent half went before the secret it runs with",
           "target": "local",
           "continueOnError": true,
@@ -3062,7 +3500,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-212",
           "label": "The plugin is gone from the relay",
           "target": "local",
           "continueOnError": true,
@@ -3083,7 +3521,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-214",
           "label": "Audit: plugin.agent-half.removed, purge",
           "target": "local",
           "continueOnError": true,
@@ -3104,7 +3542,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-215",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3121,7 +3559,7 @@
           ]
         },
         {
-          "id": "step-191",
+          "id": "step-216",
           "label": "No unit on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -3143,7 +3581,73 @@
           }
         },
         {
-          "id": "step-192",
+          "id": "step-217",
+          "label": "No socket unit",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.socket.file) \\(.socket.props.LoadState)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "false not-found"
+              },
+              "message": "No socket unit"
+            }
+          }
+        },
+        {
+          "id": "step-218",
+          "label": "No drop-in directory",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".dropInDir",
+              "expected": {
+                "kind": "literal",
+                "value": "null"
+              },
+              "message": "No drop-in directory"
+            }
+          }
+        },
+        {
+          "id": "step-219",
+          "label": "Nothing listens on port ${PORT} any more: the socket let go of it",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": ".listen.listeners | length",
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "Nothing listens on port ${PORT} any more: the socket let go of it"
+            }
+          }
+        },
+        {
+          "id": "step-220",
           "label": "No code, config or data directory",
           "target": "local",
           "continueOnError": true,
@@ -3165,7 +3669,7 @@
           }
         },
         {
-          "id": "step-193",
+          "id": "step-221",
           "label": "No ${SERVICE_USER} account or group",
           "target": "local",
           "continueOnError": true,
@@ -3187,7 +3691,7 @@
           }
         },
         {
-          "id": "step-194",
+          "id": "step-222",
           "label": "The agent's record no longer lists it",
           "target": "local",
           "continueOnError": true,
@@ -3209,7 +3713,7 @@
           }
         },
         {
-          "id": "step-195",
+          "id": "step-223",
           "label": "The agent's own copy of the plugin config is gone",
           "target": "local",
           "op": {
@@ -3219,7 +3723,7 @@
           }
         },
         {
-          "id": "step-196",
+          "id": "step-224",
           "label": "The agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {
@@ -3229,12 +3733,12 @@
           }
         }
       ],
-      "bash": "log_section \"Uninstall with purge leaves nothing\"\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability' 'remove the package'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'remove the agent half' 'revoke the secret and the capability')\" \"true\" \"The agent half went before the secret it runs with\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Uninstalled\"\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == true')\" \"1\" \"Audit: plugin.agent-half.removed, purge\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"No unit on the agent VM\" || true\nassert_json_field \"$FACTS\" '\"\\(.code.dir) \\(.config.dir) \\(.data.dir)\"' 'null null null' \"No code, config or data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"No ${SERVICE_USER} account or group\" || true\nassert_json_field \"$FACTS\" '.apphostRecord' 'null' \"The agent's record no longer lists it\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"The agent's own copy of the plugin config is gone\"\nelse\n  log_fail \"The agent still holds a plugin config for ${PLUGIN}\"\nfi"
+      "bash": "log_section \"Uninstall with purge leaves nothing\"\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability' 'remove the package'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(step_order \"$OP\" 'remove the agent half' 'revoke the secret and the capability')\" \"true\" \"The agent half went before the secret it runs with\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Uninstalled\"\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == true')\" \"1\" \"Audit: plugin.agent-half.removed, purge\" || true\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"No unit on the agent VM\" || true\nassert_json_field \"$FACTS\" '\"\\(.socket.file) \\(.socket.props.LoadState)\"' 'false not-found' \"No socket unit\" || true\nassert_json_field \"$FACTS\" '.dropInDir' 'null' \"No drop-in directory\" || true\nassert_json_field \"$FACTS\" '.listen.listeners | length' '0' \"Nothing listens on port ${PORT} any more: the socket let go of it\" || true\nassert_json_field \"$FACTS\" '\"\\(.code.dir) \\(.config.dir) \\(.data.dir)\"' 'null null null' \"No code, config or data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"No ${SERVICE_USER} account or group\" || true\nassert_json_field \"$FACTS\" '.apphostRecord' 'null' \"The agent's record no longer lists it\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"The agent's own copy of the plugin config is gone\"\nelse\n  log_fail \"The agent still holds a plugin config for ${PLUGIN}\"\nfi"
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel installs\n#    from it and holds its registry credential (OIDC), which brokers the\n#    agent's read tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only.\n# 5. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows agent:<label> pulling the tarball.\n# 6. Uninstalling with purge leaves no unit, code, config, data, account,\n#    tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/var/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel installs\n#    from it and holds its registry credential (OIDC), which brokers the\n#    agent's read tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only, and send UDP.\n# 5. Systemd holds the agent half's port: beside the unit, the socket unit\n#    lamalibre-app-e2e-apphost.socket (root 0644, ListenStream on the\n#    hosting's port, no secret), active and enabled, which the unit requires\n#    (Restart=always, no core dumps, no drop-in); ss shows the one listening\n#    socket shared by systemd (pid 1) and the agent half, whose descriptor 3\n#    it is.\n# 6. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows agent:<label> pulling the tarball.\n# 7. Uninstalling with purge leaves no unit, socket unit, listener on the\n#    port, code, config, data, account, tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nSOCKET_UNIT=\"lamalibre-app-e2e-apphost.socket\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/var/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

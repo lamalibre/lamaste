@@ -6,7 +6,7 @@
     "suite": "e2e",
     "description": "31 — Plugin settings: manifest refusals, the panel's checks, the agent half",
     "deps": [],
-    "requires": ["curl", "jq", "node", "npm", "openssl", "sqlite3"]
+    "requires": ["curl", "jq", "node", "npm", "openssl", "sqlite3", "runuser"]
   },
   "env": {},
   "constants": {},
@@ -120,7 +120,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-56",
           "label": "GET /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -130,7 +130,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-64",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -139,7 +139,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-73",
           "label": "Sleep 3s",
           "target": "local",
           "op": {
@@ -148,7 +148,7 @@
           }
         },
         {
-          "id": "step-83",
+          "id": "step-87",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -157,7 +157,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-94",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -166,7 +166,7 @@
           }
         },
         {
-          "id": "step-98",
+          "id": "step-102",
           "label": "$5: 400",
           "target": "local",
           "continueOnError": true,
@@ -187,7 +187,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-104",
           "label": "…without repeating the value",
           "target": "local",
           "continueOnError": true,
@@ -206,6 +206,15 @@
               "message": "…without repeating the value"
             }
           }
+        },
+        {
+          "id": "step-137",
+          "label": "Sleep 0s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 0
+          }
         }
       ],
       "when": {
@@ -222,14 +231,14 @@
           }
         ]
       },
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin settings tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-settings\"\nPRIV=\"${WORK_DIR}/private\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_settings_0000000000000000\"\nPLUGIN=\"e2e-settings\"\nPACKAGE=\"@lamalibre/e2e-settings-server\"\nPLAIN_PLUGIN=\"e2e-app-plugin\"\nPLAIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nAGENT_LABEL=\"e2e-cfghost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DATA=\"${WORK_DIR}/half-data\"\nHALF_MANIFEST=\"${WORK_DIR}/fixtures/ok/lamaste-plugin.json\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nPORT=\"\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180)) name\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  # Refused at install, so never there — unless a refusal regressed.\n  for name in \"${PLAIN_PLUGIN}\" e2e-settings-noagent e2e-settings-secretdefault e2e-settings-badpattern e2e-settings-toomany; do\n    api_delete \"plugins/${name}?force=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# settings_call <method> <api path> [<json> | @<file>] — one panel API call\n# as the admin: the response, then its HTTP status on a line of its own.\n# Every response is kept in PRIV/responses.log for the scan; one holding the\n# test secret (PRIV/patterns) is never printed — a marker is.\nsettings_call() {\n  local out status\n  out=$(mktemp \"${PRIV}/response.XXXXXXXX\")\n  if [ -n \"${3:-}\" ]; then\n    if [ \"${3#@}\" = \"$3\" ]; then\n      printf '%s' \"$3\" > \"${PRIV}/body.json\"\n      set -- \"$1\" \"$2\" \"@${PRIV}/body.json\"\n    fi\n    status=$(_curl_mtls -o \"$out\" -w '%{http_code}' -X \"$1\" -H 'Content-Type: application/json' --data-binary \"$3\" \"${BASE_URL}/api/$2\" 2>/dev/null) || true\n  else\n    status=$(_curl_mtls -o \"$out\" -w '%{http_code}' -X \"$1\" \"${BASE_URL}/api/$2\" 2>/dev/null) || true\n  fi\n  [ -n \"$status\" ] || status=\"000\"\n  {\n    printf '### %s %s %s\\n' \"$1\" \"$2\" \"$status\"\n    cat \"$out\"\n    printf '\\n'\n  } >> \"${PRIV}/responses.log\"\n  if [ -s \"${PRIV}/patterns\" ] && grep -qaF -f \"${PRIV}/patterns\" \"$out\"; then\n    printf '{\"redacted\":\"the response held the test secret\"}\\n'\n  else\n    cat \"$out\"\n    printf '\\n'\n  fi\n  printf '%s\\n' \"$status\"\n  rm -f \"$out\"\n}\n\n# secret_lines <file> — how many lines of the file hold the test secret\nsecret_lines() { grep -caF -f \"${PRIV}/patterns\" \"$1\" 2>/dev/null || true; }\n\n# agent_api_get path / agent_api_post path json — as the test agent (its certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<plugin>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# wait_health <state> <seconds> — until the hosting's health.state is <state>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# write_half_config <plugin-config json> — the file the agent would write\nwrite_half_config() {\n  echo \"$1\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\n  chmod 600 \"${HALF_CONFIG}.tmp\"\n  mv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\n}\n\n# start_half [plain] — (re)start the agent half on the config the agent\n# fetched: with its settings store over HALF_DATA, or without settings\n# (\"plain\"); waits until it refuses a bare call (401)\nstart_half() {\n  local deadline\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  deadline=$((SECONDS + 10))\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" != \"000\" ]; do\n    sleep 1\n  done\n  if [ \"${1:-}\" = \"plain\" ]; then\n    nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" &> \"${WORK_DIR}/half.out\" &\n  else\n    nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" \\\n      --manifest \"${HALF_MANIFEST}\" --data \"${HALF_DATA}\" &> \"${WORK_DIR}/half.out\" &\n  fi\n  deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# refused <body json> <field> <message> <value or \"\"> <what> — PUT it: 400,\n# <message> for <field>, and the value nowhere in the answer\nrefused() {\n  local resp body\n  resp=$(settings_call PUT \"plugins/${PLUGIN}/settings\" \"$1\")\n  body=$(body_of \"$resp\")\n  assert_eq \"$(status_of \"$resp\")\" \"400\" \"$5: 400\" || true\n  assert_json_field \"$body\" \".errors[\\\"$2\\\"]\" \"$3\" \"…${2}: ${3}\" || true\n  if [ -n \"$4\" ]; then\n    assert_not_contains \"$body\" \"$4\" \"…without repeating the value\" || true\n  fi\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures; the test secret\n# ==========================================================================="
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight: check onboarding is complete\"\n# ---------------------------------------------------------------------------\n\nONBOARDING_STATUS=$(api_get \"onboarding/status\" | jq -r '.status' 2>/dev/null || echo \"unknown\")\nif [ \"$ONBOARDING_STATUS\" != \"COMPLETED\" ]; then\n  log_skip \"Onboarding not completed — skipping plugin settings tests\"\n  end_test\n  exit $?\nfi\nlog_pass \"Onboarding is complete\"\n\nDOMAIN=$(api_get \"onboarding/status\" | jq -r '.domain' 2>/dev/null || echo \"null\")\nif [ -z \"$DOMAIN\" ] || [ \"$DOMAIN\" = \"null\" ]; then\n  log_skip \"No domain configured — skipping\"\n  end_test\n  exit $?\nfi\nlog_info \"Domain: ${DOMAIN}\"\n\nSTATE_DIR=\"/etc/lamalibre/lamaste\"\nWORK_DIR=\"/tmp/lamalibre-lamaste-e2e-settings\"\nPRIV=\"${WORK_DIR}/private\"\nSTUB_PORT=4874\nSTUB_URL=\"http://127.0.0.1:${STUB_PORT}\"\nSTUB_ADMIN_TOKEN=\"feria_e2eadmin_settings_0000000000000000\"\nPLUGIN=\"e2e-settings\"\nPACKAGE=\"@lamalibre/e2e-settings-server\"\nPLAIN_PLUGIN=\"e2e-app-plugin\"\nPLAIN_PACKAGE=\"@lamalibre/e2e-app-plugin-server\"\nAGENT_LABEL=\"e2e-cfghost-$(date +%s)\"\nAGENT_CERT_DIR=\"${WORK_DIR}/agent-cert\"\nHALF_CONFIG=\"${WORK_DIR}/plugin-config.json\"\nHALF_LOG=\"${WORK_DIR}/half.log\"\nHALF_DATA=\"${WORK_DIR}/half-data\"\nHALF_MANIFEST=\"${WORK_DIR}/fixtures/ok/lamaste-plugin.json\"\nLAMASTE_LIB=\"/opt/lamalibre/lamaste/serverd/node_modules/@lamalibre/lamaste\"\nPORT=\"\"\n# The squatter: an unprivileged account, a root-owned directory for its\n# script and one of its own (0700) for the log of what it was sent\nSQUATTER_USER=\"nobody\"\nSQUAT_DIR=\"/var/tmp/lamalibre-lamaste-e2e-squatter\"\nSQUAT_LOG=\"${SQUAT_DIR}/log/requests.ndjson\"\nSQUAT_MARK=\"e2e-squatter-7c41\"\n\ncleanup() {\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  pkill -f '[s]quatter.mjs' 2>/dev/null || true\n  rm -rf \"${SQUAT_DIR}\"\n  # Uninstalling tears a hosting down first (an operation); one still\n  # running refuses it until it ends.\n  api_post \"plugins/${PLUGIN}/disable\" > /dev/null 2>&1 || true\n  local deadline=$((SECONDS + 180)) name\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(api_get_status \"plugins/${PLUGIN}\")\" != \"404\" ]; do\n    api_delete \"plugins/${PLUGIN}?force=true\" > /dev/null 2>&1 || true\n    sleep 3\n  done\n  # Refused at install, so never there — unless a refusal regressed.\n  for name in \"${PLAIN_PLUGIN}\" e2e-settings-noagent e2e-settings-secretdefault e2e-settings-badpattern e2e-settings-toomany; do\n    api_delete \"plugins/${name}?force=true\" > /dev/null 2>&1 || true\n  done\n  api_delete \"certs/agent/${AGENT_LABEL}\" > /dev/null 2>&1 || true\n  rm -f \"${STATE_DIR}/.npmrc\"\n  pkill -f '[s]tub-registry.mjs' 2>/dev/null || true\n  rm -rf \"${WORK_DIR}\"\n}\ntrap cleanup EXIT\n\nstatus_of() { printf '%s\\n' \"$1\" | tail -n 1; }\nbody_of() { printf '%s\\n' \"$1\" | sed '$d'; }\njson_get() { echo \"$1\" | jq -r \"$2\" 2>/dev/null || echo \"\"; }\n\n# settings_call <method> <api path> [<json> | @<file>] — one panel API call\n# as the admin: the response, then its HTTP status on a line of its own.\n# Every response is kept in PRIV/responses.log for the scan; one holding the\n# test secret (PRIV/patterns) is never printed — a marker is.\nsettings_call() {\n  local out status\n  out=$(mktemp \"${PRIV}/response.XXXXXXXX\")\n  if [ -n \"${3:-}\" ]; then\n    if [ \"${3#@}\" = \"$3\" ]; then\n      printf '%s' \"$3\" > \"${PRIV}/body.json\"\n      set -- \"$1\" \"$2\" \"@${PRIV}/body.json\"\n    fi\n    status=$(_curl_mtls -o \"$out\" -w '%{http_code}' -X \"$1\" -H 'Content-Type: application/json' --data-binary \"$3\" \"${BASE_URL}/api/$2\" 2>/dev/null) || true\n  else\n    status=$(_curl_mtls -o \"$out\" -w '%{http_code}' -X \"$1\" \"${BASE_URL}/api/$2\" 2>/dev/null) || true\n  fi\n  [ -n \"$status\" ] || status=\"000\"\n  {\n    printf '### %s %s %s\\n' \"$1\" \"$2\" \"$status\"\n    cat \"$out\"\n    printf '\\n'\n  } >> \"${PRIV}/responses.log\"\n  if [ -s \"${PRIV}/patterns\" ] && grep -qaF -f \"${PRIV}/patterns\" \"$out\"; then\n    printf '{\"redacted\":\"the response held the test secret\"}\\n'\n  else\n    cat \"$out\"\n    printf '\\n'\n  fi\n  printf '%s\\n' \"$status\"\n  rm -f \"$out\"\n}\n\n# secret_lines <file> — how many lines of the file hold the test secret\nsecret_lines() { grep -caF -f \"${PRIV}/patterns\" \"$1\" 2>/dev/null || true; }\n\n# agent_api_get path / agent_api_post path json — as the test agent (its certificate)\nagent_api_get() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -H 'Accept: application/json' \"${BASE_URL}/api/$1\"\n}\nagent_api_post() {\n  curl -sk --max-time 30 --cert \"${AGENT_CERT_DIR}/client.crt\" --key \"${AGENT_CERT_DIR}/client.key\" --cacert \"${STATE_DIR}/pki/ca.crt\" -X POST -H 'Content-Type: application/json' -H 'Accept: application/json' -d \"$2\" \"${BASE_URL}/api/$1\"\n}\n\n# hosting_field jq-expr — a field of GET /api/plugins/<plugin>/hosting\nhosting_field() {\n  api_get \"plugins/${PLUGIN}/hosting\" | jq -r \"$1\" 2>/dev/null || echo \"\"\n}\n\n# wait_operation <operation id> <seconds> — prints the operation once it ended\n# (still running after <seconds>: printed as is; the caller asserts its status)\nwait_operation() {\n  local id=\"$1\" deadline=$((SECONDS + $2)) op='{}'\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    op=$(api_get \"plugins/${PLUGIN}/operations/${id}\" | jq -c '.operation' 2>/dev/null || echo '{}')\n    if [ \"$(echo \"$op\" | jq -r '.status' 2>/dev/null)\" != \"running\" ]; then\n      echo \"$op\"\n      return 0\n    fi\n    sleep 2\n  done\n  echo \"$op\"\n  return 0\n}\n\n# wait_health <state> <seconds> — until the hosting's health.state is <state>\nwait_health() {\n  local want=\"$1\" deadline=$((SECONDS + $2))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(hosting_field '.hosting.health.state')\" = \"$want\" ]; then\n      return 0\n    fi\n    sleep 3\n  done\n  return 1\n}\n\n# write_half_config <plugin-config json> — the file the agent would write\nwrite_half_config() {\n  echo \"$1\" | jq '. + {fetchedAt: (now | todate), acknowledged: false}' > \"${HALF_CONFIG}.tmp\"\n  chmod 600 \"${HALF_CONFIG}.tmp\"\n  mv \"${HALF_CONFIG}.tmp\" \"${HALF_CONFIG}\"\n}\n\n# start_half [plain] — (re)start the agent half on the config the agent\n# fetched: with its settings store over HALF_DATA, or without settings\n# (\"plain\"); waits until it refuses a bare call (401)\nstart_half() {\n  local deadline\n  pkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\n  deadline=$((SECONDS + 10))\n  while [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" != \"000\" ]; do\n    sleep 1\n  done\n  if [ \"${1:-}\" = \"plain\" ]; then\n    nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" &> \"${WORK_DIR}/half.out\" &\n  else\n    nohup node \"${WORK_DIR}/app-plugin-half.mjs\" --config \"${HALF_CONFIG}\" --plugin \"${PLUGIN}\" --lamaste \"${LAMASTE_LIB}\" --log \"${HALF_LOG}\" \\\n      --manifest \"${HALF_MANIFEST}\" --data \"${HALF_DATA}\" &> \"${WORK_DIR}/half.out\" &\n  fi\n  deadline=$((SECONDS + 20))\n  while [ \"$SECONDS\" -lt \"$deadline\" ]; do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 \"http://127.0.0.1:${PORT}/admin/health\" 2>/dev/null)\" = \"401\" ]; then\n      return 0\n    fi\n    sleep 1\n  done\n  return 1\n}\n\n# refused <body json> <field> <message> <value or \"\"> <what> — PUT it: 400,\n# <message> for <field>, and the value nowhere in the answer\nrefused() {\n  local resp body\n  resp=$(settings_call PUT \"plugins/${PLUGIN}/settings\" \"$1\")\n  body=$(body_of \"$resp\")\n  assert_eq \"$(status_of \"$resp\")\" \"400\" \"$5: 400\" || true\n  assert_json_field \"$body\" \".errors[\\\"$2\\\"]\" \"$3\" \"…${2}: ${3}\" || true\n  if [ -n \"$4\" ]; then\n    assert_not_contains \"$body\" \"$4\" \"…without repeating the value\" || true\n  fi\n}\n\n# health_calls — how many of the relay's health probes the agent half has\n# answered 200 (createHealthHandler's lines in its log)\nhealth_calls() { grep -c 'GET /admin/health 200 health-call' \"${HALF_LOG}\" 2>/dev/null || true; }\n\n# write_squatter <file> — squatter.mjs <port> <log> <mark>: what takes a\n# loopback port the moment the agent half lets go of it, without the\n# installation secret. It answers every request 200 with a body naming\n# <mark> and an X-Lamalibre-Responder of the right shape it cannot have\n# computed, and appends each request (method, path, body) to <log> (0600).\nwrite_squatter() {\n  cat > \"$1\" <<'SQUATTER_EOF'\nimport crypto from 'node:crypto';\nimport { appendFileSync } from 'node:fs';\nimport http from 'node:http';\n\nconst [port, log, mark] = process.argv.slice(2);\nhttp\n  .createServer((req, res) => {\n    const chunks = [];\n    req.on('data', (c) => chunks.push(c));\n    req.on('end', () => {\n      const body = Buffer.concat(chunks).toString('utf8');\n      appendFileSync(log, `${JSON.stringify({ method: req.method, url: req.url, body })}\\n`, { mode: 0o600 });\n      res.writeHead(200, {\n        'content-type': 'application/json',\n        // 32 bytes, base64url: a real one's length, no secret behind it\n        'x-lamalibre-responder': crypto.randomBytes(32).toString('base64url'),\n      });\n      res.end(JSON.stringify({ ok: true, squatter: mark }));\n    });\n  })\n  .listen(Number(port), '127.0.0.1');\nSQUATTER_EOF\n}\n\n# start_squatter — SQUATTER_USER runs squatter.mjs on the agent half's port\n# (free: the agent half was just stopped); waits until it answers (200)\nstart_squatter() {\n  local node_bin\n  node_bin=$(command -v node)\n  nohup runuser -u \"${SQUATTER_USER}\" -- \"${node_bin}\" \"${SQUAT_DIR}/squatter.mjs\" \"${PORT}\" \"${SQUAT_LOG}\" \"${SQUAT_MARK}\" &> /dev/null &\n  for _ in $(seq 1 50); do\n    if [ \"$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \"http://127.0.0.1:${PORT}/\" 2>/dev/null)\" = \"200\" ]; then\n      return 0\n    fi\n    sleep 0.2\n  done\n  return 1\n}\n\n# ===========================================================================\n# 1. Stand-in registry with the fixtures; the test secret\n# ==========================================================================="
     },
     {
       "id": "stand-in-registry-with-the-settings-fixtures-the-test-secret",
       "label": "Stand-in registry with the settings fixtures; the test secret",
       "steps": [
         {
-          "id": "step-113",
+          "id": "step-152",
           "label": "Stand-in registry is up on ${STUB_URL}",
           "target": "local",
           "op": {
@@ -239,7 +248,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-153",
           "label": "Stand-in registry did not start: $(cat \"${WORK_DIR}/stub.log\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -249,7 +258,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-158",
           "label": "Test secret A: 48 hex characters in a 0600 file",
           "target": "local",
           "continueOnError": true,
@@ -270,7 +279,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-159",
           "label": "Set DIGEST_A",
           "target": "local",
           "op": {
@@ -294,7 +303,7 @@
       "label": "A manifest's settings block is checked at install",
       "steps": [
         {
-          "id": "step-128",
+          "id": "step-167",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -311,7 +320,7 @@
           ]
         },
         {
-          "id": "step-129",
+          "id": "step-168",
           "label": "Installing ${name} (${what}) is refused: 400",
           "target": "local",
           "continueOnError": true,
@@ -332,7 +341,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-169",
           "label": "…${issue}",
           "target": "local",
           "continueOnError": true,
@@ -353,7 +362,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-171",
           "label": "…and its package was removed",
           "target": "local",
           "continueOnError": true,
@@ -374,7 +383,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-173",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -393,7 +402,7 @@
           ]
         },
         {
-          "id": "step-135",
+          "id": "step-174",
           "label": "${PLAIN_PACKAGE}, a plugin without settings, installed",
           "target": "local",
           "continueOnError": true,
@@ -415,7 +424,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-175",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -432,7 +441,7 @@
           ]
         },
         {
-          "id": "step-137",
+          "id": "step-176",
           "label": "It has no settings to read (404)…",
           "target": "local",
           "continueOnError": true,
@@ -453,7 +462,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-177",
           "label": "…no_settings",
           "target": "local",
           "continueOnError": true,
@@ -475,7 +484,7 @@
           }
         },
         {
-          "id": "step-139",
+          "id": "step-178",
           "label": "POST /api/plugins/${PLAIN_PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -486,7 +495,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-140",
+          "id": "step-179",
           "label": "${PLAIN_PLUGIN}, never hosted, uninstalled at once",
           "target": "local",
           "continueOnError": true,
@@ -514,7 +523,7 @@
       "label": "Installed but not hosted: the fields, no changes",
       "steps": [
         {
-          "id": "step-141",
+          "id": "step-180",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -533,7 +542,7 @@
           ]
         },
         {
-          "id": "step-142",
+          "id": "step-181",
           "label": "${PACKAGE} installed: an agent block and a settings block",
           "target": "local",
           "continueOnError": true,
@@ -555,7 +564,7 @@
           }
         },
         {
-          "id": "step-143",
+          "id": "step-182",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -573,7 +582,7 @@
           ]
         },
         {
-          "id": "step-144",
+          "id": "step-183",
           "label": "Plugin enabled",
           "target": "local",
           "continueOnError": true,
@@ -595,7 +604,7 @@
           }
         },
         {
-          "id": "step-145",
+          "id": "step-184",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -612,7 +621,7 @@
           ]
         },
         {
-          "id": "step-146",
+          "id": "step-185",
           "label": "GET /api/plugins/${PLUGIN}/settings answers before any hosting",
           "target": "local",
           "continueOnError": true,
@@ -633,7 +642,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-186",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -650,7 +659,7 @@
           ]
         },
         {
-          "id": "step-148",
+          "id": "step-187",
           "label": "…with the manifest's fields",
           "target": "local",
           "continueOnError": true,
@@ -672,7 +681,7 @@
           }
         },
         {
-          "id": "step-149",
+          "id": "step-188",
           "label": "…and nothing synced yet (source none)",
           "target": "local",
           "continueOnError": true,
@@ -694,7 +703,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-189",
           "label": "…not configured: apiKey missing, not set",
           "target": "local",
           "continueOnError": true,
@@ -716,7 +725,7 @@
           }
         },
         {
-          "id": "step-151",
+          "id": "step-190",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -733,7 +742,7 @@
           ]
         },
         {
-          "id": "step-152",
+          "id": "step-191",
           "label": "A change with no agent half to hold it is refused (503)",
           "target": "local",
           "continueOnError": true,
@@ -754,7 +763,7 @@
           }
         },
         {
-          "id": "step-153",
+          "id": "step-192",
           "label": "…hosting_offline",
           "target": "local",
           "continueOnError": true,
@@ -783,7 +792,7 @@
       "label": "Hosted, the agent half on the relay loopback",
       "steps": [
         {
-          "id": "step-154",
+          "id": "step-193",
           "label": "POST /api/certs/agent",
           "target": "host",
           "op": {
@@ -802,7 +811,7 @@
           ]
         },
         {
-          "id": "step-155",
+          "id": "step-194",
           "label": "Agent certificate issued for ${AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -824,7 +833,7 @@
           }
         },
         {
-          "id": "step-156",
+          "id": "step-195",
           "label": "Extract P12_PASS",
           "target": "local",
           "op": {
@@ -841,7 +850,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-200",
           "label": "POST /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -860,7 +869,7 @@
           ]
         },
         {
-          "id": "step-162",
+          "id": "step-201",
           "label": "Hosting on ${AGENT_LABEL} started",
           "target": "local",
           "op": {
@@ -881,7 +890,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-202",
           "label": "Extract HOST_OP_ID",
           "target": "local",
           "op": {
@@ -898,7 +907,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-205",
           "label": "GET /api/agents/me/plugin-config/${PLUGIN}",
           "target": "agent",
           "op": {
@@ -916,7 +925,7 @@
           ]
         },
         {
-          "id": "step-167",
+          "id": "step-206",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -925,7 +934,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-208",
           "label": "Extract PORT",
           "target": "local",
           "op": {
@@ -942,7 +951,7 @@
           }
         },
         {
-          "id": "step-171",
+          "id": "step-210",
           "label": "POST /api/agents/me/plugin-config/${PLUGIN}/ack",
           "target": "agent",
           "op": {
@@ -962,7 +971,7 @@
           ]
         },
         {
-          "id": "step-172",
+          "id": "step-211",
           "label": "The agent fetched and acknowledged the plugin config (port ${PORT})",
           "target": "local",
           "continueOnError": true,
@@ -984,7 +993,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-212",
           "label": "The agent half listens on 127.0.0.1:${PORT}, with its settings store",
           "target": "local",
           "op": {
@@ -994,7 +1003,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-213",
           "label": "The agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -1004,7 +1013,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-214",
           "label": "Set HOST_OP",
           "target": "local",
           "op": {
@@ -1021,7 +1030,7 @@
           ]
         },
         {
-          "id": "step-176",
+          "id": "step-215",
           "label": "The hosting operation succeeded",
           "target": "local",
           "continueOnError": true,
@@ -1043,7 +1052,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-216",
           "label": "Health is up",
           "target": "local",
           "op": {
@@ -1053,7 +1062,7 @@
           }
         },
         {
-          "id": "step-178",
+          "id": "step-217",
           "label": "Health did not reach up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -1063,7 +1072,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-218",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1080,7 +1089,7 @@
           ]
         },
         {
-          "id": "step-180",
+          "id": "step-219",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -1097,7 +1106,7 @@
           ]
         },
         {
-          "id": "step-181",
+          "id": "step-220",
           "label": "GET settings: live from the agent half on ${AGENT_LABEL}, up",
           "target": "local",
           "continueOnError": true,
@@ -1119,7 +1128,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-221",
           "label": "Revision 0, not configured, apiKey missing",
           "target": "local",
           "continueOnError": true,
@@ -1141,7 +1150,7 @@
           }
         },
         {
-          "id": "step-183",
+          "id": "step-222",
           "label": "The defaults (region has none)",
           "target": "local",
           "continueOnError": true,
@@ -1163,7 +1172,7 @@
           }
         },
         {
-          "id": "step-184",
+          "id": "step-223",
           "label": "The relay read them from the agent half with Lamaste's own caller assertion",
           "target": "local",
           "continueOnError": true,
@@ -1184,7 +1193,7 @@
           }
         },
         {
-          "id": "step-185",
+          "id": "step-224",
           "label": "GET /api/plugins",
           "target": "host",
           "op": {
@@ -1202,7 +1211,7 @@
           ]
         },
         {
-          "id": "step-186",
+          "id": "step-225",
           "label": "GET /api/plugins: needs configuration (apiKey)",
           "target": "local",
           "continueOnError": true,
@@ -1224,7 +1233,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-226",
           "label": "Set PROBE",
           "target": "local",
           "op": {
@@ -1241,7 +1250,7 @@
           ]
         },
         {
-          "id": "step-188",
+          "id": "step-227",
           "label": "The agent half: schema 1, revision 0, no secret",
           "target": "local",
           "continueOnError": true,
@@ -1270,7 +1279,7 @@
       "label": "The panel's checks: a message per field, never the value",
       "steps": [
         {
-          "id": "step-189",
+          "id": "step-228",
           "label": "Set HALF_PUTS",
           "target": "local",
           "op": {
@@ -1287,7 +1296,109 @@
           ]
         },
         {
-          "id": "step-202",
+          "id": "step-230",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"e2e-colour-1a2b\":\"e2e-unknown-3c4e\"}}'"
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-231",
+          "label": "An unknown setting: 400",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "400"
+              },
+              "message": "An unknown setting: 400"
+            }
+          }
+        },
+        {
+          "id": "step-232",
+          "label": "…counted under _ (1 unknown setting), never named",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".errors | to_entries | map(\"\\(.key)=\\(.value)\") | join(\",\")",
+              "expected": {
+                "kind": "literal",
+                "value": "_=1 unknown setting"
+              },
+              "message": "…counted under _ (1 unknown setting), never named"
+            }
+          }
+        },
+        {
+          "id": "step-233",
+          "label": "…the answer holds neither its name…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "e2e-colour-1a2b"
+              },
+              "message": "…the answer holds neither its name…"
+            }
+          }
+        },
+        {
+          "id": "step-234",
+          "label": "…nor its value",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "literal",
+                "value": "e2e-unknown-3c4e"
+              },
+              "message": "…nor its value"
+            }
+          }
+        },
+        {
+          "id": "step-245",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1304,7 +1415,7 @@
           ]
         },
         {
-          "id": "step-203",
+          "id": "step-246",
           "label": "values that are not an object: 400",
           "target": "local",
           "continueOnError": true,
@@ -1325,7 +1436,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-247",
           "label": "…without repeating them",
           "target": "local",
           "continueOnError": true,
@@ -1346,7 +1457,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-248",
           "label": "An update without the revision it was edited at: 400",
           "target": "local",
           "continueOnError": true,
@@ -1367,7 +1478,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-249",
           "label": "The agent half was never asked",
           "target": "local",
           "continueOnError": true,
@@ -1388,7 +1499,7 @@
           }
         },
         {
-          "id": "step-207",
+          "id": "step-250",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1405,7 +1516,7 @@
           ]
         },
         {
-          "id": "step-208",
+          "id": "step-251",
           "label": "A schedule against its pattern passes the panel, which never runs a manifest's pattern, and is refused by the agent half (422)",
           "target": "local",
           "continueOnError": true,
@@ -1426,7 +1537,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-252",
           "label": "…schedule: Does not match the required format",
           "target": "local",
           "continueOnError": true,
@@ -1448,7 +1559,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-253",
           "label": "…without repeating the value",
           "target": "local",
           "continueOnError": true,
@@ -1469,7 +1580,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-254",
           "label": "The agent half answered that one",
           "target": "local",
           "continueOnError": true,
@@ -1490,14 +1601,14 @@
           }
         }
       ],
-      "bash": "log_section \"The panel's checks: a message per field, never the value\"\n\nHALF_PUTS=$(grep -c 'PUT /admin/settings' \"${HALF_LOG}\" 2>/dev/null || true)\nLONG=\"e2e-long-$(printf 'y%.0s' $(seq 1 1016))\"\nrefused '{\"revision\":0,\"values\":{\"colour\":\"e2e-unknown-1a2b\"}}' colour 'Unknown setting' 'e2e-unknown-1a2b' \"An unknown setting\"\nrefused '{\"revision\":0,\"values\":{\"apiKey\":\"e2e-misplaced-3c4d\"}}' apiKey 'Is a secret; send it in secrets' 'e2e-misplaced-3c4d' \"A secret among the values\"\nrefused '{\"revision\":0,\"secrets\":{\"region\":\"e2e-misplaced-5e6f\"}}' region 'Is not a secret; send it in values' 'e2e-misplaced-5e6f' \"A value among the secrets\"\nrefused '{\"revision\":0,\"values\":{\"retries\":987654321}}' retries 'Must be at most 10' '987654321' \"An integer above its maximum\"\nrefused '{\"revision\":0,\"values\":{\"retries\":-7654321}}' retries 'Must be at least 0' '7654321' \"An integer below its minimum\"\nrefused '{\"revision\":0,\"values\":{\"retries\":\"e2e-nan-7a8b\"}}' retries 'Must be an integer' 'e2e-nan-7a8b' \"A string for an integer\"\nrefused '{\"revision\":0,\"values\":{\"region\":\"e2e-region-9c0d\"}}' region 'Must be one of the options' 'e2e-region-9c0d' \"A value that is not one of the options\"\nrefused '{\"revision\":0,\"values\":{\"verbose\":\"e2e-yes-1e2f\"}}' verbose 'Must be true or false' 'e2e-yes-1e2f' \"A string for a boolean\"\nrefused \"{\\\"revision\\\":0,\\\"values\\\":{\\\"schedule\\\":\\\"${LONG}\\\"}}\" schedule 'Must be at most 1024 characters' 'e2e-long-' \"A string over its maximum length\"\nrefused '{\"revision\":0,\"secrets\":{\"apiKey\":\"\"}}' apiKey 'Must not be empty' '' \"An empty secret\"\nrefused '{\"revision\":0,\"secrets\":{\"apiKey\":null}}' apiKey 'Is required' '' \"Clearing a required secret\"\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":[\"e2e-envelope-3a4b\"]}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"values that are not an object: 400\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-envelope-3a4b\" \"…without repeating them\" || true\nassert_eq \"$(status_of \"$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"values\":{\"region\":\"eu\"}}')\")\" \"400\" \"An update without the revision it was edited at: 400\" || true\nassert_eq \"$(grep -c 'PUT /admin/settings' \"${HALF_LOG}\" 2>/dev/null || true)\" \"${HALF_PUTS:-0}\" \"The agent half was never asked\" || true\n\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"schedule\":\"e2e-schedule-5f6a\"}}')\nassert_eq \"$(status_of \"$RESP\")\" \"422\" \"A schedule against its pattern passes the panel, which never runs a manifest's pattern, and is refused by the agent half (422)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.errors.schedule' 'Does not match the required format' \"…schedule: Does not match the required format\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-schedule-5f6a\" \"…without repeating the value\" || true\nassert_eq \"$(grep -c 'PUT /admin/settings 422 settings-call' \"${HALF_LOG}\" 2>/dev/null || true)\" \"1\" \"The agent half answered that one\" || true\n\n# ===========================================================================\n# 6. A secret round-trips\n# ==========================================================================="
+      "bash": "log_section \"The panel's checks: a message per field, never the value\"\n\nHALF_PUTS=$(grep -c 'PUT /admin/settings' \"${HALF_LOG}\" 2>/dev/null || true)\nLONG=\"e2e-long-$(printf 'y%.0s' $(seq 1 1016))\"\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"e2e-colour-1a2b\":\"e2e-unknown-3c4e\"}}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"An unknown setting: 400\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.errors | to_entries | map(\"\\(.key)=\\(.value)\") | join(\",\")' '_=1 unknown setting' \"…counted under _ (1 unknown setting), never named\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-colour-1a2b\" \"…the answer holds neither its name…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-unknown-3c4e\" \"…nor its value\" || true\nrefused '{\"revision\":0,\"values\":{\"apiKey\":\"e2e-misplaced-3c4d\"}}' apiKey 'Is a secret; send it in secrets' 'e2e-misplaced-3c4d' \"A secret among the values\"\nrefused '{\"revision\":0,\"secrets\":{\"region\":\"e2e-misplaced-5e6f\"}}' region 'Is not a secret; send it in values' 'e2e-misplaced-5e6f' \"A value among the secrets\"\nrefused '{\"revision\":0,\"values\":{\"retries\":987654321}}' retries 'Must be at most 10' '987654321' \"An integer above its maximum\"\nrefused '{\"revision\":0,\"values\":{\"retries\":-7654321}}' retries 'Must be at least 0' '7654321' \"An integer below its minimum\"\nrefused '{\"revision\":0,\"values\":{\"retries\":\"e2e-nan-7a8b\"}}' retries 'Must be an integer' 'e2e-nan-7a8b' \"A string for an integer\"\nrefused '{\"revision\":0,\"values\":{\"region\":\"e2e-region-9c0d\"}}' region 'Must be one of the options' 'e2e-region-9c0d' \"A value that is not one of the options\"\nrefused '{\"revision\":0,\"values\":{\"verbose\":\"e2e-yes-1e2f\"}}' verbose 'Must be true or false' 'e2e-yes-1e2f' \"A string for a boolean\"\nrefused \"{\\\"revision\\\":0,\\\"values\\\":{\\\"schedule\\\":\\\"${LONG}\\\"}}\" schedule 'Must be at most 1024 characters' 'e2e-long-' \"A string over its maximum length\"\nrefused '{\"revision\":0,\"secrets\":{\"apiKey\":\"\"}}' apiKey 'Must not be empty' '' \"An empty secret\"\nrefused '{\"revision\":0,\"secrets\":{\"apiKey\":null}}' apiKey 'Is required' '' \"Clearing a required secret\"\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":[\"e2e-envelope-3a4b\"]}')\nassert_eq \"$(status_of \"$RESP\")\" \"400\" \"values that are not an object: 400\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-envelope-3a4b\" \"…without repeating them\" || true\nassert_eq \"$(status_of \"$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"values\":{\"region\":\"eu\"}}')\")\" \"400\" \"An update without the revision it was edited at: 400\" || true\nassert_eq \"$(grep -c 'PUT /admin/settings' \"${HALF_LOG}\" 2>/dev/null || true)\" \"${HALF_PUTS:-0}\" \"The agent half was never asked\" || true\n\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"schedule\":\"e2e-schedule-5f6a\"}}')\nassert_eq \"$(status_of \"$RESP\")\" \"422\" \"A schedule against its pattern passes the panel, which never runs a manifest's pattern, and is refused by the agent half (422)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.errors.schedule' 'Does not match the required format' \"…schedule: Does not match the required format\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"e2e-schedule-5f6a\" \"…without repeating the value\" || true\nassert_eq \"$(grep -c 'PUT /admin/settings 422 settings-call' \"${HALF_LOG}\" 2>/dev/null || true)\" \"1\" \"The agent half answered that one\" || true\n\n# ===========================================================================\n# 6. A secret round-trips\n# ==========================================================================="
     },
     {
       "id": "a-secret-round-trips-to-set-true-the-agent-half-holds-it",
       "label": "A secret round-trips to { set: true }; the agent half holds it",
       "steps": [
         {
-          "id": "step-212",
+          "id": "step-255",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1514,7 +1625,7 @@
           ]
         },
         {
-          "id": "step-214",
+          "id": "step-257",
           "label": "PUT with secret A, from a 0600 file: 200",
           "target": "local",
           "continueOnError": true,
@@ -1535,7 +1646,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-258",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -1552,7 +1663,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-259",
           "label": "Revision 1, configured",
           "target": "local",
           "continueOnError": true,
@@ -1574,7 +1685,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-260",
           "label": "apiKey: when it was set, nothing else",
           "target": "local",
           "continueOnError": true,
@@ -1596,7 +1707,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-261",
           "label": "Set SET_AT_A",
           "target": "local",
           "op": {
@@ -1613,7 +1724,7 @@
           ]
         },
         {
-          "id": "step-219",
+          "id": "step-262",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -1630,7 +1741,7 @@
           ]
         },
         {
-          "id": "step-220",
+          "id": "step-263",
           "label": "GET: apiKey { set: true, setAt }, region eu",
           "target": "local",
           "continueOnError": true,
@@ -1652,7 +1763,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-264",
           "label": "Set PROBE",
           "target": "local",
           "op": {
@@ -1669,7 +1780,7 @@
           ]
         },
         {
-          "id": "step-222",
+          "id": "step-265",
           "label": "The agent half holds secret A: the SHA-256 of what it holds is secret A's",
           "target": "local",
           "continueOnError": true,
@@ -1691,7 +1802,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-266",
           "label": "…at revision 1, configured",
           "target": "local",
           "continueOnError": true,
@@ -1713,7 +1824,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-267",
           "label": "settings.json and secrets.json are 0600",
           "target": "local",
           "continueOnError": true,
@@ -1734,7 +1845,7 @@
           }
         },
         {
-          "id": "step-225",
+          "id": "step-268",
           "label": "The secret is in secrets.json…",
           "target": "local",
           "continueOnError": true,
@@ -1755,7 +1866,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-269",
           "label": "…not in settings.json",
           "target": "local",
           "continueOnError": true,
@@ -1776,7 +1887,7 @@
           }
         },
         {
-          "id": "step-227",
+          "id": "step-270",
           "label": "…nor in the agent half's log",
           "target": "local",
           "continueOnError": true,
@@ -1797,7 +1908,7 @@
           }
         },
         {
-          "id": "step-228",
+          "id": "step-271",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -1814,7 +1925,7 @@
           ]
         },
         {
-          "id": "step-229",
+          "id": "step-272",
           "label": "An update edited at revision 0, now 1: 409",
           "target": "local",
           "continueOnError": true,
@@ -1835,7 +1946,7 @@
           }
         },
         {
-          "id": "step-230",
+          "id": "step-273",
           "label": "…revision_mismatch, with the current revision",
           "target": "local",
           "continueOnError": true,
@@ -1857,7 +1968,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-274",
           "label": "GET /api/audit?plugin=${PLUGIN}&action=plugin.settings.updated&limit=20",
           "target": "host",
           "op": {
@@ -1875,7 +1986,7 @@
           ]
         },
         {
-          "id": "step-232",
+          "id": "step-275",
           "label": "Audit: plugin.settings.updated names the keys (secretsSet apiKey, changed region)",
           "target": "local",
           "continueOnError": true,
@@ -1904,7 +2015,7 @@
       "label": "/api/${PLUGIN}/settings is not forwarded",
       "steps": [
         {
-          "id": "step-233",
+          "id": "step-276",
           "label": "Set MARK",
           "target": "local",
           "op": {
@@ -1921,7 +2032,7 @@
           ]
         },
         {
-          "id": "step-235",
+          "id": "step-278",
           "label": "GET /api/${PLUGIN}/${reserved}: 404",
           "target": "local",
           "continueOnError": true,
@@ -1942,7 +2053,7 @@
           }
         },
         {
-          "id": "step-237",
+          "id": "step-280",
           "label": "PUT /api/${PLUGIN}/settings: 404 — no admin writes around the panel's checks",
           "target": "local",
           "continueOnError": true,
@@ -1963,7 +2074,7 @@
           }
         },
         {
-          "id": "step-238",
+          "id": "step-281",
           "label": "POST /api/${PLUGIN}/settings/reload: 404",
           "target": "local",
           "continueOnError": true,
@@ -1984,12 +2095,12 @@
           }
         },
         {
-          "id": "step-239",
+          "id": "step-282",
           "label": "Set REACHED",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "tail -n +$((MARK + 1)) \"${HALF_LOG}\" | grep -iE '/admin/(settings|%73ettings)' | grep -vc ' 200 settings-call$' || true"
+            "command": "tail -n +$((MARK + 1)) \"${HALF_LOG}\" | grep -iE '/admin/(settings|%73ettings|%2573ettings|hooks)' | grep -vc ' 200 settings-call$' || true"
           },
           "capture": [
             {
@@ -2001,7 +2112,7 @@
           ]
         },
         {
-          "id": "step-240",
+          "id": "step-283",
           "label": "The agent half saw none of them",
           "target": "local",
           "continueOnError": true,
@@ -2022,7 +2133,7 @@
           }
         },
         {
-          "id": "step-241",
+          "id": "step-284",
           "label": "Its other admin paths are forwarded as before, and nothing changed",
           "target": "local",
           "continueOnError": true,
@@ -2044,14 +2155,14 @@
           }
         }
       ],
-      "bash": "log_section \"/api/${PLUGIN}/settings is not forwarded\"\n\nMARK=$(wc -l < \"${HALF_LOG}\" | tr -d ' ')\nfor reserved in settings settings/reload Settings %73ettings; do\n  assert_eq \"$(api_get_status \"${PLUGIN}/${reserved}\")\" \"404\" \"GET /api/${PLUGIN}/${reserved}: 404\" || true\ndone\nassert_eq \"$(status_of \"$(settings_call PUT \"${PLUGIN}/settings\" '{\"schemaVersion\":1,\"baseRevision\":1,\"values\":{\"verbose\":true},\"secrets\":{}}')\")\" \"404\" \"PUT /api/${PLUGIN}/settings: 404 — no admin writes around the panel's checks\" || true\nassert_eq \"$(status_of \"$(settings_call POST \"${PLUGIN}/settings/reload\" '{}')\")\" \"404\" \"POST /api/${PLUGIN}/settings/reload: 404\" || true\nREACHED=$(tail -n +$((MARK + 1)) \"${HALF_LOG}\" | grep -iE '/admin/(settings|%73ettings)' | grep -vc ' 200 settings-call$' || true)\nassert_eq \"$REACHED\" \"0\" \"The agent half saw none of them\" || true\nassert_json_field \"$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\" '.revision' '1' \"Its other admin paths are forwarded as before, and nothing changed\" || true\n\n# ===========================================================================\n# 8. The agent half stopped, without settings, back\n# ==========================================================================="
+      "bash": "log_section \"/api/${PLUGIN}/settings is not forwarded\"\n\nMARK=$(wc -l < \"${HALF_LOG}\" | tr -d ' ')\n# Every spelling whose second segment, decoded (twice here), lower-cased and\n# kept to letters and digits, starts with settings or hooks.\nfor reserved in settings settings/reload Settings %73ettings %2573ettings settings-v2 hooks Hooks/install:pre-tunnel; do\n  assert_eq \"$(api_get_status \"${PLUGIN}/${reserved}\")\" \"404\" \"GET /api/${PLUGIN}/${reserved}: 404\" || true\ndone\nassert_eq \"$(status_of \"$(settings_call PUT \"${PLUGIN}/settings\" '{\"schemaVersion\":1,\"baseRevision\":1,\"values\":{\"verbose\":true},\"secrets\":{}}')\")\" \"404\" \"PUT /api/${PLUGIN}/settings: 404 — no admin writes around the panel's checks\" || true\nassert_eq \"$(status_of \"$(settings_call POST \"${PLUGIN}/settings/reload\" '{}')\")\" \"404\" \"POST /api/${PLUGIN}/settings/reload: 404\" || true\nREACHED=$(tail -n +$((MARK + 1)) \"${HALF_LOG}\" | grep -iE '/admin/(settings|%73ettings|%2573ettings|hooks)' | grep -vc ' 200 settings-call$' || true)\nassert_eq \"$REACHED\" \"0\" \"The agent half saw none of them\" || true\nassert_json_field \"$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\" '.revision' '1' \"Its other admin paths are forwarded as before, and nothing changed\" || true\n\n# ===========================================================================\n# 8. The agent half stopped, without settings, back\n# ==========================================================================="
     },
     {
       "id": "the-agent-half-stopped-then-without-settings-then-back",
       "label": "The agent half stopped, then without settings, then back",
       "steps": [
         {
-          "id": "step-243",
+          "id": "step-286",
           "label": "Sleep 1s",
           "target": "local",
           "op": {
@@ -2060,7 +2171,7 @@
           }
         },
         {
-          "id": "step-244",
+          "id": "step-287",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2077,7 +2188,7 @@
           ]
         },
         {
-          "id": "step-245",
+          "id": "step-288",
           "label": "Until the health monitor notices, a change reaches a closed port: 502",
           "target": "local",
           "continueOnError": true,
@@ -2098,7 +2209,7 @@
           }
         },
         {
-          "id": "step-246",
+          "id": "step-289",
           "label": "…refused",
           "target": "local",
           "continueOnError": true,
@@ -2120,7 +2231,7 @@
           }
         },
         {
-          "id": "step-247",
+          "id": "step-290",
           "label": "Health reports down",
           "target": "local",
           "op": {
@@ -2130,7 +2241,7 @@
           }
         },
         {
-          "id": "step-248",
+          "id": "step-291",
           "label": "Health did not report down: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2140,7 +2251,7 @@
           }
         },
         {
-          "id": "step-249",
+          "id": "step-292",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2157,7 +2268,7 @@
           ]
         },
         {
-          "id": "step-250",
+          "id": "step-293",
           "label": "GET settings still answers",
           "target": "local",
           "continueOnError": true,
@@ -2178,7 +2289,7 @@
           }
         },
         {
-          "id": "step-251",
+          "id": "step-294",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -2195,7 +2306,7 @@
           ]
         },
         {
-          "id": "step-252",
+          "id": "step-295",
           "label": "…from the cache, the hosting down",
           "target": "local",
           "continueOnError": true,
@@ -2217,7 +2328,7 @@
           }
         },
         {
-          "id": "step-253",
+          "id": "step-296",
           "label": "…as last synced: configured, region eu, apiKey set, revision 1",
           "target": "local",
           "continueOnError": true,
@@ -2239,7 +2350,7 @@
           }
         },
         {
-          "id": "step-254",
+          "id": "step-297",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2256,7 +2367,7 @@
           ]
         },
         {
-          "id": "step-255",
+          "id": "step-298",
           "label": "Health down: a change is refused (503)",
           "target": "local",
           "continueOnError": true,
@@ -2277,7 +2388,7 @@
           }
         },
         {
-          "id": "step-256",
+          "id": "step-299",
           "label": "…hosting_offline",
           "target": "local",
           "continueOnError": true,
@@ -2299,7 +2410,7 @@
           }
         },
         {
-          "id": "step-257",
+          "id": "step-300",
           "label": "An agent half without settings answers; health is up",
           "target": "local",
           "op": {
@@ -2309,7 +2420,7 @@
           }
         },
         {
-          "id": "step-258",
+          "id": "step-301",
           "label": "The agent half without settings did not come up: $(hosting_field '.hosting.health')",
           "target": "local",
           "op": {
@@ -2319,7 +2430,7 @@
           }
         },
         {
-          "id": "step-259",
+          "id": "step-302",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2336,7 +2447,7 @@
           ]
         },
         {
-          "id": "step-260",
+          "id": "step-303",
           "label": "An agent half that does not answer /admin/settings: 502",
           "target": "local",
           "continueOnError": true,
@@ -2357,7 +2468,7 @@
           }
         },
         {
-          "id": "step-261",
+          "id": "step-304",
           "label": "…settings_unsupported",
           "target": "local",
           "continueOnError": true,
@@ -2379,7 +2490,7 @@
           }
         },
         {
-          "id": "step-262",
+          "id": "step-305",
           "label": "The agent half is back with its settings store",
           "target": "local",
           "op": {
@@ -2389,7 +2500,7 @@
           }
         },
         {
-          "id": "step-263",
+          "id": "step-306",
           "label": "The agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)",
           "target": "local",
           "op": {
@@ -2399,7 +2510,7 @@
           }
         },
         {
-          "id": "step-265",
+          "id": "step-308",
           "label": "Set RESP",
           "target": "local",
           "op": {
@@ -2416,7 +2527,7 @@
           ]
         },
         {
-          "id": "step-266",
+          "id": "step-309",
           "label": "A change is accepted again",
           "target": "local",
           "continueOnError": true,
@@ -2437,7 +2548,7 @@
           }
         },
         {
-          "id": "step-267",
+          "id": "step-310",
           "label": "…revision 2: the agent half reloaded its files, secret A kept",
           "target": "local",
           "continueOnError": true,
@@ -2459,7 +2570,7 @@
           }
         },
         {
-          "id": "step-268",
+          "id": "step-311",
           "label": "Set PROBE",
           "target": "local",
           "op": {
@@ -2476,7 +2587,7 @@
           ]
         },
         {
-          "id": "step-269",
+          "id": "step-312",
           "label": "The agent half holds secret A…",
           "target": "local",
           "continueOnError": true,
@@ -2498,7 +2609,7 @@
           }
         },
         {
-          "id": "step-270",
+          "id": "step-313",
           "label": "…and verbose true",
           "target": "local",
           "continueOnError": true,
@@ -2520,14 +2631,561 @@
           }
         }
       ],
-      "bash": "log_section \"The agent half stopped, then without settings, then back\"\n\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nsleep 1\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"Until the health monitor notices, a change reaches a closed port: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'refused' \"…refused\" || true\nif wait_health down 60; then\n  log_pass \"Health reports down\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nRESP=$(settings_call GET \"plugins/${PLUGIN}/settings\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"GET settings still answers\" || true\nVIEW=$(body_of \"$RESP\")\nassert_json_field \"$VIEW\" '\"\\(.source) \\(.hosting.state)\"' 'cache down' \"…from the cache, the hosting down\" || true\nassert_json_field \"$VIEW\" '\"\\(.configured) \\(.values.region) \\(.values.apiKey.set) \\(.revision)\"' 'true eu true 1' \"…as last synced: configured, region eu, apiKey set, revision 1\" || true\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"503\" \"Health down: a change is refused (503)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'hosting_offline' \"…hosting_offline\" || true\n\nif start_half plain && wait_health up 60; then\n  log_pass \"An agent half without settings answers; health is up\"\nelse\n  log_fail \"The agent half without settings did not come up: $(hosting_field '.hosting.health')\"\nfi\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"An agent half that does not answer /admin/settings: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'settings_unsupported' \"…settings_unsupported\" || true\n\nif start_half; then\n  log_pass \"The agent half is back with its settings store\"\nelse\n  log_fail \"The agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)\"\nfi\nwait_health up 45 || true\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"A change is accepted again\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.revision) \\(.values.verbose) \\(.values.apiKey.setAt)\"' \"2 true ${SET_AT_A}\" \"…revision 2: the agent half reloaded its files, secret A kept\" || true\nPROBE=$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"The agent half holds secret A…\" || true\nassert_json_field \"$PROBE\" '.values.verbose' 'true' \"…and verbose true\" || true\n\n# ===========================================================================\n# 9. The relay keeps no secret\n# ==========================================================================="
+      "bash": "log_section \"The agent half stopped, then without settings, then back\"\n\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nsleep 1\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"Until the health monitor notices, a change reaches a closed port: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'refused' \"…refused\" || true\nif wait_health down 60; then\n  log_pass \"Health reports down\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nRESP=$(settings_call GET \"plugins/${PLUGIN}/settings\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"GET settings still answers\" || true\nVIEW=$(body_of \"$RESP\")\nassert_json_field \"$VIEW\" '\"\\(.source) \\(.hosting.state)\"' 'cache down' \"…from the cache, the hosting down\" || true\nassert_json_field \"$VIEW\" '\"\\(.configured) \\(.values.region) \\(.values.apiKey.set) \\(.revision)\"' 'true eu true 1' \"…as last synced: configured, region eu, apiKey set, revision 1\" || true\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"503\" \"Health down: a change is refused (503)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'hosting_offline' \"…hosting_offline\" || true\n\nif start_half plain && wait_health up 60; then\n  log_pass \"An agent half without settings answers; health is up\"\nelse\n  log_fail \"The agent half without settings did not come up: $(hosting_field '.hosting.health')\"\nfi\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"An agent half that does not answer /admin/settings: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'settings_unsupported' \"…settings_unsupported\" || true\n\nif start_half; then\n  log_pass \"The agent half is back with its settings store\"\nelse\n  log_fail \"The agent half did not start: $(cat \"${WORK_DIR}/half.out\" 2>/dev/null)\"\nfi\nwait_health up 45 || true\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":1,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"A change is accepted again\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.revision) \\(.values.verbose) \\(.values.apiKey.setAt)\"' \"2 true ${SET_AT_A}\" \"…revision 2: the agent half reloaded its files, secret A kept\" || true\nPROBE=$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"The agent half holds secret A…\" || true\nassert_json_field \"$PROBE\" '.values.verbose' 'true' \"…and verbose true\" || true\n\n# ===========================================================================\n# 9. A squatter on the agent half's port\n# ==========================================================================="
+    },
+    {
+      "id": "a-squatter-on-the-agent-half-s-port-gets-nothing-and-serves-nothing",
+      "label": "A squatter on the agent half's port gets nothing and serves nothing",
+      "steps": [
+        {
+          "id": "step-322",
+          "label": "Health is up: the relay sends changes to the hosting",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health is up: the relay sends changes to the hosting"
+          }
+        },
+        {
+          "id": "step-323",
+          "label": "Health is not up before the squatter: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health is not up before the squatter: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-324",
+          "label": "Set CALLS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "health_calls"
+          },
+          "capture": [
+            {
+              "variable": "CALLS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-327",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-331",
+          "label": "Right after a health probe the agent half answered, it stopped and ${SQUATTER_USER} took port ${PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Right after a health probe the agent half answered, it stopped and ${SQUATTER_USER} took port ${PORT}"
+          }
+        },
+        {
+          "id": "step-332",
+          "label": "The squatter did not take port ${PORT}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The squatter did not take port ${PORT}"
+          }
+        },
+        {
+          "id": "step-333",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_call PUT \"plugins/${PLUGIN}/settings\" \"@${PRIV}/put-s.json\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-334",
+          "label": "Set SENT_AFTER",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(SECONDS - TOOK_AT)"
+          },
+          "capture": [
+            {
+              "variable": "SENT_AFTER",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-336",
+          "label": "503: health was down already, ${SENT_AFTER}s after the squatter took the port — this section needs the change sent well within 20 s of it",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "503: health was down already, ${SENT_AFTER}s after the squatter took the port — this section needs the change sent well within 20 s of it"
+          }
+        },
+        {
+          "id": "step-337",
+          "label": "A settings change with secret S, sent ${SENT_AFTER}s after the squatter took the port, health still up: 502",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "A settings change with secret S, sent ${SENT_AFTER}s after the squatter took the port, health still up: 502"
+            }
+          }
+        },
+        {
+          "id": "step-338",
+          "label": "…unauthenticated: the answer could not prove it was the agent half's",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".code",
+              "expected": {
+                "kind": "literal",
+                "value": "unauthenticated"
+              },
+              "message": "…unauthenticated: the answer could not prove it was the agent half's"
+            }
+          }
+        },
+        {
+          "id": "step-339",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_call GET \"${PLUGIN}/ping\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-340",
+          "label": "A forwarded page request (/api/${PLUGIN}/ping): 502…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "A forwarded page request (/api/${PLUGIN}/ping): 502…"
+            }
+          }
+        },
+        {
+          "id": "step-341",
+          "label": "…reason app…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "app"
+              },
+              "message": "…reason app…"
+            }
+          }
+        },
+        {
+          "id": "step-342",
+          "label": "…never the squatter's answer",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SQUAT_MARK"
+              },
+              "message": "…never the squatter's answer"
+            }
+          }
+        },
+        {
+          "id": "step-343",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_call GET \"${PLUGIN}/panel.js\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-344",
+          "label": "The plugin's panel bundle (/api/${PLUGIN}/panel.js): 502…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "The plugin's panel bundle (/api/${PLUGIN}/panel.js): 502…"
+            }
+          }
+        },
+        {
+          "id": "step-345",
+          "label": "…not the squatter's content",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_contains",
+              "actual": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "substring": {
+                "kind": "var",
+                "name": "SQUAT_MARK"
+              },
+              "message": "…not the squatter's content"
+            }
+          }
+        },
+        {
+          "id": "step-346",
+          "label": "Set SQUATTED",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "jq -s -c '[.[] | select(.method == \"PUT\" and .url == \"/admin/settings\")] as $puts | {puts: ($puts | length), sealed: [$puts[] | (.body | fromjson? // {}) | .secrets.apiKey | select(type == \"object\" and .v == 1 and (.iv | type) == \"string\" and (.ct | type) == \"string\")] | length, pings: [.[] | select(.url | startswith(\"/admin/ping\"))] | length, bundles: [.[] | select(.url == \"/admin/panel.js\")] | length}' \"${SQUAT_LOG}\" 2>/dev/null || echo '{}'"
+          },
+          "capture": [
+            {
+              "variable": "SQUATTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-347",
+          "label": "The forwarder did send the squatter the page and the bundle requests — and refused its answers",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SQUATTED"
+              },
+              "path": "\"\\(.pings) \\(.bundles)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "1 1"
+              },
+              "message": "The forwarder did send the squatter the page and the bundle requests — and refused its answers"
+            }
+          }
+        },
+        {
+          "id": "step-348",
+          "label": "The relay sent the squatter the settings change…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SQUATTED"
+              },
+              "path": ".puts",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "The relay sent the squatter the settings change…"
+            }
+          }
+        },
+        {
+          "id": "step-349",
+          "label": "…with secret S sealed ({ v, iv, ct }: AES-256-GCM under the installation secret)…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SQUATTED"
+              },
+              "path": ".sealed",
+              "expected": {
+                "kind": "literal",
+                "value": "1"
+              },
+              "message": "…with secret S sealed ({ v, iv, ct }: AES-256-GCM under the installation secret)…"
+            }
+          }
+        },
+        {
+          "id": "step-350",
+          "label": "(the squatter's log: 0600, ${SQUATTER_USER}'s)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(stat -c '%a %U' \"${SQUAT_LOG}\" 2>/dev/null || echo \"\")"
+              },
+              "expected": {
+                "kind": "expr",
+                "template": "600 ${SQUATTER_USER}"
+              },
+              "message": "(the squatter's log: 0600, ${SQUATTER_USER}'s)"
+            }
+          }
+        },
+        {
+          "id": "step-351",
+          "label": "…and secret S (or A) in clear nowhere in what it received",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(secret_lines \"${SQUAT_LOG}\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "0"
+              },
+              "message": "…and secret S (or A) in clear nowhere in what it received"
+            }
+          }
+        },
+        {
+          "id": "step-352",
+          "label": "Health reports down: the squatter's answers to the probe do not authenticate",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Health reports down: the squatter's answers to the probe do not authenticate"
+          }
+        },
+        {
+          "id": "step-353",
+          "label": "Health did not report down: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health did not report down: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-354",
+          "label": "…reason app: something answers on the port, not the agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(hosting_field '.hosting.health.reason')"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "app"
+              },
+              "message": "…reason app: something answers on the port, not the agent half"
+            }
+          }
+        },
+        {
+          "id": "step-356",
+          "label": "The squatter gone, the agent half is back and health up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The squatter gone, the agent half is back and health up"
+          }
+        },
+        {
+          "id": "step-357",
+          "label": "The agent half did not come back: $(hosting_field '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent half did not come back: $(hosting_field '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-358",
+          "label": "Set PROBE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\""
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-359",
+          "label": "The change the squatter was sent never reached the agent half: revision 2, verbose true…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": "\"\\(.revision) \\(.values.verbose)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "2 true"
+              },
+              "message": "The change the squatter was sent never reached the agent half: revision 2, verbose true…"
+            }
+          }
+        },
+        {
+          "id": "step-360",
+          "label": "…and it holds secret A, not S",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".secretDigests.apiKey",
+              "expected": {
+                "kind": "var",
+                "name": "DIGEST_A"
+              },
+              "message": "…and it holds secret A, not S"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"A squatter on the agent half's port gets nothing and serves nothing\"\n\n# Test secret S, for the change the squatter will be sent.\n(umask 077 && openssl rand -hex 24 > \"${PRIV}/secret-s\")\ncat \"${PRIV}/secret-s\" >> \"${PRIV}/patterns\"\n(umask 077 && jq -c -n --rawfile k \"${PRIV}/secret-s\" '{revision: 2, values: {verbose: false}, secrets: {apiKey: ($k | rtrimstr(\"\\n\"))}}' > \"${PRIV}/put-s.json\")\nrm -rf \"${SQUAT_DIR}\"\ninstall -d -m 0755 \"${SQUAT_DIR}\"\ninstall -d -m 0700 -o \"${SQUATTER_USER}\" \"${SQUAT_DIR}/log\"\nwrite_squatter \"${SQUAT_DIR}/squatter.mjs\"\nchmod 0644 \"${SQUAT_DIR}/squatter.mjs\"\nif wait_health up 45; then\n  log_pass \"Health is up: the relay sends changes to the hosting\"\nelse\n  log_fail \"Health is not up before the squatter: $(hosting_field '.hosting.health')\"\nfi\n\n# Timing: the health monitor probes every 10 s and reports down after three\n# failed probes in a row. The agent half is stopped right after a probe it\n# answered, so the squatter's answers can turn health down no sooner than\n# the third probe after it, ~30 s later (20 s at the very least). The change\n# goes out within a few seconds of the squatter taking the port — while the\n# relay still holds the hosting up and sends it: the moment a squatter could\n# have been handed a secret.\nCALLS=$(health_calls)\ndeadline=$((SECONDS + 15))\nwhile [ \"$SECONDS\" -lt \"$deadline\" ] && [ \"$(health_calls)\" -le \"${CALLS:-0}\" ]; do\n  sleep 1\ndone\npkill -f '[a]pp-plugin-half.mjs' 2>/dev/null || true\nTOOK_AT=$SECONDS\nif start_squatter; then\n  log_pass \"Right after a health probe the agent half answered, it stopped and ${SQUATTER_USER} took port ${PORT}\"\nelse\n  log_fail \"The squatter did not take port ${PORT}\"\nfi\nRESP=$(settings_call PUT \"plugins/${PLUGIN}/settings\" \"@${PRIV}/put-s.json\")\nSENT_AFTER=$((SECONDS - TOOK_AT))\nrm -f \"${PRIV}/put-s.json\"\nif [ \"$(status_of \"$RESP\")\" = \"503\" ]; then\n  log_info \"503: health was down already, ${SENT_AFTER}s after the squatter took the port — this section needs the change sent well within 20 s of it\"\nfi\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A settings change with secret S, sent ${SENT_AFTER}s after the squatter took the port, health still up: 502\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.code' 'unauthenticated' \"…unauthenticated: the answer could not prove it was the agent half's\" || true\nRESP=$(settings_call GET \"${PLUGIN}/ping\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"A forwarded page request (/api/${PLUGIN}/ping): 502…\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '.reason' 'app' \"…reason app…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…never the squatter's answer\" || true\nRESP=$(settings_call GET \"${PLUGIN}/panel.js\")\nassert_eq \"$(status_of \"$RESP\")\" \"502\" \"The plugin's panel bundle (/api/${PLUGIN}/panel.js): 502…\" || true\nassert_not_contains \"$(body_of \"$RESP\")\" \"${SQUAT_MARK}\" \"…not the squatter's content\" || true\n\n# What the squatter was sent, as counts: never a body.\nSQUATTED=$(jq -s -c '[.[] | select(.method == \"PUT\" and .url == \"/admin/settings\")] as $puts | {puts: ($puts | length), sealed: [$puts[] | (.body | fromjson? // {}) | .secrets.apiKey | select(type == \"object\" and .v == 1 and (.iv | type) == \"string\" and (.ct | type) == \"string\")] | length, pings: [.[] | select(.url | startswith(\"/admin/ping\"))] | length, bundles: [.[] | select(.url == \"/admin/panel.js\")] | length}' \"${SQUAT_LOG}\" 2>/dev/null || echo '{}')\nassert_json_field \"$SQUATTED\" '\"\\(.pings) \\(.bundles)\"' '1 1' \"The forwarder did send the squatter the page and the bundle requests — and refused its answers\" || true\nassert_json_field \"$SQUATTED\" '.puts' '1' \"The relay sent the squatter the settings change…\" || true\nassert_json_field \"$SQUATTED\" '.sealed' '1' \"…with secret S sealed ({ v, iv, ct }: AES-256-GCM under the installation secret)…\" || true\nassert_eq \"$(stat -c '%a %U' \"${SQUAT_LOG}\" 2>/dev/null || echo \"\")\" \"600 ${SQUATTER_USER}\" \"(the squatter's log: 0600, ${SQUATTER_USER}'s)\" || true\nassert_eq \"$(secret_lines \"${SQUAT_LOG}\")\" \"0\" \"…and secret S (or A) in clear nowhere in what it received\" || true\n\nif wait_health down 45; then\n  log_pass \"Health reports down: the squatter's answers to the probe do not authenticate\"\nelse\n  log_fail \"Health did not report down: $(hosting_field '.hosting.health')\"\nfi\nassert_eq \"$(hosting_field '.hosting.health.reason')\" \"app\" \"…reason app: something answers on the port, not the agent half\" || true\n\npkill -f '[s]quatter.mjs' 2>/dev/null || true\nif start_half && wait_health up 45; then\n  log_pass \"The squatter gone, the agent half is back and health up\"\nelse\n  log_fail \"The agent half did not come back: $(hosting_field '.hosting.health')\"\nfi\nPROBE=$(body_of \"$(settings_call GET \"${PLUGIN}/probe/settings\")\")\nassert_json_field \"$PROBE\" '\"\\(.revision) \\(.values.verbose)\"' '2 true' \"The change the squatter was sent never reached the agent half: revision 2, verbose true…\" || true\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"…and it holds secret A, not S\" || true\n\n# ===========================================================================\n# 10. The relay keeps no secret\n# ==========================================================================="
     },
     {
       "id": "the-relay-keeps-no-secret",
       "label": "The relay keeps no secret",
       "steps": [
         {
-          "id": "step-275",
+          "id": "step-365",
           "label": "state.db, dumped ($(wc -l < \"${PRIV}/state.sql\" | tr -d ' ') lines), holds no secret",
           "target": "local",
           "continueOnError": true,
@@ -2548,7 +3206,7 @@
           }
         },
         {
-          "id": "step-276",
+          "id": "step-366",
           "label": "…the dump holds plugin_settings",
           "target": "local",
           "continueOnError": true,
@@ -2569,7 +3227,7 @@
           }
         },
         {
-          "id": "step-278",
+          "id": "step-368",
           "label": "The journal since the spec started ($(wc -l < \"${PRIV}/journal.txt\" | tr -d ' ') lines) holds none",
           "target": "local",
           "continueOnError": true,
@@ -2590,7 +3248,7 @@
           }
         },
         {
-          "id": "step-279",
+          "id": "step-369",
           "label": "Set FILES",
           "target": "local",
           "op": {
@@ -2607,7 +3265,7 @@
           ]
         },
         {
-          "id": "step-280",
+          "id": "step-370",
           "label": "No file under /etc/lamalibre, /var/lib/lamalibre or /opt/lamalibre holds it",
           "target": "local",
           "continueOnError": true,
@@ -2628,7 +3286,7 @@
           }
         },
         {
-          "id": "step-281",
+          "id": "step-371",
           "label": "No answer read holds it ($(grep -c '^### ' \"${PRIV}/responses.log\") answers, the audit log among them)",
           "target": "local",
           "continueOnError": true,
@@ -2649,7 +3307,7 @@
           }
         },
         {
-          "id": "step-282",
+          "id": "step-372",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -2666,7 +3324,7 @@
           ]
         },
         {
-          "id": "step-284",
+          "id": "step-374",
           "label": "The relay's cache (plugin_settings): revision 2, configured, and only when apiKey was set",
           "target": "local",
           "continueOnError": true,
@@ -2688,14 +3346,14 @@
           }
         }
       ],
-      "bash": "log_section \"The relay keeps no secret\"\n\nfor path in plugins \"plugins/${PLUGIN}\" \"plugins/${PLUGIN}/settings\" \"plugins/${PLUGIN}/hosting\" \"plugins/${PLUGIN}/operations\" \\\n  \"audit?plugin=${PLUGIN}&limit=200\" \"audit?limit=200\" \"notifications?limit=200\" \"${PLUGIN}/probe/settings\"; do\n  settings_call GET \"$path\" > /dev/null\ndone\nrunuser -u lamaste -- sqlite3 -readonly \"${STATE_DIR}/state.db\" .dump > \"${PRIV}/state.sql\" 2>/dev/null || true\nassert_eq \"$(secret_lines \"${PRIV}/state.sql\")\" \"0\" \"state.db, dumped ($(wc -l < \"${PRIV}/state.sql\" | tr -d ' ') lines), holds no secret\" || true\nassert_eq \"$(grep -q 'plugin_settings' \"${PRIV}/state.sql\" 2>/dev/null && echo \"yes\" || echo \"no\")\" \"yes\" \"…the dump holds plugin_settings\" || true\njournalctl --since \"@${SPEC_START}\" --no-pager -o cat > \"${PRIV}/journal.txt\" 2>/dev/null || true\nassert_eq \"$(secret_lines \"${PRIV}/journal.txt\")\" \"0\" \"The journal since the spec started ($(wc -l < \"${PRIV}/journal.txt\" | tr -d ' ') lines) holds none\" || true\nFILES=$(grep -rlaF --devices=skip -f \"${PRIV}/patterns\" /etc/lamalibre /var/lib/lamalibre /opt/lamalibre 2>/dev/null | wc -l | tr -d ' ')\nassert_eq \"$FILES\" \"0\" \"No file under /etc/lamalibre, /var/lib/lamalibre or /opt/lamalibre holds it\" || true\nassert_eq \"$(secret_lines \"${PRIV}/responses.log\")\" \"0\" \"No answer read holds it ($(grep -c '^### ' \"${PRIV}/responses.log\") answers, the audit log among them)\" || true\n# Keys and counts only: a secret the relay wrongly cached is not printed here.\nROW=$(runuser -u lamaste -- sqlite3 -readonly -json \"${STATE_DIR}/state.db\" \"SELECT revision, configured, (SELECT group_concat(key) FROM json_each(secrets_set_json)) AS secretKeys, (SELECT count(*) FROM json_each(secrets_set_json) WHERE value GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*') AS setAtTimestamps FROM plugin_settings WHERE plugin = '${PLUGIN}'\" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo \"\")\n[ -n \"$ROW\" ] || ROW='{}'\nassert_json_field \"$ROW\" '\"\\(.revision) \\(.configured) \\(.secretKeys) \\(.setAtTimestamps)\"' '2 1 apiKey 1' \"The relay's cache (plugin_settings): revision 2, configured, and only when apiKey was set\" || true\nrm -f \"${PRIV}/state.sql\" \"${PRIV}/journal.txt\"\n\n# ===========================================================================\n# 10. Uninstall\n# ==========================================================================="
+      "bash": "log_section \"The relay keeps no secret\"\n\nfor path in plugins \"plugins/${PLUGIN}\" \"plugins/${PLUGIN}/settings\" \"plugins/${PLUGIN}/hosting\" \"plugins/${PLUGIN}/operations\" \\\n  \"audit?plugin=${PLUGIN}&limit=200\" \"audit?limit=200\" \"notifications?limit=200\" \"${PLUGIN}/probe/settings\"; do\n  settings_call GET \"$path\" > /dev/null\ndone\nrunuser -u lamaste -- sqlite3 -readonly \"${STATE_DIR}/state.db\" .dump > \"${PRIV}/state.sql\" 2>/dev/null || true\nassert_eq \"$(secret_lines \"${PRIV}/state.sql\")\" \"0\" \"state.db, dumped ($(wc -l < \"${PRIV}/state.sql\" | tr -d ' ') lines), holds no secret\" || true\nassert_eq \"$(grep -q 'plugin_settings' \"${PRIV}/state.sql\" 2>/dev/null && echo \"yes\" || echo \"no\")\" \"yes\" \"…the dump holds plugin_settings\" || true\njournalctl --since \"@${SPEC_START}\" --no-pager -o cat > \"${PRIV}/journal.txt\" 2>/dev/null || true\nassert_eq \"$(secret_lines \"${PRIV}/journal.txt\")\" \"0\" \"The journal since the spec started ($(wc -l < \"${PRIV}/journal.txt\" | tr -d ' ') lines) holds none\" || true\nFILES=$(grep -rlaF --devices=skip -f \"${PRIV}/patterns\" /etc/lamalibre /var/lib/lamalibre /opt/lamalibre 2>/dev/null | wc -l | tr -d ' ')\nassert_eq \"$FILES\" \"0\" \"No file under /etc/lamalibre, /var/lib/lamalibre or /opt/lamalibre holds it\" || true\nassert_eq \"$(secret_lines \"${PRIV}/responses.log\")\" \"0\" \"No answer read holds it ($(grep -c '^### ' \"${PRIV}/responses.log\") answers, the audit log among them)\" || true\n# Keys and counts only: a secret the relay wrongly cached is not printed here.\nROW=$(runuser -u lamaste -- sqlite3 -readonly -json \"${STATE_DIR}/state.db\" \"SELECT revision, configured, (SELECT group_concat(key) FROM json_each(secrets_set_json)) AS secretKeys, (SELECT count(*) FROM json_each(secrets_set_json) WHERE value GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*') AS setAtTimestamps FROM plugin_settings WHERE plugin = '${PLUGIN}'\" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo \"\")\n[ -n \"$ROW\" ] || ROW='{}'\nassert_json_field \"$ROW\" '\"\\(.revision) \\(.configured) \\(.secretKeys) \\(.setAtTimestamps)\"' '2 1 apiKey 1' \"The relay's cache (plugin_settings): revision 2, configured, and only when apiKey was set\" || true\nrm -f \"${PRIV}/state.sql\" \"${PRIV}/journal.txt\"\n\n# ===========================================================================\n# 11. Uninstall\n# ==========================================================================="
     },
     {
       "id": "uninstalling-drops-the-cached-settings",
       "label": "Uninstalling drops the cached settings",
       "steps": [
         {
-          "id": "step-286",
+          "id": "step-376",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -2705,7 +3363,7 @@
           }
         },
         {
-          "id": "step-287",
+          "id": "step-377",
           "label": "DELETE /api/plugins/${PLUGIN}",
           "target": "host",
           "op": {
@@ -2723,7 +3381,7 @@
           ]
         },
         {
-          "id": "step-288",
+          "id": "step-378",
           "label": "Set UNINSTALL_OP",
           "target": "local",
           "op": {
@@ -2740,7 +3398,7 @@
           ]
         },
         {
-          "id": "step-289",
+          "id": "step-379",
           "label": "Plugin uninstalled",
           "target": "local",
           "continueOnError": true,
@@ -2762,7 +3420,7 @@
           }
         },
         {
-          "id": "step-290",
+          "id": "step-380",
           "label": "GET settings: 404",
           "target": "local",
           "continueOnError": true,
@@ -2783,7 +3441,7 @@
           }
         },
         {
-          "id": "step-291",
+          "id": "step-381",
           "label": "Set LEFT",
           "target": "local",
           "op": {
@@ -2800,7 +3458,7 @@
           ]
         },
         {
-          "id": "step-292",
+          "id": "step-382",
           "label": "No plugin_settings row left",
           "target": "local",
           "continueOnError": true,
@@ -2825,8 +3483,8 @@
     }
   ],
   "apiHelpers": ["agent_api_get", "agent_api_post"],
-  "headerRaw": "# ============================================================================\n# 31 — Plugin settings: manifest refusals, the panel's checks, the agent half\n# ============================================================================\n# Slice 4 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_settings_fixture_plugins):\n# - a manifest's settings block is checked at install: settings without an\n#   agent block, a default on a secret, a pattern that does not compile and\n#   51 fields are each refused (400, naming the issue) and leave nothing; a\n#   plugin without a settings block has none to read (404 no_settings)\n# - installed but not hosted, the plugin shows its fields and refuses a\n#   change (503 hosting_offline)\n# - hosted, with its agent half on the relay loopback as spec 29 runs it\n#   (write_app_plugin_half --manifest: Lamaste's createSettingsStore and\n#   createSettingsHandler): GET settings is live; each rule of the panel's\n#   checks refuses with a message per field that never repeats the value,\n#   without a call to the agent half; a pattern is refused by the agent half\n#   (422), a stale revision with 409; a secret PUT from a 0600 file reads\n#   back as { set: true } and the agent half proves it holds it by digest;\n#   its files are 0600 and the secret is in secrets.json alone\n# - /api/<route>/settings and everything under it is not forwarded (404)\n# - the agent half stopped: a change is 502 (refused) until the health\n#   monitor reports it down, then 503 hosting_offline while GET reads the\n#   cache; an agent half without settings is 502 settings_unsupported; back\n#   with its settings, it reloads its files and changes are accepted\n# - the relay keeps no secret: state.db (dumped), the journal since the\n#   spec started, the files under /etc/lamalibre, /var/lib/lamalibre and\n#   /opt/lamalibre, every answer read; uninstalling drops the cached settings\n#\n# The test secret is made on the VM into a 0600 file and only ever compared\n# by digest or counted. Settings reaching an agent half Lamaste installed on\n# another machine, through the tunnel, are three-VM spec 37; the hosting\n# agent offline is spec 38.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl sqlite3\n\nbegin_test \"31 — Plugin settings: manifest refusals, the panel's checks, the agent half\"\n\n# The journal is scanned from here on.\nSPEC_START=$(date +%s)\n",
+  "headerRaw": "# ============================================================================\n# 31 — Plugin settings: manifest refusals, the panel's checks, the agent half\n# ============================================================================\n# Slice 4 on one VM, with fixtures served by a stand-in registry on the VM\n# (helpers.sh, write_settings_fixture_plugins):\n# - a manifest's settings block is checked at install: settings without an\n#   agent block, a default on a secret, a pattern that does not compile and\n#   51 fields are each refused (400, naming the issue) and leave nothing; a\n#   plugin without a settings block has none to read (404 no_settings)\n# - installed but not hosted, the plugin shows its fields and refuses a\n#   change (503 hosting_offline)\n# - hosted, with its agent half on the relay loopback as spec 29 runs it\n#   (write_app_plugin_half --manifest: Lamaste's createSettingsStore and\n#   createSettingsHandler): GET settings is live; each rule of the panel's\n#   checks refuses with a message per field that never repeats the value\n#   (a setting the schema does not know is counted, never named), without a\n#   call to the agent half; a pattern is refused by the agent half (422), a\n#   stale revision with 409; a secret PUT from a 0600 file reads back as\n#   { set: true } and the agent half proves it holds it by digest; its files\n#   are 0600 and the secret is in secrets.json alone\n# - /api/<route>/settings and everything under it is not forwarded (404)\n# - the agent half stopped: a change is 502 (refused) until the health\n#   monitor reports it down, then 503 hosting_offline while GET reads the\n#   cache; an agent half without settings (its authenticated 404) is 502\n#   settings_unsupported; back with its settings, it reloads its files and\n#   changes are accepted\n# - a squatter takes the agent half's port the moment it lets go — an\n#   unprivileged process (nobody) answering 200 to everything, with a\n#   forged X-Lamalibre-Responder, and logging every request: a settings\n#   change carrying a new test secret, sent while the relay still believes\n#   the hosting up, is 502 unauthenticated; the squatter got the secret\n#   sealed, never in clear; health turns down (reason app) and a forwarded\n#   page or the panel bundle is 502, never the squatter's answer; the agent\n#   half back, it never saw that change\n# - the relay keeps no secret: state.db (dumped), the journal since the\n#   spec started, the files under /etc/lamalibre, /var/lib/lamalibre and\n#   /opt/lamalibre, every answer read; uninstalling drops the cached settings\n#\n# The test secrets are made on the VM into 0600 files and only ever compared\n# by digest or counted. Settings reaching an agent half Lamaste installed on\n# another machine, through the tunnel, are three-VM spec 37; the hosting\n# agent offline is spec 38; what systemd's socket leaves a squatter on the\n# agent's side is spec 35.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/helpers.sh\"\n\nrequire_commands curl jq node npm openssl sqlite3 runuser\n\nbegin_test \"31 — Plugin settings: manifest refusals, the panel's checks, the agent half\"\n\n# The journal is scanned from here on.\nSPEC_START=$(date +%s)\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }

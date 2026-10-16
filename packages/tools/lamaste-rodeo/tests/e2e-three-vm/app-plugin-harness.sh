@@ -17,7 +17,10 @@
 #   pins the relay's signing key — the helper runs only app jobs it signed;
 # - open_push_install: the push-install gates an agent-half push passes;
 # - agent_facts / relay_leftovers: the agent VM's and the relay's state of an
-#   agent half, each read in one call and never including a secret;
+#   agent half — its units, the socket systemd holds its port with and who
+#   listens on that port among it — each read in one call and never
+#   including a secret; port_probe: what that socket leaves another local
+#   process (spec 35);
 # - nudge_sync: start the agent's sync unit now instead of when its timer
 #   fires — the same unit, so never two syncs at once. Spec 34 hosts on the
 #   timer alone; the specs nudge later operations to stay inside rodeo's
@@ -62,6 +65,9 @@ APPHOST_STATUS_BEFORE=""
 # set, wait_for_app_host_facts also waits for the agent to report it pinned.
 RELAY_KID=""
 AUDIT_BASE=0
+# The hosting's port once the spec knows it: agent_facts reports who listens
+# on it (after a purge too, when no file names it any more)
+FACTS_PORT=""
 # What the cleanup restores (set as the spec changes it)
 APPHOST_ENABLED_HERE=""
 PUSH_GLOBAL_BEFORE=""
@@ -426,31 +432,33 @@ host_plugin() {
 
 # write_agent_facts_probe <file> — a Node script printing, as one line of
 # JSON, an agent half's state on the agent VM: its unit (as written and as
-# systemd applies it), account, code, data, config, the agent's own copy of
-# the plugin config and record, the helper, and system packages. A secret is
+# systemd applies it), its socket unit (the same, and the file's digest), the
+# unit's drop-in directory, who listens on its port (ss: the processes
+# sharing the listening socket, its inode) and what the running service's
+# descriptor 3 is, account, code, data, config, the agent's own copy of the
+# plugin config and record, the helper, and system packages. A secret is
 # only ever compared on the VM, never printed.
 #
-#   node agent-facts.mjs <route> <service user> <agent label> [<system package>...]
+#   [E2E_FACTS_PORT=<port>] node agent-facts.mjs <route> <service user> <agent label> [<system package>...]
+#
+# The port looked at is E2E_FACTS_PORT when set (the specs pass the
+# hosting's, so "nothing listens" can be read after a purge), else the
+# plugin config's, else the socket file's.
 write_agent_facts_probe() {
   cat > "$1" <<'PROBE_EOF'
-import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { listenersOn, run, showProps, socketInodeOf } from './probe-lib.mjs';
 
 const [route, user, label, ...packages] = process.argv.slice(2);
 const unit = `lamalibre-app-${route}.service`;
+const socketUnit = `lamalibre-app-${route}.socket`;
 const codeDir = `/opt/lamalibre/apps/${route}`;
 const dataDir = `/var/lib/lamalibre/apps/${route}`;
 const configDir = `/etc/lamalibre/apps/${route}`;
 const agentDir = `/root/.lamalibre/lamaste/agents/${label}`;
 
-function run(file, args) {
-  try {
-    return execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch (err) {
-    return typeof err.stdout === 'string' ? err.stdout.trim() : '';
-  }
-}
 const names = { passwd: new Map(), group: new Map() };
 function nameOf(db, id) {
   if (!names[db].has(id)) names[db].set(id, run('getent', [db, String(id)]).split(':')[0] || String(id));
@@ -481,27 +489,51 @@ function linkOf(p) {
 }
 
 const PROPS = [
-  'LoadState', 'ActiveState', 'UnitFileState', 'MainPID', 'User', 'Group', 'ExecStart',
+  'LoadState', 'ActiveState', 'SubState', 'UnitFileState', 'MainPID', 'User', 'Group', 'ExecStart',
   'Environment', 'ProtectSystem', 'ProtectHome', 'NoNewPrivileges', 'PrivateTmp',
   'PrivateDevices', 'ReadWritePaths', 'RestrictSUIDSGID', 'LockPersonality', 'MemoryMax',
-  'CapabilityBoundingSet', 'UMask', 'Restart',
+  'CapabilityBoundingSet', 'UMask', 'Restart', 'LimitCORE', 'Sockets', 'TriggeredBy',
+  'Requires', 'After', 'ActiveEnterTimestamp', 'NRestarts',
 ];
-const props = {};
-for (const line of run('systemctl', ['show', unit, `--property=${PROPS.join(',')}`]).split('\n')) {
-  const eq = line.indexOf('=');
-  if (eq > 0) props[line.slice(0, eq)] = line.slice(eq + 1);
+const SOCKET_PROPS = [
+  'LoadState', 'ActiveState', 'SubState', 'UnitFileState', 'Listen', 'Accept', 'NoDelay',
+  'Triggers', 'ActiveEnterTimestamp',
+];
+// A unit file's section headers and directives, as written (no comments, no blank lines)
+function unitLines(file) {
+  try {
+    return fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l !== '' && !l.startsWith('#'));
+  } catch {
+    return [];
+  }
 }
-let lines = [];
-try {
-  lines = fs
-    .readFileSync(`/etc/systemd/system/${unit}`, 'utf8')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l !== '' && !l.startsWith('#'));
-} catch {
-  lines = [];
-}
+const props = showProps(unit, PROPS);
+const lines = unitLines(`/etc/systemd/system/${unit}`);
 const pid = Number(props.MainPID ?? 0);
+
+// The socket unit that holds the agent half's port: as written, as systemd runs it.
+const socketPath = `/etc/systemd/system/${socketUnit}`;
+let socketText = null;
+try {
+  socketText = fs.readFileSync(socketPath, 'utf8');
+} catch {
+  socketText = null;
+}
+const socketLines = unitLines(socketPath);
+const socket = {
+  name: socketUnit,
+  file: socketText !== null,
+  stat: statOf(socketPath),
+  lines: socketLines,
+  sha256: socketText === null ? null : crypto.createHash('sha256').update(socketText).digest('hex'),
+  // Lines that look like an installation secret (64 hex characters)
+  secretLines: socketLines.filter((l) => /[0-9a-f]{64}/.test(l)).length,
+  props: showProps(socketUnit, SOCKET_PROPS),
+};
 let processUser = null;
 if (pid > 0) {
   try {
@@ -544,6 +576,12 @@ const config = readJson(`${configDir}/plugin-config.json`);
 const agentCopy = readJson(`${agentDir}/app-plugins/${route}.json`);
 const state = readJson(`${dataDir}/state.json`);
 const record = readJson(`${agentDir}/apphost-state.json`);
+
+// Who holds the port: the spec's (it outlives a purge), else the config's,
+// else the socket file's.
+const socketFilePort = Number(/^ListenStream=127\.0\.0\.1:([0-9]{1,5})$/m.exec(socketText ?? '')?.[1] ?? 0);
+const port =
+  Number(process.env.E2E_FACTS_PORT ?? '') || (Number.isInteger(config?.port) ? config.port : 0) || socketFilePort || null;
 let history = '';
 try {
   history = fs.readFileSync('/var/log/apt/history.log', 'utf8');
@@ -560,6 +598,14 @@ const aptRuns = (p) =>
 process.stdout.write(
   `${JSON.stringify({
     unit: { name: unit, file: lines.length > 0, lines, props, processUser },
+    socket,
+    dropInDir: statOf(`/etc/systemd/system/${unit}.d`),
+    listen: {
+      port,
+      listeners: port === null ? null : listenersOn(port),
+      // The listening socket the running agent half was given (systemd's), by inode
+      fd3Inode: pid > 0 ? socketInodeOf(pid, 3) : null,
+    },
     account,
     code: {
       dir: statOf(codeDir),
@@ -596,18 +642,192 @@ process.stdout.write(
 PROBE_EOF
 }
 
-# ship_agent_facts_probe — write the probe and put it on the agent VM (REMOTE_DIR)
-ship_agent_facts_probe() {
-  write_agent_facts_probe "${LOCAL_TMP}/agent-facts.mjs"
-  agent_exec "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}"
-  multipass transfer "${LOCAL_TMP}/agent-facts.mjs" "${AGENT_VM}:${REMOTE_DIR}/agent-facts.mjs"
+# write_probe_lib <file> — probe-lib.mjs, what the agent VM's probes share:
+# run (a command's output, "" when it fails), showProps (`systemctl show`
+# properties of a unit), listenersOn (who listens on a TCP port, from ss as
+# root: each listening socket's address, the processes sharing it and its
+# inode) and socketInodeOf (the socket behind a process's descriptor)
+write_probe_lib() {
+  cat > "$1" <<'PROBE_EOF'
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+
+export function run(file, args) {
+  try {
+    return execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch (err) {
+    return typeof err.stdout === 'string' ? err.stdout.trim() : '';
+  }
 }
 
-# agent_facts <route> <service user> [<system package>...] — see write_agent_facts_probe
+export function showProps(name, wanted) {
+  const out = {};
+  for (const line of run('systemctl', ['show', name, `--property=${wanted.join(',')}`]).split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq > 0) out[line.slice(0, eq)] = line.slice(eq + 1);
+  }
+  return out;
+}
+
+// `ss -Hltnpe 'sport = :<port>'`: one entry per listening TCP socket on the
+// port — `users:(("node",pid=…,fd=3),("systemd",pid=1,fd=…))` names every
+// process holding it, `ino:` is the socket's inode.
+export function listenersOn(port) {
+  return run('ss', ['-Hltnpe', `sport = :${port}`])
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const fields = line.trim().split(/\s+/);
+      const users = [...line.matchAll(/\("([^"]*)",pid=([0-9]+),fd=([0-9]+)\)/g)].map((m) => ({
+        name: m[1],
+        pid: Number(m[2]),
+        fd: Number(m[3]),
+      }));
+      const inode = /\bino:([0-9]+)/.exec(line)?.[1];
+      return { state: fields[0] ?? null, local: fields[3] ?? null, users, inode: inode ? Number(inode) : null };
+    });
+}
+
+export function socketInodeOf(pid, fd) {
+  try {
+    const m = /^socket:\[([0-9]+)\]$/.exec(fs.readlinkSync(`/proc/${pid}/fd/${fd}`));
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+PROBE_EOF
+}
+
+# write_port_probe <file> — port-probe.mjs (spec 35): what holds an agent
+# half's port, and what that leaves another local process. Run as root on
+# the agent VM; prints one line of JSON.
+#
+#   node port-probe.mjs bind <port> <user>
+#       <user> (unprivileged) tries to listen on 127.0.0.1:<port> and on
+#       0.0.0.0:<port>: {"127.0.0.1": <outcome>, "0.0.0.0": <outcome>}, an
+#       outcome being the error code (EADDRINUSE) or BOUND
+#   node port-probe.mjs stopped <route> <port> <user>
+#       `systemctl stop` the agent half's service, then at once the socket
+#       unit's state, who listens on the port and the binds above; `valid`:
+#       the service stayed inactive throughout the sample (a connection —
+#       the relay's health probe through the tunnel — starts it again)
+#   node port-probe.mjs loop <port> <seconds> <out file>
+#       one request after another to 127.0.0.1:<port>/admin/health for
+#       <seconds>, each on a new connection and allowed 20 s; the tally
+#       (statuses, error codes, the longest wait) goes to <out file> at the
+#       end, written atomically
+write_port_probe() {
+  cat > "$1" <<'PROBE_EOF'
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import { listenersOn, showProps } from './probe-lib.mjs';
+
+const [action, ...rest] = process.argv.slice(2);
+
+// A child node as <user>: listen on host:port, print the outcome.
+const BIND = `const net = require('node:net');
+const [host, port] = process.argv.slice(1);
+const s = net.createServer();
+s.once('error', (e) => { process.stdout.write(String(e.code || 'error')); process.exit(0); });
+s.listen({ host, port: Number(port) }, () => { process.stdout.write('BOUND'); s.close(); });`;
+function bindAs(user, host, port) {
+  try {
+    return execFileSync('runuser', ['-u', user, '--', process.execPath, '-e', BIND, host, String(port)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 15_000,
+    }).trim();
+  } catch (err) {
+    return `failed:${err.code ?? err.status ?? 'error'}`;
+  }
+}
+function binds(port, user) {
+  return { '127.0.0.1': bindAs(user, '127.0.0.1', port), '0.0.0.0': bindAs(user, '0.0.0.0', port) };
+}
+
+function healthOnce(port) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const req = http.get({ host: '127.0.0.1', port, path: '/admin/health', agent: false, timeout: 20_000 }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, ms: Date.now() - started }));
+    });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timed out'), { code: 'TIMEOUT' })));
+    req.on('error', (err) => resolve({ error: String(err.code ?? 'error'), ms: Date.now() - started }));
+  });
+}
+
+if (action === 'bind') {
+  const [port, user] = rest;
+  process.stdout.write(`${JSON.stringify(binds(Number(port), user))}\n`);
+} else if (action === 'stopped') {
+  const [route, port, user] = rest;
+  const service = `lamalibre-app-${route}.service`;
+  const socketUnit = `lamalibre-app-${route}.socket`;
+  execFileSync('systemctl', ['stop', service], { stdio: 'ignore', timeout: 60_000 });
+  const before = showProps(service, ['ActiveState', 'MainPID']);
+  const socket = showProps(socketUnit, ['ActiveState', 'SubState', 'Listen']);
+  const listeners = listenersOn(Number(port));
+  const bound = binds(Number(port), user);
+  const after = showProps(service, ['ActiveState', 'MainPID']);
+  process.stdout.write(
+    `${JSON.stringify({
+      valid: before.ActiveState === 'inactive' && after.ActiveState === 'inactive',
+      service: { before, after },
+      socket,
+      listeners,
+      binds: bound,
+    })}\n`,
+  );
+} else if (action === 'loop') {
+  const [port, seconds, outFile] = rest;
+  const deadline = Date.now() + Number(seconds) * 1000;
+  const tally = { requests: 0, statuses: {}, errors: {}, longestMs: 0 };
+  while (Date.now() < deadline) {
+    const r = await healthOnce(Number(port));
+    tally.requests += 1;
+    tally.longestMs = Math.max(tally.longestMs, r.ms);
+    if (r.error) tally.errors[r.error] = (tally.errors[r.error] ?? 0) + 1;
+    else tally.statuses[r.status] = (tally.statuses[r.status] ?? 0) + 1;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  fs.writeFileSync(`${outFile}.tmp`, `${JSON.stringify(tally)}\n`);
+  fs.renameSync(`${outFile}.tmp`, outFile);
+} else {
+  process.stderr.write('usage: port-probe.mjs bind <port> <user> | stopped <route> <port> <user> | loop <port> <seconds> <out file>\n');
+  process.exit(2);
+}
+PROBE_EOF
+}
+
+# ship_agent_facts_probe — write the agent VM's probes (agent-facts.mjs,
+# port-probe.mjs and the probe-lib.mjs they import) and put them in a fresh
+# REMOTE_DIR there
+ship_agent_facts_probe() {
+  local probe
+  write_probe_lib "${LOCAL_TMP}/probe-lib.mjs"
+  write_agent_facts_probe "${LOCAL_TMP}/agent-facts.mjs"
+  write_port_probe "${LOCAL_TMP}/port-probe.mjs"
+  agent_exec "rm -rf ${REMOTE_DIR} && mkdir -p ${REMOTE_DIR} && chmod a+rwx ${REMOTE_DIR}"
+  for probe in probe-lib.mjs agent-facts.mjs port-probe.mjs; do
+    multipass transfer "${LOCAL_TMP}/${probe}" "${AGENT_VM}:${REMOTE_DIR}/${probe}"
+  done
+}
+
+# agent_facts <route> <service user> [<system package>...] — see
+# write_agent_facts_probe; FACTS_PORT (set by the spec once it knows the
+# hosting's port) is the port whose listeners it reports
 agent_facts() {
   local route="$1" user="$2"
   shift 2
-  agent_exec "node ${REMOTE_DIR}/agent-facts.mjs ${route} ${user} ${AGENT_LABEL} $*" 2>/dev/null || echo '{}'
+  agent_exec "E2E_FACTS_PORT=${FACTS_PORT:-} node ${REMOTE_DIR}/agent-facts.mjs ${route} ${user} ${AGENT_LABEL} $*" 2>/dev/null || echo '{}'
+}
+
+# port_probe <arguments> — see write_port_probe ('{}' when it fails)
+port_probe() {
+  agent_exec "node ${REMOTE_DIR}/port-probe.mjs $*" 2>/dev/null || echo '{}'
 }
 
 # relay_leftovers <plugin> — the relay's hosting record (HTTP status of its

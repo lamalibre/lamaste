@@ -28,11 +28,17 @@
 #    paths, owners and modes of the installer contract, sqlite3 installed by
 #    apt, the hardening applied, its config 0600 holding the agent's secret
 #    (compared on the VM, never printed); its sandbox lets it write its data
-#    directory only.
-# 5. Through the tunnel the admin pages answer from the installed version;
+#    directory only, and send UDP.
+# 5. Systemd holds the agent half's port: beside the unit, the socket unit
+#    lamalibre-app-e2e-apphost.socket (root 0644, ListenStream on the
+#    hosting's port, no secret), active and enabled, which the unit requires
+#    (Restart=always, no core dumps, no drop-in); ss shows the one listening
+#    socket shared by systemd (pid 1) and the agent half, whose descriptor 3
+#    it is.
+# 6. Through the tunnel the admin pages answer from the installed version;
 #    the stand-in Feria's record shows agent:<label> pulling the tarball.
-# 6. Uninstalling with purge leaves no unit, code, config, data, account,
-#    tunnel, secret or capability.
+# 7. Uninstalling with purge leaves no unit, socket unit, listener on the
+#    port, code, config, data, account, tunnel, secret or capability.
 #
 # Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a
 # package with dependencies and a closed window are spec 36 — rodeo gives a
@@ -57,6 +63,7 @@ SERVER_PACKAGE="@lamalibre/e2e-apphost-server"
 AGENT_PACKAGE="@lamalibre/e2e-apphost-agent"
 SERVICE_USER="lamaste-app-e2e-apphost"
 UNIT="lamalibre-app-e2e-apphost.service"
+SOCKET_UNIT="lamalibre-app-e2e-apphost.socket"
 CODE_DIR="/opt/lamalibre/apps/e2e-apphost"
 DATA_DIR="/var/lib/lamalibre/apps/e2e-apphost"
 CONFIG_FILE="/etc/lamalibre/apps/e2e-apphost/plugin-config.json"
@@ -269,6 +276,8 @@ assert_eq "$(step_order "$OP" 'install the agent half' 'agent install:pre-tunnel
 
 HOSTING=$(host_api_get "plugins/${PLUGIN}/hosting")
 PORT=$(json_get "$HOSTING" '.hosting.port')
+# Who listens on it is read on the agent VM from now on — after the purge too.
+FACTS_PORT="${PORT}"
 assert_json_field "$HOSTING" '.hosting.phase' 'active' "The hosting is active" || true
 assert_json_field "$HOSTING" '.hosting.agentHalf.version' '1.0.0' "The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}" || true
 if [ "$PORT" -ge 21000 ] 2>/dev/null && [ "$PORT" -le 21999 ] 2>/dev/null; then
@@ -318,23 +327,52 @@ fi
 log_section "The unit: as written, and as systemd applies it"
 
 for line in "User=${SERVICE_USER}" "Group=${SERVICE_USER}" \
+  "Requires=${SOCKET_UNIT}" "After=${SOCKET_UNIT}" "Sockets=${SOCKET_UNIT}" \
   "ExecStart=/usr/bin/node ${CODE_DIR}/current/package/dist/agentd.mjs" \
   "Environment=LAMASTE_APP_CONFIG=${CONFIG_FILE}" "Environment=LAMASTE_APP_DATA_DIR=${DATA_DIR}" \
-  "WorkingDirectory=${DATA_DIR}" 'Restart=on-failure' 'NoNewPrivileges=yes' 'ProtectSystem=strict' \
+  "WorkingDirectory=${DATA_DIR}" 'Restart=always' 'NoNewPrivileges=yes' 'ProtectSystem=strict' \
   "ReadWritePaths=${DATA_DIR}" 'ProtectHome=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \
   'ProtectKernelTunables=yes' 'ProtectKernelModules=yes' 'ProtectKernelLogs=yes' \
   'ProtectControlGroups=yes' 'ProtectClock=yes' 'ProtectHostname=yes' 'RestrictSUIDSGID=yes' \
   'RestrictRealtime=yes' 'RestrictNamespaces=yes' 'LockPersonality=yes' \
-  'SystemCallArchitectures=native' 'CapabilityBoundingSet=' 'UMask=0077' 'MemoryMax=256M' \
+  'SystemCallArchitectures=native' 'CapabilityBoundingSet=' 'UMask=0077' 'LimitCORE=0' 'MemoryMax=256M' \
   'WantedBy=multi-user.target'; do
   assert_eq "$(echo "$FACTS" | jq --arg l "$line" '.unit.lines | index($l) != null' 2>/dev/null || echo false)" "true" "Unit: ${line}" || true
 done
 assert_eq "$(echo "$FACTS" | jq '[.unit.lines[] | select(test("[0-9a-f]{64}"))] | length' 2>/dev/null || echo "-1")" "0" "The unit names paths, never the secret" || true
 for prop in 'ProtectSystem=strict' 'ProtectHome=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \
   'RestrictSUIDSGID=yes' 'LockPersonality=yes' "ReadWritePaths=${DATA_DIR}" 'MemoryMax=268435456' \
-  'CapabilityBoundingSet=' 'UMask=0077'; do
+  'CapabilityBoundingSet=' 'UMask=0077' 'Restart=always' 'LimitCORE=0' "Sockets=${SOCKET_UNIT}" \
+  "TriggeredBy=${SOCKET_UNIT}"; do
   assert_eq "$(echo "$FACTS" | jq -r --arg k "${prop%%=*}" '.unit.props[$k] // "unset"' 2>/dev/null || echo unset)" "${prop#*=}" "systemctl show: ${prop}" || true
 done
+for dep in Requires After; do
+  assert_eq "$(echo "$FACTS" | jq -r --arg k "$dep" --arg s "${SOCKET_UNIT}" '(.unit.props[$k] // "") | split(" ") | index($s) != null' 2>/dev/null || echo false)" "true" "systemctl show: ${dep}= names ${SOCKET_UNIT}" || true
+done
+assert_json_field "$FACTS" '.dropInDir' 'null' "No ${UNIT}.d drop-in directory: the unit is all there is" || true
+
+log_section "The socket unit: systemd holds the port"
+
+# Exactly what the helper writes: three sections, six directives, the
+# hosting's port, the service it starts — and nothing secret.
+assert_json_field "$FACTS" '.socket.stat | "\(.type) \(.mode) \(.user):\(.group)"' 'file 644 root:root' "/etc/systemd/system/${SOCKET_UNIT}: root:root 0644" || true
+assert_json_field "$FACTS" '[.socket.lines[] | select(startswith("["))] | join(",")' '[Unit],[Socket],[Install]' "…its sections: [Unit], [Socket], [Install]" || true
+assert_json_field "$FACTS" '[.socket.lines[] | select(startswith("[") | not) | split("=")[0]] | join(",")' 'Description,ListenStream,Accept,NoDelay,Service,WantedBy' "…its directives: Description, ListenStream, Accept, NoDelay, Service, WantedBy — nothing else" || true
+for line in "ListenStream=127.0.0.1:${PORT}" 'Accept=no' 'NoDelay=true' "Service=${UNIT}" 'WantedBy=sockets.target'; do
+  assert_eq "$(echo "$FACTS" | jq --arg l "$line" '.socket.lines | index($l) != null' 2>/dev/null || echo false)" "true" "Socket unit: ${line}" || true
+done
+assert_json_field "$FACTS" '.socket.secretLines' '0' "…and no secret in it" || true
+assert_json_field "$FACTS" '.socket.props | "\(.LoadState) \(.ActiveState) \(.SubState) \(.UnitFileState)"' 'loaded active running enabled' "${SOCKET_UNIT} is active (running: its service has it) and enabled" || true
+assert_json_field "$FACTS" '.socket.props.Listen' "127.0.0.1:${PORT} (Stream)" "systemctl show: Listen=127.0.0.1:${PORT} (Stream)" || true
+assert_json_field "$FACTS" '.socket.props | "\(.Accept) \(.NoDelay) \(.Triggers)"' "no yes ${UNIT}" "systemctl show: Accept=no, NoDelay=yes, Triggers=${UNIT}" || true
+MAIN_PID=$(json_get "$FACTS" '.unit.props.MainPID')
+assert_json_field "$FACTS" '.listen.listeners | length' '1' "ss: one listening socket on port ${PORT}" || true
+assert_json_field "$FACTS" '.listen.listeners[0] | "\(.state) \(.local)"' "LISTEN 127.0.0.1:${PORT}" "…on 127.0.0.1:${PORT}" || true
+assert_json_field "$FACTS" '[.listen.listeners[0].users[]? | select(.pid == 1 and .name == "systemd")] | length > 0' 'true' "…held by systemd (pid 1)…" || true
+assert_json_field "$FACTS" "[.listen.listeners[0].users[]? | select(.pid == ${MAIN_PID:-0})] | length > 0" 'true' "…and by the agent half (MainPID ${MAIN_PID}), the same socket" || true
+assert_json_field "$FACTS" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' "The agent half's descriptor 3 is that listening socket (inode $(json_get "$FACTS" '.listen.fd3Inode'))" || true
+APPHOST_APP=$(agent_exec "lamaste-agent apphost status --json 2>/dev/null" 2>/dev/null | grep -E '^\{' | tail -n 1 | jq -c ".apps[\"${PLUGIN}\"] // {}" 2>/dev/null || echo '{}')
+assert_json_field "$APPHOST_APP" '"\(.unit) \(.socket)"' 'active active' "lamaste-agent apphost status: unit active, socket active" || true
 
 # ===========================================================================
 # 8. Through the tunnel: the admin pages and the sandbox
@@ -347,6 +385,7 @@ assert_json_field "$PING" '.pong' 'true' "GET /api/${PLUGIN}/ping reaches the se
 assert_json_field "$PING" '.version' '1.0.0' "…the installed version, 1.0.0" || true
 assert_json_field "$PING" '.user' "${SERVICE_USER}" "…running as ${SERVICE_USER}" || true
 assert_json_field "$PING" '.caller.type' 'admin' "…which sees the admin as its caller" || true
+assert_json_field "$PING" '.listen | "\(.mode) \(.fd) \(.listenFdsCleared)"' 'systemd-socket 3 true' "…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment" || true
 BUNDLE=$(host_api_get "${PLUGIN}/panel.js")
 assert_contains "$BUNDLE" "__lamalibrePlugins" "The admin page's bundle comes from the agent half" || true
 
@@ -371,6 +410,7 @@ assert_json_field "$FACTS" '.privateShmLeak' 'false' "…and nothing appears in 
 assert_json_field "$SANDBOX" '"\(.noNewPrivs) \(.capBnd) \(.capEff)"' '1 0000000000000000 0000000000000000' "Sandbox: no new privileges, no capabilities" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.agentState')" "Sandbox: the agent's own state (its keys) is out of reach" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.shadow')" "Sandbox: /etc/shadow is out of reach" || true
+assert_json_field "$SANDBOX" '.network.udpSend' 'ALLOWED' "Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it" || true
 
 # ===========================================================================
 # 9. The stand-in Feria's record
@@ -404,6 +444,9 @@ assert_relay_clean "${PLUGIN}" "Uninstalled"
 assert_eq "$(audit_count "${PLUGIN}" plugin.agent-half.removed '.purge == true')" "1" "Audit: plugin.agent-half.removed, purge" || true
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$FACTS" '"\(.unit.file) \(.unit.props.LoadState)"' 'false not-found' "No unit on the agent VM" || true
+assert_json_field "$FACTS" '"\(.socket.file) \(.socket.props.LoadState)"' 'false not-found' "No socket unit" || true
+assert_json_field "$FACTS" '.dropInDir' 'null' "No drop-in directory" || true
+assert_json_field "$FACTS" '.listen.listeners | length' '0' "Nothing listens on port ${PORT} any more: the socket let go of it" || true
 assert_json_field "$FACTS" '"\(.code.dir) \(.config.dir) \(.data.dir)"' 'null null null' "No code, config or data directory" || true
 assert_json_field "$FACTS" '"\(.account.user) \(.account.group)"' 'null null' "No ${SERVICE_USER} account or group" || true
 assert_json_field "$FACTS" '.apphostRecord' 'null' "The agent's record no longer lists it" || true

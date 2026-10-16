@@ -1076,14 +1076,24 @@ FIXTURE_EOF
 }
 
 # write_app_plugin_half file
-# Writes the fixture's agent half: a Node HTTP server on 127.0.0.1:<port>
-# (the port from the plugin config the agent fetched) whose /admin/* routes
-# accept only requests with a valid caller assertion, verified with
-# @lamalibre/lamaste/agent's createCallerAssertionVerifier.
+# Writes the fixture's agent half, installed by hand (the slice 2a way): a
+# Node HTTP server on 127.0.0.1:<port> (the port from the plugin config the
+# agent fetched; agentHalfListenTarget, which a half without a socket unit
+# binds itself) whose /admin/* routes accept only requests with a valid
+# caller assertion, verified with @lamalibre/lamaste/agent's
+# createCallerAssertionVerifier.
 #
 #   node app-plugin-half.mjs --config <plugin config json> --plugin <route> \
 #     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>] \
 #     [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>]
+#
+# Every answer to a verified request authenticates itself with
+# X-Lamalibre-Responder, as the relay requires of an agent half: core's
+# handlers return it (their `headers`, sent with exactly their `bodyText`);
+# the half's own routes add responderHeaderFor (the `-` form a forwarded
+# caller expects) — or, answering Lamaste's own call (caller `lamaste`, a
+# buffered answer), the form over the exact body. Answers before or instead
+# of a verification (401, a path outside /admin) carry none.
 #
 # Lifecycle hooks (4.3): /admin/hooks/<stage> answered by
 # createAgentHookHandler (Lamaste's calls only); each stage logs a line
@@ -1095,13 +1105,19 @@ FIXTURE_EOF
 # exist; /admin/settings* is answered by createSettingsHandler (Lamaste's
 # calls only, a line `<method> <url> <status> settings-call` each) and
 # /admin/probe/settings shows what the store holds — the effective values
-# and the SHA-256 of each secret, never a secret's value.
+# and the SHA-256 of each secret, never a secret's value. Without
+# --manifest, Lamaste's /admin/settings calls get the verified 404 below —
+# authenticated, so the relay knows the half has no settings.
 #
-# Routes: /admin/health, /admin/ping (echoes caller, path, what headers
-# arrived), /admin/panel.js (a mount(ctx) bundle), /admin/echo (POST, counts
-# bytes), /admin/events (3 server-sent events), anything else under /admin
-# is 404. /app/* is the user surface and answers without an assertion — the
-# forwarder must never reach it. One log line per request.
+# Routes: /admin/health (createHealthHandler, a line `GET /admin/health
+# <status> health-call` each), /admin/ping (echoes caller, path, what
+# headers arrived), /admin/panel.js (a mount(ctx) bundle), /admin/echo
+# (POST, counts bytes), /admin/events (3 server-sent events),
+# /admin/unsafe-headers (sets Service-Worker-Allowed, Clear-Site-Data and
+# X-E2E-Kept: what the forwarder must strip, and a header it passes),
+# anything else under /admin is 404. /app/* is the user surface and answers
+# without an assertion — the forwarder must never reach it. One log line per
+# request.
 write_app_plugin_half() {
   local dest="$1"
   cat > "$dest" <<'HALF_EOF'
@@ -1132,9 +1148,18 @@ if (args.includes('--wait-config')) {
   while (!existsSync(configPath)) await new Promise((r) => setTimeout(r, 500));
 }
 const agentLib = await import(pathToFileURL(path.join(lamasteDir, 'dist', 'agent', 'index.js')).href);
+// The relay believes no answer of an agent half that does not authenticate
+// itself: a @lamalibre/lamaste without these cannot serve it at all.
+const needed = ['createCallerAssertionVerifier', 'createAgentHookHandler', 'createHealthHandler', 'responderHeaderFor', 'agentHalfListenTarget'];
+const missing = needed.filter((name) => typeof agentLib[name] !== 'function');
+if (missing.length > 0) {
+  console.error(`${lamasteDir}: this @lamalibre/lamaste has no ${missing.join(', ')} — it predates authenticated agent-half answers`);
+  process.exit(2);
+}
 const verifier = agentLib.createCallerAssertionVerifier({ configPath, plugin, reloadIntervalMs: 500 });
 const port = await verifier.port();
 const callerName = (c) => (c.type === 'agent' ? `agent:${c.label}` : c.type);
+const healthHandler = agentLib.createHealthHandler({ verifier });
 
 // Lifecycle hooks (4.3): each stage logs what it was called with; a file
 // <flags>/fail-<stage> makes that stage refuse.
@@ -1143,14 +1168,12 @@ const hookFor = (stage) => (input) => {
   log(`hook ${stage} phase=${input.phase ?? '-'} reason=${input.reason ?? '-'} state=${input.state ?? '-'}`);
   return failing(stage) ? { ok: false, reason: `e2e: ${stage} refused by flag` } : { ok: true, output: { stage } };
 };
-const hookHandler = agentLib.createAgentHookHandler
-  ? agentLib.createAgentHookHandler({
-      verifier,
-      hooks: Object.fromEntries(
-        ['install:pre-tunnel', 'install:post-tunnel', 'uninstall:pre-teardown', 'uninstall:post-teardown', 'tunnel:down', 'tunnel:up'].map((s) => [s, hookFor(s)]),
-      ),
-    })
-  : null;
+const hookHandler = agentLib.createAgentHookHandler({
+  verifier,
+  hooks: Object.fromEntries(
+    ['install:pre-tunnel', 'install:post-tunnel', 'uninstall:pre-teardown', 'uninstall:post-teardown', 'tunnel:down', 'tunnel:up'].map((s) => [s, hookFor(s)]),
+  ),
+});
 
 // Settings (slice 4): the manifest's settings block is the store's schema;
 // Lamaste alone reads and changes them through /admin/settings.
@@ -1193,9 +1216,41 @@ function log(line) {
   if (logFile) appendFileSync(logFile, text);
 }
 
-function json(res, status, body, extraHeaders = {}) {
-  res.writeHead(status, { 'content-type': 'application/json', ...extraHeaders });
-  res.end(JSON.stringify(body));
+// The responder header core's handlers set (RESPONDER_HEADER of
+// @lamalibre/lamaste), for the answers this half gives Lamaste's own calls.
+const RESPONDER_HEADER = 'x-lamalibre-responder';
+
+// The X-Lamalibre-Responder header of an answer to a verified request: over
+// the exact body for Lamaste's own calls (caller `lamaste`: buffered by the
+// relay), the `-` form (responderHeaderFor) for a forwarded caller.
+function responderOf(verified, status, text) {
+  return verified.payload.caller.type === 'lamaste'
+    ? { [RESPONDER_HEADER]: verified.responder(status, text) }
+    : agentLib.responderHeaderFor(verified, status);
+}
+
+// send(res, status, headers, text, verified) — a buffered answer;
+// authenticated when it answers a verified request
+function send(res, status, headers, text, verified = null) {
+  res.writeHead(status, { ...headers, ...(verified ? responderOf(verified, status, text) : {}) });
+  res.end(text);
+}
+
+function json(res, status, body, extraHeaders = {}, verified = null) {
+  send(res, status, { 'content-type': 'application/json', ...extraHeaders }, JSON.stringify(body), verified);
+}
+
+// What core's handlers answer: exactly their bytes, with their headers
+// (the responder header among them when the request verified).
+function answer(res, out) {
+  res.writeHead(out.status, out.headers);
+  res.end(out.bodyText);
+}
+
+async function bodyOf(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return Buffer.concat(chunks);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1212,20 +1267,22 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
     return;
   }
-  if (p.startsWith('/admin/hooks/') && hookHandler) {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const out = await hookHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+  if (p.startsWith('/admin/hooks/')) {
+    const out = await hookHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: await bodyOf(req) });
     log(`${req.method} ${req.url} ${out.status} hook-call`);
-    json(res, out.status, out.body);
+    answer(res, out);
     return;
   }
   if (settingsHandler && (p === '/admin/settings' || p.startsWith('/admin/settings/'))) {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const out = await settingsHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    const out = await settingsHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: await bodyOf(req) });
     log(`${req.method} ${req.url} ${out.status} settings-call`);
-    json(res, out.status, out.body);
+    answer(res, out);
+    return;
+  }
+  if (p === '/admin/health') {
+    const out = await healthHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: await bodyOf(req) });
+    log(`${req.method} ${req.url} ${out.status} health-call`);
+    answer(res, out);
     return;
   }
   const result = await verifier.verify(req.headers, req.method, req.url);
@@ -1235,11 +1292,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   const caller = callerName(result.payload.caller);
-  if (p === '/admin/health') {
-    log(`${req.method} ${req.url} 200 caller=${caller}`);
-    json(res, 200, { ok: true, plugin, port });
-    return;
-  }
   if (p === '/admin/ping' || p === '/admin') {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
     json(res, 200, {
@@ -1249,21 +1301,24 @@ const server = http.createServer(async (req, res) => {
       cookie: req.headers.cookie ?? null,
       authorization: req.headers.authorization ?? null,
       sslClientDn: req.headers['x-ssl-client-dn'] ?? null,
-    });
+    }, {}, result);
     return;
   }
   if (p === '/admin/panel.js') {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
-    res.writeHead(200, { 'content-type': 'application/javascript' });
-    res.end(
+    send(
+      res,
+      200,
+      { 'content-type': 'application/javascript' },
       `window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n` +
         `window.__lamalibrePlugins[${JSON.stringify(plugin)}] = { mount(ctx) { ctx.mountPoint.textContent = 'E2E app plugin — served by the agent half'; return () => {}; } };\n`,
+      result,
     );
     return;
   }
   if (p === '/admin/probe/settings' && settings) {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
-    json(res, 200, settingsProbe());
+    json(res, 200, settingsProbe(), {}, result);
     return;
   }
   if (p === '/admin/echo' && req.method === 'POST') {
@@ -1271,13 +1326,28 @@ const server = http.createServer(async (req, res) => {
     req.on('data', (c) => (bytes += c.length));
     req.on('end', () => {
       log(`POST ${req.url} 200 caller=${caller} bytes=${bytes}`);
-      json(res, 200, { bytes }, { 'set-cookie': 'app-session=should-not-pass' });
+      json(res, 200, { bytes }, { 'set-cookie': 'app-session=should-not-pass' }, result);
     });
+    return;
+  }
+  if (p === '/admin/unsafe-headers') {
+    // Headers that would let a plugin's page take over the panel's origin
+    // (a service worker's scope, wiping the panel's storage): the forwarder
+    // strips them. X-E2E-Kept is an ordinary header it passes.
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    json(
+      res,
+      200,
+      { served: true },
+      { 'service-worker-allowed': '/', 'clear-site-data': '"cache", "cookies", "storage"', 'x-e2e-kept': 'kept' },
+      result,
+    );
     return;
   }
   if (p === '/admin/events') {
     log(`${req.method} ${req.url} 200 caller=${caller} sse`);
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    // A stream: the `-` form, over the status alone.
+    res.writeHead(200, { 'content-type': 'text/event-stream', ...agentLib.responderHeaderFor(result, 200) });
     let n = 0;
     const timer = setInterval(() => {
       n += 1;
@@ -1295,32 +1365,37 @@ const server = http.createServer(async (req, res) => {
     req.on('data', (c) => (bytes += c.length));
     req.on('end', () => {
       log(`POST ${req.url} 200 caller=${caller} bytes=${bytes} validated=${req.headers['x-validated'] ?? '-'}`);
-      json(res, 200, { imported: true, bytes, validated: req.headers['x-validated'] ?? null });
+      json(res, 200, { imported: true, bytes, validated: req.headers['x-validated'] ?? null }, {}, result);
     });
     return;
   }
   if (p.startsWith('/admin/export/')) {
     log(`${req.method} ${req.url} 200 caller=${caller} encoding=${req.headers['accept-encoding'] ?? '-'}`);
     // A planted credential the relay's secret scanner must redact.
-    json(res, 200, { rows: 2, token: 'ghp_' + 'E2eToken0'.repeat(4), total: '12345678901234567890' }, { etag: '"e2e"' });
+    json(res, 200, { rows: 2, token: 'ghp_' + 'E2eToken0'.repeat(4), total: '12345678901234567890' }, { etag: '"e2e"' }, result);
     return;
   }
   if (p === '/admin/report') {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
-    res.writeHead(200, { 'content-type': 'text/plain' });
-    res.end('quarterly report — BLOCKME');
+    send(res, 200, { 'content-type': 'text/plain' }, 'quarterly report — BLOCKME', result);
     return;
   }
   if (p === '/admin/stuck') {
     log(`${req.method} ${req.url} 200 caller=${caller}`);
-    json(res, 200, { reached: true });
+    json(res, 200, { reached: true }, {}, result);
     return;
   }
+  // Authenticated like any answer to a verified request: for Lamaste's
+  // /admin/settings calls to a half without settings, the relay's proof
+  // that the half itself has none (settings_unsupported).
   log(`${req.method} ${req.url} 404 caller=${caller}`);
-  json(res, 404, { error: 'no such admin route' });
+  json(res, 404, { error: 'no such admin route' }, {}, result);
 });
 
-server.listen(port, '127.0.0.1', () => log(`listening on 127.0.0.1:${port} for plugin ${plugin}`));
+// Installed by hand, without a socket unit: the half binds the plugin
+// config's port itself (agentHalfListenTarget gives the systemd socket only
+// under the unit lamaste-apphost writes).
+server.listen(agentLib.agentHalfListenTarget({ port }), () => log(`listening on 127.0.0.1:${port} for plugin ${plugin}`));
 HALF_EOF
 }
 
@@ -1509,6 +1584,10 @@ FIXTURE_EOF
 #                         a retyped field, whose stored value is dropped,
 #                         never converted — and endpoint, a new required
 #                         string without a default
+#   v3 (schemaVersion 3)  as v2, except: apiKey is a plain required string —
+#                         a secret turned into a plain field (secretToPlain),
+#                         which auto-approve never covers and whose stored
+#                         secret is dropped
 settings_block_json() {
   case "$1" in
     v1)
@@ -1531,6 +1610,21 @@ SETTINGS_EOF
     "schemaVersion": 2,
     "fields": [
       { "key": "apiKey", "label": "API key", "type": "secret", "required": true, "description": "Held by the agent half alone" },
+      { "key": "schedule", "label": "Schedule", "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "06:00", "description": "When to sync, HH:MM" },
+      { "key": "retries", "label": "Retries", "type": "string", "default": "3", "description": "A count or a policy name" },
+      { "key": "region", "label": "Region", "type": "enum", "options": [{ "value": "eu", "label": "Europe" }, { "value": "us", "label": "United States" }] },
+      { "key": "verbose", "label": "Verbose logging", "type": "boolean", "default": false },
+      { "key": "endpoint", "label": "Endpoint", "type": "string", "required": true, "maxLength": 200, "description": "The upstream service's base URL" }
+    ]
+  }
+SETTINGS_EOF
+      ;;
+    v3)
+      cat <<'SETTINGS_EOF'
+{
+    "schemaVersion": 3,
+    "fields": [
+      { "key": "apiKey", "label": "API key", "type": "string", "required": true, "maxLength": 200, "description": "No longer a secret: kept on the relay, shown in clear" },
       { "key": "schedule", "label": "Schedule", "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "06:00", "description": "When to sync, HH:MM" },
       { "key": "retries", "label": "Retries", "type": "string", "default": "3", "description": "A count or a policy name" },
       { "key": "region", "label": "Region", "type": "enum", "options": [{ "value": "eu", "label": "Europe" }, { "value": "us", "label": "United States" }] },
@@ -1649,20 +1743,26 @@ FIXTURE_EOF
 #                 workspace's @lamalibre/lamaste/agent — no runtime
 #                 dependencies, as real app plugins ship.
 # The agent half reads LAMASTE_APP_CONFIG with createCallerAssertionVerifier
-# (re-read on a signature it cannot verify), listens on 127.0.0.1:<the
-# config's port> and answers /admin/health, /admin/ping (caller, its package
-# version, its account, its data), /admin/panel.js, /admin/sandbox (what its
-# unit lets it write and read) and /admin/hooks/* (createAgentHookHandler:
-# Lamaste's calls only; each stage logs `hook <stage> phase=… version=…` to
-# the journal). LAMASTE_APP_DATA_DIR/state.json counts its starts under one
-# random instance id: data that is kept keeps the id. <mode>:
+# (re-read on a signature it cannot verify), listens where
+# agentHalfListenTarget says — under the unit lamaste-apphost writes, the
+# socket systemd holds on 127.0.0.1:<the config's port> and passes it as
+# descriptor 3 — and answers /admin/health (createHealthHandler), /admin/ping
+# (caller, its package version, its account, its data, how it listens),
+# /admin/panel.js, /admin/sandbox (what its unit lets it write, read and
+# send) and /admin/hooks/* (createAgentHookHandler: Lamaste's calls only;
+# each stage logs `hook <stage> phase=… version=…` to the journal). Every
+# answer to a verified request carries X-Lamalibre-Responder (core's
+# handlers' headers; responderHeaderFor on its own routes, over the exact
+# body for a `lamaste` caller). LAMASTE_APP_DATA_DIR/state.json counts its
+# starts under one random instance id: data that is kept keeps the id.
+# <mode>:
 #   main      — every hook stage succeeds
 #   failpost  — install:post-tunnel refuses: a bad release
 #   deps      — the agent package declares `dependencies`, which the agent's
 #               root helper refuses (an agent half ships bundled)
 #   tampered  — as main, other bytes: what a registry serving something else
 #               under a published version hands out
-# <settings> (slice 4; default none): v1 or v2 puts that settings block
+# <settings> (slice 4; default none): v1, v2 or v3 puts that settings block
 # (settings_block_json) in the manifest. The agent half is built with a copy
 # of the manifest (agent-src/lamaste-plugin.json) and keeps the settings its
 # block declares: createSettingsStore over LAMASTE_APP_DATA_DIR
@@ -1698,7 +1798,7 @@ write_app_install_fixture() {
   fi
   case "$settings_schema" in
     none) ;;
-    v1 | v2)
+    v1 | v2 | v3)
       settings_entry=",
   \"settings\": $(settings_block_json "$settings_schema")"
       ;;
@@ -1775,8 +1875,10 @@ FIXTURE_EOF
 // Bundled into one ES module (build-app-agent-half.js defines __E2E_ROUTE__
 // and __E2E_MODE__, and inlines the manifest copy next to this file); runs
 // under the unit lamaste-apphost writes, as the plugin's own account, with
-// its config and data paths in the environment.
+// its config and data paths in the environment and its listening socket —
+// systemd's, from the socket unit beside it — as descriptor 3.
 import crypto from 'node:crypto';
+import dgram from 'node:dgram';
 import {
   closeSync,
   fsyncSync,
@@ -1793,10 +1895,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  agentHalfListenTarget,
   createAgentHookHandler,
   createCallerAssertionVerifier,
+  createHealthHandler,
   createSettingsHandler,
   createSettingsStore,
+  responderHeaderFor,
   settingsFromManifest,
 } from '@lamalibre/lamaste/agent';
 import MANIFEST from './lamaste-plugin.json';
@@ -1848,6 +1953,11 @@ const state = {
 writeFileAtomic(statePath, `${JSON.stringify(state)}\n`);
 
 const verifier = createCallerAssertionVerifier({ configPath, plugin: ROUTE, reloadIntervalMs: 1000 });
+const PORT = await verifier.port();
+// Where to listen, read once at start-up (it clears systemd's LISTEN_*
+// variables): the socket systemd passed, else — installed by hand — the port.
+const LISTEN = agentHalfListenTarget({ port: PORT });
+const health = createHealthHandler({ verifier });
 const hookFor = (stage) => (input) => {
   log(`hook ${stage} phase=${input?.phase ?? '-'} version=${VERSION}`);
   if (stage === 'install:post-tunnel' && MODE === 'failpost') {
@@ -1924,7 +2034,35 @@ function procStatus(field) {
     return null;
   }
 }
-function sandboxProbe() {
+// A UDP datagram to the loopback's discard port. Node's dgram binds a port
+// of its own before it sends — what a unit allowed to bind nothing but its
+// TCP port would refuse; systemd holding that port leaves UDP alone.
+function udpSendProbe() {
+  return new Promise((resolve) => {
+    let socket = null;
+    let settled = false;
+    const done = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket?.close();
+      } catch {
+        // already closed
+      }
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => done('TIMEOUT'), 3000);
+    try {
+      socket = dgram.createSocket('udp4');
+      socket.once('error', (err) => done(errorCode(err)));
+      socket.send(Buffer.from(`e2e udp probe ${process.pid}`), 9, '127.0.0.1', (err) => done(err ? errorCode(err) : 'ALLOWED'));
+    } catch (err) {
+      done(errorCode(err));
+    }
+  });
+}
+async function sandboxProbe() {
   const probe = `e2e-${ROUTE}-probe`;
   return {
     uid: process.getuid(),
@@ -1953,12 +2091,38 @@ function sandboxProbe() {
       agentState: tryRead(() => readdirSync('/root/.lamalibre')),
       shadow: tryRead(() => readFileSync('/etc/shadow')),
     },
+    network: {
+      udpSend: await udpSendProbe(),
+    },
   };
 }
 
-function json(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
+// The X-Lamalibre-Responder header of an answer to a verified request:
+// responderHeaderFor (the `-` form) for a forwarded caller; over the exact
+// body for Lamaste's own call, which the relay buffers.
+function responderOf(verified, status, text) {
+  return verified.payload.caller.type === 'lamaste'
+    ? { 'x-lamalibre-responder': verified.responder(status, text) }
+    : responderHeaderFor(verified, status);
+}
+// send(res, status, contentType, text, verified) — authenticated when it
+// answers a verified request; an answer before verification carries nothing
+function send(res, status, contentType, text, verified = null) {
+  res.writeHead(status, { 'content-type': contentType, ...(verified ? responderOf(verified, status, text) : {}) });
+  res.end(text);
+}
+function json(res, status, body, verified = null) {
+  send(res, status, 'application/json', JSON.stringify(body), verified);
+}
+// What core's handlers answer: exactly their bytes, with their headers.
+function answer(res, out) {
+  res.writeHead(out.status, out.headers);
+  res.end(out.bodyText);
+}
+async function bodyOf(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 const PANEL_JS =
   'window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n' +
@@ -1970,23 +2134,20 @@ const server = http.createServer(async (req, res) => {
     const method = req.method ?? 'GET';
     const p = new URL(target, 'http://127.0.0.1').pathname;
     if (p.startsWith('/admin/hooks/')) {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const out = await hooks.handle({ method, url: target, headers: req.headers, body: Buffer.concat(chunks) });
-      return json(res, out.status, out.body);
+      return answer(res, await hooks.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) }));
     }
     if (settingsHandler && (p === '/admin/settings' || p.startsWith('/admin/settings/'))) {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const out = await settingsHandler.handle({ method, url: target, headers: req.headers, body: Buffer.concat(chunks) });
+      const out = await settingsHandler.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) });
       log(`settings ${method} ${p} ${out.status}`);
-      return json(res, out.status, out.body);
+      return answer(res, out);
+    }
+    if (p === '/admin/health') {
+      return answer(res, await health.handle({ method, url: target, headers: req.headers, body: await bodyOf(req) }));
     }
     if (p !== '/admin' && !p.startsWith('/admin/')) return json(res, 404, { error: 'not found' });
     const verified = await verifier.verify(req.headers, method, target);
     if (!verified.ok) return json(res, 401, { error: 'caller assertion refused', reason: verified.reason });
     const caller = verified.payload.caller;
-    if (p === '/admin/health') return json(res, 200, { ok: true, plugin: ROUTE, version: VERSION });
     log(`${method} ${p} caller=${caller.type === 'agent' ? `agent:${caller.label}` : caller.type}`);
     if (p === '/admin/ping') {
       return json(res, 200, {
@@ -1998,24 +2159,29 @@ const server = http.createServer(async (req, res) => {
         user: USER,
         pid: process.pid,
         data: { instance: state.instance, starts: state.starts, versions: state.versions },
-      });
+        // How it listens: systemd's socket (descriptor 3) under the unit
+        // lamaste-apphost writes; systemd's variables gone from its
+        // environment once read, so nothing it starts takes the socket.
+        listen: {
+          mode: 'fd' in LISTEN ? 'systemd-socket' : 'port',
+          fd: 'fd' in LISTEN ? LISTEN.fd : null,
+          port: PORT,
+          listenFdsCleared: process.env.LISTEN_FDS === undefined && process.env.LISTEN_PID === undefined,
+        },
+      }, verified);
     }
-    if (p === '/admin/panel.js') {
-      res.writeHead(200, { 'content-type': 'application/javascript' });
-      return res.end(PANEL_JS);
-    }
-    if (p === '/admin/sandbox') return json(res, 200, sandboxProbe());
-    if (p === '/admin/probe/settings' && settings) return json(res, 200, settingsProbe());
-    return json(res, 404, { error: 'no such admin route' });
+    if (p === '/admin/panel.js') return send(res, 200, 'application/javascript', PANEL_JS, verified);
+    if (p === '/admin/sandbox') return json(res, 200, await sandboxProbe(), verified);
+    if (p === '/admin/probe/settings' && settings) return json(res, 200, settingsProbe(), verified);
+    return json(res, 404, { error: 'no such admin route' }, verified);
   } catch (err) {
     log(`error: ${err?.message ?? err}`);
     return json(res, 500, { error: 'internal error' });
   }
 });
 
-const port = await verifier.port();
-server.listen(port, '127.0.0.1', () =>
-  log(`${ROUTE} agent half ${VERSION} (${MODE}) on 127.0.0.1:${port} as ${USER}, start ${state.starts} of ${state.instance}`),
+server.listen(LISTEN, () =>
+  log(`${ROUTE} agent half ${VERSION} (${MODE}) on 127.0.0.1:${PORT} (${'fd' in LISTEN ? `systemd's socket, descriptor ${LISTEN.fd}` : 'its own bind'}) as ${USER}, start ${state.starts} of ${state.instance}`),
 );
 AGENTD_EOF
   node "${here}/build-app-agent-half.js" --entry "${dir}/agent-src/agentd.mjs" \

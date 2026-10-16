@@ -6,16 +6,18 @@
 # @lamalibre/e2e-apphost-rm-server, helpers.sh), hosted on the agent VM from
 # the panel as in spec 34:
 #
-# 1. Unhosting (default) removes the unit, the code and the config, the
+# 1. Unhosting (default) removes the unit and its socket unit — nothing
+#    listens on the hosting's port afterwards — the code and the config, the
 #    tunnel, the secret and the capability; the agent half's data directory
 #    and account stay.
 # 2. The stand-in Feria then serves other bytes under the pinned version
 #    (a consistent packument, a new integrity): hosting again fails at
 #    "install the agent half" — the agent fetched the tarball and refused it
-#    against the integrity the relay pinned — and leaves nothing behind.
+#    against the integrity the relay pinned — and leaves nothing behind, no
+#    socket unit either.
 # 3. With the published bytes back, hosting again finds the data the
-#    unhosting kept; uninstalling with purge then removes the data
-#    directory and the account too.
+#    unhosting kept; uninstalling with purge then removes the units (the
+#    port released), the data directory and the account too.
 # 4. A plugin whose agent package declares `dependencies` (fixture
 #    @lamalibre/e2e-apphost-deps-server) fails at "install the agent half":
 #    the agent's root helper refuses a package that is not bundled; nothing
@@ -61,12 +63,19 @@ stub_put_tarball() {
   host_exec "curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/octet-stream' --data-binary @$1 'http://127.0.0.1:${STUB_PORT}/-/e2e/packages'"
 }
 
-# assert_nothing_installed <facts json> <message prefix> — no unit, code or config
-# of the agent half on the agent VM
+# assert_nothing_installed <facts json> <message prefix> — no unit, socket
+# unit, code or config of the agent half on the agent VM
 assert_nothing_installed() {
   assert_json_field "$1" '"\(.unit.file) \(.unit.props.LoadState)"' 'false not-found' "$2: no unit" || true
+  assert_json_field "$1" '"\(.socket.file) \(.socket.props.LoadState)"' 'false not-found' "$2: no socket unit" || true
   assert_json_field "$1" '"\(.code.dir) \(.config.dir)"' 'null null' "$2: no code, no config" || true
   assert_json_field "$1" '.apphostRecord' 'null' "$2: not in the agent's record" || true
+}
+
+# assert_port_released <facts json> <message prefix> — nothing listens on
+# the hosting's port (FACTS_PORT) on the agent VM any more
+assert_port_released() {
+  assert_json_field "$1" '"\(.listen.port) \(.listen.listeners | length)"' "${FACTS_PORT} 0" "$2: nothing listens on port ${FACTS_PORT}: the socket let go of it" || true
 }
 
 begin_test "36 — App plugin agent half: removal and refusals (Three-VM)"
@@ -123,6 +132,9 @@ if [ -n "$INSTANCE" ]; then
 else
   log_fail "The agent half does not answer through the tunnel"
 fi
+FACTS_PORT=$(hosting_field "${PLUGIN}" '.hosting.port')
+FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
+assert_json_field "$FACTS" '"\(.socket.props.ActiveState) \(.listen.listeners | length)"' 'active 1' "Its socket unit holds port ${FACTS_PORT}" || true
 
 # ===========================================================================
 # 2. Unhost: the data and the account stay
@@ -140,6 +152,7 @@ assert_eq "$(audit_count "${PLUGIN}" plugin.agent-half.removed '.purge == false'
 assert_relay_clean "${PLUGIN}" "Unhosted"
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_nothing_installed "$FACTS" "Unhosted"
+assert_port_released "$FACTS" "Unhosted"
 assert_json_field "$FACTS" '.data.dir | "\(.mode) \(.user)"' "700 ${SERVICE_USER}" "Unhosted: the data directory stays, still the account's" || true
 assert_json_field "$FACTS" '.data.state.instance' "${INSTANCE}" "…with the agent half's data in it" || true
 assert_json_field "$FACTS" '.account.user != null' 'true' "Unhosted: the account ${SERVICE_USER} stays" || true
@@ -194,6 +207,7 @@ OP=$(host_plugin "${PLUGIN}" 300 nudge)
 assert_json_field "$OP" '.status' 'succeeded' "Hosted again ($(json_get "$OP" '.error // .refused.error // ""'))" || true
 PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '.data.instance' "${INSTANCE}" "The agent half found the data the unhosting kept" || true
+FACTS_PORT=$(hosting_field "${PLUGIN}" '.hosting.port')
 
 host_api_post "plugins/${PLUGIN}/disable" '{}' > /dev/null
 UNINSTALL=$(host_api_delete "plugins/${PLUGIN}?purge=true")
@@ -203,6 +217,7 @@ assert_eq "$(host_api_get_status "plugins/${PLUGIN}")" "404" "The plugin is gone
 assert_relay_clean "${PLUGIN}" "Purged"
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_nothing_installed "$FACTS" "Purged"
+assert_port_released "$FACTS" "Purged"
 assert_json_field "$FACTS" '.data.dir' 'null' "Purged: no data directory" || true
 assert_json_field "$FACTS" '"\(.account.user) \(.account.group)"' 'null null' "Purged: no ${SERVICE_USER} account or group" || true
 

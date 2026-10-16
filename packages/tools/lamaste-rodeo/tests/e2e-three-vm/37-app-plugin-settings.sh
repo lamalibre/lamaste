@@ -12,9 +12,10 @@
 #    missing and not set; the plugin list says it needs configuration; the
 #    agent half has no settings files yet (hosting takes no settings).
 # 2. Values that do not suit their fields are refused by the panel (400, a
-#    message per field that never repeats the value) without a call to the
-#    agent half; a pattern — which the panel never runs — is refused by the
-#    agent half (422).
+#    message per field that never repeats the value; a setting the schema
+#    does not know is counted, never named) without a call to the agent
+#    half; a pattern — which the panel never runs — is refused by the agent
+#    half (422).
 # 3. A secret set through the API — from a 0600 file on the host VM, never
 #    an argument — reaches the agent half, which proves it holds it by the
 #    digest of what it holds, and reads back as { set: true, setAt }. A
@@ -25,10 +26,11 @@
 #    process's arguments and environment are sampled.
 # 5. On the agent VM settings.json and secrets.json are 0600 and the
 #    account's; the secret is in secrets.json and nowhere else.
-# 6. An update to 2.0.0 previews the schema change (retries retyped,
-#    endpoint newly required); after it the retyped value is dropped — the
-#    new default applies, never a conversion — the plugin needs
-#    configuration until endpoint is filled, and the secret stays.
+# 6. An update to 2.0.0 previews the typed schema change (retries retyped
+#    integer to string, endpoint added as a required string, no secret made
+#    plain); after it the retyped value is dropped — the new default
+#    applies, never a conversion — the plugin needs configuration until
+#    endpoint is filled, and the secret stays.
 # 7. Unhosting keeps the settings with the agent half's data; hosting again
 #    brings them back as they were.
 # 8. The test secrets are nowhere on the relay: not in state.db (dumped), in
@@ -36,7 +38,13 @@
 #    /var/log, /tmp or /run, in the journal since the spec started, in any
 #    API response it read (the audit log among them) or in a process
 #    argument.
-# 9. Uninstalling with purge removes them on both sides.
+# 9. An update to 3.0.0 turns apiKey from a secret into a plain field: with
+#    the plugin's auto-approve on, it is staged and waits all the same
+#    (secretToPlain, auto-approve withheld and audited), 2.0.0 and the
+#    secret stay; approved, it applies: the agent half drops the secret,
+#    apiKey reads as a plain field without a value and the plugin needs
+#    configuration, and the relay holds the old secret nowhere.
+# 10. Uninstalling with purge removes the settings on both sides.
 #
 # A test secret exists only on the host VM (app-plugin-harness.sh,
 # "Settings"); the spec compares digests and counts, and never prints one.
@@ -108,17 +116,18 @@ BUILD="r$(date +%s)-$$"
 FIXTURES="built"
 write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v1" "${PLUGIN}" 1.0.0 main "${BUILD}" '[]' v1 || FIXTURES="failed"
 write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v2" "${PLUGIN}" 2.0.0 main "${BUILD}" '[]' v2 || FIXTURES="failed"
+write_app_install_fixture "${LOCAL_TMP}/ship/fixtures/v3" "${PLUGIN}" 3.0.0 main "${BUILD}" '[]' v3 || FIXTURES="failed"
 if [ "$FIXTURES" != "built" ]; then
   log_fail "The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
   end_test
   exit $?
 fi
-log_pass "Fixtures built: ${SERVER_PACKAGE} 1.0.0 (settings v1) and 2.0.0 (settings v2) with their agent packages"
+log_pass "Fixtures built: ${SERVER_PACKAGE} 1.0.0, 2.0.0 and 3.0.0 (settings v1, v2, v3) with their agent packages"
 write_settings_call_script "${LOCAL_TMP}/ship/settings-call.sh"
 write_cli_sampled_script "${LOCAL_TMP}/ship/cli-sampled.sh"
 ship_agent_facts_probe
 ship_settings_facts_probe
-start_stand_in_feria fixtures/v1/server fixtures/v1/agent fixtures/v2/server fixtures/v2/agent
+start_stand_in_feria fixtures/v1/server fixtures/v1/agent fixtures/v2/server fixtures/v2/agent fixtures/v3/server fixtures/v3/agent
 prepare_settings_priv
 assert_eq "$(make_test_secret a)" "48" "Test secret A: 48 hex characters, made on the host VM in a 0600 file" || true
 assert_eq "$(make_test_secret b)" "48" "Test secret B, for the CLI" || true
@@ -178,15 +187,16 @@ assert_json_field "$FACTS" '"\(.dataDir.type) \(.settings) \(.secrets)"' 'dir nu
 log_section "Values that do not suit their fields are refused"
 
 EPOCH=$(agent_epoch)
-RESP=$(settings_api PUT "plugins/${PLUGIN}/settings" '{"revision":0,"values":{"colour":"e2e-unknown-7f3a","apiKey":"e2e-misplaced-9b2e","retries":987654321,"region":"e2e-region-3f8a"}}')
+RESP=$(settings_api PUT "plugins/${PLUGIN}/settings" '{"revision":0,"values":{"e2e-colour-6b1d":"e2e-unknown-7f3a","apiKey":"e2e-misplaced-9b2e","retries":987654321,"region":"e2e-region-3f8a"}}')
 assert_eq "$(status_of "$RESP")" "400" "Four values that do not suit their fields: 400" || true
 BODY=$(body_of "$RESP")
-assert_json_field "$BODY" '.errors.colour' 'Unknown setting' "colour: Unknown setting" || true
+assert_json_field "$BODY" '.errors._' '1 unknown setting' "A setting the schema does not know is counted under _: 1 unknown setting" || true
+assert_json_field "$BODY" '.errors | keys | join(",")' '_,apiKey,region,retries' "…never named: the errors are keyed by the schema's fields and _ alone" || true
 assert_json_field "$BODY" '.errors.apiKey' 'Is a secret; send it in secrets' "apiKey in values: Is a secret; send it in secrets" || true
 assert_json_field "$BODY" '.errors.retries' 'Must be at most 10' "retries 987654321: Must be at most 10" || true
 assert_json_field "$BODY" '.errors.region' 'Must be one of the options' "region: Must be one of the options" || true
-for value in e2e-unknown-7f3a e2e-misplaced-9b2e 987654321 e2e-region-3f8a; do
-  assert_not_contains "$BODY" "$value" "The answer never repeats the value ${value}" || true
+for value in e2e-colour-6b1d e2e-unknown-7f3a e2e-misplaced-9b2e 987654321 e2e-region-3f8a; do
+  assert_not_contains "$BODY" "$value" "The answer never repeats ${value}" || true
 done
 
 RESP=$(settings_api PUT "plugins/${PLUGIN}/settings" '{"revision":0,"values":{"schedule":"e2e-schedule-4d2c"}}')
@@ -303,10 +313,11 @@ log_section "Update to 2.0.0: the schema change previewed, a retyped value dropp
 
 UPDATE=$(host_api_post "plugins/${PLUGIN}/update" '{"version":"2.0.0"}')
 assert_json_field "$UPDATE" '.pendingUpdate.version' '2.0.0' "2.0.0 waits for approval: its agent half changed" || true
-assert_json_field "$UPDATE" '.pendingUpdate.settings.retyped | join(",")' 'retries' "Preview: retries is retyped — its value will be dropped" || true
+assert_json_field "$UPDATE" '.pendingUpdate.settings.retyped | map("\(.key):\(.from)->\(.to)") | join(",")' 'retries:integer->string' "Preview: retries is retyped, integer to string — its value will be dropped" || true
 assert_json_field "$UPDATE" '.pendingUpdate.settings.newRequired | join(",")' 'endpoint' "Preview: endpoint becomes required" || true
-assert_json_field "$UPDATE" '"\(.pendingUpdate.settings.added | join(",")) \(.pendingUpdate.settings.removed | length)"' 'endpoint 0' "Preview: endpoint added, nothing removed" || true
-assert_json_field "$(host_api_get "plugins/${PLUGIN}/hooks")" '.hooks.pendingUpdate.settings.retyped | join(",")' 'retries' "GET /api/plugins/${PLUGIN}/hooks shows the same preview" || true
+assert_json_field "$UPDATE" '"\(.pendingUpdate.settings.added | map("\(.key):\(.type)") | join(",")) \(.pendingUpdate.settings.removed | length)"' 'endpoint:string 0' "Preview: endpoint added (a string), nothing removed" || true
+assert_json_field "$UPDATE" '.pendingUpdate.settings.secretToPlain | length' '0' "Preview: no secret becomes a plain field" || true
+assert_json_field "$(host_api_get "plugins/${PLUGIN}/hooks")" '.hooks.pendingUpdate.settings.retyped | map(.key) | join(",")' 'retries' "GET /api/plugins/${PLUGIN}/hooks shows the same preview" || true
 APPROVED=$(host_api_post "plugins/${PLUGIN}/hooks/approve" "{\"digest\":\"$(json_get "$UPDATE" '.pendingUpdate.digest')\"}")
 OP=$(wait_operation "${PLUGIN}" "$(json_get "$APPROVED" '.operation.id // empty')" 300 nudge)
 assert_json_field "$OP" '.status' 'succeeded' "The update succeeded ($(json_get "$OP" '.error // ""'))" || true
@@ -381,7 +392,48 @@ assert_json_field "$ROW" '"\(.secretKeys) \(.setAtTimestamps)"' 'apiKey 1' "…w
 assert_json_field "$ROW" '(.valueKeys // "") | split(",") | index("apiKey") == null' 'true' "…and no apiKey among its values" || true
 
 # ===========================================================================
-# 11. Purge
+# 11. Update to 3.0.0: a secret becomes a plain field
+# ===========================================================================
+
+log_section "Update to 3.0.0: a secret turned plain waits for the admin, auto-approve or not"
+
+AUTO=$(host_api_call PUT "plugins/${PLUGIN}/hooks/auto-approve" '{"enabled":true}')
+assert_json_field "$(body_of "$AUTO")" '.autoApprove' 'true' "Auto-approve is on for ${PLUGIN}" || true
+UPDATE=$(host_api_post "plugins/${PLUGIN}/update" '{"version":"3.0.0"}')
+assert_json_field "$UPDATE" '.pendingUpdate.version' '3.0.0' "3.0.0 is staged and waits for approval, auto-approve on" || true
+assert_json_field "$UPDATE" '.pendingUpdate.settings.secretToPlain | join(",")' 'apiKey' "Preview: apiKey turns from a secret into a plain field (secretToPlain)" || true
+assert_json_field "$UPDATE" '.pendingUpdate.settings.retyped | map("\(.key):\(.from)->\(.to)") | join(",")' 'apiKey:secret->string' "…retyped secret to string" || true
+assert_json_field "$UPDATE" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' "Auto-approve withheld: $(json_get "$UPDATE" '(.pendingUpdate.autoApproveWithheld // []) | join("; ")')" || true
+assert_eq "$(audit_count "${PLUGIN}" hooks.auto-approve.withheld '((.codes // []) | index("settings.secret-to-plain")) != null and .version == "3.0.0"')" "1" "Audit: hooks.auto-approve.withheld, settings.secret-to-plain" || true
+assert_json_field "$(host_api_get "plugins/${PLUGIN}/hooks")" '.hooks.pendingUpdate.settings.secretToPlain | join(",")' 'apiKey' "GET /api/plugins/${PLUGIN}/hooks shows it pending" || true
+assert_json_field "$(host_api_get "plugins/${PLUGIN}")" '.plugin.version' '2.0.0' "Until it is approved, 2.0.0 stays…" || true
+assert_json_field "$(settings_probe "${PLUGIN}")" '"\(.schemaVersion) \(.secretDigests.apiKey)"' "2 ${DIGEST_B}" "…and the agent half holds secret B, schema 2" || true
+
+APPROVED=$(host_api_post "plugins/${PLUGIN}/hooks/approve" "{\"digest\":\"$(json_get "$UPDATE" '.pendingUpdate.digest')\"}")
+OP=$(wait_operation "${PLUGIN}" "$(json_get "$APPROVED" '.operation.id // empty')" 300 nudge)
+assert_json_field "$OP" '.status' 'succeeded' "Approved by the admin, the update to 3.0.0 succeeded ($(json_get "$OP" '.error // ""'))" || true
+if wait_for 60 health_up; then
+  log_pass "The hosting is up on 3.0.0"
+else
+  log_fail "Health: $(hosting_field "${PLUGIN}" '.hosting.health')"
+fi
+PROBE=$(settings_probe "${PLUGIN}")
+assert_json_field "$PROBE" '"\(.schemaVersion) \(.secretDigests | has("apiKey")) \(.stored | has("apiKey"))"' '3 false false' "The agent half, schema 3, dropped the secret: no apiKey secret, no apiKey value — never moved into its settings" || true
+FACTS=$(settings_facts "${PLUGIN}")
+assert_json_field "$FACTS" '"\(.settings.schemaVersion) \(.settings.values | has("apiKey")) \((.secrets.keys // []) | index("apiKey") == null)"' '3 false true' "On the agent VM: settings.json (schema 3) has no apiKey, secrets.json no longer holds it" || true
+VIEW=$(settings_view "${PLUGIN}")
+assert_json_field "$VIEW" '.fields | map(select(.key == "apiKey") | .type) | join(",")' 'string' "GET settings: apiKey is a plain string field…" || true
+assert_json_field "$VIEW" '.values.apiKey // "unset"' 'unset' "…without a value" || true
+assert_json_field "$VIEW" '"\(.configured) \(.missing | join(","))"' 'false apiKey' "…and the plugin needs configuration: apiKey is missing" || true
+assert_json_field "$(settings_summary "${PLUGIN}")" '"\(.configured) \(.missing | join(","))"' 'false apiKey' "GET /api/plugins: needs configuration (apiKey)" || true
+ROW=$(settings_cache_row "${PLUGIN}")
+assert_json_field "$ROW" '"\(.schemaVersion) \(.secretKeys // "none") \((.valueKeys // "") | split(",") | index("apiKey") == null)"' '3 none true' "The relay's cache: schema 3, no secret, no apiKey value" || true
+settings_sweep "${PLUGIN}"
+SCAN=$(relay_secret_scan "${PLUGIN}" "${SPEC_START}")
+assert_json_field "$SCAN" '"\(.files) \(.stateDb) \(.journal) \(.responses)"' '0 0 0 0' "Secret B (and A) is on no relay file, in no state.db row, journal line or answer after the update" || true
+
+# ===========================================================================
+# 12. Purge
 # ===========================================================================
 
 log_section "Uninstalling with purge removes the settings on both sides"

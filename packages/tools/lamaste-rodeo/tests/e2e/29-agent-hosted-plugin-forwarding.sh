@@ -17,11 +17,15 @@
 #   caller assertion: pages and the bundle work, the user surface (/app) is
 #   out of reach, credentials never pass, bodies stream, the body limit
 #   holds, server-sent events pass through, a loopback call without an
-#   assertion is refused
+#   assertion is refused; Service-Worker-Allowed, Clear-Site-Data and the
+#   agent half's responder header never reach the browser, and a service
+#   worker's script request (Service-Worker: script) is refused (403)
+#   before it enters the tunnel
 # - rotating the secret keeps calls working, before and after the agent
 #   acknowledges the new one
-# - a stopped agent half is a clean 502, and the health monitor reports
-#   down (app, then tunnel) and up again
+# - a stopped agent half is a clean 502; something else on its port serves
+#   nothing through the panel (502, reason app: no responder header), and
+#   the health monitor reports down (app, then tunnel) and up again
 # - clearing the hosting and uninstalling the plugin remove tunnel, secret
 #   and capability; the same through lamaste-server plugins host|unhost
 #
@@ -359,6 +363,17 @@ assert_json_field "$ECHO" '.bytes' '4096' "A request body streams through" || tr
 ECHO_HEADERS=$(_curl_mtls -D - -o /dev/null -X POST -H 'Content-Type: application/octet-stream' --data-binary "@${WORK_DIR}/body.bin" "${BASE_URL}/api/${PLUGIN_NAME}/echo")
 assert_not_contains "$ECHO_HEADERS" "app-session" "Set-Cookie from the application never passes back" || true
 
+# A plugin's pages live in the panel's origin: nothing they serve may
+# install a service worker there or wipe the panel's storage.
+UNSAFE_HEADERS=$(_curl_mtls -D - -o /dev/null "${BASE_URL}/api/${PLUGIN_NAME}/unsafe-headers" 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "")
+assert_contains "$UNSAFE_HEADERS" "x-e2e-kept: kept" "The agent half's own response headers pass…" || true
+assert_not_contains "$UNSAFE_HEADERS" "service-worker-allowed" "…but not Service-Worker-Allowed, which it set" || true
+assert_not_contains "$UNSAFE_HEADERS" "clear-site-data" "…nor Clear-Site-Data, which it set" || true
+assert_not_contains "$UNSAFE_HEADERS" "x-lamalibre-" "…nor its X-Lamalibre-Responder: the relay checks it, the browser never sees it" || true
+SW_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -H 'Service-Worker: script' "${BASE_URL}/api/${PLUGIN_NAME}/sw.js" 2>/dev/null || echo "000")
+assert_eq "$SW_STATUS" "403" "A service worker's script request (Service-Worker: script) is refused (403)…" || true
+assert_eq "$(grep -c '/admin/sw.js' "${HALF_LOG}" 2>/dev/null || true)" "0" "…before it enters the tunnel: the agent half never saw it" || true
+
 head -c $((11 * 1024 * 1024)) /dev/zero > "${WORK_DIR}/big.bin"
 BIG_STATUS=$(_curl_mtls -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/octet-stream' --data-binary "@${WORK_DIR}/big.bin" "${BASE_URL}/api/${PLUGIN_NAME}/echo" 2>/dev/null || echo "000")
 assert_eq "$BIG_STATUS" "413" "A body above the tunnel's 10 MiB limit is refused with 413" || true
@@ -451,6 +466,13 @@ assert_json_field "$DOWN_BODY" '.reason' 'tunnel' "Nothing on the loopback port 
 
 # Something answers on the port but it is not the agent half: the application is down.
 nohup python3 -m http.server "${PORT}" --bind 127.0.0.1 -d "${WORK_DIR}" &> /dev/null &
+for _ in $(seq 1 20); do
+  if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "http://127.0.0.1:${PORT}/" 2>/dev/null)" = "200" ]; then break; fi
+  sleep 0.5
+done
+SQUATTED=$(_curl_mtls -w '\n%{http_code}' "${BASE_URL}/api/${PLUGIN_NAME}/panel.js" 2>/dev/null || echo "000")
+assert_eq "$(echo "$SQUATTED" | tail -n 1)" "502" "Whatever holds the port without the installation secret serves nothing through the panel: 502…" || true
+assert_json_field "$(echo "$SQUATTED" | sed '$d')" '.reason' 'app' "…reason app (its answer carries no responder header)" || true
 if wait_health down 60; then
   log_pass "Health reports down within 60 seconds"
 else

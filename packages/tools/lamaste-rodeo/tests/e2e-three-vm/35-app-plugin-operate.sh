@@ -8,16 +8,27 @@
 # VM from the panel as in spec 34, then operated:
 #
 # 1. A secret rotation reaches the service's copy of the plugin config before
-#    the relay sees it acknowledged; the service is not restarted for it and
+#    the relay sees it acknowledged; the service is not restarted for it,
+#    the socket unit not touched (same file, listening since before), and
 #    calls keep working.
-# 2. A reboot of the agent VM brings the unit, the tunnel and the pages back
-#    by themselves; the agent half's data and the rotated secret are kept.
-# 3. An update to 1.1.0 waits for approval (its agent half changed), then the
+# 2. Systemd holds the port (the socket unit beside the agent half's): an
+#    unprivileged process can bind neither 127.0.0.1:<port> nor
+#    0.0.0.0:<port> (EADDRINUSE) while the agent half runs, nor while its
+#    service is stopped — the socket stays active, systemd alone holds the
+#    port — and a connection starts the agent half again. Restarted, then
+#    killed with SIGKILL (Restart=always) while a client calls it without
+#    pause, it refuses no connection and comes back with a new MainPID.
+# 3. A reboot of the agent VM brings the socket, the unit, the tunnel and
+#    the pages back by themselves, the agent half on systemd's socket
+#    (descriptor 3); its data and the rotated secret are kept.
+# 4. An update to 1.1.0 waits for approval (its agent half changed), then the
 #    new agent half is installed and activated before the relay package:
 #    current → 1.1.0, previous 1.0.0, data kept; the old version answered
-#    the pre stage, the new one the post stage.
-# 4. An update to 1.2.0 whose post stage fails is rolled back: the helper
-#    activates 1.1.0 again and the relay package is restored.
+#    the pre stage, the new one the post stage. A new process, the same
+#    socket: it listened throughout.
+# 5. An update to 1.2.0 whose post stage fails is rolled back: the helper
+#    activates 1.1.0 again and the relay package is restored — the socket
+#    still the one from boot.
 #
 # The agent's sync is nudged while operations run (the unit its timer
 # starts) so the spec stays inside rodeo's ten minutes; spec 34 shows the
@@ -42,9 +53,12 @@ SERVER_PACKAGE="@lamalibre/e2e-apphost-ops-server"
 AGENT_PACKAGE="@lamalibre/e2e-apphost-ops-agent"
 SERVICE_USER="lamaste-app-e2e-apphost-ops"
 UNIT="lamalibre-app-e2e-apphost-ops.service"
+SOCKET_UNIT="lamalibre-app-e2e-apphost-ops.socket"
 CONFIG_FILE="/etc/lamalibre/apps/e2e-apphost-ops/plugin-config.json"
 POLICY_ID="e2e-apphost-35"
 REMOTE_DIR="/var/tmp/e2e-35-app-plugin"
+# Another local process: it must get nothing of the agent half's port
+SQUATTER_USER="nobody"
 LOCAL_TMP=""
 CLEAN_PLUGINS="${PLUGIN}"
 CLEAN_ROUTES="${PLUGIN}"
@@ -54,6 +68,19 @@ PURGE_PACKAGES=""
 # (that field only: the file holds the secret)
 service_issued_at() {
   agent_exec "node -p \"JSON.parse(require('fs').readFileSync('${CONFIG_FILE}', 'utf8')).issuedAt\"" 2>/dev/null || echo ""
+}
+
+# main_pid — the agent half's MainPID (0 while it is not running)
+main_pid() { agent_exec "systemctl show -p MainPID --value ${UNIT}" 2>/dev/null || echo "0"; }
+
+# unit_active — the agent half's service is active
+unit_active() { [ "$(agent_exec "systemctl is-active ${UNIT}" 2>/dev/null)" = "active" ]; }
+
+# new_main_pid <pid> — the service is active under another MainPID than <pid>
+new_main_pid() {
+  local pid
+  pid=$(main_pid)
+  [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "$1" ] && unit_active
 }
 
 begin_test "35 — App plugin agent half: rotation, reboot, update (Three-VM)"
@@ -102,6 +129,8 @@ assert_json_field "$OP" '.status' 'succeeded' "Hosted on ${HOST_AGENT_LABEL} ($(
 PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '"\(.version) \(.user)"' "1.0.0 ${SERVICE_USER}" "Agent half 1.0.0 answers through the tunnel as ${SERVICE_USER}" || true
 INSTANCE=$(json_get "$PING" '.data.instance')
+PORT=$(hosting_field "${PLUGIN}" '.hosting.port')
+FACTS_PORT="${PORT}"
 
 # ===========================================================================
 # 2. Rotation
@@ -111,6 +140,9 @@ log_section "A rotation reaches the service's copy before it is acknowledged"
 
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 PID_BEFORE=$(json_get "$FACTS" '.unit.props.MainPID')
+SOCKET_SHA=$(json_get "$FACTS" '.socket.sha256')
+SOCKET_SINCE=$(json_get "$FACTS" '.socket.props.ActiveEnterTimestamp')
+assert_json_field "$FACTS" '.socket.props | "\(.ActiveState) \(.Listen)"' "active 127.0.0.1:${PORT} (Stream)" "${SOCKET_UNIT} listens on 127.0.0.1:${PORT} (since ${SOCKET_SINCE})" || true
 ISSUED_BEFORE=$(hosting_field "${PLUGIN}" '.hosting.secretIssuedAt')
 assert_json_field "$FACTS" '.config.issuedAt' "${ISSUED_BEFORE}" "The service's copy holds the current secret" || true
 SYNC_MARK=$(sync_log_lines)
@@ -143,11 +175,75 @@ assert_json_field "$FACTS" '.config.issuedAt' "${ISSUED_NEW}" "${CONFIG_FILE} ca
 assert_json_field "$FACTS" '.config.secretMatchesAgentCopy' 'true' "…the one the agent holds" || true
 assert_json_field "$FACTS" '.config.file | "\(.mode) \(.user)"' "600 ${SERVICE_USER}" "…still 0600, the account's" || true
 assert_json_field "$FACTS" '.unit.props.MainPID' "${PID_BEFORE}" "The service was not restarted: it re-reads its config on a signature it cannot verify" || true
+assert_json_field "$FACTS" '.socket.sha256' "${SOCKET_SHA}" "The socket unit's file is unchanged: a rotation does not move the port" || true
+assert_json_field "$FACTS" '.socket.props.ActiveEnterTimestamp' "${SOCKET_SINCE}" "…and the socket kept listening (active since ${SOCKET_SINCE})" || true
 assert_contains "$(sync_log_since "$SYNC_MARK")" "plugin config delivered to its service: ${PLUGIN}" "The agent's sync delivered it (sync.log)" || true
 assert_json_field "$(host_api_get "${PLUGIN}/ping")" '.pong' 'true' "Calls work on the new secret" || true
 
 # ===========================================================================
-# 3. Reboot
+# 3. Systemd holds the port
+# ===========================================================================
+
+log_section "Systemd holds the port: the agent half stopped, restarted or killed"
+
+BOUND=$(port_probe bind "${PORT}" "${SQUATTER_USER}")
+assert_json_field "$BOUND" '"\(.["127.0.0.1"]) \(.["0.0.0.0"])"' 'EADDRINUSE EADDRINUSE' "While the agent half runs, ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}" || true
+
+# Stopped by hand, the agent half leaves the port to systemd alone. The
+# relay's health probe — a connection through the tunnel every 10 s — starts
+# it again, so port-probe.mjs stops it and samples at once, and the sample
+# counts only when the service stayed stopped throughout (valid).
+STOPPED='{}'
+for _ in 1 2 3; do
+  STOPPED=$(port_probe stopped "${PLUGIN}" "${PORT}" "${SQUATTER_USER}")
+  if [ "$(json_get "$STOPPED" '.valid')" = "true" ]; then break; fi
+  sleep 1
+done
+assert_json_field "$STOPPED" '.valid' 'true' "systemctl stop ${UNIT}: sampled while it stayed stopped" || true
+assert_json_field "$STOPPED" '.socket | "\(.ActiveState) \(.SubState) \(.Listen)"' "active listening 127.0.0.1:${PORT} (Stream)" "${SOCKET_UNIT} stays active, listening on 127.0.0.1:${PORT}" || true
+assert_json_field "$STOPPED" '"\(.listeners | length) \([.listeners[].users[].pid | tostring] | unique | join(","))"' '1 1' "ss: systemd (pid 1) alone holds the port" || true
+assert_json_field "$STOPPED" '"\(.binds["127.0.0.1"]) \(.binds["0.0.0.0"])"' 'EADDRINUSE EADDRINUSE' "…and ${SQUATTER_USER} can bind neither 127.0.0.1:${PORT} nor 0.0.0.0:${PORT}: no window to take it" || true
+WOKEN=$(agent_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://127.0.0.1:${PORT}/admin/health" 2>/dev/null || echo "000")
+assert_eq "$WOKEN" "401" "A connection to the port finds the agent half again: systemd started it for the connection waiting on its socket" || true
+if wait_for 30 new_main_pid "${PID_BEFORE}"; then
+  log_pass "${UNIT} is active again (MainPID $(main_pid))"
+else
+  log_fail "${UNIT} did not come back: $(agent_exec "systemctl is-active ${UNIT}" 2>/dev/null)"
+fi
+assert_json_field "$(host_api_get "${PLUGIN}/ping")" '.pong' 'true' "The pages answer through the tunnel" || true
+
+# A client calling the agent half without pause (port-probe.mjs loop: a new
+# connection per request) while it is restarted, then killed: connections
+# wait on systemd's socket for the next process — none is refused.
+PID_A=$(main_pid)
+agent_exec "rm -f ${REMOTE_DIR}/loop.json; nohup node ${REMOTE_DIR}/port-probe.mjs loop ${PORT} 24 ${REMOTE_DIR}/loop.json > /dev/null 2>&1 & exit" > /dev/null 2>&1 || true
+sleep 3
+agent_exec "systemctl restart ${UNIT}" > /dev/null 2>&1 || true
+PID_B=""
+if wait_for 30 new_main_pid "${PID_A}"; then PID_B=$(main_pid); fi
+assert_not_eq "${PID_B:-0}" "0" "systemctl restart: a new agent half (MainPID ${PID_A} → ${PID_B:-none})" || true
+sleep 2
+PID_C=""
+if [ -n "${PID_B}" ]; then
+  agent_exec "kill -9 ${PID_B}" > /dev/null 2>&1 || true
+  if wait_for 40 new_main_pid "${PID_B}"; then PID_C=$(main_pid); fi
+fi
+assert_not_eq "${PID_C:-0}" "0" "kill -9: Restart=always brings a new one (MainPID ${PID_B:-none} → ${PID_C:-none})" || true
+loop_done() { [ "$(agent_exec "test -s ${REMOTE_DIR}/loop.json && echo done" 2>/dev/null)" = "done" ]; }
+wait_for 60 loop_done || true
+LOOP=$(agent_exec "cat ${REMOTE_DIR}/loop.json" 2>/dev/null || echo '{}')
+[ -n "$LOOP" ] || LOOP='{}'
+assert_json_field "$LOOP" '.requests >= 20' 'true' "The client made $(json_get "$LOOP" '.requests') requests across the restart and the kill (longest wait $(json_get "$LOOP" '.longestMs') ms)" || true
+assert_json_field "$LOOP" '.errors.ECONNREFUSED // 0' '0' "…none refused: the port was never closed" || true
+assert_json_field "$LOOP" '.statuses | keys | join(",")' '401' "…every answer the agent half's (401 to a bare call)" || true
+assert_json_field "$LOOP" '[.errors | to_entries[] | .value] | add // 0 | . <= 2' 'true' "…at most the requests in flight at the two stops cut ($(json_get "$LOOP" '.errors | tostring'))" || true
+FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
+assert_json_field "$FACTS" '.socket.props.ActiveEnterTimestamp' "${SOCKET_SINCE}" "${SOCKET_UNIT} listened throughout: active since ${SOCKET_SINCE}" || true
+assert_json_field "$FACTS" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' "The new agent half was handed the same listening socket (descriptor 3)" || true
+assert_json_field "$(host_api_get "${PLUGIN}/ping")" '.pong' 'true' "The pages answer" || true
+
+# ===========================================================================
+# 4. Reboot
 # ===========================================================================
 
 log_section "A reboot of the agent VM brings it all back"
@@ -161,7 +257,6 @@ if wait_for 180 vm_up; then
 else
   log_fail "The agent VM did not come back within 180 seconds"
 fi
-unit_active() { [ "$(agent_exec "systemctl is-active ${UNIT}" 2>/dev/null)" = "active" ]; }
 if wait_for 120 unit_active; then
   log_pass "${UNIT} started at boot"
 else
@@ -177,9 +272,16 @@ PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '"\(.version) \(.user)"' "1.0.0 ${SERVICE_USER}" "Agent half 1.0.0, as ${SERVICE_USER}" || true
 assert_json_field "$PING" '.data.instance' "${INSTANCE}" "Its data survived the reboot" || true
 assert_json_field "$PING" ".data.starts > ${STARTS_BEFORE:-0}" 'true' "…and it was started again (start $(json_get "$PING" '.data.starts'))" || true
+assert_json_field "$PING" '.listen | "\(.mode) \(.fd)"' 'systemd-socket 3' "…on systemd's socket, descriptor 3" || true
 FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$FACTS" '.unit.processUser' "${SERVICE_USER}" "Its process is ${SERVICE_USER}'s" || true
 assert_json_field "$FACTS" '.config.issuedAt' "${ISSUED_NEW}" "The service's copy kept the rotated secret" || true
+assert_json_field "$FACTS" '.socket.props | "\(.ActiveState) \(.UnitFileState) \(.Listen)"' "active enabled 127.0.0.1:${PORT} (Stream)" "${SOCKET_UNIT} came back at boot, listening on 127.0.0.1:${PORT}" || true
+PID_BOOT=$(json_get "$FACTS" '.unit.props.MainPID')
+assert_json_field "$FACTS" "[.listen.listeners[0].users[]?.pid] | any(.[]; . == 1) and any(.[]; . == ${PID_BOOT:-0})" 'true' "ss: the listening socket is systemd's and the agent half's (MainPID ${PID_BOOT})" || true
+assert_json_field "$FACTS" '.listen.fd3Inode != null and .listen.fd3Inode == .listen.listeners[0].inode' 'true' "The agent half's descriptor 3 is that socket" || true
+# From here on the socket must outlive every new agent half process.
+SOCKET_SINCE=$(json_get "$FACTS" '.socket.props.ActiveEnterTimestamp')
 assert_eq "$(user_systemctl "is-active ${SYNC_TIMER} 2>/dev/null || true")" "active" "The agent's sync timer runs again" || true
 health_up() { [ "$(hosting_field "${PLUGIN}" '.hosting.health.state')" = "up" ]; }
 if wait_for 90 health_up; then
@@ -189,7 +291,7 @@ else
 fi
 
 # ===========================================================================
-# 4. Update to 1.1.0
+# 5. Update to 1.1.0
 # ===========================================================================
 
 log_section "Update to 1.1.0: approved, the new agent half first"
@@ -210,6 +312,9 @@ FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$FACTS" '"\(.code.current) \(.code.previous)"' '1.1.0 1.0.0' "current → 1.1.0, previous → 1.0.0" || true
 assert_json_field "$FACTS" '.code.versions | join(",")' '1.0.0,1.1.0' "Both versions are kept" || true
 assert_json_field "$FACTS" '.unit.props.ActiveState' 'active' "${UNIT} is active" || true
+PID_UPDATED=$(json_get "$FACTS" '.unit.props.MainPID')
+assert_not_eq "${PID_UPDATED}" "${PID_BOOT}" "…as a new process (MainPID ${PID_BOOT} → ${PID_UPDATED})" || true
+assert_json_field "$FACTS" '.socket.props.ActiveEnterTimestamp' "${SOCKET_SINCE}" "…on the same socket: ${SOCKET_UNIT} listened throughout the update (since ${SOCKET_SINCE})" || true
 PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '.version' '1.1.0' "The pages come from 1.1.0" || true
 assert_json_field "$PING" '.data.instance' "${INSTANCE}" "…which found the data 1.0.0 left" || true
@@ -221,7 +326,7 @@ assert_contains "$JOURNAL" "hook install:post-tunnel phase=upgrade version=1.1.0
 assert_eq "$(audit_count "${PLUGIN}" plugin.agent-half.installed '.phase == "upgrade" and .version == "1.1.0"')" "1" "Audit: plugin.agent-half.installed for the upgrade" || true
 
 # ===========================================================================
-# 5. Update to 1.2.0, a bad release
+# 6. Update to 1.2.0, a bad release
 # ===========================================================================
 
 log_section "Update to 1.2.0: its post stage fails, 1.1.0 comes back"
@@ -241,6 +346,8 @@ FACTS=$(agent_facts "${PLUGIN}" "${SERVICE_USER}")
 assert_json_field "$FACTS" '"\(.code.current) \(.code.previous)"' '1.1.0 1.2.0' "current → 1.1.0 again (previous → 1.2.0)" || true
 assert_json_field "$FACTS" '.code.versions | join(",")' '1.1.0,1.2.0' "Only the current and the previous version are kept" || true
 assert_json_field "$FACTS" '.unit.props.ActiveState' 'active' "${UNIT} is active" || true
+assert_not_eq "$(json_get "$FACTS" '.unit.props.MainPID')" "${PID_UPDATED}" "…as a new process again (MainPID ${PID_UPDATED} → $(json_get "$FACTS" '.unit.props.MainPID'))" || true
+assert_json_field "$FACTS" '.socket.props.ActiveEnterTimestamp' "${SOCKET_SINCE}" "…on the socket from boot: it listened through 1.2.0 and the rollback" || true
 PING=$(host_api_get "${PLUGIN}/ping")
 assert_json_field "$PING" '.version' '1.1.0' "The pages come from 1.1.0" || true
 assert_json_field "$PING" '.data.instance' "${INSTANCE}" "…with the data kept throughout" || true

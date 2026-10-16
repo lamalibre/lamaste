@@ -309,16 +309,72 @@
               "variable": "INSTANCE"
             }
           }
+        },
+        {
+          "id": "step-25",
+          "label": "Set FACTS_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field \"${PLUGIN}\" '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "FACTS_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "Set FACTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\""
+          },
+          "capture": [
+            {
+              "variable": "FACTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-27",
+          "label": "Its socket unit holds port ${FACTS_PORT}",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "FACTS"
+              },
+              "path": "\"\\(.socket.props.ActiveState) \\(.listen.listeners | length)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "active 1"
+              },
+              "message": "Its socket unit holds port ${FACTS_PORT}"
+            }
+          }
         }
       ],
-      "bash": "log_section \"Install and host the plugin\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-36-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/main\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/deps\" \"${DEPS_PLUGIN}\" 1.0.0 deps \"${BUILD}\" '[]' || FIXTURES=\"failed\"\n# Same package and version as fixtures/main, other bytes: what a registry\n# serving something else under a published version hands out.\nwrite_app_install_fixture \"${LOCAL_TMP}/tampered\" \"${PLUGIN}\" 1.0.0 tampered \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nTAMPERED=$(npm pack \"${LOCAL_TMP}/tampered/agent\" --pack-destination \"${LOCAL_TMP}/ship\" --json --loglevel=error 2>/dev/null | jq -r '.[0].filename // empty' 2>/dev/null || echo \"\")\nif [ \"$FIXTURES\" != \"built\" ] || [ -z \"$TAMPERED\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nmv \"${LOCAL_TMP}/ship/$(basename \"${TAMPERED}\")\" \"${LOCAL_TMP}/ship/tampered.tgz\"\nlog_pass \"Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tampered ${AGENT_PACKAGE}@1.0.0\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/main/server fixtures/main/agent fixtures/deps/server fixtures/deps/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\",\\\"${DEPS_AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nPINNED=$(json_get \"$INSTALL\" '.hooks.agentHalf.integrity')\nassert_eq \"$PINNED\" \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\" \"The relay pinned the integrity the stand-in Feria publishes\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nINSTANCE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty')\nif [ -n \"$INSTANCE\" ]; then\n  log_pass \"The agent half answers through the tunnel (its data: instance ${INSTANCE})\"\nelse\n  log_fail \"The agent half does not answer through the tunnel\"\nfi\n\n# ===========================================================================\n# 2. Unhost: the data and the account stay\n# ==========================================================================="
+      "bash": "log_section \"Install and host the plugin\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-36-app-plugin-XXXXXXXX)\nBUILD=\"r$(date +%s)-$$\"\nFIXTURES=\"built\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/main\" \"${PLUGIN}\" 1.0.0 main \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nwrite_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/deps\" \"${DEPS_PLUGIN}\" 1.0.0 deps \"${BUILD}\" '[]' || FIXTURES=\"failed\"\n# Same package and version as fixtures/main, other bytes: what a registry\n# serving something else under a published version hands out.\nwrite_app_install_fixture \"${LOCAL_TMP}/tampered\" \"${PLUGIN}\" 1.0.0 tampered \"${BUILD}\" '[]' || FIXTURES=\"failed\"\nTAMPERED=$(npm pack \"${LOCAL_TMP}/tampered/agent\" --pack-destination \"${LOCAL_TMP}/ship\" --json --loglevel=error 2>/dev/null | jq -r '.[0].filename // empty' 2>/dev/null || echo \"\")\nif [ \"$FIXTURES\" != \"built\" ] || [ -z \"$TAMPERED\" ]; then\n  log_fail \"The fixtures could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nmv \"${LOCAL_TMP}/ship/$(basename \"${TAMPERED}\")\" \"${LOCAL_TMP}/ship/tampered.tgz\"\nlog_pass \"Fixtures built: ${SERVER_PACKAGE}, ${DEPS_SERVER_PACKAGE} and a tampered ${AGENT_PACKAGE}@1.0.0\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/main/server fixtures/main/agent fixtures/deps/server fixtures/deps/agent\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\",\\\"${DEPS_AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nPINNED=$(json_get \"$INSTALL\" '.hooks.agentHalf.integrity')\nassert_eq \"$PINNED\" \"$(feria_integrity \"${AGENT_PACKAGE}\" 1.0.0)\" \"The relay pinned the integrity the stand-in Feria publishes\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nINSTANCE=$(json_get \"$(host_api_get \"${PLUGIN}/ping\")\" '.data.instance // empty')\nif [ -n \"$INSTANCE\" ]; then\n  log_pass \"The agent half answers through the tunnel (its data: instance ${INSTANCE})\"\nelse\n  log_fail \"The agent half does not answer through the tunnel\"\nfi\nFACTS_PORT=$(hosting_field \"${PLUGIN}\" '.hosting.port')\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$FACTS\" '\"\\(.socket.props.ActiveState) \\(.listen.listeners | length)\"' 'active 1' \"Its socket unit holds port ${FACTS_PORT}\" || true\n\n# ===========================================================================\n# 2. Unhost: the data and the account stay\n# ==========================================================================="
     },
     {
       "id": "unhosting-keeps-the-agent-half-s-data-and-account",
       "label": "Unhosting keeps the agent half's data and account",
       "steps": [
         {
-          "id": "step-25",
+          "id": "step-28",
           "label": "DELETE /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -336,7 +392,7 @@
           ]
         },
         {
-          "id": "step-26",
+          "id": "step-29",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -353,7 +409,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-30",
           "label": "The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -375,7 +431,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-32",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -396,7 +452,7 @@
           }
         },
         {
-          "id": "step-31",
+          "id": "step-34",
           "label": "Audit: plugin.agent-half.removed, data kept",
           "target": "local",
           "continueOnError": true,
@@ -417,7 +473,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-36",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -434,7 +490,7 @@
           ]
         },
         {
-          "id": "step-35",
+          "id": "step-39",
           "label": "Unhosted: the data directory stays, still the account's",
           "target": "local",
           "continueOnError": true,
@@ -456,7 +512,7 @@
           }
         },
         {
-          "id": "step-36",
+          "id": "step-40",
           "label": "…with the agent half's data in it",
           "target": "local",
           "continueOnError": true,
@@ -478,7 +534,7 @@
           }
         },
         {
-          "id": "step-37",
+          "id": "step-41",
           "label": "Unhosted: the account ${SERVICE_USER} stays",
           "target": "local",
           "continueOnError": true,
@@ -500,7 +556,7 @@
           }
         },
         {
-          "id": "step-38",
+          "id": "step-42",
           "label": "Unhosted: the agent dropped its copy of the plugin config",
           "target": "local",
           "op": {
@@ -510,7 +566,7 @@
           }
         },
         {
-          "id": "step-39",
+          "id": "step-43",
           "label": "Unhosted: the agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {
@@ -520,14 +576,14 @@
           }
         }
       ],
-      "bash": "log_section \"Unhosting keeps the agent half's data and account\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN}/hosting\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNHOST\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == false')\" \"1\" \"Audit: plugin.agent-half.removed, data kept\" || true\nassert_relay_clean \"${PLUGIN}\" \"Unhosted\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Unhosted\"\nassert_json_field \"$FACTS\" '.data.dir | \"\\(.mode) \\(.user)\"' \"700 ${SERVICE_USER}\" \"Unhosted: the data directory stays, still the account's\" || true\nassert_json_field \"$FACTS\" '.data.state.instance' \"${INSTANCE}\" \"…with the agent half's data in it\" || true\nassert_json_field \"$FACTS\" '.account.user != null' 'true' \"Unhosted: the account ${SERVICE_USER} stays\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"Unhosted: the agent dropped its copy of the plugin config\"\nelse\n  log_fail \"Unhosted: the agent still holds a plugin config for ${PLUGIN}\"\nfi\n\n# ===========================================================================\n# 3. Other bytes under the pinned version\n# ==========================================================================="
+      "bash": "log_section \"Unhosting keeps the agent half's data and account\"\n\nUNHOST=$(host_api_delete \"plugins/${PLUGIN}/hosting\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNHOST\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"The unhosting succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nfor step in 'agent uninstall:pre-teardown' 'remove the tunnel' 'agent uninstall:post-teardown' 'remove the agent half' 'revoke the secret and the capability'; do\n  assert_eq \"$(step_status \"$OP\" \"$step\")\" \"done\" \"Step: ${step}\" || true\ndone\nassert_eq \"$(audit_count \"${PLUGIN}\" plugin.agent-half.removed '.purge == false')\" \"1\" \"Audit: plugin.agent-half.removed, data kept\" || true\nassert_relay_clean \"${PLUGIN}\" \"Unhosted\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Unhosted\"\nassert_port_released \"$FACTS\" \"Unhosted\"\nassert_json_field \"$FACTS\" '.data.dir | \"\\(.mode) \\(.user)\"' \"700 ${SERVICE_USER}\" \"Unhosted: the data directory stays, still the account's\" || true\nassert_json_field \"$FACTS\" '.data.state.instance' \"${INSTANCE}\" \"…with the agent half's data in it\" || true\nassert_json_field \"$FACTS\" '.account.user != null' 'true' \"Unhosted: the account ${SERVICE_USER} stays\" || true\nif wait_for 90 agent_copy_gone \"${PLUGIN}\"; then\n  log_pass \"Unhosted: the agent dropped its copy of the plugin config\"\nelse\n  log_fail \"Unhosted: the agent still holds a plugin config for ${PLUGIN}\"\nfi\n\n# ===========================================================================\n# 3. Other bytes under the pinned version\n# ==========================================================================="
     },
     {
       "id": "a-tarball-that-is-not-the-pinned-one-is-refused",
       "label": "A tarball that is not the pinned one is refused",
       "steps": [
         {
-          "id": "step-40",
+          "id": "step-44",
           "label": "HTTP request on host",
           "target": "host",
           "op": {
@@ -549,7 +605,7 @@
           ]
         },
         {
-          "id": "step-41",
+          "id": "step-45",
           "label": "The published tarball (the pinned bytes) is kept aside",
           "target": "local",
           "continueOnError": true,
@@ -570,7 +626,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-46",
           "label": "Set REPLACED",
           "target": "local",
           "op": {
@@ -587,7 +643,7 @@
           ]
         },
         {
-          "id": "step-43",
+          "id": "step-47",
           "label": "The stand-in Feria now serves other bytes as ${AGENT_PACKAGE}@1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -609,7 +665,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-48",
           "label": "Set TAMPERED_INTEGRITY",
           "target": "local",
           "op": {
@@ -626,7 +682,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-49",
           "label": "…whose integrity is not the pinned one",
           "target": "local",
           "continueOnError": true,
@@ -647,7 +703,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-50",
           "label": "…and its packument says so: npm itself has nothing to object to",
           "target": "local",
           "continueOnError": true,
@@ -668,7 +724,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-51",
           "label": "Set REQUEST_MARK",
           "target": "local",
           "op": {
@@ -685,7 +741,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-52",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -702,7 +758,7 @@
           ]
         },
         {
-          "id": "step-49",
+          "id": "step-53",
           "label": "Hosting failed",
           "target": "local",
           "continueOnError": true,
@@ -724,7 +780,7 @@
           }
         },
         {
-          "id": "step-50",
+          "id": "step-54",
           "label": "…at install the agent half",
           "target": "local",
           "continueOnError": true,
@@ -745,7 +801,7 @@
           }
         },
         {
-          "id": "step-51",
+          "id": "step-55",
           "label": "…the agent refused the tarball against the pinned integrity",
           "target": "local",
           "continueOnError": true,
@@ -766,7 +822,7 @@
           }
         },
         {
-          "id": "step-52",
+          "id": "step-56",
           "label": "The tunnel was never granted",
           "target": "local",
           "continueOnError": true,
@@ -787,7 +843,7 @@
           }
         },
         {
-          "id": "step-53",
+          "id": "step-57",
           "label": "Set PULLS",
           "target": "local",
           "op": {
@@ -804,7 +860,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-60",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -821,7 +877,7 @@
           ]
         },
         {
-          "id": "step-58",
+          "id": "step-62",
           "label": "Refused: the kept data is untouched",
           "target": "local",
           "continueOnError": true,
@@ -843,7 +899,7 @@
           }
         },
         {
-          "id": "step-59",
+          "id": "step-63",
           "label": "Refused: the agent dropped its copy of the plugin config",
           "target": "local",
           "op": {
@@ -853,7 +909,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-64",
           "label": "Refused: the agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {
@@ -870,7 +926,7 @@
       "label": "Hosting again finds the kept data; purge removes it",
       "steps": [
         {
-          "id": "step-61",
+          "id": "step-65",
           "label": "Set RESTORED",
           "target": "local",
           "op": {
@@ -887,7 +943,7 @@
           ]
         },
         {
-          "id": "step-62",
+          "id": "step-66",
           "label": "The stand-in Feria serves the published bytes again",
           "target": "local",
           "continueOnError": true,
@@ -909,7 +965,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-67",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -926,7 +982,7 @@
           ]
         },
         {
-          "id": "step-64",
+          "id": "step-68",
           "label": "Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -948,7 +1004,7 @@
           }
         },
         {
-          "id": "step-65",
+          "id": "step-69",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -966,7 +1022,7 @@
           ]
         },
         {
-          "id": "step-66",
+          "id": "step-70",
           "label": "The agent half found the data the unhosting kept",
           "target": "local",
           "continueOnError": true,
@@ -988,7 +1044,24 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-71",
+          "label": "Set FACTS_PORT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "hosting_field \"${PLUGIN}\" '.hosting.port'"
+          },
+          "capture": [
+            {
+              "variable": "FACTS_PORT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-72",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -999,7 +1072,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-73",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -1017,7 +1090,7 @@
           ]
         },
         {
-          "id": "step-69",
+          "id": "step-74",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1034,7 +1107,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-75",
           "label": "Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1056,7 +1129,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-76",
           "label": "The plugin is gone from the relay",
           "target": "local",
           "continueOnError": true,
@@ -1077,7 +1150,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-78",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1094,7 +1167,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-81",
           "label": "Purged: no data directory",
           "target": "local",
           "continueOnError": true,
@@ -1116,7 +1189,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-82",
           "label": "Purged: no ${SERVICE_USER} account or group",
           "target": "local",
           "continueOnError": true,
@@ -1138,14 +1211,14 @@
           }
         }
       ],
-      "bash": "log_section \"Hosting again finds the kept data; purge removes it\"\n\nRESTORED=$(stub_put_tarball \"${REMOTE_DIR}/original.tgz\")\nassert_json_field \"$RESTORED\" '.integrity' \"${PINNED}\" \"The stand-in Feria serves the published bytes again\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"The agent half found the data the unhosting kept\" || true\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Purged\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Purged\"\nassert_json_field \"$FACTS\" '.data.dir' 'null' \"Purged: no data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"Purged: no ${SERVICE_USER} account or group\" || true\n\n# ===========================================================================\n# 5. An agent package with dependencies\n# ==========================================================================="
+      "bash": "log_section \"Hosting again finds the kept data; purge removes it\"\n\nRESTORED=$(stub_put_tarball \"${REMOTE_DIR}/original.tgz\")\nassert_json_field \"$RESTORED\" '.integrity' \"${PINNED}\" \"The stand-in Feria serves the published bytes again\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted again ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.data.instance' \"${INSTANCE}\" \"The agent half found the data the unhosting kept\" || true\nFACTS_PORT=$(hosting_field \"${PLUGIN}\" '.hosting.port')\n\nhost_api_post \"plugins/${PLUGIN}/disable\" '{}' > /dev/null\nUNINSTALL=$(host_api_delete \"plugins/${PLUGIN}?purge=true\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$UNINSTALL\" '.operation.id // empty')\" 240 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))\" || true\nassert_eq \"$(host_api_get_status \"plugins/${PLUGIN}\")\" \"404\" \"The plugin is gone from the relay\" || true\nassert_relay_clean \"${PLUGIN}\" \"Purged\"\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_nothing_installed \"$FACTS\" \"Purged\"\nassert_port_released \"$FACTS\" \"Purged\"\nassert_json_field \"$FACTS\" '.data.dir' 'null' \"Purged: no data directory\" || true\nassert_json_field \"$FACTS\" '\"\\(.account.user) \\(.account.group)\"' 'null null' \"Purged: no ${SERVICE_USER} account or group\" || true\n\n# ===========================================================================\n# 5. An agent package with dependencies\n# ==========================================================================="
     },
     {
       "id": "an-agent-package-that-is-not-bundled-is-refused",
       "label": "An agent package that is not bundled is refused",
       "steps": [
         {
-          "id": "step-77",
+          "id": "step-83",
           "label": "Set INSTALL",
           "target": "local",
           "op": {
@@ -1162,7 +1235,7 @@
           ]
         },
         {
-          "id": "step-78",
+          "id": "step-84",
           "label": "Installed ${DEPS_SERVER_PACKAGE}; its agent half is ${DEPS_AGENT_PACKAGE}",
           "target": "local",
           "continueOnError": true,
@@ -1184,7 +1257,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-85",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1201,7 +1274,7 @@
           ]
         },
         {
-          "id": "step-80",
+          "id": "step-86",
           "label": "Hosting failed",
           "target": "local",
           "continueOnError": true,
@@ -1223,7 +1296,7 @@
           }
         },
         {
-          "id": "step-81",
+          "id": "step-87",
           "label": "…at install the agent half",
           "target": "local",
           "continueOnError": true,
@@ -1244,7 +1317,7 @@
           }
         },
         {
-          "id": "step-82",
+          "id": "step-88",
           "label": "…the agent's helper refused a package with dependencies",
           "target": "local",
           "continueOnError": true,
@@ -1265,7 +1338,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-90",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1282,7 +1355,7 @@
           ]
         },
         {
-          "id": "step-86",
+          "id": "step-92",
           "label": "Refused: no data directory, no account",
           "target": "local",
           "continueOnError": true,
@@ -1311,7 +1384,7 @@
       "label": "With the agent's push-install window closed, hosting is refused",
       "steps": [
         {
-          "id": "step-87",
+          "id": "step-93",
           "label": "DELETE /api/plugins/push-install/enable/${HOST_AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -1321,7 +1394,7 @@
           }
         },
         {
-          "id": "step-88",
+          "id": "step-94",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1338,7 +1411,7 @@
           ]
         },
         {
-          "id": "step-89",
+          "id": "step-95",
           "label": "Hosting is refused (403)",
           "target": "local",
           "continueOnError": true,
@@ -1359,7 +1432,7 @@
           }
         },
         {
-          "id": "step-90",
+          "id": "step-96",
           "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
           "target": "local",
           "continueOnError": true,
@@ -1381,7 +1454,7 @@
           }
         },
         {
-          "id": "step-91",
+          "id": "step-97",
           "label": "Nothing was started",
           "target": "local",
           "continueOnError": true,
@@ -1402,7 +1475,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-98",
           "label": "POST /api/plugins/${DEPS_PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -1413,7 +1486,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-99",
           "label": "${DEPS_PLUGIN}, never hosted, is uninstalled at once",
           "target": "local",
           "continueOnError": true,
@@ -1438,8 +1511,8 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 36 — App plugin agent half: removal and refusals (Three-VM)\n# ============================================================================\n# An app plugin whose agent half Lamaste installs (fixture\n# @lamalibre/e2e-apphost-rm-server, helpers.sh), hosted on the agent VM from\n# the panel as in spec 34:\n#\n# 1. Unhosting (default) removes the unit, the code and the config, the\n#    tunnel, the secret and the capability; the agent half's data directory\n#    and account stay.\n# 2. The stand-in Feria then serves other bytes under the pinned version\n#    (a consistent packument, a new integrity): hosting again fails at\n#    \"install the agent half\" — the agent fetched the tarball and refused it\n#    against the integrity the relay pinned — and leaves nothing behind.\n# 3. With the published bytes back, hosting again finds the data the\n#    unhosting kept; uninstalling with purge then removes the data\n#    directory and the account too.\n# 4. A plugin whose agent package declares `dependencies` (fixture\n#    @lamalibre/e2e-apphost-deps-server) fails at \"install the agent half\":\n#    the agent's root helper refuses a package that is not bundled; nothing\n#    is left.\n# 5. With the agent's push-install window closed, hosting is refused.\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes.\n# ============================================================================",
-  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-rm\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-rm-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-rm-agent\"\nAGENT_TARBALL=\"e2e-apphost-rm-agent-1.0.0.tgz\"\nSERVICE_USER=\"lamaste-app-e2e-apphost-rm\"\nDEPS_PLUGIN=\"e2e-apphost-deps\"\nDEPS_SERVER_PACKAGE=\"@lamalibre/e2e-apphost-deps-server\"\nDEPS_AGENT_PACKAGE=\"@lamalibre/e2e-apphost-deps-agent\"\nDEPS_SERVICE_USER=\"lamaste-app-e2e-apphost-deps\"\nPOLICY_ID=\"e2e-apphost-36\"\nREMOTE_DIR=\"/var/tmp/e2e-36-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${DEPS_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${DEPS_PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\n# stub_put_tarball <file on the host VM> — publish it on the stand-in Feria\n# (replacing the version it holds); prints the registry's answer\nstub_put_tarball() {\n  host_exec \"curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/octet-stream' --data-binary @$1 'http://127.0.0.1:${STUB_PORT}/-/e2e/packages'\"\n}\n\n# assert_nothing_installed <facts json> <message prefix> — no unit, code or config\n# of the agent half on the agent VM\nassert_nothing_installed() {\n  assert_json_field \"$1\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"$2: no unit\" || true\n  assert_json_field \"$1\" '\"\\(.code.dir) \\(.config.dir)\"' 'null null' \"$2: no code, no config\" || true\n  assert_json_field \"$1\" '.apphostRecord' 'null' \"$2: not in the agent's record\" || true\n}\n\nbegin_test \"36 — App plugin agent half: removal and refusals (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
+  "headerRaw": "# ============================================================================\n# 36 — App plugin agent half: removal and refusals (Three-VM)\n# ============================================================================\n# An app plugin whose agent half Lamaste installs (fixture\n# @lamalibre/e2e-apphost-rm-server, helpers.sh), hosted on the agent VM from\n# the panel as in spec 34:\n#\n# 1. Unhosting (default) removes the unit and its socket unit — nothing\n#    listens on the hosting's port afterwards — the code and the config, the\n#    tunnel, the secret and the capability; the agent half's data directory\n#    and account stay.\n# 2. The stand-in Feria then serves other bytes under the pinned version\n#    (a consistent packument, a new integrity): hosting again fails at\n#    \"install the agent half\" — the agent fetched the tarball and refused it\n#    against the integrity the relay pinned — and leaves nothing behind, no\n#    socket unit either.\n# 3. With the published bytes back, hosting again finds the data the\n#    unhosting kept; uninstalling with purge then removes the units (the\n#    port released), the data directory and the account too.\n# 4. A plugin whose agent package declares `dependencies` (fixture\n#    @lamalibre/e2e-apphost-deps-server) fails at \"install the agent half\":\n#    the agent's root helper refuses a package that is not bundled; nothing\n#    is left.\n# 5. With the agent's push-install window closed, hosting is refused.\n#\n# The agent's sync is nudged while operations run (the unit its timer\n# starts) so the spec stays inside rodeo's ten minutes.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-rm\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-rm-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-rm-agent\"\nAGENT_TARBALL=\"e2e-apphost-rm-agent-1.0.0.tgz\"\nSERVICE_USER=\"lamaste-app-e2e-apphost-rm\"\nDEPS_PLUGIN=\"e2e-apphost-deps\"\nDEPS_SERVER_PACKAGE=\"@lamalibre/e2e-apphost-deps-server\"\nDEPS_AGENT_PACKAGE=\"@lamalibre/e2e-apphost-deps-agent\"\nDEPS_SERVICE_USER=\"lamaste-app-e2e-apphost-deps\"\nPOLICY_ID=\"e2e-apphost-36\"\nREMOTE_DIR=\"/var/tmp/e2e-36-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN} ${DEPS_PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN} ${DEPS_PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\n# stub_put_tarball <file on the host VM> — publish it on the stand-in Feria\n# (replacing the version it holds); prints the registry's answer\nstub_put_tarball() {\n  host_exec \"curl -s --max-time 30 -X PUT -H 'Authorization: Bearer ${STUB_ADMIN_TOKEN}' -H 'Content-Type: application/octet-stream' --data-binary @$1 'http://127.0.0.1:${STUB_PORT}/-/e2e/packages'\"\n}\n\n# assert_nothing_installed <facts json> <message prefix> — no unit, socket\n# unit, code or config of the agent half on the agent VM\nassert_nothing_installed() {\n  assert_json_field \"$1\" '\"\\(.unit.file) \\(.unit.props.LoadState)\"' 'false not-found' \"$2: no unit\" || true\n  assert_json_field \"$1\" '\"\\(.socket.file) \\(.socket.props.LoadState)\"' 'false not-found' \"$2: no socket unit\" || true\n  assert_json_field \"$1\" '\"\\(.code.dir) \\(.config.dir)\"' 'null null' \"$2: no code, no config\" || true\n  assert_json_field \"$1\" '.apphostRecord' 'null' \"$2: not in the agent's record\" || true\n}\n\n# assert_port_released <facts json> <message prefix> — nothing listens on\n# the hosting's port (FACTS_PORT) on the agent VM any more\nassert_port_released() {\n  assert_json_field \"$1\" '\"\\(.listen.port) \\(.listen.listeners | length)\"' \"${FACTS_PORT} 0\" \"$2: nothing listens on port ${FACTS_PORT}: the socket let go of it\" || true\n}\n\nbegin_test \"36 — App plugin agent half: removal and refusals (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"
 }
