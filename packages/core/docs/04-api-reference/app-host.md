@@ -1,12 +1,12 @@
 # App Host
 
-When an [agent-hosted plugin](agent-hosted-plugins.md)'s manifest names an agent package (`agent.package`), Lamaste installs the plugin's **agent half** onto the hosting agent itself: a system account, a hardened systemd unit, its directories and the system packages it declares. Installing them needs root, and `lamaste-agent` runs as an unprivileged user — so it goes through one root program on the agent, **`lamaste-apphost`**, which the agent's user may run through one sudoers rule. This page is the agent machine's side: enabling the helper, what it creates, the unit, the relay-signed jobs it runs, and the contract an agent half is written to. The relay's side — hosting, approval, updates, removal — is in [Agent-Hosted Plugins](agent-hosted-plugins.md#hosting-with-an-agent-half). The design is `plugin-development/design/agent-hosted-app-plugins.md` (Slice 3).
+When an [agent-hosted plugin](agent-hosted-plugins.md)'s manifest names an agent package (`agent.package`), Lamaste installs the plugin's **agent half** onto the hosting agent itself: a system account, a hardened systemd unit with a socket unit that holds its port, its directories and the system packages it declares. Installing them needs root, and `lamaste-agent` runs as an unprivileged user — so it goes through one root program on the agent, **`lamaste-apphost`**, which the agent's user may run through one sudoers rule. This page is the agent machine's side: enabling the helper, what it creates, the unit and its socket, the relay-signed jobs it runs, and the contract an agent half is written to. The relay's side — hosting, approval, updates, removal — is in [Agent-Hosted Plugins](agent-hosted-plugins.md#hosting-with-an-agent-half). The design is `plugin-development/design/agent-hosted-app-plugins.md` (Slice 3).
 
 It is a page of its own because it documents another machine and another trust boundary: a root program, its files and its unit on the agent, which the relay's API pages only refer to.
 
 ## In Plain English
 
-The operator of an agent machine says once: _the panel may install plugins here_ (`sudo lamaste-agent apphost enable`). From then on, hosting a plugin from the panel installs its agent half on that machine with nothing done by hand: the agent's sync timer downloads exactly the package version the relay pinned, checks it byte for byte, and hands it to the helper, which unpacks it read-only under `/opt`, gives it an account of its own and a data directory under `/var/lib`, and starts it as a locked-down service. Plugin code never runs as root.
+The operator of an agent machine says once: _the panel may install plugins here_ (`sudo lamaste-agent apphost enable`). From then on, hosting a plugin from the panel installs its agent half on that machine with nothing done by hand: the agent's sync timer downloads exactly the package version the relay pinned, checks it byte for byte, and hands it to the helper, which unpacks it read-only under `/opt`, gives it an account of its own and a data directory under `/var/lib`, and starts it as a locked-down service on a port systemd holds for it. Plugin code never runs as root.
 
 The helper does only what the relay **signed**. When it is enabled it remembers (pins) the relay's public key; every install, version switch and removal the relay asks for carries the relay's signature over exactly that job, and the helper refuses anything else — so a compromised agent account cannot make it install, switch or delete anything the relay did not ask for.
 
@@ -60,17 +60,17 @@ All are Linux only. `enable`, `pin`, `remove` and `disable` refuse to run from a
 
 `/usr/local/sbin/lamaste-apphost` is a self-contained CommonJS script (Node.js built-ins only, `#!/usr/bin/node`) that reads nothing the agent's user can write. Every name and path derives from validated arguments; content — a tarball, a service spec, a plugin config, a signature — arrives on stdin, so neither a tarball nor a secret is in the sudo log, and nothing read from stdin is ever echoed. One mutating command runs at a time (`/run/lamaste-apphost.lock`, holding the owner's PID; a lock whose process is gone is taken over).
 
-| Command                                         | stdin                                                                                          | Signed | Does                                                                                                                                                                             |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `install <label> <route> <version> <integrity>` | the signature (one line of JSON), the service spec (one line of JSON), then the package `.tgz` | yes    | Install that version of the agent half and make it current                                                                                                                       |
-| `config <label> <route>`                        | the plugin config (JSON)                                                                       | no     | Write the service's copy of the plugin config; start the unit, restart it when the port changed (a rotated secret needs no restart). Exit 3 when the agent half is not installed |
-| `activate <label> <route> <version>`            | the signature                                                                                  | yes    | Point `current` at a kept version, restore that version's unit, restart                                                                                                          |
-| `remove <label> <route> [--purge]`              | the signature                                                                                  | yes    | Stop and disable the unit; remove unit, code and config. `--purge` also deletes the data directory, the account and the owner record                                             |
-| `status [<route>]`                              | —                                                                                              | no     | `{ protocol, node, apps: { <route>: { versions, current, previous, unit, owner } } }` — `node` is the Node.js the helper, and so every agent half, runs on                       |
+| Command                                         | stdin                                                                                          | Signed | Does                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `install <label> <route> <version> <integrity>` | the signature (one line of JSON), the service spec (one line of JSON), then the package `.tgz` | yes    | Install that version of the agent half and make it current                                                                                                                                                                                                                                           |
+| `config <label> <route>`                        | the plugin config (JSON)                                                                       | no     | Write the service's copy of the plugin config; write the [socket unit](#the-socket-unit) for its port, start the socket and the unit. A new port moves the socket (the unit restarts on it); a rotated secret changes nothing else and restarts nothing. Exit 3 when the agent half is not installed |
+| `activate <label> <route> <version>`            | the signature                                                                                  | yes    | Point `current` at a kept version, restore that version's unit, restart                                                                                                                                                                                                                              |
+| `remove <label> <route> [--purge]`              | the signature                                                                                  | yes    | Stop and disable the unit and its socket; remove both unit files (and the unit's drop-in directory), code and config. `--purge` also deletes the data directory, the account and the owner record                                                                                                    |
+| `status [<route>]`                              | —                                                                                              | no     | `{ protocol, node, apps: { <route>: { versions, current, previous, unit, socket, owner } } }` — `node` is the Node.js the helper, and so every agent half, runs on; `socket` the socket unit's state (`active`, `inactive`, `absent` until the config is there)                                      |
 
 `<label>` is the agent's label on this machine. `config` and `status` are not signed: the agent's user holds the plugin config already, and `status` changes nothing. An operator's `sudo lamaste-agent apphost remove|disable` loads the helper into its own root process and calls its removal directly — operator authority comes only from code already running as root, never from the helper's command line.
 
-The mutating commands print `{ "ok": true, "version": "1.2.0", "unit": "active" }` (`version`: what `current` points at, `null` after `remove`; `unit`: `active`, `inactive` or `absent`). Errors are one line on stderr, `lamaste-apphost: …`.
+The mutating commands print `{ "ok": true, "version": "1.2.0", "unit": "active" }` (`version`: what `current` points at, `null` after `remove`; `unit`: the service's state, `active`, `inactive` or `absent`). Errors are one line on stderr, `lamaste-apphost: …`.
 
 | Exit | Meaning                                                                                                                                                             |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -94,7 +94,7 @@ In this order; nothing of the agent half is written before they pass:
 7. At most 50 agent halves per machine; enough free space in `/opt/lamalibre/apps` for the unpacked package, 4 KiB per entry and a 64 MiB margin.
 8. **The bundled rule**, on the unpacked tree: `package.json` names the spec's package at the version; no non-empty `dependencies` or `optionalDependencies`, no `bundleDependencies`; no `preinstall`, `install` or `postinstall` script; no `binding.gyp`; the service entry is a file in the package. Every file becomes root-owned 0644, every directory 0755 — no executable or set-id bit, nothing the agent half can change.
 
-Then: the approved system packages it lacks are installed (`apt-get install -y --no-install-recommends`, Debian and Ubuntu only), the account, the owner record, the data and config directories are created, the version is moved into place, the unit is written, `current` switched, systemd reloaded and the unit (re)started — once its plugin config is there. A failure before the version is in place takes back what this run created; a failure after it restores the version that ran before, or for a first install removes everything. The current and previous versions are kept; older ones are deleted.
+Then: the approved system packages it lacks are installed (`apt-get install -y --no-install-recommends`, Debian and Ubuntu only), the account, the owner record, the data and config directories are created, the version is moved into place, the unit is written, `current` switched, systemd reloaded and the unit (re)started — once its plugin config is there, with the socket unit that holds its port (see [The socket unit](#the-socket-unit)). A failure before the version is in place takes back what this run created; a failure after it restores the version that ran before, or for a first install removes everything. The current and previous versions are kept; older ones are deleted.
 
 ### What it creates
 
@@ -107,6 +107,7 @@ Then: the approved system packages it lacks are installed (`apt-get install -y -
 | `/etc/lamalibre/apps/<route>/`                      | root:\<account's group\>, 0750   | The agent half's configuration directory                                                                                              |
 | `/etc/lamalibre/apps/<route>/plugin-config.json`    | the account, 0600                | Port and installation secret (`LAMASTE_APP_CONFIG`)                                                                                   |
 | `/etc/systemd/system/lamalibre-app-<route>.service` | root, 0644                       | The unit (below)                                                                                                                      |
+| `/etc/systemd/system/lamalibre-app-<route>.socket`  | root, 0644                       | The socket unit holding the agent half's port (below) — written once its plugin config is there                                       |
 | `/var/lib/lamalibre/apps/.owners/<route>.json`      | root 0644, directory root 0755   | The owner record: `{ route, package, label, since }` — outside the data the agent half can write. Kept on removal, deleted by a purge |
 | `/var/lib/lamalibre/apps/.jobs/used.json`           | root 0600, directory root 0700   | The ids of the signed jobs that ran, each kept until its signature expires                                                            |
 | `/var/lib/lamalibre/apps/.trash/`                   | root, 0700                       | A purged data directory is moved here, out of its account's reach, and deleted                                                        |
@@ -123,13 +124,17 @@ For plugin `market-indicators`, with `memoryMax: "256M"`:
 
 ```ini
 # Managed by lamaste-apphost: the agent half of Lamaste app plugin market-indicators.
+# It listens on the socket systemd holds for it (lamalibre-app-market-indicators.socket), passed as descriptor 3.
 [Unit]
 Description=Lamaste app plugin market-indicators (agent half)
+Requires=lamalibre-app-market-indicators.socket
+After=lamalibre-app-market-indicators.socket
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+Sockets=lamalibre-app-market-indicators.socket
 User=lamaste-app-market-indicators
 Group=lamaste-app-market-indicators
 ExecStart=/usr/bin/node /opt/lamalibre/apps/market-indicators/current/package/dist/agentd.mjs
@@ -137,7 +142,7 @@ Environment=LAMASTE_APP_CONFIG=/etc/lamalibre/apps/market-indicators/plugin-conf
 Environment=LAMASTE_APP_DATA_DIR=/var/lib/lamalibre/apps/market-indicators
 Environment=NODE_ENV=production
 WorkingDirectory=/var/lib/lamalibre/apps/market-indicators
-Restart=on-failure
+Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -166,6 +171,7 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 CapabilityBoundingSet=
 UMask=0077
+LimitCORE=0
 MemoryMax=256M
 StandardOutput=journal
 StandardError=journal
@@ -174,30 +180,66 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-The unit is written from a fixed template; it holds paths, never a secret.
+The unit is written from a fixed template; it holds paths, never a secret — and no port: that is in its [socket unit](#the-socket-unit), written once the plugin config is there.
 
-| Directive                                                                                                                       | Why                                                                                                                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `User=` / `Group=` the agent half's account                                                                                     | Plugin code never runs as root or as the agent's user                                                                                                                                                                                                     |
-| `NoNewPrivileges`, `CapabilityBoundingSet=` (empty), `RestrictSUIDSGID`                                                         | No privilege gained through set-id binaries or capabilities; no privileged port, no `chown`                                                                                                                                                               |
-| `ProtectSystem=strict`, `ReadWritePaths=` the data directory, `ReadOnlyPaths=/run`, `ProtectHome`, `PrivateTmp`, `UMask=0077`   | The whole file system read-only but the data directory and a private `/tmp`; `/run` too (strict leaves it writable, and `/run/lock` is world-writable); homes invisible; new files private                                                                |
-| `PrivateDevices`, `TemporaryFileSystem=/dev/shm`, `PrivateIPC`, `RemoveIPC`                                                     | No device nodes, an empty `/dev/shm` it cannot write (PrivateDevices alone binds the machine's, which every user can write; a bundled Node agent half has no use for POSIX shared memory), no shared IPC namespace, its IPC objects removed when it stops |
-| `ProtectProc=invisible`                                                                                                         | Other users' processes are not visible in `/proc`                                                                                                                                                                                                         |
-| `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname` | The kernel's tunables and modules, the cgroup tree, the clock and the hostname cannot be changed; the kernel log cannot be read                                                                                                                           |
-| `RestrictRealtime`, `RestrictNamespaces`, `LockPersonality`, `SystemCallArchitectures=native`                                   | No realtime scheduling, no new namespaces, no personality or foreign-ABI tricks                                                                                                                                                                           |
-| `SystemCallFilter=@system-service`, `SystemCallErrorNumber=EPERM`                                                               | Only the system calls services need; a call outside the set fails with `EPERM` instead of killing the process (libuv probes `io_uring` and falls back to its thread pool)                                                                                 |
-| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`                                                                              | IP and Unix sockets only. Outbound network stays the application's (an agent half fetches what it must); it binds loopback                                                                                                                                |
-| `MemoryMax=`                                                                                                                    | From `agent.service.memoryMax`; left out when the manifest sets none                                                                                                                                                                                      |
-| `Restart=on-failure`, `WantedBy=multi-user.target`                                                                              | Restarted 5 s after a crash; started at boot                                                                                                                                                                                                              |
+| Directive                                                                                                                       | Why                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `User=` / `Group=` the agent half's account                                                                                     | Plugin code never runs as root or as the agent's user                                                                                                                                                                                                                                                                                                                                |
+| `Requires=`, `After=`, `Sockets=` its socket unit                                                                               | The socket listens before the agent half starts, and systemd passes it on every start — at boot, on `start` or `restart`, after a crash, or on a connection while it was stopped — as descriptor 3 (`LISTEN_PID`, `LISTEN_FDS`). Stopping or restarting the socket stops or restarts the agent half                                                                                  |
+| `NoNewPrivileges`, `CapabilityBoundingSet=` (empty), `RestrictSUIDSGID`                                                         | No privilege gained through set-id binaries or capabilities; no privileged port, no `chown`                                                                                                                                                                                                                                                                                          |
+| `ProtectSystem=strict`, `ReadWritePaths=` the data directory, `ReadOnlyPaths=/run`, `ProtectHome`, `PrivateTmp`, `UMask=0077`   | The whole file system read-only but the data directory and a private `/tmp`; `/run` too (strict leaves it writable, and `/run/lock` is world-writable); homes invisible; new files private                                                                                                                                                                                           |
+| `PrivateDevices`, `TemporaryFileSystem=/dev/shm`, `PrivateIPC`, `RemoveIPC`                                                     | No device nodes, an empty `/dev/shm` it cannot write (PrivateDevices alone binds the machine's, which every user can write; a bundled Node agent half has no use for POSIX shared memory), no shared IPC namespace, its IPC objects removed when it stops                                                                                                                            |
+| `ProtectProc=invisible`                                                                                                         | Other users' processes are not visible in `/proc`                                                                                                                                                                                                                                                                                                                                    |
+| `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname` | The kernel's tunables and modules, the cgroup tree, the clock and the hostname cannot be changed; the kernel log cannot be read                                                                                                                                                                                                                                                      |
+| `RestrictRealtime`, `RestrictNamespaces`, `LockPersonality`, `SystemCallArchitectures=native`                                   | No realtime scheduling, no new namespaces, no personality or foreign-ABI tricks                                                                                                                                                                                                                                                                                                      |
+| `SystemCallFilter=@system-service`, `SystemCallErrorNumber=EPERM`                                                               | Only the system calls services need; a call outside the set fails with `EPERM` instead of killing the process (libuv probes `io_uring` and falls back to its thread pool)                                                                                                                                                                                                            |
+| `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`                                                                              | IP and Unix sockets only. Outbound network stays the application's (an agent half fetches what it must); it listens on loopback                                                                                                                                                                                                                                                      |
+| `LimitCORE=0`                                                                                                                   | No core dump of a process that holds the installation secret; the hard limit too, so the agent half cannot raise it                                                                                                                                                                                                                                                                  |
+| `MemoryMax=`                                                                                                                    | From `agent.service.memoryMax`; left out when the manifest sets none                                                                                                                                                                                                                                                                                                                 |
+| `Restart=always`, `WantedBy=multi-user.target`                                                                                  | Restarted 5 s after it exits, whatever its exit status; started at boot. A stopped service whose socket still listens would be started by every connection, and five starts within ten seconds trip systemd's start limit — which fails the socket and lets go of the port; restarted on its own, it is never left stopped for a connection to start. Only `systemctl stop` stops it |
 
 Not used, on purpose:
 
 - **`MemoryDenyWriteExecute`** — V8's JIT writes the machine code it runs, which the setting forbids.
 - **`ProcSubset=pid`** — Node.js reads `/proc/cpuinfo`, `/proc/stat` and `/proc/meminfo` for `os.cpus()`, `os.totalmem()` and `os.freemem()`, which applications use to size worker pools; hiding them breaks them quietly.
-- **`AF_NETLINK`** is not among the address families, so `os.networkInterfaces()` fails. An agent half binds `127.0.0.1` and needs no interface list.
+- **`AF_NETLINK`** is not among the address families, so `os.networkInterfaces()` fails. An agent half listens on `127.0.0.1` and needs no interface list.
 - **`IPAddressDeny`** — the application's own outbound calls are its business (market data, a mail relay).
+- **`SocketBindAllow=` / `SocketBindDeny=`** — systemd enforces them only when built with its BPF framework, which the systemd of Ubuntu 22.04 and 24.04 and of Debian 12 is not (they are ignored there, silently), and where they are enforced they deny all UDP from Node.js (`dgram` binds port 0 before its first send). The socket unit keeps the port for the agent half on every distribution instead, and its UDP works.
 
 The journal has the agent half's output: `journalctl -u lamalibre-app-<route>`.
+
+### The socket unit
+
+The agent half never binds its port: systemd does, in a socket unit beside the unit, and passes it the listening socket. For plugin `market-indicators` on port 21007:
+
+```ini
+# Managed by lamaste-apphost: the port of the agent half of Lamaste app plugin market-indicators.
+[Unit]
+Description=Lamaste app plugin market-indicators (agent half socket)
+
+[Socket]
+ListenStream=127.0.0.1:21007
+Accept=no
+NoDelay=true
+Service=lamalibre-app-market-indicators.service
+
+[Install]
+WantedBy=sockets.target
+```
+
+`Accept=no`: one listening socket for one long-running process, not a process per connection. `NoDelay=true` sets `TCP_NODELAY`, as Node.js's own HTTP server does. No `ReusePort=`, so nobody else may bind the port beside it. `sockets.target` wants it, so it listens from early boot; the agent half is still started at boot by `multi-user.target`, not on its first connection.
+
+**Why.** While systemd holds the socket the port stays bound — while the agent half restarts, is updated, crashes or is stopped — so no other local process (another agent half, the agent's user, any account on the machine) can take it in between: there is no window to squat it and answer in its place, nor to hold it and keep the agent half from starting. It works the same on every distribution with systemd, and leaves the agent half's own UDP untouched. (What reaches the port is authenticated as well — see [Security Model](../01-concepts/security-model.md#5d-the-app-host-on-agents).)
+
+**When it is written.** Root-owned 0644, atomically, from the validated plugin config — so not by `install` when the config has not arrived yet: the socket and the unit are first started together by the `config` that brings it (or by an `install` or `activate` once it is there). After that:
+
+- **The same port** (a rotated secret, an update, an activation): the file is left as it is and the socket keeps listening; the unit restarts on it (an update or activation) or not at all (a rotation).
+- **Another port**: the socket moves. The unit is stopped, then the socket — the old port is let go — the file is written, systemd reloaded, the socket started on the new port, and only then the unit. The socket never listens while its file names another port: a daemon-reload would then close its descriptor and leave it active with nothing open. A run cut short leaves the socket stopped or its file not loaded, which the next start puts right. If another process holds the new port, the socket does not start and neither does the unit (`Requires=`), and the helper reports the failure.
+- **The same port in another template** (a newer helper): written and loaded in place — systemd keeps a listening socket across a reload when its address is unchanged — so the port is never let go for it.
+
+Enabling uses `systemctl enable --no-reload`; systemd is reloaded only when a unit file changed (also when systemd reports a unit file it has not loaded, `NeedDaemonReload`).
+
+**On removal** both units are stopped and disabled and both files deleted — the port is released — along with any drop-in directory of the unit (`lamalibre-app-<route>.service.d/`, an operator's overrides), followed by one daemon-reload. A route installed later inherits none of them.
 
 ## Signed app jobs
 
@@ -310,23 +352,29 @@ The contract:
 - **The entry** is a relative `.js`, `.mjs` or `.cjs` path in the package, run as `/usr/bin/node <entry>` — the Node.js of the helper, which `agent.requires.node` is checked against.
 - **Files are read-only.** Every file is installed root-owned 0644 — no executable bit, so the agent half spawns no program of its own package directly; directories 0755.
 - **It writes only its data directory**, `LAMASTE_APP_DATA_DIR` (also its working directory, 0700), and its private `/tmp`. Use `node:sqlite` for a database.
-- **Its config** is `LAMASTE_APP_CONFIG` (0600): `{ plugin, port, secret, issuedAt, previousSecret?, previousIssuedAt?, fetchedAt, acknowledged }`. Listen on `127.0.0.1:<port>` and verify every `/admin/*` request:
+- **Its config** is `LAMASTE_APP_CONFIG` (0600): `{ plugin, port, secret, issuedAt, previousSecret?, previousIssuedAt?, fetchedAt, acknowledged }`. Verify every `/admin/*` request with it.
+- **Listen on the socket systemd passes — never bind a port yourself.** `agentHalfListenTarget()` answers `{ fd: 3, host: '127.0.0.1' }` under the helper's unit; systemd holds the port, so binding it fails with `EADDRINUSE`. Give it the config's port so the same code also runs as an agent half installed by hand (no socket: it answers `{ host: '127.0.0.1', port }`):
 
   ```js
-  import { createCallerAssertionVerifier } from '@lamalibre/lamaste/agent'; // bundled
+  import Fastify from 'fastify';
+  import { agentHalfListenTarget, createCallerAssertionVerifier } from '@lamalibre/lamaste/agent'; // bundled
 
   const verifier = createCallerAssertionVerifier({
     configPath: process.env.LAMASTE_APP_CONFIG,
     plugin: 'market-indicators',
   });
-  const port = await verifier.port();
+  const target = agentHalfListenTarget({ port: await verifier.port() });
+
+  const app = Fastify();
+  // …routes
+  await app.listen(target); // or, with node:http: http.createServer(handler).listen(target)
   ```
 
-  The verifier re-reads the file when a signature does not verify, so a rotated secret needs no restart; a changed port restarts the unit.
+  Pass the target to Fastify as it is: with `fd`, its `host` keeps Fastify from opening a second server on the descriptor for `::1` (its default host is `localhost`). Call it once, at start-up: it reads systemd's `LISTEN_PID`, `LISTEN_FDS` and `LISTEN_FDNAMES` and removes them from `process.env`, so no process the agent half starts takes the socket for its own. Any number of sockets but one is refused. The verifier re-reads the config when a signature does not verify, so a rotated secret needs no restart; a changed port moves the socket and restarts the unit on it.
 
 - **Lifecycle hooks** are answered at `POST /admin/hooks/<stage>` ([agent hooks](lifecycle-hooks.md#agent-hooks)); the agent's own `install:pre-tunnel` reaches the service on its loopback once it runs.
 - **Settings**, when the manifest declares them, are kept with `createSettingsStore` over `LAMASTE_APP_DATA_DIR` — `settings.json` and `secrets.json`, 0600 — and answered at `/admin/settings` with `createSettingsHandler` ([Settings](agent-hosted-plugins.md#in-the-agent-half)); they stay with the retained data and a purge deletes them.
-- **Limits of the sandbox:** no capabilities (no port below 1024), IP and Unix sockets only, no `os.networkInterfaces()`, only its own processes in `/proc`. Its output goes to the journal; `NODE_ENV=production`.
+- **Limits of the sandbox:** no capabilities (no port below 1024), IP and Unix sockets only, no `os.networkInterfaces()`, only its own processes in `/proc`, no core dumps. Its output goes to the journal; `NODE_ENV=production`.
 - **System packages** (`agent.requires.systemPackages`) are installed with `apt-get` after approval, on Debian and Ubuntu only.
 - **Name** the plugin by its route: a plugin with an agent half is named exactly its route (its packages keep their names), and the route starts and ends with a letter or digit.
 

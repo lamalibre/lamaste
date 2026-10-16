@@ -16,7 +16,8 @@
  *                                  JSON), "\n", the service spec (one line of
  *                                  JSON), "\n", then the package .tgz
  *   config <label> <route>         stdin: the plugin config (port, secret);
- *                                  the unit may then bind that port only
+ *                                  systemd then holds that port for the agent
+ *                                  half (its socket unit) and starts it
  *   activate <label> <route> <version>
  *                                  stdin: the relay's signature; point the
  *                                  agent half at a kept version
@@ -26,7 +27,8 @@
  *                                  owner record
  *   status [<route>]               the protocol, the Node.js this helper (and so
  *                                  every agent half) runs on, and per agent
- *                                  half: versions, unit state, owner (JSON)
+ *                                  half: versions, unit and socket state,
+ *                                  owner (JSON)
  *
  * **Only what the relay signed.** The agent's user can run this program as
  * root, so `install`, `activate` and `remove` do nothing the agent's relay
@@ -70,13 +72,17 @@
  * signature, no pinned key, another key, a bad, expired or reused one, or
  * one for other arguments).
  *
- * **Its own port, nothing else.** An agent half runs under a hardened unit
- * and, beside it, a drop-in that lets it bind() only the port of its
- * plugin config — so, where systemd enforces it, it cannot take the
- * loopback port of another agent half, the agent or a tunnelled
- * application. The drop-in is written from the validated config before the
- * unit is (re)started, loaded (daemon-reload) and the unit restarted when
- * it changed, and deleted with the unit (see {@link renderBindDropIn}).
+ * **Systemd holds the port.** An agent half runs under a hardened unit
+ * and never binds its port itself: beside the unit, a socket unit listens on
+ * `127.0.0.1:<port>` of its plugin config, and systemd passes that socket to
+ * the agent half whenever it starts (see {@link renderSocketUnit}). The port
+ * stays bound while the agent half restarts, is updated or is stopped, so no
+ * other local process can take it in between — on every distribution, with
+ * UDP untouched. The socket unit is written from the validated config once
+ * there is one and rewritten only when it changes — for another port with
+ * the agent half and the old socket stopped first and the new one listening
+ * before the agent half starts again (see {@link startWhenConfigured}) —
+ * and deleted with the unit.
  *
  * The names, paths and patterns below must equal those of
  * `@lamalibre/lamaste` (`src/agent-half.ts`, `src/agent/registry.ts`,
@@ -144,10 +150,6 @@ const PATHS = Object.freeze({
   relaysDir: RELAYS_DIR,
   relayPinFile: (label) => `${RELAYS_DIR}/${label}.json`,
   jobsDir: JOBS_DIR,
-  /** The unit's drop-in directory (root 0755), deleted with the unit. */
-  dropInDir: (route) => `${UNITS_DIR}/${unitName(route)}.d`,
-  /** The ports the agent half may bind: its config's, nothing else (root 0644). */
-  bindDropIn: (route) => `${UNITS_DIR}/${unitName(route)}.d/50-bind.conf`,
 });
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,11 @@ function serviceAccountComment(route) {
 /** The system unit an agent half runs as. */
 function unitName(route) {
   return `lamalibre-app-${route}.service`;
+}
+
+/** The socket unit that holds the agent half's port and passes it the listening socket. */
+function socketName(route) {
+  return `lamalibre-app-${route}.socket`;
 }
 
 const LOCK_FILE = '/run/lamaste-apphost.lock';
@@ -1691,24 +1698,49 @@ function ensureSystemPackages(ctx, packages) {
  * /proc/meminfo for os.cpus(), os.totalmem() and os.freemem(), which
  * applications use to size worker pools — hiding them breaks them quietly.
  * RestrictAddressFamilies leaves out AF_NETLINK, so os.networkInterfaces()
- * is unavailable; an agent half binds loopback and needs no interface list.
- * LimitCORE=0: no core dump of a process that holds the installation
- * secret (hard limit too — the agent half cannot raise it). The ports it
- * may bind are in its drop-in ({@link renderBindDropIn}), not here: they
- * come from the plugin config, which arrives after the unit.
+ * is unavailable; an agent half listens on loopback and needs no interface
+ * list. LimitCORE=0: no core dump of a process that holds the installation
+ * secret (hard limit too — the agent half cannot raise it).
+ *
+ * **Its listening socket comes from systemd.** The port is not here — it
+ * comes with the plugin config, after the unit — but in the socket unit
+ * ({@link renderSocketUnit}), which this unit requires and starts after.
+ * When systemd starts a service it passes it the listening sockets of the
+ * socket units that trigger it — the socket's `Service=` names this unit,
+ * and `Sockets=` says the same from this side — however the start came
+ * about: at boot (multi-user.target wants it), `systemctl start` or
+ * `restart`, `Restart=`, or a connection while it was stopped. They arrive
+ * from descriptor 3 on, announced in `LISTEN_PID` and `LISTEN_FDS`
+ * (sd_listen_fds(3); core's `agentHalfListenTarget()` reads them).
+ * `Requires=` and `After=` make the socket listen before the agent half
+ * starts, so it always gets it — and stopping or restarting the socket
+ * stops or restarts the agent half too.
+ *
+ * `Restart=always`, not on-failure: a stopped service whose socket still
+ * listens is started by the next connection. An agent half that exited
+ * on its own with status 0 would then be started by every connection, and
+ * five starts within ten seconds trip systemd's start limit — which fails
+ * the socket too, and closes the port this all keeps held. Restarted every
+ * 5 s whatever its exit status, it is never left stopped for a connection to
+ * start; only `systemctl stop` stops it.
  */
 function renderUnit(route, spec) {
   const user = serviceUser(route);
   const dataDir = PATHS.dataDir(route);
+  const socket = socketName(route);
   return [
     `# Managed by lamaste-apphost: the agent half of Lamaste app plugin ${route}.`,
+    `# It listens on the socket systemd holds for it (${socket}), passed as descriptor 3.`,
     '[Unit]',
     `Description=Lamaste app plugin ${route} (agent half)`,
+    `Requires=${socket}`,
+    `After=${socket}`,
     'After=network-online.target',
     'Wants=network-online.target',
     '',
     '[Service]',
     'Type=simple',
+    `Sockets=${socket}`,
     `User=${user}`,
     `Group=${user}`,
     `ExecStart=${NODE_BIN} ${PATHS.codeDir(route)}/current/package/${spec.service.entry}`,
@@ -1716,7 +1748,7 @@ function renderUnit(route, spec) {
     `Environment=LAMASTE_APP_DATA_DIR=${dataDir}`,
     'Environment=NODE_ENV=production',
     `WorkingDirectory=${dataDir}`,
-    'Restart=on-failure',
+    'Restart=always',
     'RestartSec=5',
     'NoNewPrivileges=yes',
     'ProtectSystem=strict',
@@ -1767,12 +1799,35 @@ function unitPath(ctx, route) {
   return at(ctx, `${UNITS_DIR}/${unitName(route)}`);
 }
 
-function unitState(ctx, route) {
-  if (!isFile(unitPath(ctx, route))) return 'absent';
-  const result = ctx.run(SYSTEMCTL, ['is-active', unitName(route)], { timeoutMs: 30_000 });
+function socketPath(ctx, route) {
+  return at(ctx, `${UNITS_DIR}/${socketName(route)}`);
+}
+
+/**
+ * The drop-in directory of the agent half's service (root's). The helper
+ * writes none; one is deleted with the unit — an operator's overrides, or
+ * the bind drop-in an earlier helper wrote — so an agent half installed on
+ * this route later inherits none.
+ */
+function dropInDir(ctx, route) {
+  return at(ctx, `${UNITS_DIR}/${unitName(route)}.d`);
+}
+
+/** `absent` without the unit file, else whether systemd reports the unit active. */
+function unitFileState(ctx, file, name) {
+  if (!isFile(file)) return 'absent';
+  const result = ctx.run(SYSTEMCTL, ['is-active', name], { timeoutMs: 30_000 });
   return !result.error && result.status === 0 && result.stdout.trim() === 'active'
     ? 'active'
     : 'inactive';
+}
+
+function unitState(ctx, route) {
+  return unitFileState(ctx, unitPath(ctx, route), unitName(route));
+}
+
+function socketState(ctx, route) {
+  return unitFileState(ctx, socketPath(ctx, route), socketName(route));
 }
 
 function outcome(ctx, route) {
@@ -1792,36 +1847,41 @@ function readVersionSpec(ctx, route, version) {
 }
 
 /**
- * The drop-in that lets the agent half bind() its config's port and nothing
- * else — systemd's SocketBindAllow/SocketBindDeny, cgroup BPF programs on
- * the bind4/bind6 hooks. `any` matches every port, 0 included, so the agent
- * half can neither listen on another port nor bind a source address or
- * port. A client is unaffected: the kernel's implicit bind on connect() or
- * sendto() does not run the hook, and Node's net, http and fetch, glibc's
- * resolver and c-ares bind nothing unless given a local address. Node's
- * dgram, though, binds port 0 explicitly before its first send or connect:
- * an agent half has no UDP.
+ * The socket unit that holds the agent half's port: systemd listens on
+ * `127.0.0.1:<port>` (the plugin config's) and passes the socket to the
+ * agent half's service — `Accept=no`, one listening socket for one
+ * long-running process, not a process per connection. `NoDelay=` sets
+ * TCP_NODELAY as Node.js's own HTTP server does. No `ReusePort=`: nobody
+ * else may bind the port beside it, nor (it is listening) the wildcard
+ * address on it. sockets.target wants it, so it listens from early boot,
+ * before the agent half starts.
  *
- * Enforced by systemd 249 or later built with its BPF framework
- * (`+BPF_FRAMEWORK` in `systemctl --version`) on the unified cgroup
- * hierarchy. An older systemd logs the directives as unknown and ignores
- * them; one built without the framework skips them. The unit runs either
- * way — without the restriction.
+ * The port is what the agent half's account may not choose: with the
+ * socket held by systemd, another local process can take the port neither
+ * while the agent half restarts nor while it is stopped — no window to
+ * squat it, and the same on every distribution (a systemd built without
+ * its BPF framework, as Ubuntu's and Debian's are, ignores
+ * SocketBindAllow=). The agent half binds nothing itself, so its own UDP
+ * (Node's dgram binds port 0) is untouched.
  */
-function renderBindDropIn(port) {
+function renderSocketUnit(route, port) {
   // The caller's port is validated already; this file is root's to trust.
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('not a TCP port');
-  return `[Service]\nSocketBindAllow=tcp:${port}\nSocketBindDeny=any\n`;
-}
-
-/** Make the bind drop-in allow `port`; true when it changed (a daemon-reload is due). */
-function writeBindDropIn(ctx, route, port) {
-  const content = renderBindDropIn(port);
-  const file = at(ctx, PATHS.bindDropIn(route));
-  if (isFile(file) && fs.readFileSync(file, 'utf8') === content) return false;
-  ensureRootDirectory(ctx, at(ctx, PATHS.dropInDir(route)));
-  atomicWrite(ctx, file, content, 0o644);
-  return true;
+  return [
+    `# Managed by lamaste-apphost: the port of the agent half of Lamaste app plugin ${route}.`,
+    '[Unit]',
+    `Description=Lamaste app plugin ${route} (agent half socket)`,
+    '',
+    '[Socket]',
+    `ListenStream=127.0.0.1:${port}`,
+    'Accept=no',
+    'NoDelay=true',
+    `Service=${unitName(route)}`,
+    '',
+    '[Install]',
+    'WantedBy=sockets.target',
+    '',
+  ].join('\n');
 }
 
 /**
@@ -1840,32 +1900,102 @@ function configuredPort(ctx, route) {
 }
 
 /**
- * Whether systemd's copy of the unit is older than its files on disk
- * (NeedDaemonReload) — a drop-in written by a run whose daemon-reload
+ * Whether systemd's copy of `unit` is older than its file on disk
+ * (NeedDaemonReload) — a unit file written by a run whose daemon-reload
  * failed, or that was cut short before it.
  */
-function unitNeedsReload(ctx, route) {
-  const result = ctx.run(
-    SYSTEMCTL,
-    ['show', '--property=NeedDaemonReload', '--value', unitName(route)],
-    { timeoutMs: 30_000 },
-  );
+function unitNeedsReload(ctx, unit) {
+  const result = ctx.run(SYSTEMCTL, ['show', '--property=NeedDaemonReload', '--value', unit], {
+    timeoutMs: 30_000,
+  });
   return !result.error && result.status === 0 && result.stdout.trim() === 'yes';
 }
 
+/** The port a socket unit's file listens on; null when it names none this helper writes. */
+function socketUnitPort(text) {
+  const m = /^ListenStream=127\.0\.0\.1:([0-9]{1,5})$/m.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
 /**
- * Start (or restart) the unit when its config is in place — without one it
- * cannot run — once its drop-in allows the config's port. A drop-in that
- * changed, now or by a run that never got it loaded, is loaded and restarts
- * the unit, so the agent half runs under what it says.
+ * Start (or restart) the agent half when its config is in place — without
+ * one it cannot run, and there is no port for its socket — with systemd
+ * holding the config's port for it. The socket unit is enabled and started
+ * with the service.
+ *
+ * **A new port moves the socket** (a first config, or one for another
+ * port): the agent half is stopped, then the socket — the old port is let
+ * go only by a stopped socket — the file is written, systemd reloaded, the
+ * socket started on the new port and only then the agent half. The socket
+ * never listens while its file names another port: a daemon-reload then
+ * (this helper's, or an apt run's) would close its descriptor and leave it
+ * active with nothing open, and an agent half started after it would get
+ * no socket. A run cut short anywhere leaves the socket stopped or its file
+ * not loaded, which the next start puts right: an unloaded file is loaded,
+ * a stopped socket started again (by name, or by the service's
+ * `Requires=`). **The same port** in another template (a newer helper) is
+ * written and loaded in place — systemd keeps a listening socket across a
+ * reload when its address is unchanged — so the port is never let go for
+ * it. A service unit systemd has not loaded is loaded and the agent half
+ * restarted.
  */
 function startWhenConfigured(ctx, route, { restart }) {
   const port = configuredPort(ctx, route);
   if (port === null) return;
-  const rebound = writeBindDropIn(ctx, route, port) || unitNeedsReload(ctx, route);
-  if (rebound) systemctl(ctx, ['daemon-reload']);
-  systemctl(ctx, ['enable', unitName(route)]);
-  systemctl(ctx, [restart || rebound ? 'restart' : 'start', unitName(route)]);
+  const service = unitName(route);
+  const socket = socketName(route);
+  const file = socketPath(ctx, route);
+  const content = renderSocketUnit(route, port);
+  const existing = isFile(file) ? fs.readFileSync(file, 'utf8') : null;
+  let moved = false;
+  let reload;
+  if (existing === null || socketUnitPort(existing) !== port) {
+    systemctl(ctx, ['stop', service]);
+    // Without its file the socket is normally not loaded at all (exit 5);
+    // one systemd still has in memory is stopped all the same.
+    systemctl(ctx, ['stop', socket], { allowFailure: existing === null });
+    atomicWrite(ctx, file, content, 0o644);
+    moved = true;
+    reload = true;
+  } else if (existing !== content) {
+    atomicWrite(ctx, file, content, 0o644);
+    reload = true;
+  } else {
+    reload = unitNeedsReload(ctx, socket);
+  }
+  const serviceStale = !moved && unitNeedsReload(ctx, service);
+  // --no-reload: `systemctl enable` reloads systemd otherwise; it is
+  // reloaded here, once, and only when a unit file changed.
+  systemctl(ctx, ['enable', '--no-reload', socket, service]);
+  if (reload || serviceStale) systemctl(ctx, ['daemon-reload']);
+  systemctl(ctx, ['start', socket]);
+  systemctl(ctx, [moved || restart || serviceStale ? 'restart' : 'start', service]);
+}
+
+/**
+ * Stop, disable and delete the agent half's units — its service and its
+ * socket, which lets go of the port — and its service's drop-in directory;
+ * one daemon-reload when anything was deleted. Stopping and disabling are
+ * best effort: whatever systemd has loaded is stopped, whatever has a file
+ * is disabled, and the files go either way.
+ */
+function removeUnits(ctx, route) {
+  const service = unitName(route);
+  const socket = socketName(route);
+  const files = [
+    [service, unitPath(ctx, route)],
+    [socket, socketPath(ctx, route)],
+  ].filter(([, file]) => isFile(file));
+  systemctl(ctx, ['stop', service, socket], { allowFailure: true });
+  if (files.length > 0) {
+    systemctl(ctx, ['disable', '--no-reload', ...files.map(([unit]) => unit)], {
+      allowFailure: true,
+    });
+  }
+  for (const [, file] of files) fs.rmSync(file, { force: true });
+  const droppedIns = removeTree(ctx, dropInDir(ctx, route));
+  if (files.length > 0 || droppedIns) systemctl(ctx, ['daemon-reload']);
+  systemctl(ctx, ['reset-failed', service, socket], { allowFailure: true });
 }
 
 /** Point `current` at `version`; the version it pointed at becomes `previous`. */
@@ -2134,10 +2264,8 @@ function attempt(fn) {
 function rollBackInstall(ctx, route, { version, before, created }) {
   const codeDir = at(ctx, PATHS.codeDir(route));
   if (before === null) {
-    attempt(() => systemctl(ctx, ['disable', '--now', unitName(route)], { allowFailure: true }));
-    attempt(() => fs.rmSync(unitPath(ctx, route), { force: true }));
-    attempt(() => removeTree(ctx, at(ctx, PATHS.dropInDir(route))));
-    attempt(() => systemctl(ctx, ['daemon-reload'], { allowFailure: true }));
+    // Its units — the socket too, when its config was there to start it.
+    attempt(() => removeUnits(ctx, route));
     attempt(() => removeTree(ctx, codeDir));
     undoCreated(ctx, route, created);
     return;
@@ -2180,7 +2308,6 @@ function config(ctx, args) {
       throw new NotInstalledError(`the agent half of ${route} is not installed`);
     }
     ensureConfigDir(ctx, route, account);
-    const previousPort = configuredPort(ctx, route);
     atomicWrite(
       ctx,
       at(ctx, PATHS.configFile(route)),
@@ -2189,11 +2316,10 @@ function config(ctx, args) {
       account,
     );
     if (isFile(unitPath(ctx, route))) {
-      // A rotated secret needs no restart (the agent half re-reads the file
-      // on a signature it cannot verify); a new port does — and the drop-in
-      // that allows it, written on the way, restarts it as well.
-      const moved = previousPort !== null && previousPort !== pluginConfig.port;
-      startWhenConfigured(ctx, route, { restart: moved });
+      // A rotated secret changes no unit and needs no restart (the agent
+      // half re-reads the file on a signature it cannot verify). A new port
+      // moves the socket, which stops and starts the agent half around it.
+      startWhenConfigured(ctx, route, { restart: false });
     }
     return outcome(ctx, route);
   } finally {
@@ -2286,18 +2412,7 @@ function remove(ctx, args) {
     if (purge) serviceAccount(ctx, route);
     if (envelope !== null) recordJob(ctx, envelope, now);
 
-    const unit = unitName(route);
-    systemctl(ctx, ['disable', '--now', unit], { allowFailure: true });
-    let unloaded = false;
-    if (isFile(unitPath(ctx, route))) {
-      fs.rmSync(unitPath(ctx, route), { force: true });
-      unloaded = true;
-    }
-    // Its drop-ins go with it: an agent half installed on this route later
-    // — after a purge, perhaps another package — inherits none.
-    if (removeTree(ctx, at(ctx, PATHS.dropInDir(route)))) unloaded = true;
-    if (unloaded) systemctl(ctx, ['daemon-reload']);
-    systemctl(ctx, ['reset-failed', unit], { allowFailure: true });
+    removeUnits(ctx, route);
     if (lstatOrNull(at(ctx, APPS_CODE)) !== null) removeStaging(ctx, route);
     removeTree(ctx, at(ctx, PATHS.codeDir(route)));
     removeTree(ctx, at(ctx, PATHS.configDir(route)));
@@ -2343,11 +2458,20 @@ function status(ctx, args) {
       current: linkedVersion(codeDir, 'current'),
       previous: linkedVersion(codeDir, 'previous'),
       unit: unitState(ctx, route),
+      // The socket unit that holds its port: absent until its config is there.
+      socket: socketState(ctx, route),
       owner: owner === null ? null : { package: owner.package, label: owner.label },
     };
     // Asked about one agent half, the answer is always there; the full
-    // list holds only those with code or a unit.
-    if (args.length === 1 || app.versions.length > 0 || app.unit !== 'absent') apps[route] = app;
+    // list holds only those with code, a unit or a socket unit.
+    if (
+      args.length === 1 ||
+      app.versions.length > 0 ||
+      app.unit !== 'absent' ||
+      app.socket !== 'absent'
+    ) {
+      apps[route] = app;
+    }
   }
   // The units run the Node.js this helper runs on (NODE_BIN, its shebang):
   // what a plugin's `agent.requires.node` is checked against.
@@ -2433,6 +2557,7 @@ if (require.main === module) {
     serviceUser,
     serviceAccountComment,
     unitName,
+    socketName,
     isVersion,
     parseSpecLine,
     parsePluginConfig,
@@ -2444,7 +2569,7 @@ if (require.main === module) {
     acquireLock,
     createContext,
     renderUnit,
-    renderBindDropIn,
+    renderSocketUnit,
     scanTarball,
     extractEntries,
     validateTree,

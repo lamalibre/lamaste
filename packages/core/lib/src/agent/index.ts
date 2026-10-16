@@ -209,6 +209,10 @@ export type {
   TunnelHookAssignment,
   AgentHookHandlerOptions,
 } from './app-plugin-hooks.js';
+// Where the agent half listens: the socket systemd passes it (the unit
+// lamaste-apphost writes), or the plugin config's port when installed by hand
+export { agentHalfListenTarget } from './listen.js';
+export type { AgentHalfListenTarget, AgentHalfListenOptions } from './listen.js';
 // The agent half's admin answers: the request/response shape core's
 // handlers share, the health route, and the responder header every
 // /admin/* answer to a verified request carries

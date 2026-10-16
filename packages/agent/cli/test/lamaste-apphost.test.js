@@ -11,9 +11,11 @@
  * relay's signature over the job as the first line of stdin and verify it
  * with the key pinned for the agent — any other key, any field that does
  * not match the command, an expired or reused job is refused (exit 5).
- * Beside each unit (no core dumps) a drop-in lets the agent half bind its
- * config's port and nothing else; it changes only with the port and goes
- * with the unit.
+ * Beside each unit (no core dumps) a socket unit holds the agent half's
+ * port — systemd listens on the config's port and passes the socket to the
+ * agent half — written once the config is there, moved (agent half and old
+ * socket stopped first, the new one listening before it starts) only when
+ * the port changes, and deleted with the unit.
  *
  * The tests run the helper in a sandbox root with the system commands
  * replaced (useradd, systemctl, apt-get, …), so they need no root and run
@@ -84,9 +86,13 @@ function fakeSystem({ packages = [], users = [], groups = [], failSystemctl = ()
   const group = new Map(groups.map((g) => [g.name, g]));
   const installed = new Set(packages);
   const active = new Set();
-  // What systemd reports as NeedDaemonReload: set by a test to stand for
-  // unit files changed on disk and not loaded; a daemon-reload clears it.
-  const units = { needReload: false };
+  // The units systemd reports NeedDaemonReload for: added by a test to stand
+  // for unit files changed on disk and not loaded; a daemon-reload clears them.
+  const units = { needReload: new Set() };
+  // A service requires its socket (Requires=, After=): starting it starts the
+  // socket, stopping the socket stops it.
+  const socketOf = (unit) => unit.replace(/\.service$/, '.socket');
+  const serviceOf = (unit) => unit.replace(/\.socket$/, '.service');
   const calls = [];
   let nextId = 990;
   const done = (stdout = '', status = 0) => ({ status, stdout, stderr: '' });
@@ -128,11 +134,25 @@ function fakeSystem({ packages = [], users = [], groups = [], failSystemctl = ()
         }
         if (verb === 'show') {
           assert.deepEqual(rest.slice(0, 2), ['--property=NeedDaemonReload', '--value']);
-          return done(units.needReload ? 'yes\n' : 'no\n');
+          return done(units.needReload.has(rest[2]) ? 'yes\n' : 'no\n');
         }
-        if (verb === 'daemon-reload') units.needReload = false;
-        if (verb === 'start' || verb === 'restart') active.add(rest[0]);
-        if (verb === 'disable' && rest[0] === '--now') active.delete(rest[1]);
+        if (verb === 'enable' || verb === 'disable') {
+          // systemd is reloaded by the helper itself, never as a side effect.
+          assert.equal(rest[0], '--no-reload', `${verb} ${rest.join(' ')}`);
+        }
+        if (verb === 'daemon-reload') units.needReload.clear();
+        if (verb === 'start' || verb === 'restart') {
+          for (const unit of rest) {
+            active.add(unit);
+            if (unit.endsWith('.service')) active.add(socketOf(unit));
+          }
+        }
+        if (verb === 'stop') {
+          for (const unit of rest) {
+            active.delete(unit);
+            if (unit.endsWith('.socket')) active.delete(serviceOf(unit));
+          }
+        }
         return done();
       }
       case 'dpkg-query':
@@ -737,11 +757,19 @@ test('install: code, account with its route, owner record, directories and unit;
     ),
     'not started without a config',
   );
+  assert.ok(
+    !fs.existsSync(at(`etc/systemd/system/${helper.socketName(ROUTE)}`)),
+    'no socket unit before there is a port',
+  );
 });
 
-test('the unit: fixed template and hardening; no core dump; MemoryMax only when set; no W^X or ProcSubset', () => {
+test('the unit: fixed template and hardening; its socket; no core dump; MemoryMax only when set; no W^X or ProcSubset', () => {
   const plain = helper.renderUnit(ROUTE, specLine()).split('\n');
   for (const line of [
+    // The socket systemd holds for it: listening before it starts, passed to it on every start.
+    'Requires=lamalibre-app-fx.socket',
+    'After=lamalibre-app-fx.socket',
+    'Sockets=lamalibre-app-fx.socket',
     'User=lamaste-app-fx',
     'Group=lamaste-app-fx',
     'ExecStart=/usr/bin/node /opt/lamalibre/apps/fx/current/package/dist/agentd.js',
@@ -764,13 +792,17 @@ test('the unit: fixed template and hardening; no core dump; MemoryMax only when 
     'UMask=0077',
     // The process holds the installation secret: never written to a core file.
     'LimitCORE=0',
-    'Restart=on-failure',
+    // Never left stopped for a connection to start it (see renderUnit).
+    'Restart=always',
+    'RestartSec=5',
     'WantedBy=multi-user.target',
   ]) {
     assert.ok(plain.includes(line), line);
   }
-  // The ports it may bind come with its config, in a drop-in of their own.
-  assert.ok(!plain.some((l) => l.startsWith('SocketBind')));
+  // Its port is in its socket unit; nothing here binds or restricts binding.
+  assert.ok(!plain.some((l) => l.startsWith('SocketBind') || l.startsWith('ListenStream')));
+  assert.ok(!plain.some((l) => l.startsWith('Restart=on-failure')));
+  assert.equal(plain.filter((l) => l.startsWith('[Unit]')).length, 1);
   assert.ok(!plain.some((l) => l.startsWith('MemoryMax')));
   assert.ok(!plain.some((l) => l.startsWith('MemoryDenyWriteExecute')), 'V8 JIT needs W+X');
   assert.ok(!plain.some((l) => l.startsWith('ProcSubset')), 'os.cpus() reads /proc');
@@ -804,17 +836,14 @@ test('config: written 0600 for the service account, never echoed, then the unit 
   const unit = helper.unitName(ROUTE);
   assert.ok(
     system.calls.some(
-      ([cmd, verb, name]) => cmd === 'systemctl' && verb === 'enable' && name === unit,
+      ([cmd, verb, ...rest]) => cmd === 'systemctl' && verb === 'enable' && rest.includes(unit),
     ),
   );
-  // Its first config brings the bind drop-in with it, which (re)starts the unit.
-  assert.ok(
-    system.calls.some(
-      ([cmd, verb, name]) => cmd === 'systemctl' && verb === 'restart' && name === unit,
-    ),
-  );
+  // Its first config brings its socket with it, and the unit starts on it.
+  assert.ok(system.active.has(unit));
+  assert.ok(system.active.has(helper.socketName(ROUTE)));
 
-  // A rotation: no restart (the agent half re-reads the file); a new port: restart.
+  // A rotation: no restart (the agent half re-reads the file); a new port: restarted on its new socket.
   system.calls.length = 0;
   call(['config', LABEL, ROUTE], configInput({ secret: 'cd'.repeat(32), previousSecret: SECRET }));
   assert.ok(!system.calls.some(([, verb]) => verb === 'restart'));
@@ -827,165 +856,285 @@ test('config: written 0600 for the service account, never echoed, then the unit 
 const systemctlCalls = (system) =>
   system.calls.filter(([cmd]) => cmd === 'systemctl').map(([, ...rest]) => rest.join(' '));
 
-test('config: a drop-in lets the agent half bind its port and nothing else; rewritten and reloaded only when the port changes', () => {
+const SOCKET_UNIT = (port, route = ROUTE) =>
+  `# Managed by lamaste-apphost: the port of the agent half of Lamaste app plugin ${route}.\n` +
+  '[Unit]\n' +
+  `Description=Lamaste app plugin ${route} (agent half socket)\n` +
+  '\n' +
+  '[Socket]\n' +
+  `ListenStream=127.0.0.1:${port}\n` +
+  'Accept=no\n' +
+  'NoDelay=true\n' +
+  `Service=lamalibre-app-${route}.service\n` +
+  '\n' +
+  '[Install]\n' +
+  'WantedBy=sockets.target\n';
+
+test('the socket unit: systemd listens on the config port on loopback and passes it to the unit', () => {
+  assert.equal(helper.socketName(ROUTE), 'lamalibre-app-fx.socket');
+  assert.equal(helper.renderSocketUnit(ROUTE, 21000), SOCKET_UNIT(21000));
+  // Only a TCP port, whatever reaches it.
+  for (const bad of [0, 65536, -1, 1.5, '21000', '21000\nExecStartPre=/bin/sh', null, NaN]) {
+    assert.throws(() => helper.renderSocketUnit(ROUTE, bad), /not a TCP port/, String(bad));
+  }
+  assert.ok(helper.renderSocketUnit(ROUTE, 65535).includes('\nListenStream=127.0.0.1:65535\n'));
+});
+
+test('config: the first one writes the socket unit, enables both units and starts the socket before the unit', () => {
   const { install, call, system, chowns, at } = setup();
   install('1.0.0', tgzOf(packageEntries()));
   const unit = helper.unitName(ROUTE);
-  const dir = at(`etc/systemd/system/${unit}.d`);
-  const file = path.join(dir, '50-bind.conf');
-  assert.ok(!fs.existsSync(dir), 'no drop-in before there is a port');
+  const socket = helper.socketName(ROUTE);
+  const file = at(`etc/systemd/system/${socket}`);
 
   system.calls.length = 0;
   call(['config', LABEL, ROUTE], configInput());
-  assert.equal(
-    fs.readFileSync(file, 'utf8'),
-    '[Service]\nSocketBindAllow=tcp:21000\nSocketBindDeny=any\n',
-  );
-  assert.equal(helper.renderBindDropIn(21000), fs.readFileSync(file, 'utf8'));
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21000));
   assert.equal(mode(file), '644');
-  assert.equal(mode(dir), '755');
-  const rel = path.relative(at('.'), dir);
   assert.ok(
-    chowns.some(([p, u, g]) => p === rel && u === UID && g === GID),
-    'the directory is root’s',
-  );
-  assert.ok(
-    chowns.some(([p, u, g]) => p.startsWith(`${rel}/.lamaste-apphost-`) && u === UID && g === GID),
+    chowns.some(
+      ([p, u, g]) => p.startsWith('etc/systemd/system/.lamaste-apphost-') && u === UID && g === GID,
+    ),
     'written atomically, root’s before it is renamed into place',
   );
-  assert.deepEqual(listed(dir), ['50-bind.conf'], 'no temporary file is left behind');
-  // Loaded before the unit (re)starts on it.
+  assert.ok(
+    !listed(at('etc/systemd/system')).some((n) => n.startsWith('.')),
+    'no temporary file is left behind',
+  );
+  assert.ok(!fs.existsSync(at(`etc/systemd/system/${unit}.d`)), 'no drop-in');
+  // Written while neither runs, loaded, and listening before the unit starts on it.
   assert.deepEqual(systemctlCalls(system), [
+    `stop ${unit}`,
+    `stop ${socket}`,
+    `enable --no-reload ${socket} ${unit}`,
     'daemon-reload',
-    `enable ${unit}`,
+    `start ${socket}`,
     `restart ${unit}`,
     `is-active ${unit}`,
   ]);
+  assert.deepEqual(call(['status', ROUTE]).apps.fx, {
+    versions: ['1.0.0'],
+    current: '1.0.0',
+    previous: null,
+    unit: 'active',
+    socket: 'active',
+    owner: { package: PKG, label: LABEL },
+  });
+});
 
-  // The same port (a rotated secret): the drop-in is left as it is — no reload, no restart.
+test('config: a rotated secret leaves the socket unit and the unit alone — no reload, no restart', () => {
+  const { install, call, system, at } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  call(['config', LABEL, ROUTE], configInput());
+  const unit = helper.unitName(ROUTE);
+  const socket = helper.socketName(ROUTE);
+  const file = at(`etc/systemd/system/${socket}`);
   const { ino, mtimeMs } = fs.statSync(file);
+
   system.calls.length = 0;
   call(['config', LABEL, ROUTE], configInput({ secret: 'cd'.repeat(32), previousSecret: SECRET }));
   assert.equal(fs.statSync(file).ino, ino);
   assert.equal(fs.statSync(file).mtimeMs, mtimeMs);
   assert.deepEqual(systemctlCalls(system), [
+    `show --property=NeedDaemonReload --value ${socket}`,
     `show --property=NeedDaemonReload --value ${unit}`,
-    `enable ${unit}`,
+    `enable --no-reload ${socket} ${unit}`,
+    `start ${socket}`,
     `start ${unit}`,
     `is-active ${unit}`,
   ]);
-
-  // Another port: rewritten, reloaded, restarted.
-  system.calls.length = 0;
-  call(['config', LABEL, ROUTE], configInput({ port: 21001 }));
-  assert.equal(
-    fs.readFileSync(file, 'utf8'),
-    '[Service]\nSocketBindAllow=tcp:21001\nSocketBindDeny=any\n',
-  );
-  assert.deepEqual(systemctlCalls(system), [
-    'daemon-reload',
-    `enable ${unit}`,
-    `restart ${unit}`,
-    `is-active ${unit}`,
-  ]);
-
-  // A drop-in that says anything else is put right on the next config, and restarts the unit.
-  fs.writeFileSync(file, '[Service]\nSocketBindAllow=tcp:22\nSocketBindDeny=any\n');
-  system.calls.length = 0;
-  call(['config', LABEL, ROUTE], configInput({ port: 21001 }));
-  assert.equal(fs.readFileSync(file, 'utf8'), helper.renderBindDropIn(21001));
-  assert.ok(systemctlCalls(system).includes('daemon-reload'));
-  assert.ok(systemctlCalls(system).includes(`restart ${unit}`));
 });
 
-test('a drop-in written by a run whose daemon-reload failed is loaded, and restarts the unit, on the next start', () => {
+test('config: a new port moves the socket — the unit and the old socket stopped, the new one listening before the unit starts', () => {
+  const { install, call, system, at } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  call(['config', LABEL, ROUTE], configInput());
+  const unit = helper.unitName(ROUTE);
+  const socket = helper.socketName(ROUTE);
+  const file = at(`etc/systemd/system/${socket}`);
+  // When the file is written: the order of calls and writes, together.
+  const order = [];
+  const run = (cmd, args, opts) => {
+    order.push(`${path.basename(cmd)} ${args.join(' ')} [${socketPortOnDisk(file)}]`);
+    return system.run(cmd, args, opts);
+  };
+  call(['config', LABEL, ROUTE], configInput({ port: 21001 }), { run });
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21001));
+  assert.deepEqual(
+    order.filter((c) => c.startsWith('systemctl')),
+    [
+      `systemctl stop ${unit} [21000]`,
+      `systemctl stop ${socket} [21000]`,
+      // Written only once both are stopped: never loaded under a listening socket.
+      `systemctl enable --no-reload ${socket} ${unit} [21001]`,
+      `systemctl daemon-reload [21001]`,
+      `systemctl start ${socket} [21001]`,
+      `systemctl restart ${unit} [21001]`,
+      `systemctl is-active ${unit} [21001]`,
+    ],
+  );
+  assert.ok(system.active.has(unit) && system.active.has(socket));
+
+  // A socket unit that names any other port is moved back to the config's on the next config.
+  fs.writeFileSync(file, SOCKET_UNIT(22));
+  system.calls.length = 0;
+  call(['config', LABEL, ROUTE], configInput({ port: 21001 }));
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21001));
+  assert.deepEqual(systemctlCalls(system).slice(0, 2), [`stop ${unit}`, `stop ${socket}`]);
+  assert.ok(systemctlCalls(system).includes(`restart ${unit}`));
+  // And one that names none.
+  fs.writeFileSync(file, '[Socket]\nListenStream=0.0.0.0:21001\n');
+  system.calls.length = 0;
+  call(['config', LABEL, ROUTE], configInput({ port: 21001 }));
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21001));
+  assert.equal(systemctlCalls(system)[1], `stop ${socket}`);
+});
+
+/** The port the socket unit file on disk listens on, or "-" without one. */
+function socketPortOnDisk(file) {
+  if (!fs.existsSync(file)) return '-';
+  const m = /^ListenStream=127\.0\.0\.1:(\d+)$/m.exec(fs.readFileSync(file, 'utf8'));
+  return m ? m[1] : '?';
+}
+
+test('the same port in another template is written and loaded in place — the socket is never stopped for it', () => {
+  const { install, call, system, at } = setup();
+  install('1.0.0', tgzOf(packageEntries()));
+  call(['config', LABEL, ROUTE], configInput());
+  const unit = helper.unitName(ROUTE);
+  const socket = helper.socketName(ROUTE);
+  const file = at(`etc/systemd/system/${socket}`);
+  // What an earlier helper might have written for the same port.
+  fs.writeFileSync(file, SOCKET_UNIT(21000).replace('NoDelay=true\n', ''));
+
+  system.calls.length = 0;
+  call(['config', LABEL, ROUTE], configInput());
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21000));
+  assert.deepEqual(systemctlCalls(system), [
+    `show --property=NeedDaemonReload --value ${unit}`,
+    `enable --no-reload ${socket} ${unit}`,
+    'daemon-reload',
+    `start ${socket}`,
+    `start ${unit}`,
+    `is-active ${unit}`,
+  ]);
+});
+
+test('a socket unit written by a run whose daemon-reload failed is loaded, and its socket started, on the next start', () => {
   let failReload = false;
   const { install, call, system, at } = setup({
     failSystemctl: (args) => failReload && args[0] === 'daemon-reload',
   });
   install('1.0.0', tgzOf(packageEntries()));
   const unit = helper.unitName(ROUTE);
+  const socket = helper.socketName(ROUTE);
   failReload = true;
   assert.throws(
     () => call(['config', LABEL, ROUTE], configInput()),
     /daemon-reload exited with status 1/,
   );
-  // On disk, not loaded: systemd says so (NeedDaemonReload) — the unit never started.
-  const file = at(`etc/systemd/system/${unit}.d/50-bind.conf`);
-  assert.equal(fs.readFileSync(file, 'utf8'), helper.renderBindDropIn(21000));
-  assert.ok(!system.active.has(unit));
-  system.units.needReload = true;
+  // On disk, not loaded: systemd says so (NeedDaemonReload) — neither unit runs.
+  assert.equal(fs.readFileSync(at(`etc/systemd/system/${socket}`), 'utf8'), SOCKET_UNIT(21000));
+  assert.ok(!system.active.has(unit) && !system.active.has(socket));
+  system.units.needReload.add(socket);
 
   failReload = false;
   system.calls.length = 0;
   call(['config', LABEL, ROUTE], configInput());
   assert.deepEqual(systemctlCalls(system), [
+    `show --property=NeedDaemonReload --value ${socket}`,
     `show --property=NeedDaemonReload --value ${unit}`,
+    `enable --no-reload ${socket} ${unit}`,
     'daemon-reload',
-    `enable ${unit}`,
-    `restart ${unit}`,
+    `start ${socket}`,
+    `start ${unit}`,
     `is-active ${unit}`,
   ]);
+  assert.ok(system.active.has(unit) && system.active.has(socket));
+
+  // A unit file systemd has not loaded: loaded, and the unit restarted on it.
+  system.units.needReload.add(unit);
+  system.calls.length = 0;
+  call(['config', LABEL, ROUTE], configInput());
+  assert.ok(systemctlCalls(system).includes('daemon-reload'));
+  assert.ok(systemctlCalls(system).includes(`restart ${unit}`));
 });
 
-test('the bind drop-in: only a TCP port, whatever reaches it', () => {
-  for (const bad of [0, 65536, -1, 1.5, '21000', '21000\nExecStartPre=/bin/sh', null, NaN]) {
-    assert.throws(() => helper.renderBindDropIn(bad), /not a TCP port/, String(bad));
-  }
-  assert.equal(
-    helper.renderBindDropIn(65535),
-    '[Service]\nSocketBindAllow=tcp:65535\nSocketBindDeny=any\n',
+test('a port another process holds: the socket does not start, nor the unit; the next config starts both', () => {
+  let portTaken = true;
+  const socket = helper.socketName(ROUTE);
+  const { install, call, system } = setup({
+    failSystemctl: (args) => portTaken && args[0] === 'start' && args[1] === socket,
+  });
+  install('1.0.0', tgzOf(packageEntries()));
+  const unit = helper.unitName(ROUTE);
+  assert.throws(
+    () => call(['config', LABEL, ROUTE], configInput()),
+    new RegExp(`start ${socket.replace(/\./g, '\\.')} exited with status 1`),
   );
+  assert.ok(!system.active.has(unit), 'never started without its socket');
+  portTaken = false;
+  system.calls.length = 0;
+  assert.equal(call(['config', LABEL, ROUTE], configInput()).unit, 'active');
+  assert.ok(systemctlCalls(system).includes(`start ${socket}`));
+  assert.ok(!systemctlCalls(system).includes(`stop ${socket}`), 'its file was right already');
 });
 
-test('install and activate bring a missing drop-in back before the unit restarts — an agent half set up before drop-ins gets one', () => {
+test('install and activate keep the socket as it is; a missing socket unit comes back before the unit restarts', () => {
   const { install, call, system, at } = setup();
   install('1.0.0', tgzOf(packageEntries()));
   call(['config', LABEL, ROUTE], configInput());
   const unit = helper.unitName(ROUTE);
-  const dir = at(`etc/systemd/system/${unit}.d`);
-  const file = path.join(dir, '50-bind.conf');
+  const socket = helper.socketName(ROUTE);
+  const file = at(`etc/systemd/system/${socket}`);
 
-  fs.rmSync(dir, { recursive: true });
+  // Kept as it is when it is right: one reload, for the unit; the socket keeps listening.
   system.calls.length = 0;
   install('1.1.0', tgzOf(packageEntries({ version: '1.1.0' })));
-  assert.equal(fs.readFileSync(file, 'utf8'), helper.renderBindDropIn(21000));
-  const calls = systemctlCalls(system);
-  assert.ok(calls.lastIndexOf('daemon-reload') < calls.indexOf(`restart ${unit}`));
+  let calls = systemctlCalls(system);
+  assert.equal(calls.filter((c) => c === 'daemon-reload').length, 1);
+  assert.ok(!calls.includes(`stop ${socket}`));
+  assert.ok(calls.indexOf(`start ${socket}`) < calls.indexOf(`restart ${unit}`));
+
+  // An agent half set up before socket units: its socket is created before it restarts.
+  fs.rmSync(file);
+  system.calls.length = 0;
+  call(['activate', LABEL, ROUTE, '1.0.0']);
+  assert.equal(fs.readFileSync(file, 'utf8'), SOCKET_UNIT(21000));
+  calls = systemctlCalls(system);
+  assert.deepEqual(calls.slice(calls.indexOf(`stop ${unit}`)), [
+    `stop ${unit}`,
+    `stop ${socket}`,
+    `enable --no-reload ${socket} ${unit}`,
+    'daemon-reload',
+    `start ${socket}`,
+    `restart ${unit}`,
+    `is-active ${unit}`,
+  ]);
   assert.equal(
     calls.filter((c) => c === 'daemon-reload').length,
     2,
-    "the unit's, then the drop-in's",
+    "the unit's, then the socket's",
   );
-
-  // Kept as it is when it is right: one reload, for the unit.
-  system.calls.length = 0;
-  call(['activate', LABEL, ROUTE, '1.0.0']);
-  assert.equal(systemctlCalls(system).filter((c) => c === 'daemon-reload').length, 1);
-
-  fs.rmSync(dir, { recursive: true });
-  system.calls.length = 0;
-  call(['activate', LABEL, ROUTE, '1.1.0']);
-  assert.equal(fs.readFileSync(file, 'utf8'), helper.renderBindDropIn(21000));
-  assert.ok(systemctlCalls(system).includes(`restart ${unit}`));
 });
 
-test('a plugin config this helper did not write gives no port: no drop-in, and the unit is not started', () => {
+test('a plugin config this helper did not write gives no port: no socket unit, and the unit is not started', () => {
   const { install, call, system, at } = setup();
   install('1.0.0', tgzOf(packageEntries()));
   const config = at('etc/lamalibre/apps/fx/plugin-config.json');
   fs.writeFileSync(config, JSON.stringify({ ...pluginConfig(), port: '21000\nExecStartPre=/x' }));
   system.calls.length = 0;
   call(['activate', LABEL, ROUTE, '1.0.0']);
-  assert.ok(!fs.existsSync(at(`etc/systemd/system/${helper.unitName(ROUTE)}.d`)));
+  assert.ok(!fs.existsSync(at(`etc/systemd/system/${helper.socketName(ROUTE)}`)));
   assert.ok(!systemctlCalls(system).some((c) => /^(start|restart|enable) /.test(c)));
-  // The next config replaces it, and the unit starts on its drop-in.
+  // The next config replaces it, and the unit starts on its socket.
   call(['config', LABEL, ROUTE], configInput());
   assert.equal(
-    fs.readFileSync(at(`etc/systemd/system/${helper.unitName(ROUTE)}.d/50-bind.conf`), 'utf8'),
-    helper.renderBindDropIn(21000),
+    fs.readFileSync(at(`etc/systemd/system/${helper.socketName(ROUTE)}`), 'utf8'),
+    SOCKET_UNIT(21000),
   );
   assert.equal(call(['status', ROUTE]).apps.fx.unit, 'active');
+  assert.equal(call(['status', ROUTE]).apps.fx.socket, 'active');
 });
 
 test('config: refused shapes never quote the input; an agent half not installed is exit 3', () => {
@@ -1021,6 +1170,7 @@ test('versions: install switches current, keeps the previous one, prunes the res
     current: '1.1.0',
     previous: '1.0.0',
     unit: 'active',
+    socket: 'active',
     owner: { package: PKG, label: LABEL },
   });
 
@@ -1051,30 +1201,38 @@ test('remove keeps the data, the account and the owner record unless --purge; a 
   install('1.0.0', tgzOf(packageEntries()));
   call(['config', LABEL, ROUTE], configInput());
   fs.writeFileSync(at('var/lib/lamalibre/apps/fx/db.sqlite'), 'data');
-  const dropIns = at(`etc/systemd/system/${helper.unitName(ROUTE)}.d`);
-  assert.ok(fs.existsSync(path.join(dropIns, '50-bind.conf')));
-  // Whatever else is in the unit's drop-in directory goes with it, too.
-  fs.writeFileSync(path.join(dropIns, 'override.conf'), '[Service]\nSocketBindAllow=tcp:22\n');
+  const unit = helper.unitName(ROUTE);
+  const socket = helper.socketName(ROUTE);
+  const socketFile = at(`etc/systemd/system/${socket}`);
+  assert.ok(fs.existsSync(socketFile));
+  // A drop-in directory beside the unit — an operator's, or the bind drop-in
+  // an earlier helper wrote — goes with it, too.
+  const dropIns = at(`etc/systemd/system/${unit}.d`);
+  fs.mkdirSync(dropIns, { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(dropIns, '50-bind.conf'),
+    '[Service]\nSocketBindAllow=tcp:21000\nSocketBindDeny=any\n',
+  );
+  fs.writeFileSync(path.join(dropIns, 'override.conf'), '[Service]\nEnvironment=X=1\n');
 
   system.calls.length = 0;
   assert.deepEqual(call(['remove', LABEL, ROUTE]), { ok: true, version: null, unit: 'absent' });
   assert.ok(!fs.existsSync(at('opt/lamalibre/apps/fx')));
   assert.ok(!fs.existsSync(at('etc/lamalibre/apps/fx')));
-  assert.ok(!fs.existsSync(at(`etc/systemd/system/${helper.unitName(ROUTE)}`)));
+  assert.ok(!fs.existsSync(at(`etc/systemd/system/${unit}`)));
+  assert.ok(!fs.existsSync(socketFile), 'the socket unit goes with the unit, and the port with it');
   assert.ok(!fs.existsSync(dropIns), 'the drop-ins go with the unit');
-  assert.deepEqual(
-    systemctlCalls(system).filter((c) => c === 'daemon-reload'),
-    ['daemon-reload'],
-    'reloaded once, unit and drop-ins gone',
-  );
+  assert.ok(!system.active.has(unit) && !system.active.has(socket));
+  // Both stopped, both disabled, one reload once units and drop-ins are gone.
+  assert.deepEqual(systemctlCalls(system), [
+    `stop ${unit} ${socket}`,
+    `disable --no-reload ${unit} ${socket}`,
+    'daemon-reload',
+    `reset-failed ${unit} ${socket}`,
+  ]);
   assert.ok(fs.existsSync(at('var/lib/lamalibre/apps/fx/db.sqlite')));
   assert.ok(fs.existsSync(ownerFile(at)), 'the owner record stays with the data');
   assert.ok(system.users.has(helper.serviceUser(ROUTE)));
-  assert.ok(
-    system.calls.some(
-      ([cmd, verb, flag]) => cmd === 'systemctl' && verb === 'disable' && flag === '--now',
-    ),
-  );
 
   // Installed again later by its owner, the kept data is still the service's.
   install('1.0.0', tgzOf(packageEntries()));
@@ -1091,7 +1249,7 @@ test('remove keeps the data, the account and the owner record unless --purge; a 
   assert.deepEqual(fs.readdirSync(at('var/lib/lamalibre/apps/.trash')), []);
   assert.ok(!system.users.has(helper.serviceUser(ROUTE)));
   assert.ok(!system.groups.has(helper.serviceUser(ROUTE)));
-  // Removing what is not there is not an error — and reloads nothing.
+  // Removing what is not there is not an error — and disables and reloads nothing.
   system.calls.length = 0;
   assert.deepEqual(call(['remove', LABEL, ROUTE, '--purge']), {
     ok: true,
@@ -1099,10 +1257,17 @@ test('remove keeps the data, the account and the owner record unless --purge; a 
     unit: 'absent',
   });
   assert.ok(!systemctlCalls(system).includes('daemon-reload'));
+  assert.ok(!systemctlCalls(system).some((c) => c.startsWith('disable')));
 
-  // A drop-in directory left without its unit is removed, and reloaded.
+  // A socket unit, or a drop-in directory, left without its unit is removed, and reloaded.
+  fs.writeFileSync(socketFile, SOCKET_UNIT(21000));
+  system.calls.length = 0;
+  call(['remove', LABEL, ROUTE]);
+  assert.ok(!fs.existsSync(socketFile));
+  assert.ok(systemctlCalls(system).includes(`disable --no-reload ${socket}`));
+  assert.ok(systemctlCalls(system).includes('daemon-reload'));
   fs.mkdirSync(dropIns, { mode: 0o755 });
-  fs.writeFileSync(path.join(dropIns, '50-bind.conf'), helper.renderBindDropIn(21000));
+  fs.writeFileSync(path.join(dropIns, '50-bind.conf'), '[Service]\nSocketBindDeny=any\n');
   system.calls.length = 0;
   call(['remove', LABEL, ROUTE]);
   assert.ok(!fs.existsSync(dropIns));
@@ -1126,6 +1291,7 @@ test('status: protocol, Node.js and every agent half with its owner', () => {
         current: '1.0.0',
         previous: null,
         unit: 'inactive',
+        socket: 'absent',
         owner: { package: PKG, label: LABEL },
       },
     },
@@ -1135,6 +1301,17 @@ test('status: protocol, Node.js and every agent half with its owner', () => {
     current: null,
     previous: null,
     unit: 'absent',
+    socket: 'absent',
+    owner: null,
+  });
+  // A socket unit left without code or unit is listed, so it can be seen and removed.
+  fs.writeFileSync(at(`etc/systemd/system/${helper.socketName('hx')}`), SOCKET_UNIT(21009, 'hx'));
+  assert.deepEqual(call(['status']).apps.hx, {
+    versions: [],
+    current: null,
+    previous: null,
+    unit: 'absent',
+    socket: 'inactive',
     owner: null,
   });
 });
@@ -1239,16 +1416,19 @@ test('an install that fails after creating the account takes back what it create
 
 test('a first install that fails once its code is in place leaves nothing behind', () => {
   const { install, system, at } = setup({ failSystemctl: (args) => args[0] === 'daemon-reload' });
-  // A drop-in directory an earlier, interrupted removal left behind.
+  // A socket unit and a drop-in directory an earlier, interrupted removal left behind.
+  const socketFile = at(`etc/systemd/system/${helper.socketName(ROUTE)}`);
+  fs.writeFileSync(socketFile, SOCKET_UNIT(21000));
   const dropIns = at(`etc/systemd/system/${helper.unitName(ROUTE)}.d`);
   fs.mkdirSync(dropIns, { mode: 0o755 });
-  fs.writeFileSync(path.join(dropIns, '50-bind.conf'), helper.renderBindDropIn(21000));
+  fs.writeFileSync(path.join(dropIns, 'override.conf'), '[Service]\nEnvironment=X=1\n');
   assert.throws(
     () => install('1.0.0', tgzOf(packageEntries())),
     /daemon-reload exited with status 1/,
   );
   assert.deepEqual(listed(at('opt/lamalibre/apps')), [], 'no code');
   assert.ok(!fs.existsSync(at(`etc/systemd/system/${helper.unitName(ROUTE)}`)), 'no unit');
+  assert.ok(!fs.existsSync(socketFile), 'no socket unit');
   assert.ok(!fs.existsSync(dropIns), 'no drop-in');
   assert.ok(!system.users.has(helper.serviceUser(ROUTE)), 'no account');
   assert.ok(!fs.existsSync(ownerFile(at)), 'no owner record');
@@ -1846,11 +2026,10 @@ test('contract: names and paths derived from a route equal the core library', ()
     for (const key of ['codeDir', 'dataDir', 'configDir', 'configFile', 'ownerFile']) {
       assert.equal(helper.PATHS[key](route), core.APPHOST_PATHS[key](route), `${key} ${route}`);
     }
-    // The drop-ins of the unit core names.
-    assert.equal(helper.PATHS.dropInDir(route), `/etc/systemd/system/${core.appUnitName(route)}.d`);
+    // The socket unit of the unit core names.
     assert.equal(
-      helper.PATHS.bindDropIn(route),
-      `/etc/systemd/system/${core.appUnitName(route)}.d/50-bind.conf`,
+      helper.socketName(route),
+      core.appUnitName(route).replace(/\.service$/, '.socket'),
     );
   }
 });
