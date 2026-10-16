@@ -17,7 +17,8 @@
     "bin"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20.0.0"

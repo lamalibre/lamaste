@@ -44,6 +44,10 @@ pub struct AgentConfig {
     pub chisel_version: Option<String>,
     pub setup_at: Option<String>,
     pub updated_at: Option<String>,
+    /// The panel's TLS public-key pin the agent captured when it enrolled
+    /// (base64 SHA-256 of the key; `lamaste-agent panel reset-pin`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_server_pubkey_sha256: Option<String>,
 }
 
 /// Admin certificate authentication details.
@@ -100,6 +104,11 @@ pub struct AdminApiConfig {
     pub p12_path: Option<String>,
     pub p12_password: Option<String>,
     pub keychain_identity: Option<String>,
+    /// The server registry entry this config belongs to — where a first-use
+    /// panel key pin is stored. None for a config that is not a server's.
+    pub server_id: Option<String>,
+    /// The panel's TLS public-key pin stored with the server (an IP panel).
+    pub panel_pin: Option<String>,
 }
 
 /// Load the admin configuration for the active server.
@@ -128,6 +137,11 @@ fn admin_config_from_server(server: &serde_json::Value) -> Result<AdminApiConfig
     let server_id = server.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let panel_url = server.get("panelUrl").and_then(|v| v.as_str())
         .ok_or("Server has no panelUrl")?.to_string();
+    let registry_id = (!server_id.is_empty()).then(|| server_id.to_string());
+    let panel_pin = server
+        .get("panelServerPubkeySha256")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     // Check for explicit admin_auth
     if let Some(admin_auth) = server.get("adminAuth") {
@@ -148,6 +162,8 @@ fn admin_config_from_server(server: &serde_json::Value) -> Result<AdminApiConfig
             p12_path,
             p12_password,
             keychain_identity,
+            server_id: registry_id,
+            panel_pin,
         });
     }
 
@@ -169,6 +185,8 @@ fn admin_config_from_server(server: &serde_json::Value) -> Result<AdminApiConfig
         p12_path,
         p12_password,
         keychain_identity,
+        server_id: registry_id,
+        panel_pin,
     })
 }
 

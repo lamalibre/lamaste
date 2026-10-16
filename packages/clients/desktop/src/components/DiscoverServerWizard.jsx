@@ -224,7 +224,8 @@ export default function DiscoverServerWizard({ onClose }) {
         knownHostsPath: sshKnownHostsPath,
       });
 
-      // Step 2: Register server (cert is now ready on disk)
+      // Step 2: Register server (cert is now ready on disk), with the panel's
+      // TLS key pin read over the same SSH session
       setSshRecoveryStep('Registering server...');
       const entry = await invoke('register_discovered_server', {
         dropletId: selected.dropletId,
@@ -234,6 +235,7 @@ export default function DiscoverServerWizard({ onClose }) {
         domain: selected.domains[0] ?? null,
         panelUrl: selected.panelUrl,
         label: label.trim(),
+        panelServerPubkeySha256: result.panelServerPubkeySha256 ?? null,
       });
 
       // Step 3: Import recovered P12

@@ -222,7 +222,7 @@ The wizard shows up to 12 steps with live progress indicators. Each step shows a
 | **Setting up DNS records**      | Creates A and wildcard A records in DigitalOcean DNS (only if a domain was selected in the Domain step)     |
 | **Connecting via SSH**          | Establishes an SSH connection using the temporary key                                                       |
 | **Installing Lamaste**          | Runs `npx @lamalibre/create-lamaste` on the droplet (up to 10 minutes)                                      |
-| **Retrieving credentials**      | Downloads the admin certificate (`.p12` file) from the droplet                                              |
+| **Retrieving credentials**      | Downloads the admin certificate (`.p12` file) and reads the panel's TLS key pin from the droplet            |
 | **Enrolling admin certificate** | Imports the certificate into your OS credential store                                                       |
 | **Saving configuration**        | Writes the server entry to `~/.lamalibre/lamaste/servers.json`                                              |
 | **Cleaning up**                 | Deletes the temporary SSH key from DigitalOcean and your machine                                            |

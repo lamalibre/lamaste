@@ -823,6 +823,9 @@ Stores the server registry for the desktop app's multi-server support. Created b
 | `adminAuth.method`           | string         | `"p12"` or `"keychain"` — how the admin cert is stored                                              |
 | `adminAuth.p12Path`          | string \| null | Path to admin P12 file (when method is `"p12"`)                                                     |
 | `adminAuth.keychainIdentity` | string \| null | Keychain identity for admin cert (when method is `"keychain"`)                                      |
+| `panelServerPubkeySha256`    | string         | The pin of the panel's TLS key for a panel reached at its IP address (see below)                    |
+| `panelServerPinnedAt`        | string         | ISO 8601 timestamp of the pin                                                                       |
+| `panelServerPinSource`       | string         | `ssh`, `installer`, `local`, `agent`, `first-use` or `re-pin` (see below)                           |
 
 **Example:**
 
@@ -852,6 +855,8 @@ Stores the server registry for the desktop app's multi-server support. Created b
 ```
 
 **Notes on `adminAuth`:** When `adminAuth` is present and valid, the desktop app shows the Agents/Servers mode toggle in the sidebar. Cloud-provisioned servers populate `adminAuth` automatically (the admin certificate is downloaded during provisioning). For manually added servers, the user must import an admin certificate to enable Server mode.
+
+**Panel key pin:** At its IP address (`https://<ip>:9292`) the panel serves a self-signed certificate, so the app verifies every call to it by `panelServerPubkeySha256` — the base64 SHA-256 of the certificate's public key (SubjectPublicKeyInfo), curl's `--pinnedpubkey sha256//…` form and the same value an agent's config holds. `panelServerPinSource` says where it came from: `ssh` (read from the server over SSH by cloud provisioning or an admin recovery), `installer` (a local install, from the installer's report), `local` (a local install imported, or installed by an older installer: read from the certificate file through `pkexec`), `agent` (migrated from the agent's `agent.json`), `first-use` (taken from the first connection) or `re-pin` (the user replaced it on the Servers page, the only way it changes). A panel reached at its domain has no pin: its Let's Encrypt certificate is verified normally. `sudo lamaste-server panel-pin` on the relay prints the value to compare with.
 
 **P12 password:** Not stored in the JSON file. Retrieved from the OS credential store (`com.lamalibre.lamaste.server` service, keyed by server UUID).
 

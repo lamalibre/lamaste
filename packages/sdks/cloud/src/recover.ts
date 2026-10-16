@@ -23,6 +23,7 @@ import { dirname, join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { tmpDir } from '@lamalibre/lamaste/agent';
 import { generateKeyPair, sshExec, scpDownload, cleanupKeyPair, secureDelete } from './ssh.js';
+import { readPanelKeyPin } from './panel-pin.js';
 
 export interface RecoveryKeyPair {
   readonly publicKey: string;
@@ -34,6 +35,8 @@ export interface RecoveryKeyPair {
 export interface RecoveryResult {
   readonly p12Path: string;
   readonly p12Password: string;
+  /** The panel's IP certificate key pin, read over the same SSH session. */
+  readonly panelServerPubkeySha256: string;
 }
 
 /**
@@ -102,9 +105,16 @@ export async function recoverAdmin(
     knownHostsPath,
   );
 
+  // The panel's IP certificate, through the same session: the desktop
+  // verifies the panel by its key pin instead of trusting it on first use.
+  const panelServerPubkeySha256 = await readPanelKeyPin(ip, privateKeyPath, knownHostsPath, {
+    useSudo: true,
+  });
+
   return {
     p12Path: localP12,
     p12Password: password.trim(),
+    panelServerPubkeySha256,
   };
 }
 

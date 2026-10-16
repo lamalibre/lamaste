@@ -273,6 +273,8 @@ sudo openssl req -x509 -nodes -days 3650 \
   -addext "subjectAltName=IP:NEW_IP"
 ```
 
+The new certificate has a new key. Agents re-pin it with `lamaste-agent panel reset-pin`, the desktop app with **Re-pin** on the server's card; compare both with `sudo lamaste-server panel-pin` on the new server. Until then they refuse the panel at its IP address.
+
 **Step 7: Update DNS records** to point to the new IP
 
 **Step 8: Fix permissions (same as Step 3 above)**

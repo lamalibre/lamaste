@@ -134,6 +134,16 @@ export interface ServerEntry {
   readonly keychainIdentity?: string | undefined;
   readonly p12Path?: string | undefined;
   readonly p12Password?: string | undefined;
+  /**
+   * The pin of the panel's IP certificate key (base64 SHA-256 of its
+   * SubjectPublicKeyInfo), read from the server over SSH: the desktop app
+   * verifies every call to `https://<ip>:9292` against it.
+   */
+  readonly panelServerPubkeySha256?: string | undefined;
+  /** When the pin was read (ISO 8601). */
+  readonly panelServerPinnedAt?: string | undefined;
+  /** Where the pin came from: `ssh` here (see the desktop's ServerEntry). */
+  readonly panelServerPinSource?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------

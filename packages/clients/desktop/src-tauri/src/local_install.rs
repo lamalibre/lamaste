@@ -55,6 +55,10 @@ struct InstallServerInfo {
     panel_url: String,
     p12_path: String,
     p12_password_path: String,
+    /// The pin of the panel's IP certificate, read by the installer (root)
+    /// from the certificate it made. Absent from older installers.
+    #[serde(default)]
+    panel_server_pubkey_sha256: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +124,26 @@ fn validate_pki_path(path: &str) -> Result<(), String> {
     }
     // If canonicalize fails (file doesn't exist yet), the string check above is sufficient
     Ok(())
+}
+
+/// The certificate of this machine's panel IP vhost.
+const LOCAL_PANEL_CERT: &str = "/etc/lamalibre/lamaste/pki/self-signed.pem";
+
+/// The key pin of this machine's panel certificate, read as root (`pkexec`;
+/// the PKI directory is the panel's own, 0700). An imported local install
+/// is pinned from the file, not on first use: on loopback a first use would
+/// trust whatever listens on 9292 — any local user can, whenever nginx does
+/// not hold it (panel 2FA switches the IP vhost off).
+fn read_local_panel_pin() -> Result<String, String> {
+    validate_pki_path(LOCAL_PANEL_CERT)?;
+    let output = std::process::Command::new("pkexec")
+        .args(["cat", LOCAL_PANEL_CERT])
+        .output()
+        .map_err(|_| "Failed to read the panel's TLS certificate".to_string())?;
+    if !output.status.success() {
+        return Err("Failed to read the panel's TLS certificate".to_string());
+    }
+    crate::panel_tls::pin_of_pem(&output.stdout)
 }
 
 /// Get the current user's UID as a string for chown operations.
@@ -470,6 +494,15 @@ pub async fn start_local_install(
             s.active = false;
         }
 
+        // The installer's pin of the panel it just set up; an older installer
+        // reports none, and the certificate file is read instead.
+        let (pin, pin_source) = match server_info
+            .panel_server_pubkey_sha256
+            .filter(|pin| crate::panel_tls::validate_pin(pin).is_ok())
+        {
+            Some(pin) => (pin, cloud::PIN_SOURCE_INSTALLER),
+            None => (read_local_panel_pin()?, cloud::PIN_SOURCE_LOCAL),
+        };
         let entry = ServerEntry {
             id: server_id,
             label,
@@ -487,6 +520,9 @@ pub async fn start_local_install(
             p12_password: None,
             admin_auth: None,
             active_mode: None,
+            panel_server_pubkey_sha256: Some(pin),
+            panel_server_pinned_at: Some(chrono::Utc::now().to_rfc3339()),
+            panel_server_pin_source: Some(pin_source.to_string()),
             extra: Default::default(),
         };
 
@@ -541,6 +577,7 @@ pub async fn import_existing_local_install(
         );
 
         let server_id = uuid::Uuid::new_v4().to_string();
+        let pin = read_local_panel_pin()?;
         let p12_dest = import_local_certs(
             &server_id,
             "/etc/lamalibre/lamaste/pki/client.p12",
@@ -585,6 +622,9 @@ pub async fn import_existing_local_install(
             p12_password: None,
             admin_auth: None,
             active_mode: None,
+            panel_server_pubkey_sha256: Some(pin),
+            panel_server_pinned_at: Some(chrono::Utc::now().to_rfc3339()),
+            panel_server_pin_source: Some(cloud::PIN_SOURCE_LOCAL.to_string()),
             extra: Default::default(),
         };
 
@@ -605,17 +645,17 @@ pub async fn import_existing_local_install(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
-/// Check health of the local Lamaste server at https://127.0.0.1:9292.
+/// Check health of the local Lamaste server at https://127.0.0.1:9292 — a
+/// reachability probe that sends nothing: no client certificate, cookie or
+/// body (see `panel_tls::probe_args`).
 #[tauri::command]
 pub async fn check_local_server_health() -> Result<cloud::ServerHealth, String> {
     tokio::task::spawn_blocking(|| {
+        const URL: &str = "https://127.0.0.1:9292";
         let output = std::process::Command::new("curl")
-            .args([
-                "-sk",
-                "--max-time",
-                "5",
-                "https://127.0.0.1:9292/api/health",
-            ])
+            .args(["-s", "--max-time", "5"])
+            .args(crate::panel_tls::probe_args(URL)?)
+            .arg(format!("{}/api/health", URL))
             .output()
             .map_err(|e| format!("Health check failed: {}", e))?;
 
