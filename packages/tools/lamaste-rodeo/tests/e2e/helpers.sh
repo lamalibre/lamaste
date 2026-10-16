@@ -1083,12 +1083,19 @@ FIXTURE_EOF
 #
 #   node app-plugin-half.mjs --config <plugin config json> --plugin <route> \
 #     --lamaste <dir of the @lamalibre/lamaste package> [--log <file>] \
-#     [--flags <dir>] [--wait-config]
+#     [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>]
 #
 # Lifecycle hooks (4.3): /admin/hooks/<stage> answered by
 # createAgentHookHandler (Lamaste's calls only); each stage logs a line
 # `hook <stage> phase=… reason=… state=…`, and <flags>/fail-<stage> makes it
 # refuse. --wait-config waits for the agent's sync to deliver the config.
+#
+# Settings (slice 4), with --manifest: the manifest's settings block is the
+# schema of a settings store (createSettingsStore) over --data, which must
+# exist; /admin/settings* is answered by createSettingsHandler (Lamaste's
+# calls only, a line `<method> <url> <status> settings-call` each) and
+# /admin/probe/settings shows what the store holds — the effective values
+# and the SHA-256 of each secret, never a secret's value.
 #
 # Routes: /admin/health, /admin/ping (echoes caller, path, what headers
 # arrived), /admin/panel.js (a mount(ctx) bundle), /admin/echo (POST, counts
@@ -1098,9 +1105,10 @@ FIXTURE_EOF
 write_app_plugin_half() {
   local dest="$1"
   cat > "$dest" <<'HALF_EOF'
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const args = process.argv.slice(2);
@@ -1113,8 +1121,10 @@ const plugin = opt('--plugin');
 const lamasteDir = opt('--lamaste');
 const logFile = opt('--log');
 const flagsDir = opt('--flags');
-if (!configPath || !plugin || !lamasteDir) {
-  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>] [--flags <dir>] [--wait-config]');
+const manifestPath = opt('--manifest');
+const dataDir = opt('--data');
+if (!configPath || !plugin || !lamasteDir || (manifestPath && !dataDir)) {
+  console.error('usage: app-plugin-half.mjs --config <file> --plugin <route> --lamaste <dir> [--log <file>] [--flags <dir>] [--wait-config] [--manifest <file> --data <dir>]');
   process.exit(2);
 }
 // --wait-config: the agent's sync delivers the config after the half starts.
@@ -1141,6 +1151,41 @@ const hookHandler = agentLib.createAgentHookHandler
       ),
     })
   : null;
+
+// Settings (slice 4): the manifest's settings block is the store's schema;
+// Lamaste alone reads and changes them through /admin/settings.
+let settings = null;
+let settingsHandler = null;
+if (manifestPath) {
+  if (!agentLib.createSettingsStore) {
+    console.error('--manifest: this @lamalibre/lamaste has no plugin settings');
+    process.exit(2);
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  settings = agentLib.createSettingsStore({ dataDir, settings: agentLib.settingsFromManifest(manifest) });
+  await settings.load();
+  settingsHandler = agentLib.createSettingsHandler({ verifier, store: settings });
+}
+// What the store holds: the effective values and, for each secret that is
+// set, the SHA-256 of its value — never the value.
+function settingsProbe() {
+  const state = settings.state();
+  const secretDigests = {};
+  for (const key of Object.keys(state.secrets)) {
+    const value = settings.secret(key);
+    if (value !== undefined) secretDigests[key] = crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+  }
+  return {
+    schemaVersion: state.schemaVersion,
+    revision: state.revision,
+    configured: state.configured,
+    missing: state.missing,
+    values: settings.values(),
+    stored: state.values,
+    secretsSetAt: state.secrets,
+    secretDigests,
+  };
+}
 
 function log(line) {
   const text = `${new Date().toISOString()} ${line}\n`;
@@ -1175,6 +1220,14 @@ const server = http.createServer(async (req, res) => {
     json(res, out.status, out.body);
     return;
   }
+  if (settingsHandler && (p === '/admin/settings' || p.startsWith('/admin/settings/'))) {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const out = await settingsHandler.handle({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
+    log(`${req.method} ${req.url} ${out.status} settings-call`);
+    json(res, out.status, out.body);
+    return;
+  }
   const result = await verifier.verify(req.headers, req.method, req.url);
   if (!result.ok) {
     log(`${req.method} ${req.url} 401 refused=${result.reason}`);
@@ -1206,6 +1259,11 @@ const server = http.createServer(async (req, res) => {
       `window.__lamalibrePlugins = window.__lamalibrePlugins || {};\n` +
         `window.__lamalibrePlugins[${JSON.stringify(plugin)}] = { mount(ctx) { ctx.mountPoint.textContent = 'E2E app plugin — served by the agent half'; return () => {}; } };\n`,
     );
+    return;
+  }
+  if (p === '/admin/probe/settings' && settings) {
+    log(`${req.method} ${req.url} 200 caller=${caller}`);
+    json(res, 200, settingsProbe());
     return;
   }
   if (p === '/admin/echo' && req.method === 'POST') {
@@ -1439,7 +1497,144 @@ export default {
 FIXTURE_EOF
 }
 
-# write_app_install_fixture dir name version mode build-id [system-packages-json]
+# settings_block_json v1|v2
+# The settings block of the settings fixtures (slice 4), as it sits in a
+# manifest:
+#   v1 (schemaVersion 1)  apiKey    secret, required
+#                         schedule  string, pattern ^HH:MM$, default "06:00"
+#                         retries   integer 0..10, default 3
+#                         region    enum eu | us, optional, no default
+#                         verbose   boolean, default false
+#   v2 (schemaVersion 2)  as v1, except: retries is a string (default "3") —
+#                         a retyped field, whose stored value is dropped,
+#                         never converted — and endpoint, a new required
+#                         string without a default
+settings_block_json() {
+  case "$1" in
+    v1)
+      cat <<'SETTINGS_EOF'
+{
+    "schemaVersion": 1,
+    "fields": [
+      { "key": "apiKey", "label": "API key", "type": "secret", "required": true, "description": "Held by the agent half alone" },
+      { "key": "schedule", "label": "Schedule", "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "06:00", "description": "When to sync, HH:MM" },
+      { "key": "retries", "label": "Retries", "type": "integer", "min": 0, "max": 10, "default": 3 },
+      { "key": "region", "label": "Region", "type": "enum", "options": [{ "value": "eu", "label": "Europe" }, { "value": "us", "label": "United States" }] },
+      { "key": "verbose", "label": "Verbose logging", "type": "boolean", "default": false }
+    ]
+  }
+SETTINGS_EOF
+      ;;
+    v2)
+      cat <<'SETTINGS_EOF'
+{
+    "schemaVersion": 2,
+    "fields": [
+      { "key": "apiKey", "label": "API key", "type": "secret", "required": true, "description": "Held by the agent half alone" },
+      { "key": "schedule", "label": "Schedule", "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "06:00", "description": "When to sync, HH:MM" },
+      { "key": "retries", "label": "Retries", "type": "string", "default": "3", "description": "A count or a policy name" },
+      { "key": "region", "label": "Region", "type": "enum", "options": [{ "value": "eu", "label": "Europe" }, { "value": "us", "label": "United States" }] },
+      { "key": "verbose", "label": "Verbose logging", "type": "boolean", "default": false },
+      { "key": "endpoint", "label": "Endpoint", "type": "string", "required": true, "maxLength": 200, "description": "The upstream service's base URL" }
+    ]
+  }
+SETTINGS_EOF
+      ;;
+    *)
+      echo "settings_block_json: unknown schema $1" >&2
+      return 2
+      ;;
+  esac
+}
+
+# write_settings_fixture_plugins dir
+# Agent-hosted plugins declaring settings (slice 4), for single-VM spec 31;
+# each in <dir>/<variant>, package @lamalibre/<name>-server:
+#   ok             e2e-settings — an agent block and the v1 settings block
+#                  (settings_block_json); its agent half is
+#                  write_app_plugin_half --manifest <dir>/ok/lamaste-plugin.json
+#   noagent        e2e-settings-noagent — settings without an agent block
+#   secretdefault  e2e-settings-secretdefault — a secret with a default
+#   badpattern     e2e-settings-badpattern — a pattern that does not compile
+#   toomany        e2e-settings-toomany — 51 fields
+# Every variant but ok is refused at install. Their main modules throw if
+# the panel ever imports them.
+write_settings_fixture_plugins() {
+  local dir="$1"
+  local variant name pkg agent settings fields i
+  for variant in ok noagent secretdefault badpattern toomany; do
+    name="e2e-settings-${variant}"
+    agent='
+  "agent": { "requires": { "node": ">=22", "os": ["linux"] } },'
+    case "$variant" in
+      ok)
+        name="e2e-settings"
+        settings="$(settings_block_json v1)"
+        ;;
+      noagent)
+        agent=''
+        settings="$(settings_block_json v1)"
+        ;;
+      secretdefault)
+        settings='{
+    "schemaVersion": 1,
+    "fields": [{ "key": "apiKey", "label": "API key", "type": "secret", "required": true, "default": "e2e-default-secret" }]
+  }'
+        ;;
+      badpattern)
+        settings='{
+    "schemaVersion": 1,
+    "fields": [{ "key": "schedule", "label": "Schedule", "type": "string", "pattern": "([0-9]{2}" }]
+  }'
+        ;;
+      toomany)
+        fields=""
+        for i in $(seq 1 51); do
+          fields="${fields}${fields:+,
+}      { \"key\": \"f${i}\", \"label\": \"Field ${i}\", \"type\": \"boolean\" }"
+        done
+        settings="{
+    \"schemaVersion\": 1,
+    \"fields\": [
+${fields}
+    ]
+  }"
+        ;;
+    esac
+    pkg="@lamalibre/${name}-server"
+    mkdir -p "${dir}/${variant}"
+    cat > "${dir}/${variant}/package.json" <<FIXTURE_EOF
+{
+  "name": "${pkg}",
+  "version": "1.0.0",
+  "description": "Lamaste e2e fixture: an agent-hosted plugin declaring settings (${variant})",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "lamaste-plugin.json"],
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
+FIXTURE_EOF
+    cat > "${dir}/${variant}/index.js" <<FIXTURE_EOF
+// The application runs on its hosting agent; the panel never loads this module.
+throw new Error('${name}: agent-hosted plugin code was imported');
+FIXTURE_EOF
+    cat > "${dir}/${variant}/lamaste-plugin.json" <<FIXTURE_EOF
+{
+  "name": "${name}",
+  "displayName": "E2E Settings (${variant})",
+  "version": "1.0.0",
+  "description": "Settings an admin configures; the agent half holds them",
+  "hosting": "agent",${agent}
+  "modes": ["server"],
+  "packages": { "server": "${pkg}" },
+  "capabilities": ["plugin:${name}:use"],
+  "settings": ${settings}
+}
+FIXTURE_EOF
+  done
+}
+
+# write_app_install_fixture dir name version mode build-id [system-packages-json] [settings]
 # An agent-hosted plugin whose agent half Lamaste installs onto the hosting
 # agent itself (slice 3) — two packages at <version>:
 #   <dir>/server  @lamalibre/<name>-server: the manifest — hosting "agent";
@@ -1467,6 +1662,17 @@ FIXTURE_EOF
 #               root helper refuses (an agent half ships bundled)
 #   tampered  — as main, other bytes: what a registry serving something else
 #               under a published version hands out
+# <settings> (slice 4; default none): v1 or v2 puts that settings block
+# (settings_block_json) in the manifest. The agent half is built with a copy
+# of the manifest (agent-src/lamaste-plugin.json) and keeps the settings its
+# block declares: createSettingsStore over LAMASTE_APP_DATA_DIR
+# (settings.json, secrets.json), /admin/settings* answered by
+# createSettingsHandler (Lamaste's calls only; each logs
+# `settings <method> <path> <status>`, each change
+# `settings revision=… configured=… missing=…`), and /admin/probe/settings —
+# its schema version, revision, configured, missing, effective values,
+# stored values and the SHA-256 of each secret that is set, never a value.
+# Without a settings block none of this exists.
 # <build-id> goes into the agent package, so each run's tarballs — and their
 # integrity — are new: an agent's npm cache never answers for the registry.
 # Needs node, this workspace's node_modules (esbuild) and its core library
@@ -1474,9 +1680,10 @@ FIXTURE_EOF
 write_app_install_fixture() {
   local dir="$1" name="$2" version="$3" mode="$4" build_id="$5"
   local system_packages="${6:-[\"sqlite3\"]}"
+  local settings_schema="${7:-none}"
   local server_pkg="@lamalibre/${name}-server"
   local agent_pkg="@lamalibre/${name}-agent"
-  local here deps=''
+  local here deps='' settings_entry=''
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   case "$mode" in
     main | failpost | deps | tampered) ;;
@@ -1489,6 +1696,17 @@ write_app_install_fixture() {
     echo "write_app_install_fixture: invalid name or build id" >&2
     return 2
   fi
+  case "$settings_schema" in
+    none) ;;
+    v1 | v2)
+      settings_entry=",
+  \"settings\": $(settings_block_json "$settings_schema")"
+      ;;
+    *)
+      echo "write_app_install_fixture: unknown settings schema ${settings_schema}" >&2
+      return 2
+      ;;
+  esac
   if [ "$mode" = "deps" ]; then
     deps=',
   "dependencies": { "left-pad": "1.3.0" }'
@@ -1535,9 +1753,12 @@ FIXTURE_EOF
       "install": { "pre-tunnel": {}, "post-tunnel": {} },
       "uninstall": { "pre-teardown": {}, "post-teardown": {} }
     }
-  }
+  }${settings_entry}
 }
 FIXTURE_EOF
+  # The agent half's own copy of the manifest: its settings block is the
+  # schema of the settings the agent half keeps.
+  cp "${dir}/server/lamaste-plugin.json" "${dir}/agent-src/lamaste-plugin.json"
 
   cat > "${dir}/agent/package.json" <<FIXTURE_EOF
 {
@@ -1552,8 +1773,9 @@ FIXTURE_EOF
   cat > "${dir}/agent-src/agentd.mjs" <<'AGENTD_EOF'
 // E2E app plugin — the agent half Lamaste installs onto its hosting agent.
 // Bundled into one ES module (build-app-agent-half.js defines __E2E_ROUTE__
-// and __E2E_MODE__); runs under the unit lamaste-apphost writes, as the
-// plugin's own account, with its config and data paths in the environment.
+// and __E2E_MODE__, and inlines the manifest copy next to this file); runs
+// under the unit lamaste-apphost writes, as the plugin's own account, with
+// its config and data paths in the environment.
 import crypto from 'node:crypto';
 import {
   closeSync,
@@ -1570,7 +1792,14 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAgentHookHandler, createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
+import {
+  createAgentHookHandler,
+  createCallerAssertionVerifier,
+  createSettingsHandler,
+  createSettingsStore,
+  settingsFromManifest,
+} from '@lamalibre/lamaste/agent';
+import MANIFEST from './lamaste-plugin.json';
 
 const ROUTE = __E2E_ROUTE__;
 const MODE = __E2E_MODE__;
@@ -1630,6 +1859,42 @@ const hooks = createAgentHookHandler({
   verifier,
   hooks: Object.fromEntries(HOOK_STAGES.map((stage) => [stage, hookFor(stage)])),
 });
+
+// Settings, when the manifest declares them: settings.json and secrets.json
+// in the data directory — so they stay with data an unhosting keeps — which
+// Lamaste alone reads and changes, through /admin/settings. A change is
+// logged without its values.
+const settings = MANIFEST.settings === undefined
+  ? null
+  : createSettingsStore({ dataDir, settings: settingsFromManifest(MANIFEST) });
+let settingsHandler = null;
+if (settings) {
+  await settings.load();
+  settings.onChange((s) =>
+    log(`settings revision=${s.revision} configured=${s.configured} missing=${s.missing.join(',') || '-'}`),
+  );
+  settingsHandler = createSettingsHandler({ verifier, store: settings });
+}
+// What the store holds, for the specs: the effective and the stored values
+// and, for each secret that is set, the SHA-256 of its value — never a value.
+function settingsProbe() {
+  const current = settings.state();
+  const secretDigests = {};
+  for (const key of Object.keys(current.secrets)) {
+    const value = settings.secret(key);
+    if (value !== undefined) secretDigests[key] = crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+  }
+  return {
+    schemaVersion: current.schemaVersion,
+    revision: current.revision,
+    configured: current.configured,
+    missing: current.missing,
+    values: settings.values(),
+    stored: current.values,
+    secretsSetAt: current.secrets,
+    secretDigests,
+  };
+}
 
 // What the unit's sandbox lets this process do. Each write is attempted and
 // undone when it succeeds; all but the data directory and the private /tmp
@@ -1710,6 +1975,13 @@ const server = http.createServer(async (req, res) => {
       const out = await hooks.handle({ method, url: target, headers: req.headers, body: Buffer.concat(chunks) });
       return json(res, out.status, out.body);
     }
+    if (settingsHandler && (p === '/admin/settings' || p.startsWith('/admin/settings/'))) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const out = await settingsHandler.handle({ method, url: target, headers: req.headers, body: Buffer.concat(chunks) });
+      log(`settings ${method} ${p} ${out.status}`);
+      return json(res, out.status, out.body);
+    }
     if (p !== '/admin' && !p.startsWith('/admin/')) return json(res, 404, { error: 'not found' });
     const verified = await verifier.verify(req.headers, method, target);
     if (!verified.ok) return json(res, 401, { error: 'caller assertion refused', reason: verified.reason });
@@ -1733,6 +2005,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(PANEL_JS);
     }
     if (p === '/admin/sandbox') return json(res, 200, sandboxProbe());
+    if (p === '/admin/probe/settings' && settings) return json(res, 200, settingsProbe());
     return json(res, 404, { error: 'no such admin route' });
   } catch (err) {
     log(`error: ${err?.message ?? err}`);

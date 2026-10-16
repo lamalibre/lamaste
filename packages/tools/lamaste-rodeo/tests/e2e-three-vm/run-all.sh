@@ -105,6 +105,8 @@ TEST_SCRIPTS=(
   "18-agent-plugin-hosting.sh"
   "19-agent-plugin-crud.sh"
   "20-agent-user-plugin-access.sh"
+  "37-app-plugin-settings.sh"
+  "38-app-plugin-offline.sh"
 )
 
 PASSED=0

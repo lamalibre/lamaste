@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # ============================================================================
-# App plugin harness — what the three-VM specs 34, 35 and 36 share
+# App plugin harness — what the three-VM specs 34 to 38 share
 # ============================================================================
 # Sourced after ../e2e/helpers.sh by the specs in which Lamaste installs an
 # app plugin's agent half onto the agent VM from the panel (slice 3):
@@ -22,11 +22,16 @@
 #   fires — the same unit, so never two syncs at once. Spec 34 hosts on the
 #   timer alone; the specs nudge later operations to stay inside rodeo's
 #   ten minutes per spec;
+# - settings (slice 4, specs 37 and 38): test secrets that exist only on the
+#   host VM, the settings API called through a script there that never
+#   prints a response holding one, and scans of the relay and the agent VM
+#   that report counts, never a secret;
 # - app_plugin_cleanup: what the specs' cleanup traps run.
 #
 # Runs on the machine driving the VMs, under bash 3.2 (macOS): no arrays.
 # A spec sets REMOTE_DIR, LOCAL_TMP, CLEAN_PLUGINS, CLEAN_ROUTES and
-# PURGE_PACKAGES (space-separated lists) before it uses these.
+# PURGE_PACKAGES (space-separated lists) before it uses these; one that uses
+# the settings helpers also sets PRIV (a directory under REMOTE_DIR).
 # ============================================================================
 
 HOST_VM="lamaste-host"
@@ -65,6 +70,9 @@ PUSH_WINDOW=""
 CREDENTIAL_SET=""
 NPMRC_WRITTEN=""
 STUB_STARTED=""
+# The host VM's private directory for test secrets (settings helpers; the
+# spec sets it under REMOTE_DIR, which the cleanup removes)
+PRIV=""
 
 # ---------------------------------------------------------------------------
 # VM exec and panel API
@@ -622,6 +630,375 @@ assert_relay_clean() {
 agent_copy_gone() {
   nudge_sync
   [ "$(agent_exec "if [ -e ${AGENT_DIR}/app-plugins/$1.json ]; then echo present; else echo gone; fi" 2>/dev/null)" = "gone" ]
+}
+
+# ---------------------------------------------------------------------------
+# Settings (slice 4) — specs 37 and 38
+# ---------------------------------------------------------------------------
+#
+# A test secret exists only on the host VM, in PRIV (0700; its files 0600):
+# generated there (secret-<name>), put into request bodies there — jq reads
+# the file, so the value is never an argument — and compared by its SHA-256.
+# PRIV/patterns holds every test secret, one per line, for the scans
+# (grep -F -f, which report counts). Settings calls go through
+# settings-call.sh in REMOTE_DIR, which keeps every response in
+# PRIV/responses.log and never prints one holding a test secret.
+
+# write_settings_call_script <file> — settings-call.sh (see its header);
+# shipped to the host VM's REMOTE_DIR
+write_settings_call_script() {
+  cat > "$1" <<'CALL_EOF'
+#!/bin/bash
+# settings-call.sh <method> <api path> [<body file>] — one panel API call as
+# the admin. Prints the response, then its HTTP status on a line of its own,
+# and keeps both in private/responses.log for the specs' scan. A response
+# holding a test secret (private/patterns) is never printed: a marker is.
+set -u
+priv="$(cd "$(dirname "$0")" && pwd)/private"
+out="$(mktemp "${priv}/response.XXXXXXXX")"
+status=""
+if [ -n "${3:-}" ]; then
+  status=$(curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key \
+    --cacert /etc/lamalibre/lamaste/pki/ca.crt -X "$1" -H 'Accept: application/json' -H 'Content-Type: application/json' \
+    --data-binary "@$3" -o "$out" -w '%{http_code}' "https://127.0.0.1:9292/api/$2" 2>/dev/null) || true
+else
+  status=$(curl -sk --max-time 30 --cert /etc/lamalibre/lamaste/pki/client.crt --key /etc/lamalibre/lamaste/pki/client.key \
+    --cacert /etc/lamalibre/lamaste/pki/ca.crt -X "$1" -H 'Accept: application/json' \
+    -o "$out" -w '%{http_code}' "https://127.0.0.1:9292/api/$2" 2>/dev/null) || true
+fi
+[ -n "$status" ] || status="000"
+{
+  printf '### %s %s %s\n' "$1" "$2" "$status"
+  cat "$out"
+  printf '\n'
+} >> "${priv}/responses.log"
+if [ -s "${priv}/patterns" ] && grep -qaF -f "${priv}/patterns" "$out"; then
+  printf '{"redacted":"the response held a test secret"}\n'
+else
+  cat "$out"
+  printf '\n'
+fi
+printf '%s\n' "$status"
+rm -f "$out"
+CALL_EOF
+}
+
+# write_cli_sampled_script <file> — cli-sampled.sh (see its header); shipped
+# to the host VM's REMOTE_DIR
+write_cli_sampled_script() {
+  cat > "$1" <<'CLI_EOF'
+#!/bin/bash
+# cli-sampled.sh <stdin file | -> <lamaste-server arguments...> — run
+# lamaste-server with that file on its stdin (- for none) while, every
+# 50 ms, every process's arguments are appended to private/ps.log and the
+# /proc/<pid>/cmdline and /proc/<pid>/environ files holding a test secret
+# (private/patterns) are listed in private/cmdline.log and
+# private/environ.log. Prints the CLI's exit status, then its output — or a
+# marker when the output holds a test secret.
+set -u
+priv="$(cd "$(dirname "$0")" && pwd)/private"
+input="$1"
+shift
+out="$(mktemp "${priv}/cli.XXXXXXXX")"
+flag="${priv}/sampling"
+touch "$flag" "${priv}/ps.log" "${priv}/cmdline.log" "${priv}/environ.log"
+(
+  while [ -e "$flag" ]; do
+    ps -e -ww -o pid=,args= >> "${priv}/ps.log" 2>/dev/null
+    printf '=== sample\n' >> "${priv}/ps.log"
+    if [ -s "${priv}/patterns" ]; then
+      grep -laF -f "${priv}/patterns" /proc/[0-9]*/cmdline >> "${priv}/cmdline.log" 2>/dev/null
+      grep -laF -f "${priv}/patterns" /proc/[0-9]*/environ >> "${priv}/environ.log" 2>/dev/null
+    fi
+    sleep 0.05
+  done
+) &
+sampler=$!
+sleep 0.3
+if [ "$input" = "-" ]; then
+  lamaste-server "$@" > "$out" 2>&1 < /dev/null
+else
+  lamaste-server "$@" > "$out" 2>&1 < "$input"
+fi
+rc=$?
+sleep 0.2
+rm -f "$flag"
+wait "$sampler" 2>/dev/null
+printf '%s\n' "$rc"
+if [ -s "${priv}/patterns" ] && grep -qaF -f "${priv}/patterns" "$out"; then
+  printf '[the output held a test secret]\n'
+else
+  cat "$out"
+fi
+rm -f "$out"
+CLI_EOF
+}
+
+# prepare_settings_priv — on the host VM, after start_stand_in_feria shipped
+# the scripts: PRIV (0700), an empty patterns file, the scripts shipped
+# (settings-call.sh, and cli-sampled.sh when the spec uses it) executable
+prepare_settings_priv() {
+  host_exec "install -d -m 0700 ${PRIV} && install -m 0600 /dev/null ${PRIV}/patterns; for s in settings-call.sh cli-sampled.sh; do if [ -f ${REMOTE_DIR}/\$s ]; then chmod 0755 ${REMOTE_DIR}/\$s; fi; done" > /dev/null 2>&1 || true
+}
+
+# make_test_secret <name> — a new test secret on the host VM: 48 hex
+# characters in PRIV/secret-<name> (0600), added to PRIV/patterns. Prints
+# its length — never the secret.
+make_test_secret() {
+  host_exec "umask 077; openssl rand -hex 24 > ${PRIV}/secret-$1 && cat ${PRIV}/secret-$1 >> ${PRIV}/patterns && tr -d '\n' < ${PRIV}/secret-$1 | wc -c" 2>/dev/null | tr -d ' ' || echo "0"
+}
+
+# secret_digest <name> — the SHA-256 (hex) of test secret <name>
+secret_digest() {
+  host_exec "tr -d '\n' < ${PRIV}/secret-$1 | sha256sum | cut -c1-64" 2>/dev/null || echo ""
+}
+
+# secret_put_body <name> <revision> <values json> — on the host VM, the
+# body of PUT /api/plugins/<name>/settings that sets apiKey to test secret
+# <name> (PRIV/put-<name>.json, 0600); prints its path
+secret_put_body() {
+  local file="${PRIV}/put-$1.json"
+  host_exec "umask 077; jq -c -n --rawfile k ${PRIV}/secret-$1 --argjson r $2 --argjson v '$3' '{revision: \$r, values: \$v, secrets: {apiKey: (\$k | rtrimstr(\"\\n\"))}}' > ${file}" > /dev/null 2>&1 || true
+  echo "$file"
+}
+
+# secret_stdin_body <name> — on the host VM, what `plugins configure
+# --secrets-stdin` reads to set apiKey to test secret <name>
+# (PRIV/stdin-<name>.json, 0600); prints its path
+secret_stdin_body() {
+  local file="${PRIV}/stdin-$1.json"
+  host_exec "umask 077; jq -c -n --rawfile k ${PRIV}/secret-$1 '{apiKey: (\$k | rtrimstr(\"\\n\"))}' > ${file}" > /dev/null 2>&1 || true
+  echo "$file"
+}
+
+# settings_api <method> <api path> [<json>] — through settings-call.sh: the
+# response, then its HTTP status on a line of its own (status_of / body_of).
+# <json> must hold no single quote.
+settings_api() {
+  if [ -n "${3:-}" ]; then
+    host_exec "umask 077; printf '%s' '$3' > ${PRIV}/body.json; ${REMOTE_DIR}/settings-call.sh $1 '$2' ${PRIV}/body.json" 2>/dev/null || echo "000"
+  else
+    host_exec "${REMOTE_DIR}/settings-call.sh $1 '$2'" 2>/dev/null || echo "000"
+  fi
+}
+
+# settings_api_file <method> <api path> <body file on the host VM>
+settings_api_file() {
+  host_exec "${REMOTE_DIR}/settings-call.sh $1 '$2' $3" 2>/dev/null || echo "000"
+}
+
+# settings_view <plugin> — the body of GET /api/plugins/<plugin>/settings
+settings_view() { body_of "$(settings_api GET "plugins/$1/settings")"; }
+
+# settings_probe <plugin> — what the agent half's settings store holds,
+# through the forwarder (/admin/probe/settings: digests, never a secret)
+settings_probe() { body_of "$(settings_api GET "$1/probe/settings")"; }
+
+# settings_summary <plugin> — the plugin's `settings` in GET /api/plugins
+settings_summary() {
+  body_of "$(settings_api GET plugins)" | jq -c ".plugins[]? | select(.name == \"$1\") | .settings // null" 2>/dev/null || echo "null"
+}
+
+# cli_sampled <stdin file | -> <lamaste-server arguments...> — through
+# cli-sampled.sh: the exit status, then the output
+cli_sampled() {
+  local input="$1"
+  shift
+  timed_exec 120 multipass exec "${HOST_VM}" -- sudo bash -c "${REMOTE_DIR}/cli-sampled.sh ${input} $*" 2>/dev/null || echo "-1"
+}
+
+# cli_sample_report — what the samples of cli-sampled.sh saw, as JSON: how
+# many samples, how many lines show lamaste-server running a configure, and
+# how many argument lines, cmdline files and environment files held a test
+# secret
+cli_sample_report() {
+  host_exec "s=\$(grep -c '^=== sample\$' ${PRIV}/ps.log 2>/dev/null); c=\$(grep -cE 'lamaste-server(\\.js)? plugins configure' ${PRIV}/ps.log 2>/dev/null); a=\$(grep -caF -f ${PRIV}/patterns ${PRIV}/ps.log 2>/dev/null); l=\$(wc -l < ${PRIV}/cmdline.log 2>/dev/null); e=\$(wc -l < ${PRIV}/environ.log 2>/dev/null); printf '{\"samples\":%s,\"cli\":%s,\"secretArgs\":%s,\"secretCmdlines\":%s,\"secretEnv\":%s}\n' \"\${s:-null}\" \"\${c:-null}\" \"\${a:-null}\" \"\${l:-null}\" \"\${e:-null}\"" 2>/dev/null || echo '{}'
+}
+
+# settings_sweep <plugin> — read, through settings-call.sh (so into
+# PRIV/responses.log), every API answer that could carry a secret: the
+# plugin list and record, its settings, hosting, hooks and operations, the
+# audit log, the agents, the notifications, the agent half's probe
+settings_sweep() {
+  local paths="'plugins' 'plugins/$1' 'plugins/$1/settings' 'plugins/$1/hosting' 'plugins/$1/hooks' 'plugins/$1/operations' 'audit?plugin=$1&limit=200' 'audit?limit=200' 'certs/agent' 'notifications?limit=200' '$1/probe/settings'"
+  host_exec "for p in ${paths}; do ${REMOTE_DIR}/settings-call.sh GET \"\$p\" > /dev/null; done" > /dev/null 2>&1 || true
+}
+
+# relay_secret_scan <plugin> <since epoch> — where the test secrets are on
+# the relay, as counts: files under /etc/lamalibre, /var/lib/lamalibre,
+# /opt/lamalibre, /var/log, /tmp and /run holding one (and, as a control,
+# files under /etc/lamalibre naming <plugin>); lines of state.db's dump
+# (with its size, and whether it holds plugin_settings); lines of the
+# host's journal since <since>; lines of PRIV/responses.log (and how many
+# responses it holds)
+relay_secret_scan() {
+  host_exec "p=${PRIV}/patterns; runuser -u lamaste -- sqlite3 -readonly /etc/lamalibre/lamaste/state.db .dump > ${PRIV}/state.sql 2>/dev/null; journalctl --since @$2 --no-pager -o cat > ${PRIV}/journal.txt 2>/dev/null; f=\$(grep -rlaF --devices=skip -f \$p /etc/lamalibre /var/lib/lamalibre /opt/lamalibre /var/log /tmp /run 2>/dev/null | wc -l); fc=\$(grep -rlaF --devices=skip -e '$1' /etc/lamalibre 2>/dev/null | wc -l); d=\$(grep -caF -f \$p ${PRIV}/state.sql); dl=\$(wc -l < ${PRIV}/state.sql); dt=\$(grep -c 'plugin_settings' ${PRIV}/state.sql); j=\$(grep -caF -f \$p ${PRIV}/journal.txt); jl=\$(wc -l < ${PRIV}/journal.txt); r=\$(grep -caF -f \$p ${PRIV}/responses.log); rc=\$(grep -c '^### ' ${PRIV}/responses.log); rm -f ${PRIV}/state.sql ${PRIV}/journal.txt; printf '{\"files\":%s,\"filesControl\":%s,\"stateDb\":%s,\"stateDbLines\":%s,\"stateDbSettingsTable\":%s,\"journal\":%s,\"journalLines\":%s,\"responses\":%s,\"responseCount\":%s}\n' \"\${f:-null}\" \"\${fc:-null}\" \"\${d:-null}\" \"\${dl:-null}\" \"\${dt:-null}\" \"\${j:-null}\" \"\${jl:-null}\" \"\${r:-null}\" \"\${rc:-null}\"" 2>/dev/null || echo '{}'
+}
+
+# settings_cache_row <plugin> — the relay's cache of the plugin's settings
+# (plugin_settings in state.db), {} when there is no row: its revision,
+# configured flag, the keys of its values and of its secrets, and how many
+# secret entries are timestamps (setAt). Never a value: a secret the relay
+# wrongly kept is not printed here — relay_secret_scan counts it.
+settings_cache_row() {
+  local row
+  row=$(host_exec "runuser -u lamaste -- sqlite3 -readonly -json /etc/lamalibre/lamaste/state.db \"SELECT plugin, schema_version AS schemaVersion, revision, configured, (SELECT group_concat(key) FROM json_each(values_json)) AS valueKeys, (SELECT group_concat(key) FROM json_each(secrets_set_json)) AS secretKeys, (SELECT count(*) FROM json_each(secrets_set_json) WHERE value GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*') AS setAtTimestamps FROM plugin_settings WHERE plugin = '$1'\" 2>/dev/null" 2>/dev/null | jq -c '.[0] // {}' 2>/dev/null || echo "")
+  [ -n "$row" ] || row='{}'
+  echo "$row"
+}
+
+# write_settings_facts_probe <file> — a Node script printing, as one line of
+# JSON, what an agent half's settings store left on the agent VM:
+# settings.json and secrets.json (mode, owner), the values settings.json
+# holds with their recorded types, the secrets' keys with the SHA-256 of
+# their values and when they were set, and how many files outside
+# secrets.json — and lines of the journal — hold one of those values. A
+# secret is only ever compared on the VM, never printed.
+#
+#   node settings-facts.mjs <route> <agent label>
+write_settings_facts_probe() {
+  cat > "$1" <<'PROBE_EOF'
+import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const [route, label] = process.argv.slice(2);
+const dataDir = `/var/lib/lamalibre/apps/${route}`;
+const settingsPath = path.join(dataDir, 'settings.json');
+const secretsPath = path.join(dataDir, 'secrets.json');
+const FILE_LIMIT = 16 * 1024 * 1024;
+
+const names = { passwd: new Map(), group: new Map() };
+function nameOf(db, id) {
+  if (!names[db].has(id)) {
+    let entry = '';
+    try {
+      entry = execFileSync('getent', [db, String(id)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      entry = '';
+    }
+    names[db].set(id, entry.split(':')[0] || String(id));
+  }
+  return names[db].get(id);
+}
+function statOf(p) {
+  try {
+    const s = fs.lstatSync(p);
+    const type = s.isDirectory() ? 'dir' : s.isSymbolicLink() ? 'link' : s.isFile() ? 'file' : 'other';
+    return { mode: (s.mode & 0o7777).toString(8), user: nameOf('passwd', s.uid), group: nameOf('group', s.gid), type };
+  } catch {
+    return null;
+  }
+}
+function readJson(p) {
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+const secretsFile = readJson(secretsPath);
+const stored = secretsFile?.secrets && typeof secretsFile.secrets === 'object' ? secretsFile.secrets : {};
+const values = Object.values(stored)
+  .map((s) => (typeof s?.value === 'string' ? s.value : ''))
+  .filter((v) => v.length > 0);
+const holds = (data) => values.some((v) => data.includes(v));
+
+// Regular files under <dir> (but <skip>) whose content holds a stored secret
+function filesHolding(dir, skip) {
+  let n = 0;
+  const walk = (d) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (p === skip) continue;
+      if (e.isDirectory()) {
+        walk(p);
+      } else if (e.isFile()) {
+        try {
+          if (fs.statSync(p).size <= FILE_LIMIT && holds(fs.readFileSync(p))) n++;
+        } catch {
+          // gone, or not readable
+        }
+      }
+    }
+  };
+  walk(dir);
+  return n;
+}
+
+const settingsFile = readJson(settingsPath);
+const shown = {};
+for (const [key, entry] of Object.entries(settingsFile?.values ?? {})) {
+  const type = entry?.type ?? null;
+  shown[key] = holds(String(entry?.value ?? '')) ? { type, redacted: true } : { type, value: entry?.value ?? null };
+}
+let journal = '';
+if (values.length > 0) {
+  try {
+    journal = execFileSync('journalctl', ['-b', '--no-pager', '-o', 'cat'], {
+      encoding: 'utf8',
+      maxBuffer: 512 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    journal = '';
+  }
+}
+const digest = (v) => crypto.createHash('sha256').update(String(v), 'utf8').digest('hex');
+
+process.stdout.write(
+  `${JSON.stringify({
+    dataDir: statOf(dataDir),
+    settings: settingsFile
+      ? { file: statOf(settingsPath), schemaVersion: settingsFile.schemaVersion ?? null, revision: settingsFile.revision ?? null, values: shown }
+      : null,
+    secrets: secretsFile
+      ? {
+          file: statOf(secretsPath),
+          keys: Object.keys(stored),
+          digests: Object.fromEntries(Object.entries(stored).map(([k, s]) => [k, digest(s?.value ?? '')])),
+          setAt: Object.fromEntries(Object.entries(stored).map(([k, s]) => [k, s?.setAt ?? null])),
+        }
+      : null,
+    secretElsewhere:
+      values.length === 0
+        ? null
+        : {
+            settingsFile: fs.existsSync(settingsPath) && holds(fs.readFileSync(settingsPath)) ? 1 : 0,
+            dataDir: filesHolding(dataDir, secretsPath),
+            configDir: filesHolding(`/etc/lamalibre/apps/${route}`, null),
+            codeDir: filesHolding(`/opt/lamalibre/apps/${route}`, null),
+            agentDir: filesHolding(`/root/.lamalibre/lamaste/agents/${label}`, null),
+            journal: journal.split('\n').filter((line) => holds(line)).length,
+          },
+  })}\n`,
+);
+PROBE_EOF
+}
+
+# ship_settings_facts_probe — write the probe and put it on the agent VM,
+# after ship_agent_facts_probe (which makes REMOTE_DIR there)
+ship_settings_facts_probe() {
+  write_settings_facts_probe "${LOCAL_TMP}/settings-facts.mjs"
+  multipass transfer "${LOCAL_TMP}/settings-facts.mjs" "${AGENT_VM}:${REMOTE_DIR}/settings-facts.mjs"
+}
+
+# settings_facts <route> — see write_settings_facts_probe
+settings_facts() {
+  agent_exec "node ${REMOTE_DIR}/settings-facts.mjs $1 ${AGENT_LABEL}" 2>/dev/null || echo '{}'
+}
+
+# iso_epoch <ISO 8601 timestamp> — its Unix time, "" when it is not one
+iso_epoch() {
+  jq -rn --arg t "$1" '$t | sub("\\.[0-9]+"; "") | fromdateiso8601' 2>/dev/null || echo ""
 }
 
 # ---------------------------------------------------------------------------

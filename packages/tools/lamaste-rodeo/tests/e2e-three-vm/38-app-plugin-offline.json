@@ -1,0 +1,1546 @@
+{
+  "version": 1,
+  "meta": {
+    "number": 38,
+    "name": "App plugin with its hosting agent offline",
+    "suite": "e2e-three-vm",
+    "description": "38 — App plugin with its hosting agent offline (Three-VM)",
+    "deps": [],
+    "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
+  },
+  "env": {},
+  "constants": {
+    "PLUGIN": {
+      "value": "e2e-apphost-off"
+    },
+    "SERVER_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-off-server"
+    },
+    "AGENT_PACKAGE": {
+      "value": "@lamalibre/e2e-apphost-off-agent"
+    },
+    "POLICY_ID": {
+      "value": "e2e-apphost-38"
+    },
+    "REMOTE_DIR": {
+      "value": "/var/tmp/e2e-38-app-plugin"
+    },
+    "PRIV": {
+      "value": "${REMOTE_DIR}/private",
+      "expression": true
+    },
+    "CLEAN_PLUGINS": {
+      "value": "${PLUGIN}",
+      "expression": true
+    },
+    "CLEAN_ROUTES": {
+      "value": "${PLUGIN}",
+      "expression": true
+    }
+  },
+  "cleanup": [],
+  "sections": [
+    {
+      "id": "pre-flight",
+      "label": "Pre-flight",
+      "steps": [
+        {
+          "id": "step-1",
+          "label": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}"
+          }
+        }
+      ],
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"Pre-flight\"\n# ---------------------------------------------------------------------------\n\napp_plugin_preflight\nlog_info \"Hosting agent: ${HOST_AGENT_LABEL} (local name ${AGENT_LABEL}), relay domain ${DOMAIN}\"\n\n# ===========================================================================\n# 1. Install, host and configure\n# ==========================================================================="
+    },
+    {
+      "id": "install-host-and-configure-the-plugin",
+      "label": "Install, host and configure the plugin",
+      "steps": [
+        {
+          "id": "step-2",
+          "label": "Set LOCAL_TMP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "mktemp -d /tmp/e2e-38-app-plugin-XXXXXXXX"
+          },
+          "capture": [
+            {
+              "variable": "LOCAL_TMP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-3",
+          "label": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)"
+          }
+        },
+        {
+          "id": "step-4",
+          "label": "Fixture built: ${SERVER_PACKAGE} 1.0.0 (settings v1) and its agent package",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "Fixture built: ${SERVER_PACKAGE} 1.0.0 (settings v1) and its agent package"
+          }
+        },
+        {
+          "id": "step-9",
+          "label": "Test secret A, made on the host VM in a 0600 file",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(make_test_secret a)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "48"
+              },
+              "message": "Test secret A, made on the host VM in a 0600 file"
+            }
+          }
+        },
+        {
+          "id": "step-10",
+          "label": "Test secret C, for a change while the agent is offline",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(make_test_secret c)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "48"
+              },
+              "message": "Test secret C, for a change while the agent is offline"
+            }
+          }
+        },
+        {
+          "id": "step-11",
+          "label": "Set DIGEST_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "secret_digest a"
+          },
+          "capture": [
+            {
+              "variable": "DIGEST_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-14",
+          "label": "Set INSTALL",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\""
+          },
+          "capture": [
+            {
+              "variable": "INSTALL",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-15",
+          "label": "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "INSTALL"
+              },
+              "path": ".plugin.version",
+              "expected": {
+                "kind": "literal",
+                "value": "1.0.0"
+              },
+              "message": "Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half"
+            }
+          }
+        },
+        {
+          "id": "step-16",
+          "label": "Set OP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_plugin \"${PLUGIN}\" 300 nudge"
+          },
+          "capture": [
+            {
+              "variable": "OP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-17",
+          "label": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "OP"
+              },
+              "path": ".status",
+              "expected": {
+                "kind": "literal",
+                "value": "succeeded"
+              },
+              "message": "Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))"
+            }
+          }
+        },
+        {
+          "id": "step-18",
+          "label": "The relay's health of the hosting is up",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The relay's health of the hosting is up"
+          }
+        },
+        {
+          "id": "step-19",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-20",
+          "label": "Set BODY_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "secret_put_body a 0 '{\"region\":\"us\"}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-21",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_api_file PUT \"plugins/${PLUGIN}/settings\" \"${BODY_FILE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-23",
+          "label": "Configured: secret A and region us",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "Configured: secret A and region us"
+            }
+          }
+        },
+        {
+          "id": "step-24",
+          "label": "Set SET_AT_A",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(body_of \"$RESP\")\" '.values.apiKey.setAt // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SET_AT_A",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-25",
+          "label": "Set PROBE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_probe \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-26",
+          "label": "The agent half holds secret A (by digest)…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".secretDigests.apiKey",
+              "expected": {
+                "kind": "var",
+                "name": "DIGEST_A"
+              },
+              "message": "The agent half holds secret A (by digest)…"
+            }
+          }
+        },
+        {
+          "id": "step-27",
+          "label": "…and region us",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".values.region",
+              "expected": {
+                "kind": "literal",
+                "value": "us"
+              },
+              "message": "…and region us"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"Install, host and configure the plugin\"\n\nLOCAL_TMP=$(mktemp -d /tmp/e2e-38-app-plugin-XXXXXXXX)\nif ! write_app_install_fixture \"${LOCAL_TMP}/ship/fixtures/v1\" \"${PLUGIN}\" 1.0.0 main \"r$(date +%s)-$$\" '[]' v1; then\n  log_fail \"The fixture could not be built (npm install at the workspace root, npm run build -w packages/core/lib)\"\n  end_test\n  exit $?\nfi\nlog_pass \"Fixture built: ${SERVER_PACKAGE} 1.0.0 (settings v1) and its agent package\"\nwrite_settings_call_script \"${LOCAL_TMP}/ship/settings-call.sh\"\nship_agent_facts_probe\nstart_stand_in_feria fixtures/v1/server fixtures/v1/agent\nprepare_settings_priv\nassert_eq \"$(make_test_secret a)\" \"48\" \"Test secret A, made on the host VM in a 0600 file\" || true\nassert_eq \"$(make_test_secret c)\" \"48\" \"Test secret C, for a change while the agent is offline\" || true\nDIGEST_A=$(secret_digest a)\nensure_app_host_helper\nopen_push_install \"${POLICY_ID}\" \"[\\\"${AGENT_PACKAGE}\\\"]\" '[\"install\",\"uninstall\"]' > /dev/null\n\nINSTALL=$(install_approved \"${PLUGIN}\" \"${SERVER_PACKAGE}@1.0.0\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 and approved its agent half\" || true\nOP=$(host_plugin \"${PLUGIN}\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Hosted on ${HOST_AGENT_LABEL} ($(json_get \"$OP\" '.error // .refused.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The relay's health of the hosting is up\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nBODY_FILE=$(secret_put_body a 0 '{\"region\":\"us\"}')\nRESP=$(settings_api_file PUT \"plugins/${PLUGIN}/settings\" \"${BODY_FILE}\")\nhost_exec \"rm -f ${BODY_FILE}\" > /dev/null 2>&1 || true\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"Configured: secret A and region us\" || true\nSET_AT_A=$(json_get \"$(body_of \"$RESP\")\" '.values.apiKey.setAt // empty')\nPROBE=$(settings_probe \"${PLUGIN}\")\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"The agent half holds secret A (by digest)…\" || true\nassert_json_field \"$PROBE\" '.values.region' 'us' \"…and region us\" || true\n\n# ===========================================================================\n# 2. Presence while the agent runs\n# ==========================================================================="
+    },
+    {
+      "id": "while-the-agent-runs-the-relay-sees-it-sync",
+      "label": "While the agent runs, the relay sees it sync",
+      "steps": [
+        {
+          "id": "step-28",
+          "label": "Set SEEN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "last_seen"
+          },
+          "capture": [
+            {
+              "variable": "SEEN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-29",
+          "label": "Set SEEN_EPOCH",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "iso_epoch \"$SEEN\""
+          },
+          "capture": [
+            {
+              "variable": "SEEN_EPOCH",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-30",
+          "label": "Set NOW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_now"
+          },
+          "capture": [
+            {
+              "variable": "NOW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-31",
+          "label": "The hosting carries agentLastSeenAt ${SEEN}: the agent synced within the last two minutes",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The hosting carries agentLastSeenAt ${SEEN}: the agent synced within the last two minutes"
+          },
+          "when": {
+            "kind": "var_not_empty",
+            "variable": "SEEN_EPOCH"
+          }
+        },
+        {
+          "id": "step-32",
+          "label": "agentLastSeenAt is '${SEEN}' (the relay's clock: ${NOW})",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "agentLastSeenAt is '${SEEN}' (the relay's clock: ${NOW})"
+          },
+          "when": {
+            "kind": "not",
+            "condition": {
+              "kind": "var_not_empty",
+              "variable": "SEEN_EPOCH"
+            }
+          }
+        },
+        {
+          "id": "step-33",
+          "label": "GET /api/certs/agent: ${HOST_AGENT_LABEL} carries lastSeenAt",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "not_eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cert_last_seen)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": ""
+              },
+              "message": "GET /api/certs/agent: ${HOST_AGENT_LABEL} carries lastSeenAt"
+            }
+          }
+        },
+        {
+          "id": "step-34",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_view \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-35",
+          "label": "GET settings: live, the hosting up, the agent's last contact shown",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.source) \\(.hosting.state) \\(.hosting.agentLastSeenAt != null)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "live up true"
+              },
+              "message": "GET settings: live, the hosting up, the agent's last contact shown"
+            }
+          }
+        },
+        {
+          "id": "step-36",
+          "label": "agentLastSeenAt advances as the agent syncs ($(last_seen))",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "agentLastSeenAt advances as the agent syncs ($(last_seen))"
+          }
+        },
+        {
+          "id": "step-37",
+          "label": "agentLastSeenAt stayed at ${SEEN} while the agent synced",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "agentLastSeenAt stayed at ${SEEN} while the agent synced"
+          }
+        },
+        {
+          "id": "step-38",
+          "label": "Set SYNCED_LIVE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$(settings_view \"${PLUGIN}\")\" '.syncedAt // empty'"
+          },
+          "capture": [
+            {
+              "variable": "SYNCED_LIVE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        }
+      ],
+      "bash": "log_section \"While the agent runs, the relay sees it sync\"\n\nSEEN=$(last_seen)\nSEEN_EPOCH=$(iso_epoch \"$SEEN\")\nNOW=$(host_now)\nif [ -n \"$SEEN_EPOCH\" ] && [ $((NOW - SEEN_EPOCH)) -le 120 ] 2>/dev/null; then\n  log_pass \"The hosting carries agentLastSeenAt ${SEEN}: the agent synced within the last two minutes\"\nelse\n  log_fail \"agentLastSeenAt is '${SEEN}' (the relay's clock: ${NOW})\"\nfi\nassert_not_eq \"$(cert_last_seen)\" \"\" \"GET /api/certs/agent: ${HOST_AGENT_LABEL} carries lastSeenAt\" || true\nVIEW=$(settings_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '\"\\(.source) \\(.hosting.state) \\(.hosting.agentLastSeenAt != null)\"' 'live up true' \"GET settings: live, the hosting up, the agent's last contact shown\" || true\nif wait_for 90 seen_after \"${SEEN_EPOCH:-0}\"; then\n  log_pass \"agentLastSeenAt advances as the agent syncs ($(last_seen))\"\nelse\n  log_fail \"agentLastSeenAt stayed at ${SEEN} while the agent synced\"\nfi\nSYNCED_LIVE=$(json_get \"$(settings_view \"${PLUGIN}\")\" '.syncedAt // empty')\n\n# ===========================================================================\n# 3. The agent VM down\n# ==========================================================================="
+    },
+    {
+      "id": "the-agent-vm-down-offline-read-from-the-cache-writes-refused",
+      "label": "The agent VM down: offline, read from the cache, writes refused",
+      "steps": [
+        {
+          "id": "step-39",
+          "label": "Set STOP_BEGIN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_now"
+          },
+          "capture": [
+            {
+              "variable": "STOP_BEGIN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-40",
+          "label": "Stopping ${AGENT_VM}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Stopping ${AGENT_VM}"
+          }
+        },
+        {
+          "id": "step-43",
+          "label": "The agent VM is stopped",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(vm_state)"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "Stopped"
+              },
+              "message": "The agent VM is stopped"
+            }
+          }
+        },
+        {
+          "id": "step-44",
+          "label": "Set STOPPED_AT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_now"
+          },
+          "capture": [
+            {
+              "variable": "STOPPED_AT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-45",
+          "label": "Set SEEN_DOWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "last_seen"
+          },
+          "capture": [
+            {
+              "variable": "SEEN_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-46",
+          "label": "Set CERT_SEEN_DOWN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "cert_last_seen"
+          },
+          "capture": [
+            {
+              "variable": "CERT_SEEN_DOWN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-50",
+          "label": "The health monitor reports the hosting down",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The health monitor reports the hosting down"
+          }
+        },
+        {
+          "id": "step-51",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-52",
+          "label": "GET /api/plugins/${PLUGIN}/hosting",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins/${PLUGIN}/hosting"
+          },
+          "capture": [
+            {
+              "variable": "HOSTING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-53",
+          "label": "Hosting view: down, reason tunnel — nothing answers on the relay's end of the tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOSTING"
+              },
+              "path": ".hosting.health | \"\\(.state) \\(.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "down tunnel"
+              },
+              "message": "Hosting view: down, reason tunnel — nothing answers on the relay's end of the tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-55",
+          "label": "…its agentLastSeenAt still the last sync",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "HOSTING"
+              },
+              "path": ".hosting.agentLastSeenAt",
+              "expected": {
+                "kind": "var",
+                "name": "SEEN_DOWN"
+              },
+              "message": "…its agentLastSeenAt still the last sync"
+            }
+          }
+        },
+        {
+          "id": "step-56",
+          "label": "Set PING",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "host_api_call GET \"${PLUGIN}/ping\""
+          },
+          "capture": [
+            {
+              "variable": "PING",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-57",
+          "label": "The pages answer 502…",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$PING\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "502"
+              },
+              "message": "The pages answer 502…"
+            }
+          }
+        },
+        {
+          "id": "step-58",
+          "label": "…reason tunnel",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$PING\")"
+              },
+              "path": ".reason",
+              "expected": {
+                "kind": "literal",
+                "value": "tunnel"
+              },
+              "message": "…reason tunnel"
+            }
+          }
+        },
+        {
+          "id": "step-59",
+          "label": "GET /api/plugins",
+          "target": "host",
+          "op": {
+            "type": "api",
+            "method": "GET",
+            "path": "plugins"
+          },
+          "capture": [
+            {
+              "variable": "LISTED",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-60",
+          "label": "GET /api/plugins shows the hosting down",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LISTED"
+              },
+              "path": ".agentHosting.health.state",
+              "expected": {
+                "kind": "literal",
+                "value": "down"
+              },
+              "message": "GET /api/plugins shows the hosting down"
+            }
+          }
+        },
+        {
+          "id": "step-61",
+          "label": "…and the plugin configured, from the cache",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "LISTED"
+              },
+              "path": ".settings.configured",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "…and the plugin configured, from the cache"
+            }
+          }
+        },
+        {
+          "id": "step-62",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_api GET \"plugins/${PLUGIN}/settings\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-63",
+          "label": "GET settings still answers",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "GET settings still answers"
+            }
+          }
+        },
+        {
+          "id": "step-64",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "body_of \"$RESP\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-65",
+          "label": "…from the relay's cache",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".source",
+              "expected": {
+                "kind": "literal",
+                "value": "cache"
+              },
+              "message": "…from the relay's cache"
+            }
+          }
+        },
+        {
+          "id": "step-66",
+          "label": "…saying the hosting is down (tunnel)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".hosting | \"\\(.state) \\(.reason)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "down tunnel"
+              },
+              "message": "…saying the hosting is down (tunnel)"
+            }
+          }
+        },
+        {
+          "id": "step-67",
+          "label": "…and when the agent was last seen",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": ".hosting.agentLastSeenAt",
+              "expected": {
+                "kind": "var",
+                "name": "SEEN_DOWN"
+              },
+              "message": "…and when the agent was last seen"
+            }
+          }
+        },
+        {
+          "id": "step-68",
+          "label": "…with what was last synced: configured, region us, apiKey { set: true, setAt }",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.configured) \\(.values.region) \\(.values.apiKey.set) \\(.values.apiKey.setAt)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "true us true ${SET_AT_A}"
+              },
+              "message": "…with what was last synced: configured, region us, apiKey { set: true, setAt }"
+            }
+          }
+        },
+        {
+          "id": "step-70",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_api PUT \"plugins/${PLUGIN}/settings\" \"{\\\"revision\\\":$(json_get \"$VIEW\" '.revision'),\\\"values\\\":{\\\"region\\\":\\\"eu\\\"}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-71",
+          "label": "A change is refused while the agent is offline (503)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "A change is refused while the agent is offline (503)"
+            }
+          }
+        },
+        {
+          "id": "step-72",
+          "label": "…hosting_offline, with the hosting's state",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "expr",
+                "template": "$(body_of \"$RESP\")"
+              },
+              "path": "\"\\(.code) \\(.hosting.state)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "hosting_offline down"
+              },
+              "message": "…hosting_offline, with the hosting's state"
+            }
+          }
+        },
+        {
+          "id": "step-73",
+          "label": "Set BODY_FILE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "secret_put_body c \"$(json_get \"$VIEW\" '.revision')\" '{}'"
+          },
+          "capture": [
+            {
+              "variable": "BODY_FILE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-74",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_api_file PUT \"plugins/${PLUGIN}/settings\" \"${BODY_FILE}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-76",
+          "label": "…so is one that carries a new secret, C",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "503"
+              },
+              "message": "…so is one that carries a new secret, C"
+            }
+          }
+        },
+        {
+          "id": "step-77",
+          "label": "Set SCAN",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "relay_secret_scan \"${PLUGIN}\" \"${SPEC_START}\""
+          },
+          "capture": [
+            {
+              "variable": "SCAN",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-78",
+          "label": "Secret C (and A) is on no relay file, in no state.db row, journal line or answer: nothing kept to deliver later",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SCAN"
+              },
+              "path": "\"\\(.files) \\(.stateDb) \\(.journal) \\(.responses)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "0 0 0 0"
+              },
+              "message": "Secret C (and A) is on no relay file, in no state.db row, journal line or answer: nothing kept to deliver later"
+            }
+          }
+        },
+        {
+          "id": "step-79",
+          "label": "…searches that find what is there",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "SCAN"
+              },
+              "path": "\"\\(.filesControl > 0) \\(.stateDbLines > 0) \\(.journalLines > 0)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "true true true"
+              },
+              "message": "…searches that find what is there"
+            }
+          }
+        },
+        {
+          "id": "step-80",
+          "label": "Set WAIT",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "(70 - (SECONDS - FROZEN_FROM))"
+          },
+          "capture": [
+            {
+              "variable": "WAIT",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-81",
+          "label": "agentLastSeenAt has not moved $((SECONDS - FROZEN_FROM)) seconds later",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(last_seen)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "SEEN_DOWN"
+              },
+              "message": "agentLastSeenAt has not moved $((SECONDS - FROZEN_FROM)) seconds later"
+            }
+          }
+        },
+        {
+          "id": "step-82",
+          "label": "…nor the agent's lastSeenAt on GET /api/certs/agent (${CERT_SEEN_DOWN})",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(cert_last_seen)"
+              },
+              "expected": {
+                "kind": "var",
+                "name": "CERT_SEEN_DOWN"
+              },
+              "message": "…nor the agent's lastSeenAt on GET /api/certs/agent (${CERT_SEEN_DOWN})"
+            }
+          }
+        }
+      ],
+      "bash": "log_section \"The agent VM down: offline, read from the cache, writes refused\"\n\nSTOP_BEGIN=$(host_now)\nlog_info \"Stopping ${AGENT_VM}\"\nAGENT_STOPPED=1\ntimed_exec 180 multipass stop \"${AGENT_VM}\" > /dev/null 2>&1\nassert_eq \"$(vm_state)\" \"Stopped\" \"The agent VM is stopped\" || true\nSTOPPED_AT=$(host_now)\nSEEN_DOWN=$(last_seen)\nCERT_SEEN_DOWN=$(cert_last_seen)\nFROZEN_FROM=$SECONDS\nassert_epoch_le \"$(iso_epoch \"$SEEN_DOWN\")\" \"${STOPPED_AT}\" \"agentLastSeenAt (${SEEN_DOWN}) is from before the agent went down\" || true\nassert_epoch_le \"$((STOP_BEGIN - 120))\" \"$(iso_epoch \"$SEEN_DOWN\")\" \"…its last sync, shortly before\" || true\n\nif wait_for 90 health_down; then\n  log_pass \"The health monitor reports the hosting down\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nHOSTING=$(host_api_get \"plugins/${PLUGIN}/hosting\")\nassert_json_field \"$HOSTING\" '.hosting.health | \"\\(.state) \\(.reason)\"' 'down tunnel' \"Hosting view: down, reason tunnel — nothing answers on the relay's end of the tunnel\" || true\nassert_epoch_le \"${STOP_BEGIN}\" \"$(iso_epoch \"$(json_get \"$HOSTING\" '.hosting.health.since')\")\" \"…since the agent went down ($(json_get \"$HOSTING\" '.hosting.health.since'))\" || true\nassert_json_field \"$HOSTING\" '.hosting.agentLastSeenAt' \"${SEEN_DOWN}\" \"…its agentLastSeenAt still the last sync\" || true\nPING=$(host_api_call GET \"${PLUGIN}/ping\")\nassert_eq \"$(status_of \"$PING\")\" \"502\" \"The pages answer 502…\" || true\nassert_json_field \"$(body_of \"$PING\")\" '.reason' 'tunnel' \"…reason tunnel\" || true\nLISTED=$(host_api_get \"plugins\" | jq -c \".plugins[]? | select(.name == \\\"${PLUGIN}\\\")\" 2>/dev/null || echo '{}')\nassert_json_field \"$LISTED\" '.agentHosting.health.state' 'down' \"GET /api/plugins shows the hosting down\" || true\nassert_json_field \"$LISTED\" '.settings.configured' 'true' \"…and the plugin configured, from the cache\" || true\n\nRESP=$(settings_api GET \"plugins/${PLUGIN}/settings\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"GET settings still answers\" || true\nVIEW=$(body_of \"$RESP\")\nassert_json_field \"$VIEW\" '.source' 'cache' \"…from the relay's cache\" || true\nassert_json_field \"$VIEW\" '.hosting | \"\\(.state) \\(.reason)\"' 'down tunnel' \"…saying the hosting is down (tunnel)\" || true\nassert_json_field \"$VIEW\" '.hosting.agentLastSeenAt' \"${SEEN_DOWN}\" \"…and when the agent was last seen\" || true\nassert_json_field \"$VIEW\" '\"\\(.configured) \\(.values.region) \\(.values.apiKey.set) \\(.values.apiKey.setAt)\"' \"true us true ${SET_AT_A}\" \"…with what was last synced: configured, region us, apiKey { set: true, setAt }\" || true\nassert_epoch_le \"$(iso_epoch \"$(json_get \"$VIEW\" '.syncedAt')\")\" \"${STOPPED_AT}\" \"…synced before the agent went down ($(json_get \"$VIEW\" '.syncedAt'); last live read ${SYNCED_LIVE})\" || true\n\nRESP=$(settings_api PUT \"plugins/${PLUGIN}/settings\" \"{\\\"revision\\\":$(json_get \"$VIEW\" '.revision'),\\\"values\\\":{\\\"region\\\":\\\"eu\\\"}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"503\" \"A change is refused while the agent is offline (503)\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.hosting.state)\"' 'hosting_offline down' \"…hosting_offline, with the hosting's state\" || true\nBODY_FILE=$(secret_put_body c \"$(json_get \"$VIEW\" '.revision')\" '{}')\nRESP=$(settings_api_file PUT \"plugins/${PLUGIN}/settings\" \"${BODY_FILE}\")\nhost_exec \"rm -f ${BODY_FILE}\" > /dev/null 2>&1 || true\nassert_eq \"$(status_of \"$RESP\")\" \"503\" \"…so is one that carries a new secret, C\" || true\nSCAN=$(relay_secret_scan \"${PLUGIN}\" \"${SPEC_START}\")\nassert_json_field \"$SCAN\" '\"\\(.files) \\(.stateDb) \\(.journal) \\(.responses)\"' '0 0 0 0' \"Secret C (and A) is on no relay file, in no state.db row, journal line or answer: nothing kept to deliver later\" || true\nassert_json_field \"$SCAN\" '\"\\(.filesControl > 0) \\(.stateDbLines > 0) \\(.journalLines > 0)\"' 'true true true' \"…searches that find what is there\" || true\n\n# agentLastSeenAt must not move while the agent is down — read again after\n# more than two of the agent's 30-second syncs (and the relay's once-a-minute\n# write of it) would have passed.\nWAIT=$((70 - (SECONDS - FROZEN_FROM)))\nif [ \"$WAIT\" -gt 0 ]; then sleep \"$WAIT\"; fi\nassert_eq \"$(last_seen)\" \"${SEEN_DOWN}\" \"agentLastSeenAt has not moved $((SECONDS - FROZEN_FROM)) seconds later\" || true\nassert_eq \"$(cert_last_seen)\" \"${CERT_SEEN_DOWN}\" \"…nor the agent's lastSeenAt on GET /api/certs/agent (${CERT_SEEN_DOWN})\" || true\nassert_epoch_le \"$(iso_epoch \"${CERT_SEEN_DOWN}\")\" \"${STOPPED_AT}\" \"…which is from before the agent went down too\" || true\n\n# ===========================================================================\n# 4. The agent VM back\n# ==========================================================================="
+    },
+    {
+      "id": "the-agent-vm-back-up-live-writes-accepted",
+      "label": "The agent VM back: up, live, writes accepted",
+      "steps": [
+        {
+          "id": "step-84",
+          "label": "Starting ${AGENT_VM}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "info",
+            "message": "Starting ${AGENT_VM}"
+          }
+        },
+        {
+          "id": "step-87",
+          "label": "The agent VM is back",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The agent VM is back"
+          }
+        },
+        {
+          "id": "step-88",
+          "label": "The agent VM did not come back within 180 seconds",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The agent VM did not come back within 180 seconds"
+          }
+        },
+        {
+          "id": "step-93",
+          "label": "The health monitor reports the hosting up again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The health monitor reports the hosting up again"
+          }
+        },
+        {
+          "id": "step-94",
+          "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')"
+          }
+        },
+        {
+          "id": "step-96",
+          "label": "The pages answer again",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "The pages answer again"
+          }
+        },
+        {
+          "id": "step-97",
+          "label": "The pages do not answer: $(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "The pages do not answer: $(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)"
+          }
+        },
+        {
+          "id": "step-98",
+          "label": "Set VIEW",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_view \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "VIEW",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-99",
+          "label": "GET settings is live again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "VIEW"
+              },
+              "path": "\"\\(.source) \\(.hosting.state)\"",
+              "expected": {
+                "kind": "literal",
+                "value": "live up"
+              },
+              "message": "GET settings is live again"
+            }
+          }
+        },
+        {
+          "id": "step-100",
+          "label": "Set REVISION",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "json_get \"$VIEW\" '.revision'"
+          },
+          "capture": [
+            {
+              "variable": "REVISION",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-101",
+          "label": "Set RESP",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_api PUT \"plugins/${PLUGIN}/settings\" \"{\\\"revision\\\":${REVISION:-0},\\\"values\\\":{\\\"region\\\":\\\"eu\\\"}}\""
+          },
+          "capture": [
+            {
+              "variable": "RESP",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-102",
+          "label": "A change is accepted again",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "eq",
+              "actual": {
+                "kind": "expr",
+                "template": "$(status_of \"$RESP\")"
+              },
+              "expected": {
+                "kind": "literal",
+                "value": "200"
+              },
+              "message": "A change is accepted again"
+            }
+          }
+        },
+        {
+          "id": "step-103",
+          "label": "Set PROBE",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "settings_probe \"${PLUGIN}\""
+          },
+          "capture": [
+            {
+              "variable": "PROBE",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-104",
+          "label": "…and reaches the agent half (region eu, revision $((${REVISION:-0} + 1)))",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": "\"\\(.revision) \\(.values.region)\"",
+              "expected": {
+                "kind": "expr",
+                "template": "$((${REVISION:-0} + 1)) eu"
+              },
+              "message": "…and reaches the agent half (region eu, revision $((${REVISION:-0} + 1)))"
+            }
+          }
+        },
+        {
+          "id": "step-105",
+          "label": "The agent half still holds secret A: the offline write with secret C never arrived",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "PROBE"
+              },
+              "path": ".secretDigests.apiKey",
+              "expected": {
+                "kind": "var",
+                "name": "DIGEST_A"
+              },
+              "message": "The agent half still holds secret A: the offline write with secret C never arrived"
+            }
+          }
+        },
+        {
+          "id": "step-106",
+          "label": "agentLastSeenAt advances again ($(last_seen))",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "agentLastSeenAt advances again ($(last_seen))"
+          }
+        },
+        {
+          "id": "step-107",
+          "label": "agentLastSeenAt stayed at ${SEEN_DOWN} after the agent came back",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "agentLastSeenAt stayed at ${SEEN_DOWN} after the agent came back"
+          }
+        },
+        {
+          "id": "step-112",
+          "label": "…and so does lastSeenAt on GET /api/certs/agent ($(cert_last_seen))",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "pass",
+            "message": "…and so does lastSeenAt on GET /api/certs/agent ($(cert_last_seen))"
+          }
+        },
+        {
+          "id": "step-113",
+          "label": "GET /api/certs/agent: lastSeenAt stayed at ${CERT_SEEN_DOWN}",
+          "target": "local",
+          "op": {
+            "type": "log",
+            "level": "fail",
+            "message": "GET /api/certs/agent: lastSeenAt stayed at ${CERT_SEEN_DOWN}"
+          }
+        }
+      ],
+      "bash": "log_section \"The agent VM back: up, live, writes accepted\"\n\nlog_info \"Starting ${AGENT_VM}\"\ntimed_exec 240 multipass start \"${AGENT_VM}\" > /dev/null 2>&1\nif wait_for 180 vm_up; then\n  AGENT_STOPPED=\"\"\n  log_pass \"The agent VM is back\"\nelse\n  log_fail \"The agent VM did not come back within 180 seconds\"\nfi\nup_again() {\n  nudge_sync\n  health_up\n}\nif wait_for 180 up_again; then\n  log_pass \"The health monitor reports the hosting up again\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\npages_back() { [ \"$(json_get \"$(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)\" '.pong')\" = \"true\" ]; }\nif wait_for 60 pages_back; then\n  log_pass \"The pages answer again\"\nelse\n  log_fail \"The pages do not answer: $(host_api_get \"${PLUGIN}/ping\" 2>/dev/null)\"\nfi\nVIEW=$(settings_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '\"\\(.source) \\(.hosting.state)\"' 'live up' \"GET settings is live again\" || true\nREVISION=$(json_get \"$VIEW\" '.revision')\nRESP=$(settings_api PUT \"plugins/${PLUGIN}/settings\" \"{\\\"revision\\\":${REVISION:-0},\\\"values\\\":{\\\"region\\\":\\\"eu\\\"}}\")\nassert_eq \"$(status_of \"$RESP\")\" \"200\" \"A change is accepted again\" || true\nPROBE=$(settings_probe \"${PLUGIN}\")\nassert_json_field \"$PROBE\" '\"\\(.revision) \\(.values.region)\"' \"$((${REVISION:-0} + 1)) eu\" \"…and reaches the agent half (region eu, revision $((${REVISION:-0} + 1)))\" || true\nassert_json_field \"$PROBE\" '.secretDigests.apiKey' \"${DIGEST_A}\" \"The agent half still holds secret A: the offline write with secret C never arrived\" || true\nif wait_for 120 seen_after \"$(iso_epoch \"${SEEN_DOWN}\")\"; then\n  log_pass \"agentLastSeenAt advances again ($(last_seen))\"\nelse\n  log_fail \"agentLastSeenAt stayed at ${SEEN_DOWN} after the agent came back\"\nfi\ncert_seen_again() {\n  nudge_sync\n  [ \"$(cert_last_seen)\" != \"${CERT_SEEN_DOWN}\" ] && [ -n \"$(cert_last_seen)\" ]\n}\nif wait_for 90 cert_seen_again; then\n  log_pass \"…and so does lastSeenAt on GET /api/certs/agent ($(cert_last_seen))\"\nelse\n  log_fail \"GET /api/certs/agent: lastSeenAt stayed at ${CERT_SEEN_DOWN}\"\nfi"
+    }
+  ],
+  "apiHelpers": [],
+  "headerRaw": "# ============================================================================\n# 38 — App plugin with its hosting agent offline (Three-VM)\n# ============================================================================\n# An app plugin with settings (fixture @lamalibre/e2e-apphost-off-server,\n# helpers.sh: write_app_install_fixture … v1) is hosted on the agent VM from\n# the panel as in spec 34 and configured (a test secret that exists only on\n# the host VM, as in spec 37); then the agent VM itself is taken down:\n#\n# 1. While the agent runs, the relay records when it last saw it — each\n#    sync's GET /api/tunnels/agent-config — as agentLastSeenAt on the\n#    hosting and lastSeenAt on GET /api/certs/agent, and it advances.\n# 2. The agent VM stopped: the health monitor reports the hosting down,\n#    reason tunnel; the forwarder answers 502 (tunnel); agentLastSeenAt\n#    stays at the agent's last sync before it went down (read again 70\n#    seconds later); GET settings answers from the relay's cache (source\n#    cache, the secret { set: true }); a change is refused with 503\n#    hosting_offline — one carrying a new secret too, which is then on no\n#    relay file, row, journal line or answer: the relay keeps nothing to\n#    deliver later.\n# 3. The agent VM started again: the hosting is up, the pages answer, GET\n#    settings is live again, a change is accepted and reaches the agent\n#    half, agentLastSeenAt advances; the offline write never arrives.\n#\n# The cleanup starts the agent VM again should the spec end while it is\n# down, then uninstalls with purge.\n# ============================================================================",
+  "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost-off\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-off-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-off-agent\"\nPOLICY_ID=\"e2e-apphost-38\"\nREMOTE_DIR=\"/var/tmp/e2e-38-app-plugin\"\nPRIV=\"${REMOTE_DIR}/private\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n# Set while the agent VM is stopped: the cleanup starts it again\nAGENT_STOPPED=\"\"\n\nhealth_up() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"up\" ]; }\nhealth_down() { [ \"$(hosting_field \"${PLUGIN}\" '.hosting.health.state')\" = \"down\" ]; }\nvm_up() { [ \"$(timed_exec 20 multipass exec \"${AGENT_VM}\" -- echo up 2>/dev/null)\" = \"up\" ]; }\nvm_state() {\n  multipass info \"${AGENT_VM}\" --format json 2>/dev/null | jq -r \".info[\\\"${AGENT_VM}\\\"].state // \\\"unknown\\\"\" 2>/dev/null || echo \"unknown\"\n}\nhost_now() { host_exec \"date +%s\" 2>/dev/null || echo \"0\"; }\n\n# last_seen — agentLastSeenAt of the hosting (ISO 8601)\nlast_seen() { hosting_field \"${PLUGIN}\" '.hosting.agentLastSeenAt // empty'; }\n\n# cert_last_seen — lastSeenAt of the agent on GET /api/certs/agent\ncert_last_seen() {\n  host_api_get \"certs/agent\" 2>/dev/null | jq -r \"[.agents[]? | select(.label == \\\"${HOST_AGENT_LABEL}\\\" and (.revoked // false) == false) | .lastSeenAt] | first // empty\" 2>/dev/null || echo \"\"\n}\n\n# seen_after <epoch> — agentLastSeenAt is later than <epoch> (the agent\n# synced since); the agent's sync is started on each try\nseen_after() {\n  nudge_sync\n  local now\n  now=$(iso_epoch \"$(last_seen)\")\n  [ -n \"$now\" ] && [ \"$now\" -gt \"$1\" ] 2>/dev/null\n}\n\n# assert_epoch_le <a> <b> <message> — Unix times, a ≤ b\nassert_epoch_le() {\n  if [ -n \"$1\" ] && [ -n \"$2\" ] && [ \"$1\" -le \"$2\" ] 2>/dev/null; then\n    log_pass \"$3\"\n    return 0\n  fi\n  log_fail \"$3 (${1:-none} is not at or before ${2:-none})\"\n  return 1\n}\n\nbegin_test \"38 — App plugin with its hosting agent offline (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  if [ -n \"${AGENT_STOPPED}\" ]; then\n    timed_exec 240 multipass start \"${AGENT_VM}\" > /dev/null 2>&1\n    wait_for 180 vm_up || true\n  fi\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n\nSPEC_START=$(host_now)\n",
+  "cleanupRaw": "",
+  "trailerRaw": "\nend_test\n"
+}
