@@ -403,6 +403,7 @@ UPDATE=$(host_api_post "plugins/${PLUGIN}/update" '{"version":"3.0.0"}')
 assert_json_field "$UPDATE" '.pendingUpdate.version' '3.0.0' "3.0.0 is staged and waits for approval, auto-approve on" || true
 assert_json_field "$UPDATE" '.pendingUpdate.settings.secretToPlain | join(",")' 'apiKey' "Preview: apiKey turns from a secret into a plain field (secretToPlain)" || true
 assert_json_field "$UPDATE" '.pendingUpdate.settings.retyped | map("\(.key):\(.from)->\(.to)") | join(",")' 'apiKey:secret->string' "…retyped secret to string" || true
+assert_json_field "$UPDATE" '[.pendingUpdate.approvalRequired[]?.code] | index("settings.secret-to-plain") != null' 'true' "It waits for approval because a secret turns plain (approvalRequired: settings.secret-to-plain)" || true
 assert_json_field "$UPDATE" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' "Auto-approve withheld: $(json_get "$UPDATE" '(.pendingUpdate.autoApproveWithheld // []) | join("; ")')" || true
 assert_eq "$(audit_count "${PLUGIN}" hooks.auto-approve.withheld '((.codes // []) | index("settings.secret-to-plain")) != null and .version == "3.0.0"')" "1" "Audit: hooks.auto-approve.withheld, settings.secret-to-plain" || true
 assert_json_field "$(host_api_get "plugins/${PLUGIN}/hooks")" '.hooks.pendingUpdate.settings.secretToPlain | join(",")' 'apiKey' "GET /api/plugins/${PLUGIN}/hooks shows it pending" || true

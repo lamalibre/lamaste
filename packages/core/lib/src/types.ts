@@ -312,9 +312,12 @@ export interface AdminClient {
   // agent half Lamaste installs (`hooks.approval.digest` is what to approve)
   // — auto-approve
   getPluginHooks(name: string): Promise<{ hooks: unknown }>;
+  // A pending update is approved by its digest, its version, or both; an
+  // update with no relay hooks or agent half has no digest (`null`).
   approvePluginHooks(
     name: string,
-    digest: string,
+    digest: string | null,
+    version?: string,
   ): Promise<{ ok: boolean; hooks?: unknown; operation?: unknown }>;
   setPluginHooksAutoApprove(
     name: string,

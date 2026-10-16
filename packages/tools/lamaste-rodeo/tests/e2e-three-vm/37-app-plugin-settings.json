@@ -3,7 +3,7 @@
   "meta": {
     "number": 37,
     "name": "App plugin settings and secrets",
-    "suite": "e2e-three-vm",
+    "suite": "e2e",
     "description": "37 — App plugin settings and secrets (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
@@ -3671,6 +3671,28 @@
         },
         {
           "id": "step-201",
+          "label": "It waits for approval because a secret turns plain (approvalRequired: settings.secret-to-plain)",
+          "target": "local",
+          "continueOnError": true,
+          "op": {
+            "type": "assert",
+            "check": {
+              "kind": "json_field",
+              "source": {
+                "kind": "var",
+                "name": "UPDATE"
+              },
+              "path": "[.pendingUpdate.approvalRequired[]?.code] | index(\"settings.secret-to-plain\") != null",
+              "expected": {
+                "kind": "literal",
+                "value": "true"
+              },
+              "message": "It waits for approval because a secret turns plain (approvalRequired: settings.secret-to-plain)"
+            }
+          }
+        },
+        {
+          "id": "step-202",
           "label": "Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(",
           "target": "local",
           "continueOnError": true,
@@ -3692,7 +3714,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-204",
           "label": "GET /api/plugins/${PLUGIN}/hooks shows it pending",
           "target": "local",
           "continueOnError": true,
@@ -3714,7 +3736,7 @@
           }
         },
         {
-          "id": "step-204",
+          "id": "step-205",
           "label": "Until it is approved, 2.0.0 stays…",
           "target": "local",
           "continueOnError": true,
@@ -3736,7 +3758,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-206",
           "label": "…and the agent half holds secret B, schema 2",
           "target": "local",
           "continueOnError": true,
@@ -3758,7 +3780,7 @@
           }
         },
         {
-          "id": "step-206",
+          "id": "step-207",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -3777,7 +3799,7 @@
           ]
         },
         {
-          "id": "step-207",
+          "id": "step-208",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -3794,7 +3816,7 @@
           ]
         },
         {
-          "id": "step-208",
+          "id": "step-209",
           "label": "Approved by the admin, the update to 3.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -3816,7 +3838,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-210",
           "label": "The hosting is up on 3.0.0",
           "target": "local",
           "op": {
@@ -3826,7 +3848,7 @@
           }
         },
         {
-          "id": "step-210",
+          "id": "step-211",
           "label": "Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')",
           "target": "local",
           "op": {
@@ -3836,7 +3858,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-212",
           "label": "Set PROBE",
           "target": "local",
           "op": {
@@ -3853,7 +3875,7 @@
           ]
         },
         {
-          "id": "step-212",
+          "id": "step-213",
           "label": "The agent half, schema 3, dropped the secret: no apiKey secret, no apiKey value — never moved into its settings",
           "target": "local",
           "continueOnError": true,
@@ -3875,7 +3897,7 @@
           }
         },
         {
-          "id": "step-213",
+          "id": "step-214",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3892,7 +3914,7 @@
           ]
         },
         {
-          "id": "step-214",
+          "id": "step-215",
           "label": "On the agent VM: settings.json (schema 3) has no apiKey, secrets.json no longer holds it",
           "target": "local",
           "continueOnError": true,
@@ -3914,7 +3936,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-216",
           "label": "Set VIEW",
           "target": "local",
           "op": {
@@ -3931,7 +3953,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-217",
           "label": "GET settings: apiKey is a plain string field…",
           "target": "local",
           "continueOnError": true,
@@ -3953,7 +3975,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-218",
           "label": "…without a value",
           "target": "local",
           "continueOnError": true,
@@ -3975,7 +3997,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-219",
           "label": "…and the plugin needs configuration: apiKey is missing",
           "target": "local",
           "continueOnError": true,
@@ -3997,7 +4019,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-220",
           "label": "GET /api/plugins: needs configuration (apiKey)",
           "target": "local",
           "continueOnError": true,
@@ -4019,7 +4041,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-221",
           "label": "Set ROW",
           "target": "local",
           "op": {
@@ -4036,7 +4058,7 @@
           ]
         },
         {
-          "id": "step-221",
+          "id": "step-222",
           "label": "The relay's cache: schema 3, no secret, no apiKey value",
           "target": "local",
           "continueOnError": true,
@@ -4058,7 +4080,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-224",
           "label": "Set SCAN",
           "target": "local",
           "op": {
@@ -4075,7 +4097,7 @@
           ]
         },
         {
-          "id": "step-224",
+          "id": "step-225",
           "label": "Secret B (and A) is on no relay file, in no state.db row, journal line or answer after the update",
           "target": "local",
           "continueOnError": true,
@@ -4097,14 +4119,14 @@
           }
         }
       ],
-      "bash": "log_section \"Update to 3.0.0: a secret turned plain waits for the admin, auto-approve or not\"\n\nAUTO=$(host_api_call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on for ${PLUGIN}\" || true\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '3.0.0' \"3.0.0 is staged and waits for approval, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.settings.secretToPlain | join(\",\")' 'apiKey' \"Preview: apiKey turns from a secret into a plain field (secretToPlain)\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.settings.retyped | map(\"\\(.key):\\(.from)->\\(.to)\") | join(\",\")' 'apiKey:secret->string' \"…retyped secret to string\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(\"; \")')\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" hooks.auto-approve.withheld '((.codes // []) | index(\"settings.secret-to-plain\")) != null and .version == \"3.0.0\"')\" \"1\" \"Audit: hooks.auto-approve.withheld, settings.secret-to-plain\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.pendingUpdate.settings.secretToPlain | join(\",\")' 'apiKey' \"GET /api/plugins/${PLUGIN}/hooks shows it pending\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '2.0.0' \"Until it is approved, 2.0.0 stays…\" || true\nassert_json_field \"$(settings_probe \"${PLUGIN}\")\" '\"\\(.schemaVersion) \\(.secretDigests.apiKey)\"' \"2 ${DIGEST_B}\" \"…and the agent half holds secret B, schema 2\" || true\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved by the admin, the update to 3.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The hosting is up on 3.0.0\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nPROBE=$(settings_probe \"${PLUGIN}\")\nassert_json_field \"$PROBE\" '\"\\(.schemaVersion) \\(.secretDigests | has(\"apiKey\")) \\(.stored | has(\"apiKey\"))\"' '3 false false' \"The agent half, schema 3, dropped the secret: no apiKey secret, no apiKey value — never moved into its settings\" || true\nFACTS=$(settings_facts \"${PLUGIN}\")\nassert_json_field \"$FACTS\" '\"\\(.settings.schemaVersion) \\(.settings.values | has(\"apiKey\")) \\((.secrets.keys // []) | index(\"apiKey\") == null)\"' '3 false true' \"On the agent VM: settings.json (schema 3) has no apiKey, secrets.json no longer holds it\" || true\nVIEW=$(settings_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '.fields | map(select(.key == \"apiKey\") | .type) | join(\",\")' 'string' \"GET settings: apiKey is a plain string field…\" || true\nassert_json_field \"$VIEW\" '.values.apiKey // \"unset\"' 'unset' \"…without a value\" || true\nassert_json_field \"$VIEW\" '\"\\(.configured) \\(.missing | join(\",\"))\"' 'false apiKey' \"…and the plugin needs configuration: apiKey is missing\" || true\nassert_json_field \"$(settings_summary \"${PLUGIN}\")\" '\"\\(.configured) \\(.missing | join(\",\"))\"' 'false apiKey' \"GET /api/plugins: needs configuration (apiKey)\" || true\nROW=$(settings_cache_row \"${PLUGIN}\")\nassert_json_field \"$ROW\" '\"\\(.schemaVersion) \\(.secretKeys // \"none\") \\((.valueKeys // \"\") | split(\",\") | index(\"apiKey\") == null)\"' '3 none true' \"The relay's cache: schema 3, no secret, no apiKey value\" || true\nsettings_sweep \"${PLUGIN}\"\nSCAN=$(relay_secret_scan \"${PLUGIN}\" \"${SPEC_START}\")\nassert_json_field \"$SCAN\" '\"\\(.files) \\(.stateDb) \\(.journal) \\(.responses)\"' '0 0 0 0' \"Secret B (and A) is on no relay file, in no state.db row, journal line or answer after the update\" || true\n\n# ===========================================================================\n# 12. Purge\n# ==========================================================================="
+      "bash": "log_section \"Update to 3.0.0: a secret turned plain waits for the admin, auto-approve or not\"\n\nAUTO=$(host_api_call PUT \"plugins/${PLUGIN}/hooks/auto-approve\" '{\"enabled\":true}')\nassert_json_field \"$(body_of \"$AUTO\")\" '.autoApprove' 'true' \"Auto-approve is on for ${PLUGIN}\" || true\nUPDATE=$(host_api_post \"plugins/${PLUGIN}/update\" '{\"version\":\"3.0.0\"}')\nassert_json_field \"$UPDATE\" '.pendingUpdate.version' '3.0.0' \"3.0.0 is staged and waits for approval, auto-approve on\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.settings.secretToPlain | join(\",\")' 'apiKey' \"Preview: apiKey turns from a secret into a plain field (secretToPlain)\" || true\nassert_json_field \"$UPDATE\" '.pendingUpdate.settings.retyped | map(\"\\(.key):\\(.from)->\\(.to)\") | join(\",\")' 'apiKey:secret->string' \"…retyped secret to string\" || true\nassert_json_field \"$UPDATE\" '[.pendingUpdate.approvalRequired[]?.code] | index(\"settings.secret-to-plain\") != null' 'true' \"It waits for approval because a secret turns plain (approvalRequired: settings.secret-to-plain)\" || true\nassert_json_field \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | length > 0' 'true' \"Auto-approve withheld: $(json_get \"$UPDATE\" '(.pendingUpdate.autoApproveWithheld // []) | join(\"; \")')\" || true\nassert_eq \"$(audit_count \"${PLUGIN}\" hooks.auto-approve.withheld '((.codes // []) | index(\"settings.secret-to-plain\")) != null and .version == \"3.0.0\"')\" \"1\" \"Audit: hooks.auto-approve.withheld, settings.secret-to-plain\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}/hooks\")\" '.hooks.pendingUpdate.settings.secretToPlain | join(\",\")' 'apiKey' \"GET /api/plugins/${PLUGIN}/hooks shows it pending\" || true\nassert_json_field \"$(host_api_get \"plugins/${PLUGIN}\")\" '.plugin.version' '2.0.0' \"Until it is approved, 2.0.0 stays…\" || true\nassert_json_field \"$(settings_probe \"${PLUGIN}\")\" '\"\\(.schemaVersion) \\(.secretDigests.apiKey)\"' \"2 ${DIGEST_B}\" \"…and the agent half holds secret B, schema 2\" || true\n\nAPPROVED=$(host_api_post \"plugins/${PLUGIN}/hooks/approve\" \"{\\\"digest\\\":\\\"$(json_get \"$UPDATE\" '.pendingUpdate.digest')\\\"}\")\nOP=$(wait_operation \"${PLUGIN}\" \"$(json_get \"$APPROVED\" '.operation.id // empty')\" 300 nudge)\nassert_json_field \"$OP\" '.status' 'succeeded' \"Approved by the admin, the update to 3.0.0 succeeded ($(json_get \"$OP\" '.error // \"\"'))\" || true\nif wait_for 60 health_up; then\n  log_pass \"The hosting is up on 3.0.0\"\nelse\n  log_fail \"Health: $(hosting_field \"${PLUGIN}\" '.hosting.health')\"\nfi\nPROBE=$(settings_probe \"${PLUGIN}\")\nassert_json_field \"$PROBE\" '\"\\(.schemaVersion) \\(.secretDigests | has(\"apiKey\")) \\(.stored | has(\"apiKey\"))\"' '3 false false' \"The agent half, schema 3, dropped the secret: no apiKey secret, no apiKey value — never moved into its settings\" || true\nFACTS=$(settings_facts \"${PLUGIN}\")\nassert_json_field \"$FACTS\" '\"\\(.settings.schemaVersion) \\(.settings.values | has(\"apiKey\")) \\((.secrets.keys // []) | index(\"apiKey\") == null)\"' '3 false true' \"On the agent VM: settings.json (schema 3) has no apiKey, secrets.json no longer holds it\" || true\nVIEW=$(settings_view \"${PLUGIN}\")\nassert_json_field \"$VIEW\" '.fields | map(select(.key == \"apiKey\") | .type) | join(\",\")' 'string' \"GET settings: apiKey is a plain string field…\" || true\nassert_json_field \"$VIEW\" '.values.apiKey // \"unset\"' 'unset' \"…without a value\" || true\nassert_json_field \"$VIEW\" '\"\\(.configured) \\(.missing | join(\",\"))\"' 'false apiKey' \"…and the plugin needs configuration: apiKey is missing\" || true\nassert_json_field \"$(settings_summary \"${PLUGIN}\")\" '\"\\(.configured) \\(.missing | join(\",\"))\"' 'false apiKey' \"GET /api/plugins: needs configuration (apiKey)\" || true\nROW=$(settings_cache_row \"${PLUGIN}\")\nassert_json_field \"$ROW\" '\"\\(.schemaVersion) \\(.secretKeys // \"none\") \\((.valueKeys // \"\") | split(\",\") | index(\"apiKey\") == null)\"' '3 none true' \"The relay's cache: schema 3, no secret, no apiKey value\" || true\nsettings_sweep \"${PLUGIN}\"\nSCAN=$(relay_secret_scan \"${PLUGIN}\" \"${SPEC_START}\")\nassert_json_field \"$SCAN\" '\"\\(.files) \\(.stateDb) \\(.journal) \\(.responses)\"' '0 0 0 0' \"Secret B (and A) is on no relay file, in no state.db row, journal line or answer after the update\" || true\n\n# ===========================================================================\n# 12. Purge\n# ==========================================================================="
     },
     {
       "id": "uninstalling-with-purge-removes-the-settings-on-both-sides",
       "label": "Uninstalling with purge removes the settings on both sides",
       "steps": [
         {
-          "id": "step-225",
+          "id": "step-226",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -4115,7 +4137,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-227",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -4133,7 +4155,7 @@
           ]
         },
         {
-          "id": "step-227",
+          "id": "step-228",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -4150,7 +4172,7 @@
           ]
         },
         {
-          "id": "step-228",
+          "id": "step-229",
           "label": "Uninstalled with purge ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -4172,7 +4194,7 @@
           }
         },
         {
-          "id": "step-229",
+          "id": "step-230",
           "label": "GET settings: 404, the plugin is gone",
           "target": "local",
           "continueOnError": true,
@@ -4193,7 +4215,7 @@
           }
         },
         {
-          "id": "step-230",
+          "id": "step-231",
           "label": "No plugin_settings row left on the relay",
           "target": "local",
           "continueOnError": true,
@@ -4215,7 +4237,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-232",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -4232,7 +4254,7 @@
           ]
         },
         {
-          "id": "step-232",
+          "id": "step-233",
           "label": "No data directory on the agent VM: settings.json and secrets.json are gone",
           "target": "local",
           "continueOnError": true,

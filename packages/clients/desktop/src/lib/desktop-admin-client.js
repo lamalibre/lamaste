@@ -163,8 +163,12 @@ export const desktopAdminClient = {
   getPluginOperations: (name) => invoke('admin_get_plugin_operations', { name }),
   getPluginOperation: (name, id) => invoke('admin_get_plugin_operation', { name, id }),
   getPluginHooks: (name) => invoke('admin_get_plugin_hooks', { name }),
-  approvePluginHooks: (name, digest) =>
-    invokeRefusable('admin_approve_plugin_hooks', { name, digest }),
+  approvePluginHooks: (name, digest, version) =>
+    invokeRefusable('admin_approve_plugin_hooks', {
+      name,
+      digest: digest ?? null,
+      version: version ?? null,
+    }),
   setPluginHooksAutoApprove: (name, enabled) =>
     invoke('admin_set_plugin_hooks_auto_approve', { name, enabled }),
   updatePlugin: (name, version) =>

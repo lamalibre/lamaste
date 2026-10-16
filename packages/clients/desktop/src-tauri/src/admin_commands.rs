@@ -776,14 +776,28 @@ pub async fn admin_get_plugin_hooks(name: String) -> Result<serde_json::Value, S
     .await.map_err(|e| format!("Task failed: {}", e))?
 }
 
+/// The body of `POST /api/plugins/:name/hooks/approve`: the digest that was
+/// shown (`null` for an update with no relay hooks or agent half) and, for a
+/// pending update, its version — left out when there is none, as the panel
+/// takes no `null` version.
+fn approve_hooks_body(digest: Option<String>, version: Option<String>) -> serde_json::Value {
+    let mut body = serde_json::Map::new();
+    body.insert("digest".to_string(), serde_json::json!(digest));
+    if let Some(version) = version {
+        body.insert("version".to_string(), serde_json::json!(version));
+    }
+    serde_json::Value::Object(body)
+}
+
 #[tauri::command]
 pub async fn admin_approve_plugin_hooks(
     name: String,
-    digest: String,
+    digest: Option<String>,
+    version: Option<String>,
 ) -> Result<serde_json::Value, serde_json::Value> {
     tokio::task::spawn_blocking(move || {
         let path = format!("/api/plugins/{}/hooks/approve", url_encode(&name));
-        let body = serde_json::json!({ "digest": digest }).to_string();
+        let body = approve_hooks_body(digest, version).to_string();
         // Approving a pending update starts it.
         admin_operation("POST", &path, Some(&body))
     })
@@ -1491,6 +1505,24 @@ pub async fn admin_clear_access_request_log() -> Result<serde_json::Value, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_approval_names_the_digest_and_the_version_only_when_there_is_one() {
+        assert_eq!(
+            approve_hooks_body(Some("ab".repeat(32)), Some("1.2.0".to_string())),
+            serde_json::json!({ "digest": "ab".repeat(32), "version": "1.2.0" })
+        );
+        // An update with no relay hooks or agent half has no digest.
+        assert_eq!(
+            approve_hooks_body(None, Some("1.2.0".to_string())),
+            serde_json::json!({ "digest": null, "version": "1.2.0" })
+        );
+        // The panel takes no null version: it is left out.
+        assert_eq!(
+            approve_hooks_body(Some("ab".repeat(32)), None),
+            serde_json::json!({ "digest": "ab".repeat(32) })
+        );
+    }
 
     #[test]
     fn a_settings_refusal_keeps_what_the_panel_ui_acts_on() {
