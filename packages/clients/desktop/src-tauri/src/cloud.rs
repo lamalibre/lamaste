@@ -1902,16 +1902,12 @@ pub async fn update_panel_server(
             "-k".to_string(),
             "--proto".to_string(), "=https".to_string(),
             "-X".to_string(), "POST".to_string(),
-            "-H".to_string(), "Content-Type: application/json".to_string(),
-            "-d".to_string(), body,
         ];
         args.extend(auth.auth_args());
         args.push(update_url.clone());
 
-        let output = std::process::Command::new("curl")
-            .args(&args)
-            .output()
-            .map_err(|e| format!("Failed to run curl: {}", e))?;
+        // The body reaches curl on stdin, never in its arguments.
+        let output = crate::api::run_curl(&args, crate::api::CurlStdin::JsonBody(&body))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

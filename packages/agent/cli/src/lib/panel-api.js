@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import { readdirSync, unlinkSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
-import { LAMASTE_DIR } from '@lamalibre/lamaste/agent';
+import { LAMASTE_DIR, sweepStaleCurlConfigs } from '@lamalibre/lamaste/agent';
 import { formatCurlPinnedPubkey } from './panel-cert.js';
 
 const AGENT_DIR = LAMASTE_DIR;
@@ -53,30 +52,8 @@ function tlsVerifyArgs(pinSource) {
   return ['-k'];
 }
 
-/**
- * Clean up stale curl config temp files left behind by previous crashes.
- * Runs once at module load — synchronous to keep it simple and non-blocking
- * at startup (these files are tiny).
- */
-function cleanupStaleCurlConfigs() {
-  try {
-    const entries = readdirSync(AGENT_DIR);
-    for (const entry of entries) {
-      if (entry.startsWith('.curl-config-') && entry.endsWith('.tmp')) {
-        try {
-          unlinkSync(path.join(AGENT_DIR, entry));
-        } catch {
-          // Best-effort — may be locked or already removed
-        }
-      }
-    }
-  } catch {
-    // AGENT_DIR may not exist yet — that is fine
-  }
-}
-
-// Run cleanup once at import time
-cleanupStaleCurlConfigs();
+// Curl configs a crash left behind (only stale ones: the directory is shared).
+sweepStaleCurlConfigs(AGENT_DIR);
 
 /**
  * Validate that p12Path and p12Password do not contain newlines or other
@@ -910,6 +887,37 @@ export async function updateSessionStatus(config, sessionId, status) {
 }
 
 /**
+ * The curl arguments of an unauthenticated JSON POST (`curlPostUnauthenticated`).
+ * The body is not among them: curl reads it on stdin (`--data-binary @-`).
+ * It carries the enrollment token, and other local users can read a
+ * process's command line (`ps`, `/proc/<pid>/cmdline`). Exported for tests.
+ *
+ * Do NOT use -f — it swallows the response body on 4xx/5xx errors, and the
+ * caller needs the server's JSON error message.
+ *
+ * @param {string} url - Full URL
+ * @param {{ panelServerPubkeySha256?: string, panelUrl?: string } | null} [pinSource]
+ * @returns {string[]}
+ */
+export function unauthenticatedPostArgs(url, pinSource) {
+  return [
+    '-s',
+    '--max-time',
+    '30',
+    ...tlsVerifyArgs(pinSource),
+    '-w',
+    '\n%{http_code}',
+    '-X',
+    'POST',
+    '-H',
+    'Content-Type: application/json',
+    '--data-binary',
+    '@-',
+    url,
+  ];
+}
+
+/**
  * Execute an unauthenticated curl POST to a panel URL.
  * Used for the enrollment endpoint which doesn't require mTLS.
  *
@@ -920,29 +928,15 @@ export async function updateSessionStatus(config, sessionId, status) {
  * (true TOFU on the first contact only).
  *
  * @param {string} url - Full URL
- * @param {object} body - JSON body
+ * @param {object} body - JSON body, sent on curl's stdin
  * @param {{ panelServerPubkeySha256?: string, panelUrl?: string } | null} [pinSource]
  * @returns {Promise<object>}
  */
 export async function curlPostUnauthenticated(url, body, pinSource) {
   try {
-    // Do NOT use -f flag — it swallows the response body on 4xx/5xx errors.
-    // We need to read the JSON error message from the server.
-    const { stdout } = await execa('curl', [
-      '-s',
-      '--max-time',
-      '30',
-      ...tlsVerifyArgs(pinSource),
-      '-w',
-      '\n%{http_code}',
-      '-X',
-      'POST',
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify(body),
-      url,
-    ]);
+    const { stdout } = await execa('curl', unauthenticatedPostArgs(url, pinSource), {
+      input: JSON.stringify(body),
+    });
     // stdout ends with \n<status_code>
     const lines = stdout.trimEnd().split('\n');
     const httpCode = parseInt(lines.pop(), 10);

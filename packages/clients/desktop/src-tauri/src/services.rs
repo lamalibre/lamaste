@@ -87,18 +87,10 @@ fn curl_agentd(
 ) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}{}", AGENTD_PORT, path);
 
-    let mut args = vec!["-s".to_string(), "-X".to_string(), method.to_string()];
+    let args = vec!["-s".to_string(), "-X".to_string(), method.to_string(), url];
 
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = crate::api::curl_agentd_as_owner(&args)?;
+    // The token and the body reach curl on stdin, never in its arguments.
+    let output = crate::api::curl_agentd_as_owner(&args, body)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

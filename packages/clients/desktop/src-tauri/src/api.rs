@@ -46,123 +46,204 @@ pub(crate) fn agentd_token() -> Result<&'static str, String> {
 }
 
 /// Run `curl <args>` against the local agentd as its owner. The Bearer token
-/// reaches curl on stdin (`-H @-`), never in its arguments: other local users
-/// can read a process's command line (`/proc/<pid>/cmdline` on Linux), and
-/// the token is all that separates them from the daemon's owner — and its
-/// plugin install. `args` must not make curl read stdin themselves (`@-`, `-`).
-pub(crate) fn curl_agentd_as_owner(args: &[String]) -> Result<std::process::Output, String> {
+/// reaches curl on stdin, never in its arguments: other local users can read
+/// a process's command line (`/proc/<pid>/cmdline` on Linux), and the token
+/// is all that separates them from the daemon's owner — and its plugin
+/// install. A request body travels with it, so stdin carries one curl config
+/// (`-K -`, see `agentd_stdin_config`). `args` must not make curl read stdin
+/// themselves (`@-`, `-`).
+pub(crate) fn curl_agentd_as_owner(
+    args: &[String],
+    body: Option<&str>,
+) -> Result<std::process::Output, String> {
+    let config = agentd_stdin_config(agentd_token()?, body)?;
+    run_curl(args, CurlStdin::Config(config))
+}
+
+/// The curl config an agentd call passes on stdin: the Bearer token and,
+/// with a body, the body and its JSON content type. `data-raw`, unlike
+/// `data-binary`, never reads a file named by a leading `@`. The body must be
+/// one line — compact JSON, as `serde_json` writes it.
+fn agentd_stdin_config(token: &str, body: Option<&str>) -> Result<String, String> {
+    let mut config = curl_config_line("header", &format!("Authorization: Bearer {}", token))?;
+    if let Some(body) = body {
+        if body.contains(['\r', '\n', '\0']) {
+            return Err("A request body for lamaste-agentd must be one line of JSON".to_string());
+        }
+        config.push_str(&curl_config_line(
+            "header",
+            "Content-Type: application/json",
+        )?);
+        config.push_str(&curl_config_line("data-raw", body)?);
+    }
+    Ok(config)
+}
+
+// ---------------------------------------------------------------------------
+// Running curl with nothing secret in its arguments
+// ---------------------------------------------------------------------------
+//
+// Other local users can read a process's command line (`ps`,
+// `/proc/<pid>/cmdline` on Linux). The client certificate's password and the
+// panel's 2FA session cookie therefore live in a private curl config file
+// (`-K <file>`, `CurlAuth`), and a request body — a TOTP code, a user's
+// password, storage keys — reaches curl on stdin (`run_curl`).
+
+/// One curl config directive, `name = "value"`, with backslashes and double
+/// quotes escaped for curl's quoted values. A value holding CR, LF or NUL is
+/// refused: curl reads its config line by line, so a line break would start
+/// a directive of the value's choosing (and, in a cookie or a header, split
+/// the request's headers). The error never repeats the value.
+fn curl_config_line(name: &str, value: &str) -> Result<String, String> {
+    if value.contains(['\r', '\n', '\0']) {
+        return Err(format!(
+            "The curl config value of \"{}\" contains a line break or NUL",
+            name
+        ));
+    }
+    Ok(format!(
+        "{} = \"{}\"\n",
+        name,
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
+}
+
+/// What curl reads on stdin.
+pub(crate) enum CurlStdin<'a> {
+    /// Nothing: stdin is closed (`/dev/null`).
+    Nothing,
+    /// A JSON request body (`--data-binary @-`, with its content type).
+    JsonBody(&'a str),
+    /// A curl config (`-K -`) made of `curl_config_line`s.
+    Config(String),
+}
+
+impl<'a> CurlStdin<'a> {
+    /// The request body as stdin, or nothing.
+    pub(crate) fn json(body: Option<&'a str>) -> Self {
+        body.map_or(CurlStdin::Nothing, CurlStdin::JsonBody)
+    }
+}
+
+/// The arguments curl runs with: what makes it read `stdin`, then `args`.
+/// `args` must not make curl read stdin themselves — neither `-` nor anything
+/// ending in `@-` (`-H @-`, `-d@-`, `-F name=@-`) — since stdin carries the
+/// body or the config.
+fn curl_argv(args: &[String], stdin: &CurlStdin) -> Result<Vec<String>, String> {
+    if args.iter().any(|a| a == "-" || a.ends_with("@-")) {
+        return Err(
+            "curl arguments must not read stdin: it carries the request body or config".to_string(),
+        );
+    }
+    let mut argv: Vec<String> = match stdin {
+        CurlStdin::Nothing => Vec::new(),
+        CurlStdin::JsonBody(_) => vec![
+            "-H".to_string(),
+            "Content-Type: application/json".to_string(),
+            "--data-binary".to_string(),
+            "@-".to_string(),
+        ],
+        CurlStdin::Config(_) => vec!["-K".to_string(), "-".to_string()],
+    };
+    argv.extend(args.iter().cloned());
+    Ok(argv)
+}
+
+/// Run curl with `args` and `stdin`, and return its output whatever its exit
+/// status. curl reads a `@-` body or a `-K -` config in full before it
+/// connects, so stdin is written and closed before the output is collected.
+pub(crate) fn run_curl(args: &[String], stdin: CurlStdin) -> Result<std::process::Output, String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    if args.iter().any(|a| a == "@-" || a == "-") {
-        return Err("curl arguments must not read stdin: it carries the agentd token".to_string());
-    }
-    let token = agentd_token()?;
+    let argv = curl_argv(args, &stdin)?;
+    let input: Option<&[u8]> = match &stdin {
+        CurlStdin::Nothing => None,
+        CurlStdin::JsonBody(body) => Some(body.as_bytes()),
+        CurlStdin::Config(config) => Some(config.as_bytes()),
+    };
     let mut child = Command::new("curl")
-        .arg("-H")
-        .arg("@-")
-        .args(args)
-        .stdin(Stdio::piped())
+        .args(&argv)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to run curl: {}", e))?;
-    {
-        // curl reads the header file before it connects; closing stdin (end
-        // of this block) ends it.
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Failed to open curl stdin".to_string())?;
-        stdin
-            .write_all(format!("Authorization: Bearer {}\n", token).as_bytes())
-            .map_err(|e| format!("Failed to pass the agentd token to curl: {}", e))?;
-    }
-    child
+    // The pipe is dropped at the end of the match arm, which closes stdin.
+    let written = match (input, child.stdin.take()) {
+        (Some(bytes), Some(mut pipe)) => pipe.write_all(bytes),
+        _ => Ok(()),
+    };
+    let output = child
         .wait_with_output()
-        .map_err(|e| format!("Failed to run curl: {}", e))
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    if let Err(e) = written {
+        // curl stopped before reading its stdin; its own error says why.
+        return Err(format!(
+            "Failed to pass the request to curl: {}: {}",
+            e,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output)
 }
 
-// --- Curl config file helper (keeps P12 password out of process args) ---
-
-/// RAII guard that creates a temporary curl config file with cert credentials
-/// and deletes it on drop, ensuring cleanup even on error paths.
+/// RAII guard for a private curl config file (`-K <path>`), deleted on drop
+/// so it is cleaned up on error paths too.
 pub(crate) struct CurlConfigFile {
     path: std::path::PathBuf,
 }
 
 impl CurlConfigFile {
-    fn new(p12_path: &str, p12_password: &str) -> Result<Self, String> {
-        use std::io::Write;
-
-        let random_suffix: u64 = {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u8(0);
-            h.finish()
-        };
-
-        // Validate that p12_password and p12_path don't contain characters that
-        // could inject additional curl config directives. In curl's config file format,
-        // newlines terminate a directive, so embedded newlines/carriage returns/null bytes
-        // in the value would allow injection of arbitrary curl options.
-        if p12_password.contains('\n')
-            || p12_password.contains('\r')
-            || p12_password.contains('\0')
-        {
-            return Err("P12 password contains invalid characters".to_string());
-        }
-        if p12_path.contains('\n')
-            || p12_path.contains('\r')
-            || p12_path.contains('\0')
-        {
-            return Err("P12 path contains invalid characters".to_string());
-        }
-
+    /// Create the file in the agent directory, which only its owner can
+    /// write.
+    fn create(content: &str) -> Result<Self, String> {
         let dir = config::agent_dir();
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create agent directory: {}", e))?;
+        Self::create_in(&dir, content)
+    }
 
-        let path = dir.join(format!(".curl-config-{}.tmp", random_suffix));
+    /// Create the file in `dir` exclusively (`O_EXCL`, so an existing file or
+    /// link at the path is never written through) with mode 0600 from the
+    /// start, so its content is never readable by anyone else.
+    fn create_in(dir: &std::path::Path, content: &str) -> Result<Self, String> {
+        use std::io::Write;
 
-        // Build config content: quote the cert path:password to handle special chars.
-        // Curl config files use \"  for literal quote and \\ for literal backslash.
-        let content = format!(
-            "cert = \"{}:{}\"\ncert-type = \"P12\"\n",
-            p12_path.replace('\\', "\\\\").replace('"', "\\\""),
-            p12_password.replace('\\', "\\\\").replace('"', "\\\""),
-        );
+        let path = dir.join(format!(
+            ".curl-config-{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ));
 
-        // Create file atomically with restrictive permissions and O_EXCL
-        // to prevent symlink attacks and avoid a window of world-readable content
-        {
-            #[cfg(unix)]
-            let mut file = {
-                use std::os::unix::fs::OpenOptionsExt;
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .mode(0o600)
-                    .open(&path)
-                    .map_err(|e| format!("Failed to create curl config file: {}", e))?
-            };
+        #[cfg(unix)]
+        let mut file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .map_err(|e| format!("Failed to create curl config file: {}", e))?
+        };
 
-            #[cfg(not(unix))]
-            let mut file = {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)
-                    .map_err(|e| format!("Failed to create curl config file: {}", e))?
-            };
+        #[cfg(not(unix))]
+        let mut file = {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|e| format!("Failed to create curl config file: {}", e))?
+        };
 
-            file.write_all(content.as_bytes())
-                .map_err(|e| format!("Failed to write curl config file: {}", e))?;
-        }
-
-        Ok(Self { path })
+        // From here on the guard owns the file: a failed write removes it.
+        let guard = Self { path };
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to write curl config file: {}", e))?;
+        Ok(guard)
     }
 }
 
@@ -174,39 +255,77 @@ impl Drop for CurlConfigFile {
 
 // --- Shared curl helpers ---
 
-/// Build auth-specific curl args. For P12, creates a temp config file (RAII).
-/// For Keychain, returns --cert <identity> args directly.
-pub(crate) enum CurlAuth {
-    P12(CurlConfigFile),
-    Keychain(String),
+/// The client certificate a panel request authenticates with.
+enum ClientCert<'a> {
+    P12 { path: &'a str, password: &'a str },
+    Keychain(&'a str),
+}
+
+/// The private curl config of a panel request: the client certificate (a
+/// P12 and its password, or a Keychain identity) and, when given, the 2FA
+/// session cookie.
+fn curl_auth_config(cert: &ClientCert, session_cookie: Option<&str>) -> Result<String, String> {
+    let mut content = match cert {
+        ClientCert::P12 { path, password } => {
+            if path.contains(['\r', '\n', '\0']) {
+                return Err("P12 path contains invalid characters".to_string());
+            }
+            if password.contains(['\r', '\n', '\0']) {
+                return Err("P12 password contains invalid characters".to_string());
+            }
+            curl_config_line("cert", &format!("{}:{}", path, password))?
+                + &curl_config_line("cert-type", "P12")?
+        }
+        ClientCert::Keychain(identity) => curl_config_line("cert", identity)?,
+    };
+    if let Some(cookie) = session_cookie {
+        content.push_str(&curl_config_line(
+            "cookie",
+            &format!("lamaste_2fa_session={}", cookie),
+        )?);
+    }
+    Ok(content)
+}
+
+/// How a panel request authenticates, in a private curl config file passed
+/// with `-K` (see `curl_auth_config`). Keep it alive until curl has finished:
+/// dropping it deletes the file.
+pub(crate) struct CurlAuth {
+    file: CurlConfigFile,
 }
 
 impl CurlAuth {
+    fn create(cert: &ClientCert, session_cookie: Option<&str>) -> Result<Self, String> {
+        Ok(Self {
+            file: CurlConfigFile::create(&curl_auth_config(cert, session_cookie)?)?,
+        })
+    }
+
+    /// An agent's client certificate.
     fn new(cfg: &config::AgentConfig) -> Result<Self, String> {
-        if cfg.auth_method == "keychain" {
-            let identity = cfg.keychain_identity.as_deref()
-                .ok_or("Keychain identity not configured")?;
-            Ok(CurlAuth::Keychain(identity.to_string()))
+        let cert = if cfg.auth_method == "keychain" {
+            ClientCert::Keychain(
+                cfg.keychain_identity
+                    .as_deref()
+                    .ok_or("Keychain identity not configured")?,
+            )
         } else {
-            let p12_path = cfg.p12_path.as_deref()
-                .ok_or("P12 path not configured")?;
-            let p12_password = cfg.p12_password.as_deref()
-                .ok_or("P12 password not configured")?;
-            Ok(CurlAuth::P12(CurlConfigFile::new(p12_path, p12_password)?))
-        }
+            ClientCert::P12 {
+                path: cfg.p12_path.as_deref().ok_or("P12 path not configured")?,
+                password: cfg
+                    .p12_password
+                    .as_deref()
+                    .ok_or("P12 password not configured")?,
+            }
+        };
+        Self::create(&cert, None)
     }
 
     pub(crate) fn auth_args(&self) -> Vec<String> {
-        match self {
-            CurlAuth::P12(cfg_file) => vec![
-                "-K".to_string(),
-                cfg_file.path.to_string_lossy().to_string(),
-            ],
-            CurlAuth::Keychain(identity) => vec![
-                "--cert".to_string(),
-                identity.clone(),
-            ],
-        }
+        vec![
+            "-K".to_string(),
+            self.file.path.to_string_lossy().to_string(),
+        ]
     }
 }
 
@@ -214,7 +333,7 @@ impl CurlAuth {
 /// The returned CurlAuth must be kept alive until the curl command completes
 /// (it holds the RAII guard for the temp config file).
 pub(crate) fn build_curl_auth_for_server(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
-    admin_curl_auth(cfg)
+    CurlAuth::create(&admin_client_cert(cfg)?, None)
 }
 
 pub(crate) fn curl_panel(
@@ -228,27 +347,11 @@ pub(crate) fn curl_panel(
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.extend([
-        "-k".to_string(),
-        "-X".to_string(),
-        method.to_string(),
-    ]);
+    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
 
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
+    let output = run_curl(&args, CurlStdin::json(body))?;
 
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
-
-    // auth is dropped here (or on early return), cleaning up temp files if P12
+    // auth is dropped here (or on early return), deleting its config file
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -272,8 +375,9 @@ pub(crate) fn curl_panel(
 /// The agent panel server binds 127.0.0.1 only and authenticates loopback
 /// callers via a Bearer token stored at `~/.lamalibre/lamaste/agentd.token`. The token
 /// is mode 0600, so only the agent's owning OS user can read it, and it is
-/// handed to curl on stdin (`curl_agentd_as_owner`). Headers claiming a
-/// caller (`X-SSL-Client-*`, `Remote-User`) prove nothing to the daemon.
+/// handed to curl on stdin with the body (`curl_agentd_as_owner`). Headers
+/// claiming a caller (`X-SSL-Client-*`, `Remote-User`) prove nothing to the
+/// daemon.
 ///
 /// `agent_label` is unused at the wire level (the daemon attributes the call
 /// to its own `--label` once the token matches), but kept in the signature
@@ -287,18 +391,9 @@ pub(crate) fn curl_agent_local_panel(
 ) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}{}", port, path);
 
-    let mut args = vec!["-s".to_string(), "-X".to_string(), method.to_string()];
+    let args = vec!["-s".to_string(), "-X".to_string(), method.to_string(), url];
 
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = curl_agentd_as_owner(&args)?;
+    let output = curl_agentd_as_owner(&args, body)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -348,19 +443,44 @@ pub(crate) fn get_2fa_session(server_id: &str) -> Option<String> {
     None
 }
 
-/// Build a CurlAuth from an AdminApiConfig.
-fn admin_curl_auth(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
+/// The 2FA session cookie stored for the active server, if it is made only
+/// of the characters the panel's signed cookie uses; anything else is left
+/// out (the panel then asks for the code again) rather than sent into the
+/// request's `Cookie` header.
+fn active_2fa_session() -> Option<String> {
+    let server_id = config::get_active_server_id().ok()?;
+    let cookie = get_2fa_session(&server_id)?;
+    cookie
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%')
+        .then_some(cookie)
+}
+
+/// The client certificate of an AdminApiConfig.
+fn admin_client_cert(cfg: &config::AdminApiConfig) -> Result<ClientCert<'_>, String> {
     if cfg.auth_method == "keychain" {
-        let identity = cfg.keychain_identity.as_deref()
+        let identity = cfg
+            .keychain_identity
+            .as_deref()
             .ok_or("Admin keychain identity not configured")?;
-        Ok(CurlAuth::Keychain(identity.to_string()))
+        Ok(ClientCert::Keychain(identity))
     } else {
-        let p12_path = cfg.p12_path.as_deref()
+        let path = cfg
+            .p12_path
+            .as_deref()
             .ok_or("Admin P12 path not configured")?;
-        let p12_password = cfg.p12_password.as_deref()
+        let password = cfg
+            .p12_password
+            .as_deref()
             .ok_or("Admin P12 password not configured")?;
-        Ok(CurlAuth::P12(CurlConfigFile::new(p12_path, p12_password)?))
+        Ok(ClientCert::P12 { path, password })
     }
+}
+
+/// Build a CurlAuth from an AdminApiConfig, with the 2FA session cookie
+/// when one is stored for the active server.
+fn admin_curl_auth(cfg: &config::AdminApiConfig) -> Result<CurlAuth, String> {
+    CurlAuth::create(&admin_client_cert(cfg)?, active_2fa_session().as_deref())
 }
 
 /// The panel's error message in a response body (`{ "error": ... }`),
@@ -436,39 +556,14 @@ pub(crate) fn curl_panel_admin_response(
     body: Option<&str>,
 ) -> Result<String, String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.extend([
-        "-k".to_string(),
-        "-X".to_string(),
-        method.to_string(),
-    ]);
+    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
 
-    // Include 2FA session cookie if available (validated against injection)
-    if let Ok(server_id) = config::get_active_server_id() {
-        if let Some(cookie) = get_2fa_session(&server_id) {
-            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
-                args.push("-b".to_string());
-                args.push(format!("lamaste_2fa_session={}", cookie));
-            }
-        }
-    }
-
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = run_curl(&args, CurlStdin::json(body))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -487,39 +582,16 @@ pub(crate) fn curl_panel_admin_with_headers(
     body: Option<&str>,
 ) -> Result<(String, String), String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
-    let mut args = vec!["-s".to_string(), "-D".to_string(), "-".to_string()];
+    // `-i` puts the response headers before the body on stdout (`-D -`
+    // would too, but a `-` argument is refused: stdin carries the body).
+    let mut args = vec!["-s".to_string(), "-i".to_string()];
     args.extend(auth.auth_args());
-    args.extend([
-        "-k".to_string(),
-        "-X".to_string(),
-        method.to_string(),
-    ]);
+    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
 
-    // Include 2FA session cookie if available (validated against injection)
-    if let Ok(server_id) = config::get_active_server_id() {
-        if let Some(cookie) = get_2fa_session(&server_id) {
-            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
-                args.push("-b".to_string());
-                args.push(format!("lamaste_2fa_session={}", cookie));
-            }
-        }
-    }
-
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = run_curl(&args, CurlStdin::json(body))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -528,7 +600,7 @@ pub(crate) fn curl_panel_admin_with_headers(
 
     let raw = String::from_utf8_lossy(&output.stdout).to_string();
 
-    // -D - dumps headers followed by body, separated by \r\n\r\n
+    // -i writes the headers followed by the body, separated by \r\n\r\n
     let (headers, resp_body) = if let Some(pos) = raw.find("\r\n\r\n") {
         (raw[..pos].to_string(), raw[pos + 4..].to_string())
     } else {
@@ -551,6 +623,7 @@ pub(crate) fn curl_panel_admin_binary(
     output_path: &std::path::Path,
 ) -> Result<(), String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
@@ -559,24 +632,10 @@ pub(crate) fn curl_panel_admin_binary(
         "-k".to_string(),
         "-o".to_string(),
         output_path.to_string_lossy().to_string(),
+        url,
     ]);
 
-    // Include 2FA session cookie if available (validated against injection)
-    if let Ok(server_id) = config::get_active_server_id() {
-        if let Some(cookie) = get_2fa_session(&server_id) {
-            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
-                args.push("-b".to_string());
-                args.push(format!("lamaste_2fa_session={}", cookie));
-            }
-        }
-    }
-
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = run_curl(&args, CurlStdin::Nothing)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -599,21 +658,12 @@ pub(crate) fn curl_panel_admin_multipart(
     } else {
         base_url
     };
+    // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
     args.push("-k".to_string());
-
-    // Include 2FA session cookie if available (validated against injection)
-    if let Ok(server_id) = config::get_active_server_id() {
-        if let Some(cookie) = get_2fa_session(&server_id) {
-            if cookie.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'%') {
-                args.push("-b".to_string());
-                args.push(format!("lamaste_2fa_session={}", cookie));
-            }
-        }
-    }
 
     for file_path in file_paths {
         // Validate file path: must be a regular file, no curl -F special characters
@@ -630,10 +680,7 @@ pub(crate) fn curl_panel_admin_multipart(
 
     args.push(url);
 
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let output = run_curl(&args, CurlStdin::Nothing)?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -649,4 +696,286 @@ pub(crate) fn curl_panel_admin_multipart(
     }
 
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    const SECRET: &str = "s3cr3t-\"quoted\"-\\-SECRET";
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn config_line_quotes_and_escapes() {
+        assert_eq!(
+            curl_config_line("cookie", "a=b").unwrap(),
+            "cookie = \"a=b\"\n"
+        );
+        assert_eq!(
+            curl_config_line("cert", "C:\\p12:pa\"ss").unwrap(),
+            "cert = \"C:\\\\p12:pa\\\"ss\"\n"
+        );
+    }
+
+    #[test]
+    fn config_line_refuses_line_breaks_and_nul_without_repeating_them() {
+        for bad in ["v\nheader = \"X-Injected: 1\"", "v\rw", "v\0w"] {
+            let err = curl_config_line("cookie", bad).unwrap_err();
+            assert!(
+                err.contains("\"cookie\" contains a line break or NUL"),
+                "{}",
+                err
+            );
+            assert!(!err.contains(bad));
+        }
+    }
+
+    #[test]
+    fn a_json_body_goes_to_stdin_never_into_the_arguments() {
+        let body = format!("{{\"code\":\"{}\"}}", SECRET);
+        let args = strings(&["-s", "-X", "POST", "https://panel.example/api/x"]);
+        let argv = curl_argv(&args, &CurlStdin::JsonBody(&body)).unwrap();
+        assert_eq!(
+            argv,
+            strings(&[
+                "-H",
+                "Content-Type: application/json",
+                "--data-binary",
+                "@-",
+                "-s",
+                "-X",
+                "POST",
+                "https://panel.example/api/x",
+            ])
+        );
+        assert!(!argv.iter().any(|a| a.contains("SECRET")));
+    }
+
+    #[test]
+    fn a_config_goes_to_stdin_and_nothing_adds_no_argument() {
+        let args = strings(&["-s", "http://127.0.0.1:9393/api/status"]);
+        let config =
+            curl_config_line("header", &format!("Authorization: Bearer {}", SECRET)).unwrap();
+        let argv = curl_argv(&args, &CurlStdin::Config(config)).unwrap();
+        assert_eq!(
+            argv,
+            strings(&["-K", "-", "-s", "http://127.0.0.1:9393/api/status"])
+        );
+        assert_eq!(curl_argv(&args, &CurlStdin::Nothing).unwrap(), args);
+        assert!(matches!(CurlStdin::json(None), CurlStdin::Nothing));
+        assert!(matches!(
+            CurlStdin::json(Some("{}")),
+            CurlStdin::JsonBody("{}")
+        ));
+    }
+
+    #[test]
+    fn arguments_that_read_stdin_are_refused() {
+        for bad in ["-", "@-", "-d@-", "files=@-"] {
+            let args = strings(&["-s", "-H", bad, "http://127.0.0.1/"]);
+            assert!(curl_argv(&args, &CurlStdin::Nothing).is_err(), "{}", bad);
+        }
+    }
+
+    #[test]
+    fn the_agentd_config_carries_the_token_and_the_body() {
+        assert_eq!(
+            agentd_stdin_config("abc123", None).unwrap(),
+            "header = \"Authorization: Bearer abc123\"\n"
+        );
+        assert_eq!(
+            agentd_stdin_config("abc123", Some("{\"description\":\"a \\\"b\\\" \\\\ c\"}"))
+                .unwrap(),
+            "header = \"Authorization: Bearer abc123\"\n\
+             header = \"Content-Type: application/json\"\n\
+             data-raw = \"{\\\"description\\\":\\\"a \\\\\\\"b\\\\\\\" \\\\\\\\ c\\\"}\"\n"
+        );
+        let err = agentd_stdin_config("abc123", Some("{\n  \"a\": 1\n}")).unwrap_err();
+        assert!(err.contains("one line of JSON"), "{}", err);
+    }
+
+    #[test]
+    fn the_auth_config_holds_the_certificate_and_the_session_cookie() {
+        let p12 = ClientCert::P12 {
+            path: "/home/u/client.p12",
+            password: "pa\"ss\\word",
+        };
+        assert_eq!(
+            curl_auth_config(&p12, None).unwrap(),
+            "cert = \"/home/u/client.p12:pa\\\"ss\\\\word\"\ncert-type = \"P12\"\n"
+        );
+        assert_eq!(
+            curl_auth_config(
+                &ClientCert::Keychain("Lamaste Admin (mac)"),
+                Some("v1.sig%2F")
+            )
+            .unwrap(),
+            "cert = \"Lamaste Admin (mac)\"\ncookie = \"lamaste_2fa_session=v1.sig%2F\"\n"
+        );
+        let bad_password = ClientCert::P12 {
+            path: "/p.p12",
+            password: "pw\ncookie = \"x\"",
+        };
+        assert_eq!(
+            curl_auth_config(&bad_password, None).unwrap_err(),
+            "P12 password contains invalid characters"
+        );
+        let bad_path = ClientCert::P12 {
+            path: "/p\r.p12",
+            password: "pw",
+        };
+        assert_eq!(
+            curl_auth_config(&bad_path, None).unwrap_err(),
+            "P12 path contains invalid characters"
+        );
+        assert!(
+            curl_auth_config(&ClientCert::Keychain("id"), Some("v\nheader = \"X: 1\"")).is_err()
+        );
+    }
+
+    /// A fresh directory under the system temporary directory.
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "lamaste-desktop-{}-{}",
+            name,
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_config_file_is_0600_and_removed_on_drop() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("curl-config");
+        let file = CurlConfigFile::create_in(&dir, "cookie = \"a=b\"\n").unwrap();
+        let path = file.path.clone();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "cookie = \"a=b\"\n"
+        );
+        drop(file);
+        assert!(!path.exists());
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    /// A loopback HTTP server answering one request; the handle yields the
+    /// request's head and body.
+    fn one_request_server() -> (String, std::thread::JoinHandle<(String, String)>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/api/test", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}")
+                .unwrap();
+            (head, String::from_utf8(body).unwrap())
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn run_curl_sends_a_json_body_from_stdin() {
+        let (url, server) = one_request_server();
+        let body = format!("{{\"code\":\"{}\",\"note\":\"é\"}}", SECRET);
+        let args = strings(&["-s", "--max-time", "10", "-X", "POST", &url]);
+        let output = run_curl(&args, CurlStdin::JsonBody(&body)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "{\"ok\":true}");
+        let (head, received) = server.join().unwrap();
+        assert!(head.starts_with("POST /api/test "), "{}", head);
+        assert!(
+            head.contains("Content-Type: application/json\r\n"),
+            "{}",
+            head
+        );
+        assert_eq!(received, body);
+    }
+
+    #[test]
+    fn run_curl_reads_a_config_from_stdin() {
+        let (url, server) = one_request_server();
+        let body = "{\"description\":\"a \\\"b\\\" \\\\ c\",\"port\":3000}";
+        let config = agentd_stdin_config("abc123", Some(body)).unwrap();
+        let args = strings(&["-s", "--max-time", "10", "-X", "POST", &url]);
+        let output = run_curl(&args, CurlStdin::Config(config)).unwrap();
+        assert!(output.status.success());
+        let (head, received) = server.join().unwrap();
+        assert!(
+            head.contains("Authorization: Bearer abc123\r\n"),
+            "{}",
+            head
+        );
+        assert!(
+            head.contains("Content-Type: application/json\r\n"),
+            "{}",
+            head
+        );
+        assert_eq!(received, body);
+    }
+
+    #[test]
+    fn the_session_cookie_reaches_the_panel_from_the_config_file() {
+        let (url, server) = one_request_server();
+        let dir = temp_dir("curl-cookie");
+        // curl presents a client certificate only over TLS; the cookie is
+        // what this plain-HTTP request checks.
+        let config = curl_auth_config(&ClientCert::Keychain("unused"), Some("v1.sig%2F")).unwrap();
+        let file = CurlConfigFile::create_in(&dir, &config).unwrap();
+        let mut args = strings(&["-s", "--max-time", "10"]);
+        args.extend([
+            "-K".to_string(),
+            file.path.to_string_lossy().to_string(),
+            url,
+        ]);
+        let output = run_curl(&args, CurlStdin::Nothing).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (head, received) = server.join().unwrap();
+        assert!(head.starts_with("GET /api/test "), "{}", head);
+        assert!(
+            head.contains("Cookie: lamaste_2fa_session=v1.sig%2F\r\n"),
+            "{}",
+            head
+        );
+        assert_eq!(received, "");
+        drop(file);
+        std::fs::remove_dir(&dir).unwrap();
+    }
 }

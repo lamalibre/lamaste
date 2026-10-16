@@ -10,11 +10,10 @@
  */
 
 import crypto from 'node:crypto';
-import { readdirSync, unlinkSync } from 'node:fs';
 import { writeFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
-import { agentDataDir } from '@lamalibre/lamaste/agent';
+import { agentDataDir, sweepStaleCurlConfigs } from '@lamalibre/lamaste/agent';
 
 // ---------------------------------------------------------------------------
 // Server cert pinning (B10) — one-shot warning when no pin is on file
@@ -51,32 +50,6 @@ function tlsVerifyArgs(pinSource) {
   }
   warnMissingPin(pinSource?.panelUrl);
   return ['-k'];
-}
-
-// ---------------------------------------------------------------------------
-// Stale curl config cleanup
-// ---------------------------------------------------------------------------
-
-/**
- * Clean up stale curl config temp files left behind by previous crashes.
- * Runs once at module load — synchronous to keep it simple.
- * @param {string} dir
- */
-function cleanupStaleCurlConfigs(dir) {
-  try {
-    const entries = readdirSync(dir);
-    for (const entry of entries) {
-      if (entry.startsWith('.curl-config-') && entry.endsWith('.tmp')) {
-        try {
-          unlinkSync(path.join(dir, entry));
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-  } catch {
-    // Dir may not exist yet
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +241,8 @@ function parseChiselCredential(parsed) {
  */
 export function createPanelApiClient(label) {
   const baseDir = agentDataDir(label);
-  cleanupStaleCurlConfigs(baseDir);
+  // Curl configs a crash left behind (only stale ones: a request may be in flight).
+  sweepStaleCurlConfigs(baseDir);
 
   return {
     /**
