@@ -16,22 +16,26 @@ import { convergeWithPanel, describeConverge } from '../lib/converge.js';
 import { putHostFacts, reportJobResult } from '../lib/panel-api.js';
 
 /**
- * Report this machine's host facts when they changed (or a day passed) —
- * what the relay checks a plugin's requirements against when it is hosted
- * here.
+ * Report this machine's host facts when they changed, the relay does not
+ * hold them (the agent-config answer's `hostFactsHash` names other facts,
+ * or none) or a day passed — what the relay checks a plugin's requirements
+ * against when it is hosted here.
  *
  * @param {string} label
+ * @param {object} response - the agent-config response
  * @param {string[]} warnings
  * @returns {Promise<string[]>} what happened, for the log
  */
-async function reportHostFacts(label, warnings) {
+async function reportHostFacts(label, response, warnings) {
   const config = await requireAgentConfig(label);
-  const { changed } = await syncHostFacts(
+  const { changed, relayDiffered } = await syncHostFacts(
     label,
     { putHostFacts: (facts) => putHostFacts(config, facts) },
     warnings,
+    { relayFactsHash: response.hostFactsHash },
   );
-  return changed ? ['host facts reported'] : [];
+  if (changed) return ['host facts reported'];
+  return relayDiffered ? ['host facts reported again (the relay held other facts or none)'] : [];
 }
 
 /**
@@ -96,9 +100,11 @@ export async function runSync({ label, quiet = false }) {
   const now = new Date().toISOString();
 
   try {
+    // One agent-config answer serves the whole run: converge, the host
+    // facts (the hash of what the relay holds of them) and the plugin hooks.
     const { result, response, delivered } = await convergeWithPanel(label);
     const hookWarnings = [];
-    const factEvents = await reportHostFacts(label, hookWarnings).catch((err) => {
+    const factEvents = await reportHostFacts(label, response, hookWarnings).catch((err) => {
       hookWarnings.push(`Host facts could not be reported (${err.message}).`);
       return [];
     });

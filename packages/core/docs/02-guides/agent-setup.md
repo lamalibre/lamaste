@@ -117,7 +117,7 @@ The relay only lets an agent open the ports of the enabled tunnels it carries, a
 4. The service definition lists exactly the tunnels the relay grants this agent.
 5. The client runs when there is something to carry, and is stopped when the agent carries no tunnel or the operator stopped it.
 
-When everything already matches, a run costs one panel request and changes nothing. After converging, a run also reports the agent's host facts when they changed and runs the jobs the relay listed for the plugins this agent hosts — lifecycle hook calls, and installing, switching or removing an agent half ([App Host](../04-api-reference/app-host.md)); an install may take up to 10 minutes, so systemd allows a run 20 (`TimeoutStartSec=20min`). The timer runs it:
+When everything already matches, a run costs one panel request and changes nothing. After converging, a run also reports the agent's host facts when they changed or the relay does not hold them (the agent-config answer's `hostFactsHash`, see [Host facts](../04-api-reference/agent-hosted-plugins.md#host-facts)) and runs the jobs the relay listed for the plugins this agent hosts — lifecycle hook calls, and installing, switching or removing an agent half ([App Host](../04-api-reference/app-host.md)); an install may take up to 10 minutes, so systemd allows a run 20 (`TimeoutStartSec=20min`). The timer runs it:
 
 | Platform | Units                                                                                        | Schedule                                                      |
 | -------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |

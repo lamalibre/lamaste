@@ -133,7 +133,7 @@ Every app job is signed by the relay with its signing key when it is created, an
 
 ### Host facts
 
-Each agent reports its host on its sync when the facts change, and once a day: `PUT /api/agents/me/host-facts` (agent certificates only; 10 per minute, 4 KiB).
+Each agent reports its host on its sync when the facts change, when the relay does not hold them, and once a day: `PUT /api/agents/me/host-facts` (agent certificates only; 10 per minute, 4 KiB). What the relay holds it tells the agent in every [`GET /api/tunnels/agent-config`](tunnels.md#get-api-tunnels-agent-config) answer: `hostFactsHash`, the SHA-256 of the facts stored on the agent's record (`hostFactsHash` in `@lamalibre/lamaste`, the same function the agent hashes its own with), `null` when it stores none. When that is not the hash of the agent's facts, the sync reports them whatever it last reported — so an agent enrolled again on its label (a new record, without host facts) or a relay restored from a backup can host again after one sync, not a day later. Behind a relay that does not send the field, the agent reports as before.
 
 ```json
 {
@@ -155,7 +155,7 @@ Each agent reports its host on its sync when the facts change, and once a day: `
 | `systemd` | systemd is the system manager                                                                                                                                                                                                                        |
 | `apphost` | The app host helper; `null` when it is not enabled or does not answer. `version`: its protocol; `node`: the Node.js it — and every agent half it installs — runs on; `relayKid`: the id of the relay key pinned for this agent (`null`: none pinned) |
 
-The relay keeps them on the agent's record (`hostFacts`, `hostFactsAt`; `GET /api/certs/agent`), re-validated on every read. The panel shows them on the Certificates page and in the host dialog. The agent asks its helper only when the helper file changed or a day passed (sudo logs every run); the pinned key is read on every sync, so a re-pin is reported at once. A panel older than 4.3 answers `404`, which the agent logs as a warning.
+The relay keeps them on the agent's record (`hostFacts`, `hostFactsAt`; `GET /api/certs/agent`), re-validated on every read. The panel shows them on the Certificates page and in the host dialog. The agent asks its helper only when the helper file changed or a day passed (sudo logs every run); the pinned key is read on every sync, so a re-pin is reported at once. A panel older than 4.3 answers `404`, which the agent logs as a warning. `sync.log` records `host facts reported` for a change, and `host facts reported again (the relay held other facts or none)` for facts the relay did not hold.
 
 ### `GET /api/plugins/:name/hosting/eligibility`
 
@@ -631,7 +631,7 @@ Only Lamaste: a caller assertion that does not verify is `401`, one naming an ad
 
 Both are 0600, owned by the account the agent half runs as, and written atomically: an exclusive temp file in the same directory (`wx` — never opened through an existing file or link), `fsync`, rename, `fsync` of the directory. A symbolic link — or anything but a regular file — where either belongs is refused, on read (checked, then opened with `O_NOFOLLOW`) and on write. A missing file is empty; a malformed one, or one over 4 MiB, is an error that names the file and never repeats its contents. A secret never goes into `settings.json`.
 
-**Reconcile.** `load()` and `reload()` reconcile the stored values with the agent half's own schema. A key the schema no longer knows is dropped; so is a value recorded for another type than its field has now — a **retyped value is dropped, never converted**: a secret whose field became a string leaves `secrets.json` and never lands in `settings.json`, and a string whose field became a secret leaves `settings.json` — and so is a value that no longer passes its field's checks, pattern included. A file is rewritten only when something was dropped from it; the revision stays.
+**Reconcile.** `load()` and `reload()` reconcile the stored values with the agent half's own schema. A key the schema no longer knows is dropped; so is a value recorded for another type than its field has now — a **retyped value is dropped, never converted**: a secret whose field became a string leaves `secrets.json` and never lands in `settings.json`, and a string whose field became a secret leaves `settings.json` — and so is a value that no longer passes its field's checks, pattern included. A file is rewritten when something was dropped from it, and `settings.json` also when it records another `schemaVersion` than the agent half's — after an update that dropped only a secret, or nothing, it names the new schema too; the revision stays.
 
 **A change** is serialized with every other. A `schemaVersion` other than the agent half's is `409 schema_mismatch`, a `baseRevision` other than the current revision `409 revision_mismatch` with the current `revision`, and a value its checks refuse — pattern included — `422` per field. Otherwise it is applied (`null` clears): `secrets.json` first, when a secret changed, each new secret with `setAt` now; then `settings.json` with the revision plus one; then the listeners.
 

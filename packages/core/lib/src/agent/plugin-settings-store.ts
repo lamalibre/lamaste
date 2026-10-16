@@ -23,7 +23,9 @@
  * schema no longer knows is dropped, so is a value recorded for another
  * type than the field has now (retyped — dropped, never converted: a secret
  * that became a string never lands in `settings.json`), and a value that no
- * longer passes the field's checks.
+ * longer passes the field's checks. A file is rewritten when something was
+ * dropped from it, and `settings.json` also when it records another
+ * `schemaVersion` than the agent half's; the revision stays.
  *
  * {@link createSettingsHandler} answers `/admin/settings` for Lamaste alone
  * (caller `lamaste`, through the tunnel): the relay's panel validates an
@@ -185,6 +187,8 @@ interface StoredSecret {
 }
 
 interface SettingsFile {
+  /** The schema version the file was written for; null when there is no file. */
+  readonly schemaVersion: number | null;
   readonly revision: number;
   readonly values: ReadonlyMap<string, StoredValue>;
 }
@@ -245,7 +249,7 @@ function malformed(filePath: string): Error {
 }
 
 function parseSettingsFile(raw: unknown, filePath: string): SettingsFile {
-  if (raw === undefined) return { revision: 0, values: new Map() };
+  if (raw === undefined) return { schemaVersion: null, revision: 0, values: new Map() };
   if (!isRecord(raw) || raw['v'] !== FILE_VERSION) throw malformed(filePath);
   const revision = raw['revision'];
   const schemaVersion = raw['schemaVersion'];
@@ -270,7 +274,7 @@ function parseSettingsFile(raw: unknown, filePath: string): SettingsFile {
     }
     out.set(key, { type: entry['type'], value });
   }
-  return { revision, values: out };
+  return { schemaVersion, revision, values: out };
 }
 
 function parseSecretsFile(raw: unknown, filePath: string): Map<string, StoredSecret> {
@@ -378,7 +382,11 @@ export function createSettingsStore(opts: SettingsStoreOptions): SettingsStore {
     );
   }
 
-  /** Read, reconcile with the schema, persist what reconciling dropped, then adopt. */
+  /**
+   * Read, reconcile with the schema, persist what reconciling dropped — and
+   * settings.json when it was written for another schema version, so it
+   * names the schema its values were reconciled with — then adopt.
+   */
   async function readAndReconcile(): Promise<void> {
     const settingsFile = parseSettingsFile(await readStoreFile(settingsPath), settingsPath);
     const secretsFile = parseSecretsFile(await readStoreFile(secretsPath), secretsPath);
@@ -416,8 +424,12 @@ export function createSettingsStore(opts: SettingsStoreOptions): SettingsStore {
       nextSecrets.set(key, stored);
     }
 
+    // An update to another schema version that dropped no value (only a
+    // secret, or nothing) still leaves settings.json recording the old one.
+    const otherSchema =
+      settingsFile.schemaVersion !== null && settingsFile.schemaVersion !== block.schemaVersion;
     if (droppedSecret) await writeSecrets(nextSecrets);
-    if (droppedValue) await writeSettings(settingsFile.revision, nextValues);
+    if (droppedValue || otherSchema) await writeSettings(settingsFile.revision, nextValues);
     revision = settingsFile.revision;
     values = nextValues;
     secrets = nextSecrets;

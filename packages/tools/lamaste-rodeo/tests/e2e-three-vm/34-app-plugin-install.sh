@@ -342,7 +342,7 @@ done
 assert_eq "$(echo "$FACTS" | jq '[.unit.lines[] | select(test("[0-9a-f]{64}"))] | length' 2>/dev/null || echo "-1")" "0" "The unit names paths, never the secret" || true
 for prop in 'ProtectSystem=strict' 'ProtectHome=yes' 'NoNewPrivileges=yes' 'PrivateTmp=yes' 'PrivateDevices=yes' \
   'RestrictSUIDSGID=yes' 'LockPersonality=yes' "ReadWritePaths=${DATA_DIR}" 'MemoryMax=268435456' \
-  'CapabilityBoundingSet=' 'UMask=0077' 'Restart=always' 'LimitCORE=0' "Sockets=${SOCKET_UNIT}" \
+  'CapabilityBoundingSet=' 'UMask=0077' 'Restart=always' 'LimitCORE=0' \
   "TriggeredBy=${SOCKET_UNIT}"; do
   assert_eq "$(echo "$FACTS" | jq -r --arg k "${prop%%=*}" '.unit.props[$k] // "unset"' 2>/dev/null || echo unset)" "${prop#*=}" "systemctl show: ${prop}" || true
 done

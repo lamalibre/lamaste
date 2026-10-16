@@ -3,7 +3,7 @@
   "meta": {
     "number": 37,
     "name": "App plugin settings and secrets",
-    "suite": "e2e",
+    "suite": "e2e-three-vm",
     "description": "37 — App plugin settings and secrets (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
@@ -1498,7 +1498,7 @@
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "agent_epoch"
+            "command": "agent_epoch_after_now"
           },
           "capture": [
             {
@@ -1616,7 +1616,7 @@
           }
         }
       ],
-      "bash": "log_section \"A stale revision is refused; /admin/settings is not forwarded\"\n\nRESP=$(settings_api PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An update edited at revision 0, now 1: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.revision)\"' 'revision_mismatch 1' \"…revision_mismatch, with the current revision\" || true\nEPOCH=$(agent_epoch)\nfor reserved in settings settings/reload Settings %73ettings; do\n  assert_eq \"$(host_api_get_status \"${PLUGIN}/${reserved}\")\" \"404\" \"GET /api/${PLUGIN}/${reserved} through the forwarder: 404\" || true\ndone\nassert_eq \"$(status_of \"$(host_api_call PUT \"${PLUGIN}/settings\" '{\"schemaVersion\":1,\"baseRevision\":1,\"values\":{\"verbose\":true},\"secrets\":{}}')\")\" \"404\" \"PUT /api/${PLUGIN}/settings: 404 — no admin writes around the panel's checks\" || true\nassert_eq \"$(status_of \"$(host_api_call POST \"${PLUGIN}/settings/reload\" '{}')\")\" \"404\" \"POST /api/${PLUGIN}/settings/reload: 404\" || true\nassert_eq \"$(half_settings_lines \"$EPOCH\" '/admin/(settings|Settings|%73ettings)(/reload)? (caller=|40[0-9])')\" \"0\" \"The agent half saw none of them\" || true\nassert_json_field \"$(settings_probe \"${PLUGIN}\")\" '\"\\(.revision) \\(.values.verbose)\"' '1 false' \"…and nothing changed\" || true\n\n# ===========================================================================\n# 6. The CLI\n# ==========================================================================="
+      "bash": "log_section \"A stale revision is refused; /admin/settings is not forwarded\"\n\nRESP=$(settings_api PUT \"plugins/${PLUGIN}/settings\" '{\"revision\":0,\"values\":{\"verbose\":true}}')\nassert_eq \"$(status_of \"$RESP\")\" \"409\" \"An update edited at revision 0, now 1: 409\" || true\nassert_json_field \"$(body_of \"$RESP\")\" '\"\\(.code) \\(.revision)\"' 'revision_mismatch 1' \"…revision_mismatch, with the current revision\" || true\n# The agent half logged that 409 (`settings PUT /admin/settings 409`), which\n# the count below would match: its window opens after the second it fell in.\nEPOCH=$(agent_epoch_after_now)\nfor reserved in settings settings/reload Settings %73ettings; do\n  assert_eq \"$(host_api_get_status \"${PLUGIN}/${reserved}\")\" \"404\" \"GET /api/${PLUGIN}/${reserved} through the forwarder: 404\" || true\ndone\nassert_eq \"$(status_of \"$(host_api_call PUT \"${PLUGIN}/settings\" '{\"schemaVersion\":1,\"baseRevision\":1,\"values\":{\"verbose\":true},\"secrets\":{}}')\")\" \"404\" \"PUT /api/${PLUGIN}/settings: 404 — no admin writes around the panel's checks\" || true\nassert_eq \"$(status_of \"$(host_api_call POST \"${PLUGIN}/settings/reload\" '{}')\")\" \"404\" \"POST /api/${PLUGIN}/settings/reload: 404\" || true\nassert_eq \"$(half_settings_lines \"$EPOCH\" '/admin/(settings|Settings|%73ettings)(/reload)? (caller=|40[0-9])')\" \"0\" \"The agent half saw none of them\" || true\nassert_json_field \"$(settings_probe \"${PLUGIN}\")\" '\"\\(.revision) \\(.values.verbose)\"' '1 false' \"…and nothing changed\" || true\n\n# ===========================================================================\n# 6. The CLI\n# ==========================================================================="
     },
     {
       "id": "lamaste-server-plugins-configure-secrets-stdin-its-arguments-sampled",

@@ -17,6 +17,7 @@ import {
   BASE_CAPABILITIES as CORE_BASE_CAPABILITIES,
   HostFactsSchema,
   PLUGIN_AGENT_CN_PREFIX as CORE_PLUGIN_AGENT_CN_PREFIX,
+  hostFactsHash,
 } from '@lamalibre/lamaste';
 import { addToRevocationList } from './revocation.js';
 import { releaseAgentTunnels, stripPluginCapabilities } from '@lamalibre/lamaste/server';
@@ -741,6 +742,34 @@ export function setAgentHostFacts(label, hostFacts) {
     await saveAgentRegistry(registry);
     return { hostFactsAt: agent.hostFactsAt };
   });
+}
+
+/**
+ * The host facts agent `label` last reported, as stored on its enrolled,
+ * unrevoked record — null when it has none: it never reported, its record
+ * was replaced since (enrolled again on the label, a restored backup), or
+ * the stored facts no longer parse.
+ *
+ * @param {string} label
+ * @returns {Promise<import('@lamalibre/lamaste').HostFacts | null>}
+ */
+export async function getAgentHostFacts(label) {
+  const registry = await loadAgentRegistry();
+  return registry.agents.find((a) => a.label === label && !a.revoked)?.hostFacts ?? null;
+}
+
+/**
+ * The hash of the host facts stored for agent `label` — core's
+ * `hostFactsHash`, exactly what the agent computes over its own — or null
+ * when it has none ({@link getAgentHostFacts}). The agent's sync gets it in
+ * agent-config and reports its facts again when it is not theirs.
+ *
+ * @param {string} label
+ * @returns {Promise<string | null>}
+ */
+export async function getAgentHostFactsHash(label) {
+  const facts = await getAgentHostFacts(label);
+  return facts === null ? null : hostFactsHash(facts);
 }
 
 /**

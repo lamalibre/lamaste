@@ -282,10 +282,11 @@ export {
   parseOsRelease,
   probeAppHost,
   gatherHostFacts,
-  hostFactsHash,
   hostFactsStatePath,
   syncHostFacts,
 } from './host-facts.js';
+// In the root since the relay hashes the facts it stores too; kept here for /agent callers.
+export { hostFactsHash } from '../host-facts.js';
 export type {
   AppHostProbe,
   HostFactsSources,

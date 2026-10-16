@@ -3,7 +3,8 @@
  * `settings.json` and `secrets.json` in the half's data directory — 0600,
  * written atomically, never through a symbolic link, a secret never in
  * `settings.json` — reconciles them with the half's own schema on load
- * (retyped and unknown keys dropped, never converted), refuses a stale
+ * (retyped and unknown keys dropped, never converted; `settings.json` then
+ * records that schema's version), refuses a stale
  * revision or another schema version, and `/admin/settings` answers only
  * Lamaste — an update only with its body as signed and its secrets sealed
  * to that request — never with a secret's value, every answer authenticated.
@@ -404,6 +405,40 @@ test('store: reconcile drops retyped and unknown keys — never converts, persis
   // A string that becomes a secret: the stored string is dropped, not adopted as the secret.
   const s3 = await loadedStore(dir, v1);
   assert.equal(s3.secret('apiKey'), undefined);
+});
+
+test('store: settings.json records the schema version it was reconciled with, even when no value was dropped', async () => {
+  const dir = await freshDir();
+  const s1 = await loadedStore(dir);
+  await s1.update({ ...FULL_UPDATE, secrets: { apiKey: SECRET, token: 'tok-1' } });
+  const settingsPath = path.join(dir, 'settings.json');
+  const written = await readJson(settingsPath);
+
+  // v3: the secret token becomes a plain string — only secrets.json loses something.
+  const v3 = settingsFromManifest({
+    ...manifestV1,
+    settings: {
+      schemaVersion: 3,
+      fields: manifestV1.settings.fields.map((f) =>
+        f.key === 'token' ? { key: 'token', label: 'Token', type: 'string' } : f,
+      ),
+    },
+  });
+  const s3 = await loadedStore(dir, v3);
+  assert.equal(s3.secret('token'), undefined);
+  assert.equal(s3.state().revision, 1, 'reconciling is not an update');
+  assert.deepEqual(await readJson(settingsPath), { ...written, schemaVersion: 3 });
+  assert.equal(await mode(settingsPath), 0o600);
+
+  // Loaded again at v3: nothing to rewrite.
+  const ino = (await stat(settingsPath)).ino;
+  await loadedStore(dir, v3);
+  assert.equal((await stat(settingsPath)).ino, ino);
+
+  // No settings.json records no version: an empty directory still gets no file.
+  const empty = await freshDir();
+  await loadedStore(empty, v3);
+  assert.deepEqual(await filesIn(empty), []);
 });
 
 test('store: a value that no longer passes its checks is dropped on load', async () => {

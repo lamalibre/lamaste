@@ -24,7 +24,7 @@ import {
 } from '@lamalibre/lamaste';
 import { getConfig } from '../../lib/config.js';
 import { readTunnels, readSites } from '../../lib/state.js';
-import { loadAgentRegistry } from '../../lib/mtls.js';
+import { getAgentHostFactsHash, loadAgentRegistry } from '../../lib/mtls.js';
 import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
 import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
@@ -297,6 +297,14 @@ export default async function tunnelRoutes(fastify, _opts) {
           // through its app host helper (`app-install`, `app-activate`,
           // `app-remove`) — see lib/agent-jobs.js for each job's fields.
           agentJobs: AGENT_LABEL_REGEX.test(label) ? await pendingAgentJobs(label) : [],
+          // For the agent's own sync: the hash of the host facts stored on
+          // its record (null: none), which it compares with its own and
+          // reports them again when they differ — a record replaced since its
+          // last report (enrolled again on the label, a restored backup)
+          // holds none. Not for an admin's ?agent= call.
+          ...(caller !== null && AGENT_LABEL_REGEX.test(caller)
+            ? { hostFactsHash: await getAgentHostFactsHash(caller) }
+            : {}),
         };
       } catch (err) {
         request.log.error(err, 'Failed to generate agent config');

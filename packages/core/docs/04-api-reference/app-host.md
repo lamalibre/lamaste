@@ -29,7 +29,7 @@ What `enable` does:
 3. Checks that the helper answers (`status`) and that the agent's user can run it with `sudo -n`.
 4. Pins the relay key of every agent of that user on the machine (see [Pinning the relay key](#pinning-the-relay-key)), printing each label's key id to compare with the relay's. A failure here leaves the helper enabled — it runs no job until `sudo lamaste-agent apphost pin` succeeds.
 
-The agent's next sync reports the helper to the relay in its [host facts](agent-hosted-plugins.md#host-facts); from then on the panel lists the agent as able to host plugins whose agent half Lamaste installs.
+The agent's next sync reports the helper to the relay in its [host facts](agent-hosted-plugins.md#host-facts); from then on the panel lists the agent as able to host plugins whose agent half Lamaste installs. A relay that loses them — the agent enrolled again on its label, the relay restored from a backup — has them again after the agent's next sync: its agent-config answer tells the agent the hash of the facts it holds (`hostFactsHash`), and the agent reports when that is not the hash of its own.
 
 ### The sudoers rule
 

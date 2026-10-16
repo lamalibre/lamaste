@@ -8,7 +8,15 @@
  * agent's app jobs with (`apphost enable|pin`).
  *
  * The sync gathers them on every run and reports them
- * (`PUT /api/agents/me/host-facts`) when they changed or a day has passed;
+ * (`PUT /api/agents/me/host-facts`) when they changed, when the relay holds
+ * other facts or none, or a day has passed. What the relay holds it says in
+ * its agent-config answer (`hostFactsHash`: the {@link hostFactsHash} of
+ * the facts it stores for this agent, null when it stores none), so a relay
+ * whose record of the agent was replaced — the agent enrolled again on the
+ * same label, the relay restored from a backup — has them again after the
+ * next sync, not the next day. A relay that does not say is reported to as
+ * before.
+ *
  * `agents/<label>/host-facts.json` (0600) remembers what was last reported:
  *
  *     { "reported": { "hash": "<sha256>", "at": "<ISO 8601>" } | null,
@@ -22,12 +30,12 @@
  * may read: it is read on every sync, so a re-pin is reported at once.
  */
 
-import crypto from 'node:crypto';
 import { readFile, readlink, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { atomicWriteJSON, readJSONFile } from '../file-helpers.js';
+import { HOST_FACTS_HASH_RE, hostFactsHash } from '../host-facts.js';
 import { HostFactsSchema } from '../schemas.js';
 import type { HostFacts } from '../schemas.js';
 import { appHostHelperKey, appHostStatus, pinnedRelayKid } from './apphost.js';
@@ -163,29 +171,6 @@ export async function gatherHostFacts(
   });
 }
 
-/** SHA-256 of the facts in a fixed field order — what decides whether they changed. */
-export function hostFactsHash(facts: HostFacts): string {
-  const canonical = {
-    os: facts.os,
-    arch: facts.arch,
-    distro:
-      facts.distro === null
-        ? null
-        : { id: facts.distro.id, idLike: facts.distro.idLike, versionId: facts.distro.versionId },
-    node: facts.node,
-    systemd: facts.systemd,
-    apphost:
-      facts.apphost === null
-        ? null
-        : {
-            version: facts.apphost.version,
-            node: facts.apphost.node,
-            relayKid: facts.apphost.relayKid,
-          },
-  };
-  return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
-}
-
 interface HostFactsState {
   readonly reported: { readonly hash: string; readonly at: string } | null;
   /** The helper's last answer, for the helper file it came from. */
@@ -230,6 +215,15 @@ export interface HostFactsPanelCalls {
 
 export interface HostFactsSyncOptions {
   readonly now?: number | undefined;
+  /**
+   * `hostFactsHash` of the relay's agent-config answer, as it came: the
+   * hash of the facts the relay stores for this agent, null when it stores
+   * none. Facts the relay does not hold are reported whatever this agent
+   * last reported. Absent (a relay that does not say) or anything but a
+   * hash or null: reported when they changed or a day has passed, as
+   * before.
+   */
+  readonly relayFactsHash?: unknown;
   /** Replaces the machine as the source of the facts (tests). */
   readonly sources?: HostFactsSources | undefined;
   /** Replaces the helper file's identity, the uncached probe and the pinned key's id (tests). */
@@ -247,15 +241,33 @@ export interface HostFactsSyncResult {
   readonly reported: boolean;
   /** They differ from what was last reported (a first report counts). */
   readonly changed: boolean;
+  /**
+   * They were sent to a relay that held other facts or none
+   * ({@link HostFactsSyncOptions.relayFactsHash}) — due whatever this agent
+   * last reported.
+   */
+  readonly relayDiffered: boolean;
 }
 
-const NOT_REPORTED: HostFactsSyncResult = Object.freeze({ reported: false, changed: false });
+const NOT_REPORTED: HostFactsSyncResult = Object.freeze({
+  reported: false,
+  changed: false,
+  relayDiffered: false,
+});
+
+/** The relay's `hostFactsHash`: a hash, null (it stores none), or undefined — it did not say. */
+function relayFactsHashOf(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === 'string' && HOST_FACTS_HASH_RE.test(value) ? value : undefined;
+}
 
 /**
  * Gather the host facts and report them when they changed since the last
- * report or {@link HOST_FACTS_REFRESH_MS} has passed. Failures are
- * warnings; nothing is recorded as reported until the panel took it, so
- * the next sync tries again.
+ * report, the relay holds other facts or none
+ * ({@link HostFactsSyncOptions.relayFactsHash}), or
+ * {@link HOST_FACTS_REFRESH_MS} has passed. Failures are warnings; nothing
+ * is recorded as reported until the panel took it, so the next sync tries
+ * again.
  */
 export async function syncHostFacts(
   label: string,
@@ -307,7 +319,12 @@ export async function syncHostFacts(
   let reported = state.reported;
   let result = NOT_REPORTED;
   const hash = hostFactsHash(facts);
+  // What this agent last reported is not what the relay holds when the
+  // relay's record of it was replaced since: reported again, at once.
+  const relayHash = relayFactsHashOf(options.relayFactsHash);
+  const relayDiffered = relayHash !== undefined && relayHash !== hash;
   const fresh =
+    !relayDiffered &&
     reported !== null &&
     reported.hash === hash &&
     now - Date.parse(reported.at) < HOST_FACTS_REFRESH_MS;
@@ -320,7 +337,7 @@ export async function syncHostFacts(
             'whether this agent can host a plugin; retrying on the next sync.',
         );
       } else {
-        result = { reported: true, changed: reported?.hash !== hash };
+        result = { reported: true, changed: reported?.hash !== hash, relayDiffered };
         reported = { hash, at: new Date(now).toISOString() };
       }
     } catch (err: unknown) {

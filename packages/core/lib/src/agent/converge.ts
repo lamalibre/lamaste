@@ -46,6 +46,11 @@ export interface AgentConfigResponse {
   readonly appPlugins?: unknown;
   /** Agent jobs for this agent's sync to run: hook calls and app jobs (relay 4.3+). */
   readonly agentJobs?: unknown;
+  /**
+   * The hash of the host facts the relay stores for this agent, null when
+   * it stores none (relay 4.3+); the sync hands it to `syncHostFacts`.
+   */
+  readonly hostFactsHash?: unknown;
 }
 
 export interface IssuedChiselCredential {

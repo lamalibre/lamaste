@@ -48,7 +48,12 @@ import {
 import { httpError } from './app-error.js';
 import { getConfig } from './config.js';
 import { readTunnels } from './state.js';
-import { loadAgentRegistry, saveAgentRegistry, withRegistryLock } from './mtls.js';
+import {
+  getAgentHostFacts,
+  loadAgentRegistry,
+  saveAgentRegistry,
+  withRegistryLock,
+} from './mtls.js';
 import { startPluginOperation } from './plugin-operations.js';
 import {
   pipelineContext,
@@ -147,12 +152,6 @@ export async function isActiveAgent(label) {
 // Pushing an agent half: eligibility and the push-install gates
 // ---------------------------------------------------------------------------
 
-/** The host facts agent `label` last reported, or null. */
-async function agentHostFacts(label) {
-  const registry = await loadAgentRegistry();
-  return registry.agents.find((a) => a.label === label && !a.revoked)?.hostFacts ?? null;
-}
-
 /**
  * What this relay brings to eligibility: the id of the key it signs app
  * jobs with — null when the key is unusable (it signs nothing then).
@@ -175,7 +174,7 @@ export async function assertAgentEligible(label, requires, agentHalf, pluginName
   const { eligible, reasons } = hostEligibility(
     requires,
     agentHalf,
-    await agentHostFacts(label),
+    await getAgentHostFacts(label),
     await relayEligibility(),
   );
   if (!eligible) {

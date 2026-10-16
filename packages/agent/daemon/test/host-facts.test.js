@@ -1,8 +1,11 @@
 /**
  * Host facts (slice 3): what the relay checks a plugin's `agent.requires`
  * and an agent half's needs against. Gathered from os-release, PID 1 and
- * the app host helper; reported when they change or a day has passed; a
- * panel without the endpoint is a warning, retried on the next sync. The
+ * the app host helper; reported when they change, when the relay's
+ * agent-config says it holds other facts or none (its record of the agent
+ * was replaced), or a day has passed — a relay that does not say is
+ * reported to as before; a panel without the endpoint is a warning,
+ * retried on the next sync. The
  * helper is asked through sudo only when its file changed or its answer is
  * a day old, so the sync does not fill the sudo log every 30 seconds. The
  * relay key pinned for the agent is read on every sync — a root-owned file
@@ -204,10 +207,14 @@ test('sync: reported on the first run and on a change, not when nothing changed,
   const run = (now, sources = linux()) =>
     agent.syncHostFacts(LABEL, calls, [], { now, sources, appHost: probe.options });
 
-  assert.deepEqual(await run(t0), { reported: true, changed: true });
+  assert.deepEqual(await run(t0), { reported: true, changed: true, relayDiffered: false });
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].apphost, { version: 1, node: '22.13.1', relayKid: null });
-  assert.deepEqual(await run(t0 + 30_000), { reported: false, changed: false });
+  assert.deepEqual(await run(t0 + 30_000), {
+    reported: false,
+    changed: false,
+    relayDiffered: false,
+  });
   assert.equal(sent.length, 1);
 
   const state = JSON.parse(await readFile(agent.hostFactsStatePath(LABEL), 'utf-8'));
@@ -218,11 +225,13 @@ test('sync: reported on the first run and on a change, not when nothing changed,
   assert.deepEqual(await run(t0 + 60_000, { ...linux(), nodeVersion: '22.14.0' }), {
     reported: true,
     changed: true,
+    relayDiffered: false,
   });
   // A day later, unchanged: refreshed, not a change.
   assert.deepEqual(await run(t0 + 60_000 + DAY, { ...linux(), nodeVersion: '22.14.0' }), {
     reported: true,
     changed: false,
+    relayDiffered: false,
   });
   assert.equal(sent.length, 3);
 });
@@ -273,12 +282,12 @@ test('sync: a panel without the endpoint is a steady warning, retried on every s
 
   const first = await run(t0);
   const second = await run(t0 + 30_000);
-  assert.deepEqual(first.result, { reported: false, changed: false });
+  assert.deepEqual(first.result, { reported: false, changed: false, relayDiffered: false });
   assert.equal(first.warnings.length, 1);
   assert.match(first.warnings[0], /does not take host facts yet/);
   assert.deepEqual(second.warnings, first.warnings, 'the same text, so the sync log has it once');
   const third = await run(t0 + 60_000);
-  assert.deepEqual(third.result, { reported: true, changed: true });
+  assert.deepEqual(third.result, { reported: true, changed: true, relayDiffered: false });
   assert.deepEqual(third.warnings, []);
   assert.equal(sent.length, 3);
 
@@ -301,15 +310,159 @@ test('sync: the pinned relay key is read every run, without sudo; a re-pin is a 
 
   await run(t0);
   probe.relayKid = KID;
-  assert.deepEqual(await run(t0 + 30_000), { reported: true, changed: true });
+  assert.deepEqual(await run(t0 + 30_000), { reported: true, changed: true, relayDiffered: false });
   assert.equal(probe.probes, 1, 'the helper itself is not asked again');
   assert.equal(probe.kidReads, 2);
   assert.deepEqual([...probe.labels], [LABEL], "the reporting agent's own pin");
   assert.equal(sent.at(-1).apphost.relayKid, KID);
-  assert.deepEqual(await run(t0 + 60_000), { reported: false, changed: false });
+  assert.deepEqual(await run(t0 + 60_000), {
+    reported: false,
+    changed: false,
+    relayDiffered: false,
+  });
   probe.relayKid = 'cd'.repeat(16);
-  assert.deepEqual(await run(t0 + 90_000), { reported: true, changed: true });
+  assert.deepEqual(await run(t0 + 90_000), { reported: true, changed: true, relayDiffered: false });
   assert.equal(sent.at(-1).apphost.relayKid, 'cd'.repeat(16));
+});
+
+test('the hash is the root library’s, which the relay computes too; /agent re-exports it', () => {
+  assert.equal(agent.hostFactsHash, core.hostFactsHash);
+  const facts = {
+    os: 'linux',
+    arch: 'x64',
+    distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
+    node: '22.13.1',
+    systemd: true,
+    apphost: { version: 1, node: '22.13.1', relayKid: KID },
+  };
+  const hash = core.hostFactsHash(facts);
+  assert.match(hash, core.HOST_FACTS_HASH_RE);
+  // The field order is fixed: the same facts, however their keys are ordered, hash alike.
+  const reordered = Object.fromEntries(Object.entries(facts).reverse());
+  reordered.apphost = { relayKid: KID, node: '22.13.1', version: 1 };
+  assert.equal(core.hostFactsHash(reordered), hash);
+  assert.notEqual(core.hostFactsHash({ ...facts, systemd: false }), hash);
+});
+
+test('sync: a relay that holds other facts or none is reported to at once, whatever this agent last reported', async () => {
+  const probe = helperProbe();
+  const { sent, calls } = reporter();
+  const t0 = Date.parse('2026-10-15T10:00:00Z');
+  const run = (now, relayFactsHash, sources = linux()) =>
+    agent.syncHostFacts(LABEL, calls, [], {
+      now,
+      sources,
+      appHost: probe.options,
+      relayFactsHash,
+    });
+
+  // The first report, to a relay that holds none.
+  assert.deepEqual(await run(t0, null), { reported: true, changed: true, relayDiffered: true });
+  const hash = agent.hostFactsHash(sent[0]);
+  // The relay holds them: nothing to do, as before.
+  assert.deepEqual(await run(t0 + 30_000, hash), {
+    reported: false,
+    changed: false,
+    relayDiffered: false,
+  });
+  assert.equal(sent.length, 1);
+
+  // The agent enrolled again on its label: the relay's new record holds
+  // none, while host-facts.json says they were reported a minute ago.
+  const before = JSON.parse(await readFile(agent.hostFactsStatePath(LABEL), 'utf-8'));
+  assert.equal(before.reported.hash, hash);
+  assert.deepEqual(await run(t0 + 60_000, null), {
+    reported: true,
+    changed: false,
+    relayDiffered: true,
+  });
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[1], sent[0]);
+  const after = JSON.parse(await readFile(agent.hostFactsStatePath(LABEL), 'utf-8'));
+  assert.deepEqual(after.reported, { hash, at: new Date(t0 + 60_000).toISOString() });
+  assert.deepEqual(await run(t0 + 90_000, hash), {
+    reported: false,
+    changed: false,
+    relayDiffered: false,
+  });
+
+  // A relay restored from a backup holds the facts of another day.
+  assert.deepEqual(await run(t0 + 120_000, 'ef'.repeat(32)), {
+    reported: true,
+    changed: false,
+    relayDiffered: true,
+  });
+  assert.equal(sent.length, 3);
+
+  // Changed facts to a relay holding the old ones: a change, reported once.
+  const upgraded = { ...linux(), nodeVersion: '22.14.0' };
+  assert.deepEqual(await run(t0 + 150_000, hash, upgraded), {
+    reported: true,
+    changed: true,
+    relayDiffered: true,
+  });
+  assert.deepEqual(await run(t0 + 180_000, agent.hostFactsHash(sent.at(-1)), upgraded), {
+    reported: false,
+    changed: false,
+    relayDiffered: false,
+  });
+  assert.equal(sent.length, 4);
+});
+
+test('sync: a relay that lost them while the report fails: a warning, and reported on the next sync', async () => {
+  const probe = helperProbe();
+  const { sent, calls } = reporter([
+    'ok',
+    new Error('Failed to report host facts. Details: HTTP 503'),
+    'ok',
+  ]);
+  const t0 = Date.parse('2026-10-15T10:00:00Z');
+  const run = async (now, relayFactsHash) => {
+    const warnings = [];
+    const result = await agent.syncHostFacts(LABEL, calls, warnings, {
+      now,
+      sources: linux(),
+      appHost: probe.options,
+      relayFactsHash,
+    });
+    return { result, warnings };
+  };
+
+  await run(t0, null);
+  const failed = await run(t0 + 30_000, null);
+  assert.deepEqual(failed.result, { reported: false, changed: false, relayDiffered: false });
+  assert.match(failed.warnings[0], /could not be reported .*HTTP 503.*retrying/);
+  const state = JSON.parse(await readFile(agent.hostFactsStatePath(LABEL), 'utf-8'));
+  assert.equal(state.reported.at, new Date(t0).toISOString(), 'not recorded as reported');
+  const retried = await run(t0 + 60_000, null);
+  assert.deepEqual(retried.result, { reported: true, changed: false, relayDiffered: true });
+  assert.deepEqual(retried.warnings, []);
+  assert.equal(sent.length, 3);
+});
+
+test('sync: a relay that does not say what it holds is reported to as before; a malformed hash counts as not said', async () => {
+  const probe = helperProbe();
+  const { sent, calls } = reporter();
+  const t0 = Date.parse('2026-10-15T10:00:00Z');
+  const run = (now, options = {}) =>
+    agent.syncHostFacts(LABEL, calls, [], {
+      now,
+      sources: linux(),
+      appHost: probe.options,
+      ...options,
+    });
+  const nothing = { reported: false, changed: false, relayDiffered: false };
+
+  assert.deepEqual(await run(t0), { reported: true, changed: true, relayDiffered: false });
+  assert.deepEqual(await run(t0 + 30_000), nothing);
+  assert.deepEqual(await run(t0 + 60_000, { relayFactsHash: undefined }), nothing);
+  for (const relayFactsHash of ['', 'EF'.repeat(32), 'ef'.repeat(31), 42, {}, ['ef'.repeat(32)]]) {
+    assert.deepEqual(await run(t0 + 90_000, { relayFactsHash }), nothing, String(relayFactsHash));
+  }
+  assert.equal(sent.length, 1);
+  // A day later: refreshed, as ever.
+  assert.deepEqual(await run(t0 + DAY), { reported: true, changed: false, relayDiffered: false });
+  assert.equal(sent.length, 2);
 });
 
 test('relay pin: read as the helper reads it — a root-owned file in a root-owned directory, strictly', async () => {

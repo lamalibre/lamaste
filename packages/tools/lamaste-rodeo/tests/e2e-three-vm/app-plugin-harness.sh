@@ -239,6 +239,22 @@ agent_relay_kid() {
 # agent_epoch — the agent VM's clock, for journal reads after it
 agent_epoch() { agent_exec "date +%s" 2>/dev/null || echo "0"; }
 
+# agent_epoch_after_now — the agent VM's clock once it has moved past the
+# current second (up to ~5 s). A journal read takes whole seconds
+# (`--since @<epoch>`): from this epoch on it holds nothing logged before
+# the call, not even a line of a request answered in the same second.
+agent_epoch_after_now() {
+  local start now tries=0
+  start=$(agent_epoch)
+  now="${start}"
+  while [ "${now}" -le "${start}" ] && [ "${tries}" -lt 25 ]; do
+    sleep 0.2
+    now=$(agent_epoch)
+    tries=$((tries + 1))
+  done
+  echo "${now}"
+}
+
 # unit_journal_since <unit> <epoch> — the unit's messages since then
 unit_journal_since() {
   agent_exec "journalctl -u $1 --since @$2 --no-pager -o cat 2>/dev/null" 2>/dev/null || echo ""
@@ -492,7 +508,7 @@ const PROPS = [
   'LoadState', 'ActiveState', 'SubState', 'UnitFileState', 'MainPID', 'User', 'Group', 'ExecStart',
   'Environment', 'ProtectSystem', 'ProtectHome', 'NoNewPrivileges', 'PrivateTmp',
   'PrivateDevices', 'ReadWritePaths', 'RestrictSUIDSGID', 'LockPersonality', 'MemoryMax',
-  'CapabilityBoundingSet', 'UMask', 'Restart', 'LimitCORE', 'Sockets', 'TriggeredBy',
+  'CapabilityBoundingSet', 'UMask', 'Restart', 'LimitCORE', 'TriggeredBy',
   'Requires', 'After', 'ActiveEnterTimestamp', 'NRestarts',
 ];
 const SOCKET_PROPS = [

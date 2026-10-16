@@ -238,7 +238,9 @@ log_section "A stale revision is refused; /admin/settings is not forwarded"
 RESP=$(settings_api PUT "plugins/${PLUGIN}/settings" '{"revision":0,"values":{"verbose":true}}')
 assert_eq "$(status_of "$RESP")" "409" "An update edited at revision 0, now 1: 409" || true
 assert_json_field "$(body_of "$RESP")" '"\(.code) \(.revision)"' 'revision_mismatch 1' "…revision_mismatch, with the current revision" || true
-EPOCH=$(agent_epoch)
+# The agent half logged that 409 (`settings PUT /admin/settings 409`), which
+# the count below would match: its window opens after the second it fell in.
+EPOCH=$(agent_epoch_after_now)
 for reserved in settings settings/reload Settings %73ettings; do
   assert_eq "$(host_api_get_status "${PLUGIN}/${reserved}")" "404" "GET /api/${PLUGIN}/${reserved} through the forwarder: 404" || true
 done

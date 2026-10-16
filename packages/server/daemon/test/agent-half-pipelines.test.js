@@ -1,7 +1,8 @@
 /**
  * Agent halves Lamaste installs (slice 3), the relay's pipelines and gates:
- * host facts reported by an agent and the eligibility listing (an agent must
- * have pinned the key the relay signs with); app jobs in agent-config —
+ * host facts reported by an agent, the hash of them agent-config tells it
+ * (null when its record holds none), and the eligibility listing (an agent
+ * must have pinned the key the relay signs with); app jobs in agent-config —
  * each signed by the relay for its agent — and their results checked per
  * kind; the install pipeline
  * installing the agent half between reserving and the agent's pre stage,
@@ -29,6 +30,7 @@ import {
   CALLER_ASSERTION_HEADER,
   NonceStore,
   RESPONDER_HEADER,
+  hostFactsHash,
   parseRelayVerifyKey,
   pluginHostCapability,
   verifyAppJobSignature,
@@ -337,8 +339,10 @@ before(async () => {
     return reply.code(403).send({ error: 'forbidden' });
   });
   const { default: pluginRoutes } = await import('../src/routes/management/plugins.js');
+  const { default: tunnelRoutes } = await import('../src/routes/management/tunnels.js');
   await app.register(agentsRoutes, { prefix: '/api' });
   await app.register(pluginRoutes, { prefix: '/api' });
+  await app.register(tunnelRoutes, { prefix: '/api' });
   await app.ready();
 });
 
@@ -437,6 +441,69 @@ test('eligibility: listed per enrolled agent with reasons; a hand-installed half
   // Out of the way of the tests below.
   const registry = await lib.loadAgentRegistry();
   registry.agents.find((a) => a.label === 'vm4').revoked = true;
+  await lib.saveAgentRegistry(registry);
+});
+
+test('host facts: agent-config tells the agent the hash of those stored for it — null when none, never to an admin', async () => {
+  const agentConfig = (headers, query = '') =>
+    app.inject({ method: 'GET', url: `/api/tunnels/agent-config${query}`, headers });
+  const sync = async (label) => {
+    const res = await agentConfig({ 'x-test-role': 'agent', 'x-test-label': label });
+    assert.equal(res.statusCode, 200);
+    return res.json();
+  };
+
+  // What the agent computes over its own facts (core's root hostFactsHash).
+  assert.equal((await sync('vm1')).hostFactsHash, hostFactsHash(LINUX));
+  assert.equal((await sync('mac1')).hostFactsHash, hostFactsHash(MACOS));
+  // Never reported: null, not an absent field — absent means a relay that does not say.
+  const vm3 = await sync('vm3');
+  assert.ok(Object.hasOwn(vm3, 'hostFactsHash'));
+  assert.equal(vm3.hostFactsHash, null);
+
+  // An administrator's ?agent= call is not the agent's own view; neither is a plugin-agent's.
+  const admin = await agentConfig({ 'x-test-role': 'admin' }, '?agent=vm1');
+  assert.equal(admin.statusCode, 200);
+  assert.equal(admin.json().agentLabel, 'vm1');
+  assert.equal(Object.hasOwn(admin.json(), 'hostFactsHash'), false);
+  const domainOnly = await agentConfig({ 'x-test-role': 'admin' });
+  assert.equal(Object.hasOwn(domainOnly.json(), 'hostFactsHash'), false);
+  const pluginAgent = await agentConfig({
+    'x-test-role': 'plugin-agent',
+    'x-test-label': 'plugin-agent:vm1:x',
+  });
+  assert.equal(pluginAgent.statusCode, 200);
+  assert.equal(Object.hasOwn(pluginAgent.json(), 'hostFactsHash'), false);
+
+  // Enrolled again on its label: the new record holds none until the agent reports again.
+  await enroll('vm5');
+  await lib.setAgentHostFacts('vm5', LINUX);
+  assert.equal((await sync('vm5')).hostFactsHash, hostFactsHash(LINUX));
+  let registry = await lib.loadAgentRegistry();
+  registry.agents.find((a) => a.label === 'vm5').revoked = true;
+  await lib.saveAgentRegistry(registry);
+  await enroll('vm5');
+  assert.equal((await sync('vm5')).hostFactsHash, null);
+  const put = await app.inject({
+    method: 'PUT',
+    url: '/api/agents/me/host-facts',
+    headers: { 'x-test-role': 'agent', 'x-test-label': 'vm5' },
+    payload: LINUX,
+  });
+  assert.equal(put.statusCode, 200);
+  assert.equal((await sync('vm5')).hostFactsHash, hostFactsHash(LINUX));
+
+  // Stored facts that no longer parse (another version wrote them) read as none.
+  const db = await lib.getStateDb();
+  db.prepare('UPDATE agents SET host_facts = ? WHERE label = ?').run(
+    JSON.stringify({ ...LINUX, kernel: '6.8' }),
+    'vm5',
+  );
+  assert.equal((await sync('vm5')).hostFactsHash, null);
+
+  // Out of the way of the tests below.
+  registry = await lib.loadAgentRegistry();
+  registry.agents.find((a) => a.label === 'vm5').revoked = true;
   await lib.saveAgentRegistry(registry);
 });
 

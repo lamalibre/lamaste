@@ -220,6 +220,10 @@ export type { AgentHalfDeclaration, AgentHalfPreview, AgentHalfSpec } from './ag
 export { hostEligibility } from './host-eligibility.js';
 export type { HostEligibility, HostEligibilityRelay } from './host-eligibility.js';
 
+// The hash of an agent's host facts, which the agent and the relay compare
+// (the relay's agent-config answer carries the hash of the facts it stores)
+export { HOST_FACTS_HASH_RE, hostFactsHash } from './host-facts.js';
+
 // Relay-signed app jobs: what the agent's root helper verifies before it
 // installs, switches or removes an agent half
 export {
