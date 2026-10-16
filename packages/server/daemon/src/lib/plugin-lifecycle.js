@@ -13,8 +13,10 @@
  *   with `phase: "upgrade"` around installing it — the new agent half
  *   first, then the relay package — and a failure restores the previous
  *   version on both sides. Settings are outside the approval: the preview
- *   lists how the settings schema changes (`pendingUpdate.settings`), and
- *   the relay re-reads the agent half's settings after the update.
+ *   lists how the settings schema changes (`pendingUpdate.settings`),
+ *   auto-approve does not cover a version that turns a secret setting into
+ *   a plain one, and the relay re-reads the agent half's settings after
+ *   the update.
  */
 
 import {
@@ -185,23 +187,72 @@ export async function uninstallPluginWithHosting(
  * @returns {string[]}
  */
 export function autoApproveWithheld(before, after) {
+  return agentHalfWithheld(before, after).map((reason) => reason.message);
+}
+
+/**
+ * {@link autoApproveWithheld}, each reason with its stable code (what the
+ * audit entry records beside the sentence): `agent-half.added`,
+ * `agent-half.package`, `agent-half.system-packages`, `agent-half.entry`,
+ * `agent-half.memory-max`.
+ *
+ * @returns {Array<{ code: string, message: string }>}
+ */
+function agentHalfWithheld(before, after) {
   if (!after) return [];
-  if (!before) return ['it brings an agent half Lamaste installs'];
+  if (!before) {
+    return [{ code: 'agent-half.added', message: 'it brings an agent half Lamaste installs' }];
+  }
   const reasons = [];
   if (after.package !== before.package) {
-    reasons.push(`its agent package changes (${before.package} → ${after.package})`);
+    reasons.push({
+      code: 'agent-half.package',
+      message: `its agent package changes (${before.package} → ${after.package})`,
+    });
   }
   const added = after.systemPackages.filter((p) => !before.systemPackages.includes(p));
-  if (added.length > 0) reasons.push(`it adds system packages (${added.join(', ')})`);
+  if (added.length > 0) {
+    reasons.push({
+      code: 'agent-half.system-packages',
+      message: `it adds system packages (${added.join(', ')})`,
+    });
+  }
   if (after.service.entry !== before.service.entry) {
-    reasons.push(`its service entry changes (${before.service.entry} → ${after.service.entry})`);
+    reasons.push({
+      code: 'agent-half.entry',
+      message: `its service entry changes (${before.service.entry} → ${after.service.entry})`,
+    });
   }
   if (after.service.memoryMax !== before.service.memoryMax) {
-    reasons.push(
-      `its service memory limit changes (${before.service.memoryMax ?? 'none'} → ${after.service.memoryMax ?? 'none'})`,
-    );
+    reasons.push({
+      code: 'agent-half.memory-max',
+      message: `its service memory limit changes (${before.service.memoryMax ?? 'none'} → ${after.service.memoryMax ?? 'none'})`,
+    });
   }
   return reasons;
+}
+
+/**
+ * Why auto-approve does not cover a version because of how it changes the
+ * settings schema: fields that are secrets now and plain values after it
+ * (`settings.secret-to-plain`). Their secrets are dropped on both sides,
+ * never moved — but whatever an administrator types into them next is kept
+ * on the relay and shown in clear, which a plugin release must not decide
+ * on its own. Settings are outside the approval digest; this only keeps
+ * auto-approve from covering such an update.
+ *
+ * @param {import('@lamalibre/lamaste').SettingsSchemaDiff | null} diff
+ * @returns {Array<{ code: string, message: string }>}
+ */
+export function settingsWithheld(diff) {
+  const keys = diff?.secretToPlain ?? [];
+  if (keys.length === 0) return [];
+  return [
+    {
+      code: 'settings.secret-to-plain',
+      message: `it turns secret settings into plain ones (${keys.join(', ')}) — what is typed into them next is kept on the relay and shown in clear`,
+    },
+  ];
 }
 
 /**
@@ -316,9 +367,11 @@ async function stageVersion(plugin, requestedVersion, record) {
 
 /**
  * How a staged version changes the settings schema, for the update's
- * preview: fields added, removed and retyped (a retyped field's value is
- * dropped on both sides, never converted) and the fields the plugin will
- * need filled — null when neither version declares settings.
+ * preview (core's typed `settingsSchemaDiff`): fields added and removed
+ * with their types, retyped ones `from` → `to` (a retyped field's value is
+ * dropped on both sides, never converted), the fields the plugin will need
+ * filled, and the secrets that become plain values (`secretToPlain`, which
+ * withholds auto-approve) — null when neither version declares settings.
  *
  * @param {object} plugin the installed registry entry
  * @param {object} manifest the staged version's manifest
@@ -390,10 +443,16 @@ export async function updatePlugin(
       approvedBy = actor;
     } else {
       // Auto-approve covers a new version of the same agent half, never one
-      // that changes what runs as root on the agent.
-      const withheld = state?.autoApprove
-        ? autoApproveWithheld(installedAgentHalf(plugin), staged.agentHalf)
+      // that changes what runs as root on the agent, nor one that turns a
+      // secret setting into a plain one.
+      const settings = settingsPreview(plugin, staged.manifest);
+      const withheldReasons = state?.autoApprove
+        ? [
+            ...agentHalfWithheld(installedAgentHalf(plugin), staged.agentHalf),
+            ...settingsWithheld(settings),
+          ]
         : [];
+      const withheld = withheldReasons.map((reason) => reason.message);
       if (state?.autoApprove && withheld.length === 0) {
         approvedBy = 'auto-approve';
         autoApproved = true;
@@ -408,7 +467,7 @@ export async function updatePlugin(
           agentHalf: staged.agentHalf
             ? agentHalfPreview(derivePluginRoute(plugin.name), staged.agentHalf)
             : null,
-          settings: settingsPreview(plugin, staged.manifest),
+          settings,
           ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
         };
         await setPendingUpdate(name, pendingUpdate);
@@ -421,6 +480,7 @@ export async function updatePlugin(
               digest: staged.digest,
               version: staged.version,
               reasons: withheld,
+              codes: withheldReasons.map((reason) => reason.code),
               requestedBy: actor,
             },
           });

@@ -37,6 +37,7 @@ import {
   startHostedPluginHealthMonitor,
   stopHostedPluginHealthMonitor,
 } from './lib/plugin-hosting.js';
+import { refreshHostedPluginSettings } from './lib/plugin-settings.js';
 import { syncOidcClients } from './lib/plugin-oidc.js';
 import { ensureRelaySigningKey } from './lib/relay-signing.js';
 import { reconcileSiteVhosts, reconcileTunnelVhosts } from './lib/vhost-reconcile.js';
@@ -228,6 +229,14 @@ async function start() {
 
   // --- Health of hosted agent-hosted plugins (every 10s; idle without hostings) ---
   startHostedPluginHealthMonitor(server.log);
+  // The monitor resumes from the persisted health, so a plugin that stayed
+  // up across the restart sees no transition that would re-read its
+  // settings: read them once now — one plugin after another, best effort —
+  // so a change made while the panel was down is seen (and, when Lamaste
+  // did not make it, reported).
+  refreshHostedPluginSettings(server.log).catch((err) => {
+    server.log.warn({ err: err.message }, 'Startup refresh of plugin settings failed');
+  });
 
   // --- Periodic ticket instance liveness check (every 60s) ---
   const livenessInterval = setInterval(() => {

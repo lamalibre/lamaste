@@ -21,12 +21,15 @@ import { useToast } from './Toast.jsx';
 import { errorMessage, refusalOf } from '../lib/errorMessage.js';
 import { settingsHostingOutage, settingsReadOnlyReason } from '../lib/hostingState.js';
 import {
+  CREDENTIAL_HINT,
   buildSettingsUpdate,
   canClear,
   changedKeys,
   initialInputs,
   initialSecretActions,
+  looksLikeCredential,
   needsValue,
+  secretMaskSupported,
   secretState,
   secretStatusText,
   settingsErrorsOf,
@@ -38,6 +41,17 @@ const INPUT =
 
 /** How often read-only settings are read again, to open the form once its hosting is up. */
 const READ_ONLY_POLL_MS = 10_000;
+
+/**
+ * Whether this browser masks a secret's text input (`-webkit-text-security`;
+ * every current browser — Firefox since 114). Read once: it does not change.
+ */
+const SECRET_MASKED = secretMaskSupported(typeof CSS === 'undefined' ? undefined : CSS);
+
+/** A secret's text never leaves its input by the clipboard, as a password input's does not. */
+function refuseClipboard(e) {
+  e.preventDefault();
+}
 
 const SMALL_BUTTON =
   'flex items-center gap-1.5 rounded bg-zinc-700 px-2 py-0.5 text-zinc-300 hover:bg-zinc-600 disabled:opacity-50';
@@ -108,10 +122,13 @@ function FieldRow({ id, field, missing, error, children }) {
 
 /**
  * The form for one revision of a plugin's settings. Non-secret inputs are
- * controlled; a secret is typed into a password input that is never
- * prefilled and whose value never enters React state — the form reads it
- * when it submits, empties the input, and hands the update to `onSubmit`.
- * Only the fields the administrator changed are sent.
+ * controlled; a secret is typed into an uncontrolled, masked text input —
+ * never a password input, which browsers offer to save in their password
+ * managers (`autocomplete="new-password"` only stops autofill) — that is
+ * never prefilled, keeps no form history (`autocomplete="off"`, no name),
+ * cannot be copied out and whose value never enters React state: the form
+ * reads it once when it submits, empties the input, and hands the update to
+ * `onSubmit`. Only the fields the administrator changed are sent.
  */
 function SettingsForm({
   pluginName,
@@ -183,16 +200,25 @@ function SettingsForm({
     switch (field.type) {
       case 'string':
         return (
-          <input
-            id={id}
-            type="text"
-            value={inputs[key]}
-            onChange={(e) => setInput(key, e.target.value)}
-            placeholder={field.default !== undefined ? `Default: ${field.default}` : undefined}
-            spellCheck={false}
-            aria-invalid={error ? true : undefined}
-            className={inputClass(error)}
-          />
+          <>
+            <input
+              id={id}
+              type="text"
+              value={inputs[key]}
+              onChange={(e) => setInput(key, e.target.value)}
+              placeholder={field.default !== undefined ? `Default: ${field.default}` : undefined}
+              spellCheck={false}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={looksLikeCredential(field) ? `${id}-hint` : undefined}
+              className={inputClass(error)}
+            />
+            {looksLikeCredential(field) && (
+              <p id={`${id}-hint`} className="mt-1 flex items-start gap-1 text-yellow-400/90">
+                <Info size={11} className="mt-0.5 shrink-0" />
+                {CREDENTIAL_HINT}
+              </p>
+            )}
+          </>
         );
       case 'integer':
       case 'number':
@@ -290,25 +316,39 @@ function SettingsForm({
               )}
             </div>
             {!readOnly && action === 'replace' && (
-              <input
-                id={id}
-                ref={secretRef(key)}
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                placeholder={state.set ? 'New value' : 'Value'}
-                onChange={(e) => {
-                  const filled = e.target.value !== '';
-                  setSecretFilled((prev) =>
-                    prev[key] === filled ? prev : { ...prev, [key]: filled },
-                  );
-                  onEdit(key);
-                }}
-                aria-invalid={error ? true : undefined}
-                data-1p-ignore
-                data-lpignore="true"
-                className={inputClass(error)}
-              />
+              <>
+                <input
+                  id={id}
+                  ref={secretRef(key)}
+                  type="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  placeholder={state.set ? 'New value' : 'Value'}
+                  onChange={(e) => {
+                    const filled = e.target.value !== '';
+                    setSecretFilled((prev) =>
+                      prev[key] === filled ? prev : { ...prev, [key]: filled },
+                    );
+                    onEdit(key);
+                  }}
+                  onCopy={refuseClipboard}
+                  onCut={refuseClipboard}
+                  aria-invalid={error ? true : undefined}
+                  data-1p-ignore
+                  data-lpignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
+                  className={`${inputClass(error)} [-webkit-text-security:disc]`}
+                />
+                {!SECRET_MASKED && (
+                  <p className="text-yellow-400/90">
+                    This browser cannot mask the value: it shows as you type it. Use a current
+                    browser to keep it out of sight.
+                  </p>
+                )}
+              </>
             )}
           </div>
         );
@@ -429,8 +469,10 @@ function SettingsPanel({ pluginName }) {
         reload();
         return;
       }
-      if (code === 'hosting_offline' || code === 'timeout') {
-        // Offline now, or no answer in time — the change may have been
+      if (code === 'hosting_offline' || code === 'timeout' || code === 'unauthenticated') {
+        // Offline now, no answer in time, or an answer that was not the
+        // agent half's (something else on the tunnel's port, or an agent
+        // half built against an older core) — the change may have been
         // stored: the settings as they are now say which.
         setFormError(errorMessage(err));
         reload();
@@ -557,7 +599,7 @@ function SettingsPanel({ pluginName }) {
  * declares settings (the plugin list's `settings` summary). Collapsed, it
  * shows whether the plugin is configured; opened, the form, generated from
  * the fields: text, number, checkbox and choice inputs, and secrets as
- * password inputs with when they were set, Replace and — for an optional
+ * masked inputs with when they were set, Replace and — for an optional
  * one — Clear.
  */
 export default function PluginSettings({ plugin }) {

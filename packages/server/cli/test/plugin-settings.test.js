@@ -26,6 +26,7 @@ import {
   parseConfigureArgs,
   parseSecretsJson,
   parseTextAnswer,
+  settingsDiffLines,
   settingsReadOnlyReason,
   settingsRefusal,
   settingsSourceText,
@@ -269,13 +270,15 @@ test('a value that is not one of its field is refused by key, with no value in t
     ['endpoint', 'x'.repeat(21), 'Must be at most 20 characters'],
     ['retries', '', 'Is empty — use --clear to put it back to its default'],
     ['endpoint', '', 'Is empty — this setting needs a value'],
-    ['nope', '1', 'Unknown setting'],
   ];
   for (const [key, raw, message] of cases) {
     const built = buildSettingsUpdate(view(), { sets: [{ key, raw }] });
     assert.equal(built.ok, false, `${key}=${raw}`);
     assert.equal(built.errors[key], message, `${key}=${raw}`);
   }
+  assert.deepEqual(buildSettingsUpdate(view(), { sets: [{ key: 'nope', raw: '1' }] }).errors, {
+    _: '1 unknown setting',
+  });
   // A string's pattern is left to the agent half (the relay never runs a plugin's regex).
   assert.equal(
     buildSettingsUpdate(view(), { sets: [{ key: 'schedule', raw: 'not a schedule' }] }).ok,
@@ -287,7 +290,7 @@ test('--clear of a field that must keep a value is refused; a key may be named o
   const built = buildSettingsUpdate(view(), { clears: ['apiKey', 'endpoint', 'nope'] });
   assert.deepEqual(built, {
     ok: false,
-    errors: { nope: 'Unknown setting', apiKey: 'Is required', endpoint: 'Is required' },
+    errors: { _: '1 unknown setting', apiKey: 'Is required', endpoint: 'Is required' },
   });
   const twice = buildSettingsUpdate(view(), {
     sets: [{ key: 'retries', raw: '1' }],
@@ -314,8 +317,7 @@ test('the secrets on stdin: only secret keys, strings or null, checked like any 
     ok: false,
     errors: {
       retries: 'Is not a secret — give it with --set',
-      nope: 'Unknown setting',
-      _: 'A key on stdin is not a setting name',
+      _: '2 unknown settings',
       webhookToken: 'Must be at most 64 characters',
       apiKey: 'Must not be empty',
     },
@@ -327,6 +329,22 @@ test('the secrets on stdin: only secret keys, strings or null, checked like any 
   assert.deepEqual(buildSettingsUpdate(view(), { secrets: { apiKey: null } }).errors, {
     apiKey: 'Is required',
   });
+});
+
+test('unknown names are counted, never named — a token pasted where a key belongs never comes back', () => {
+  // Token-shaped, and a valid setting name: it would pass the key check.
+  const TOKENISH = 'ghpA1b2C3d4E5f6G7h8I9j0KlMnOpQr';
+  const built = buildSettingsUpdate(view(), {
+    sets: [
+      { key: TOKENISH, raw: '1' },
+      { key: TOKENISH, raw: '2' },
+    ],
+    clears: ['alsoUnknown'],
+    secrets: { [TOKENISH]: SECRET, [`${SECRET} `]: SECRET },
+  });
+  assert.deepEqual(built, { ok: false, errors: { _: '5 unknown settings' } });
+  assert.ok(!messagesOf(built).includes(TOKENISH));
+  assert.ok(!messagesOf(built).includes(SECRET));
 });
 
 test('an interactive text answer: empty puts the field back to its default, else parsed and checked', () => {
@@ -449,6 +467,51 @@ test('a refusal says what to do: each field, a stale revision, an offline hostin
   assert.deepEqual(settingsRefusal(offline, 'fx', NOW).details, [
     'The agent half is not responding since 2026-10-16T11:59:00.000Z (1m ago).',
   ]);
+  const unauthenticated = Object.assign(new Error('did not authenticate its answer'), {
+    code: 'unauthenticated',
+  });
+  const explained = settingsRefusal(unauthenticated, 'fx', NOW).details;
+  assert.match(explained[0], /may hold the plugin's internal tunnel port/);
+  assert.match(explained[0], /built against an older @lamalibre\/lamaste and must be rebuilt/);
+  assert.equal(
+    explained[1],
+    'See what the agent half stored with: lamaste-server plugins settings fx',
+  );
+});
+
+test('the update preview: the typed settings diff, and a warning for secrets that become plain', () => {
+  assert.deepEqual(settingsDiffLines(null), []);
+  assert.deepEqual(
+    settingsDiffLines({ added: [], removed: [], retyped: [], newRequired: [], secretToPlain: [] }),
+    [],
+  );
+  const lines = settingsDiffLines({
+    added: [{ key: 'endpoint', type: 'string' }],
+    removed: [{ key: 'verbose', type: 'boolean' }],
+    retyped: [
+      { key: 'retries', from: 'integer', to: 'string' },
+      { key: 'token', from: 'secret', to: 'string' },
+    ],
+    newRequired: ['retries', 'endpoint'],
+    secretToPlain: ['token'],
+  });
+  assert.deepEqual(lines, [
+    { text: 'added: endpoint (string)', warning: false },
+    { text: 'removed: verbose (boolean) — their values are dropped', warning: false },
+    {
+      text: 'type changed: retries (integer → string), token (secret → string) — their values are dropped, not converted',
+      warning: false,
+    },
+    { text: 'newly required: retries, endpoint — to be set after the update', warning: false },
+    {
+      text: 'secrets become plain values: token — what is typed into them next is stored on the relay and shown in clear',
+      warning: true,
+    },
+  ]);
+  // Whatever the panel sent, nothing a terminal would act on.
+  for (const line of settingsDiffLines({ added: [{ key: `x${NASTY}`, type: 'string' }] })) {
+    assertPrintable(line.text, 'a diff line');
+  }
 });
 
 // ---------------------------------------------------------------------------

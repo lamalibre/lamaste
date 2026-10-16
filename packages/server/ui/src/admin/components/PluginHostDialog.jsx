@@ -1,9 +1,19 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, Loader2, Server, ShieldAlert, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDown,
+  KeyRound,
+  Loader2,
+  Server,
+  ShieldAlert,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { explainRefusal } from '../lib/pluginRefusal.js';
+import { CREDENTIAL_HINT, fieldTypeText, looksLikeCredential } from '../lib/pluginSettings.js';
 import { AgentHalfView } from './PluginLifecycle.jsx';
 import { HostFactsSummary } from './HostFacts.jsx';
 import { pushWindowOpen, scrollToPushInstall } from './PushInstallSection.jsx';
@@ -69,12 +79,58 @@ const RefusalNotice = forwardRef(function RefusalNotice({ refusal, pluginName, o
 });
 
 /**
+ * The settings a plugin declares, with their types — what an administrator
+ * fills in once it is hosted. Hosting itself takes none: the agent half
+ * starts without them.
+ */
+function DeclaredSettings({ query }) {
+  const fields = query.data?.fields;
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3">
+      <p className="mb-1 flex items-center gap-1.5 font-medium text-zinc-300">
+        <SlidersHorizontal size={12} className="text-cyan-400" />
+        Settings it asks for
+      </p>
+      <p className="mb-2 text-zinc-500">
+        Hosting takes no settings: the agent half starts without them, and you fill them in under
+        Settings on the plugin&apos;s card once it is hosted. Secrets are kept by the agent half
+        alone; every other value is also kept on the relay and shown in clear.
+      </p>
+      {Array.isArray(fields) ? (
+        <ul className="space-y-1">
+          {fields.map((field) => (
+            <li key={field.key} className="flex flex-wrap items-baseline gap-x-2">
+              {field.type === 'secret' && (
+                <KeyRound size={11} className="shrink-0 self-center text-cyan-400" />
+              )}
+              <span className="text-zinc-300">{field.label}</span>
+              <span className="font-mono text-zinc-600">{field.key}</span>
+              <span className={field.type === 'secret' ? 'text-cyan-400' : 'text-zinc-500'}>
+                {fieldTypeText(field)}
+              </span>
+              {looksLikeCredential(field) && (
+                <span className="w-full text-yellow-400/90">{CREDENTIAL_HINT}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : query.isError ? (
+        <p className="text-red-400">{errorMessage(query.error)}</p>
+      ) : (
+        <Loader2 size={12} className="animate-spin text-zinc-500" />
+      )}
+    </div>
+  );
+}
+
+/**
  * Host an agent-hosted plugin on one of the enrolled machine agents. Lists
  * them with what each reported about its host; the ones that cannot host
  * the plugin are disabled with the reasons (its `agent.requires` and, when
  * Lamaste installs the agent half, what installing it needs). For an agent
  * half Lamaste installs, shows what goes onto the agent and each agent's
- * push-install window, and explains a refused hosting in place.
+ * push-install window, and explains a refused hosting in place. A plugin
+ * that declares settings shows its fields with their types.
  *
  * `onHost(name, agentLabel, { onSuccess, onError })` starts the hosting.
  */
@@ -111,6 +167,15 @@ export default function PluginHostDialog({ plugin, onHost, onClose, isActing }) 
     queryKey: ['plugin-hooks', plugin.name],
     queryFn: () => client.getPluginHooks(plugin.name),
     enabled: lamasteInstalls,
+  });
+  // The plugin list carries only a summary of the settings; their fields
+  // come with the settings view (the schema alone while it is not hosted).
+  const declaresSettings = plugin.settings != null;
+  const settingsQuery = useQuery({
+    queryKey: ['plugin-settings', plugin.name],
+    queryFn: () => client.getPluginSettings(plugin.name),
+    enabled: declaresSettings,
+    refetchOnWindowFocus: false,
   });
 
   const candidates = eligibilityQuery.data?.agents ?? [];
@@ -180,6 +245,8 @@ export default function PluginHostDialog({ plugin, onHost, onClose, isActing }) 
               )}
             </div>
           )}
+
+          {declaresSettings && <DeclaredSettings query={settingsQuery} />}
 
           {approvalPending && (
             <p className="flex items-start gap-1.5 text-yellow-400">

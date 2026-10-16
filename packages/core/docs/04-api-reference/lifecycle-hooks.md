@@ -70,7 +70,7 @@ Relay hooks are code Lamaste runs on the relay, and an [agent half Lamaste insta
 
 - Installing a plugin with relay hooks or an agent half Lamaste installs leaves them **pending**: the plugin can be enabled, but not hosted, and its forwarded API answers `503 { code: "hooks_not_approved" }` until the approval.
 - **Approving** names the digest the administrator saw; if what the version brings changed meanwhile the panel answers `409` with the current digest.
-- **Updating** a plugin whose new version brings another hook set or agent half waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log — except an agent half change that runs more as root: an agent half where there was none, another agent package, added system packages, another service entry or memory limit ([withheld](agent-hosted-plugins.md#approval)).
+- **Updating** a plugin whose new version brings another hook set or agent half waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log — except an agent half change that runs more as root (an agent half where there was none, another agent package, added system packages, another service entry or memory limit) and a version that turns a secret setting into a plain one, whose next value the relay would keep in clear ([withheld](agent-hosted-plugins.md#approval)).
 - Agent hooks are the plugin's own code on its own agent and need no approval. Shared hooks are part of the approved set by name and settings; their rules ride Lamaste releases (see below).
 
 Every approval, auto-approve change and auto-approval is recorded in the [audit log](audit-and-notifications.md) with the administrator certificate's serial.
@@ -132,7 +132,7 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 }
 ```
 
-`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, autoApproveWithheld }` while an update waits — `settings` lists how the version changes the plugin's [settings schema](agent-hosted-plugins.md#in-the-plugin-list-and-the-update-preview) (`{ added, removed, retyped, newRequired }`, `null` when neither version declares settings; not part of the digest), and `autoApproveWithheld` why auto-approve did not cover it (`null` otherwise).
+`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, autoApproveWithheld }` while an update waits — `settings` lists how the version changes the plugin's [settings schema](agent-hosted-plugins.md#in-the-plugin-list-and-the-update-preview) (`{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key, from, to }], newRequired: [key], secretToPlain: [key] }`, `null` when neither version declares settings; not part of the digest), and `autoApproveWithheld` why auto-approve did not cover it, in sentences (`null` otherwise).
 
 ### `POST /api/plugins/:name/hooks/approve`
 
@@ -266,7 +266,7 @@ Every decision may carry `effects` (at most 10): `{ type: 'audit', event, data? 
 
 ### Agent hooks
 
-The agent half answers `POST /admin/hooks/<stage>` (body `{ stage, input }`, answer `{ ok: true, output? }` or `{ ok: false, reason }`). `createAgentHookHandler` from `@lamalibre/lamaste/agent` does the checking — the caller assertion must name Lamaste itself (`{ type: 'lamaste' }`), which no forwarded caller can, and the forwarder never reaches `/admin/hooks`:
+The agent half answers `POST /admin/hooks/<stage>` (body `{ stage, input }`, answer `{ ok: true, output? }` or `{ ok: false, reason }`). `createAgentHookHandler` from `@lamalibre/lamaste/agent` does the checking — the caller assertion must name Lamaste itself (`{ type: 'lamaste' }`), which no forwarded caller can, and bind the SHA-256 of the exact body (`wrong_body` otherwise), so it needs the body **as received** (a `Buffer` or a string; a parsed object is refused `400` "The body must be passed as received"); the forwarder never reaches `/admin/hooks*`. Send the `status`, `headers` and `bodyText` it returns, `bodyText` byte for byte: its `X-Lamalibre-Responder` header signs those bytes, and the relay counts a hook answer without a valid one as a failure (`unauthenticated`) — see [Authentication between the relay and the agent half](agent-hosted-plugins.md#authentication-between-the-relay-and-the-agent-half):
 
 ```js
 import { createAgentHookHandler, createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
@@ -279,8 +279,9 @@ const hooks = createAgentHookHandler({
     'tunnel:down': () => queueLocally(),
   },
 });
-// in the agent half's router, for POST /admin/hooks/*:
-const { status, body } = await hooks.handle({ method, url, headers, body: rawBody });
+// in the agent half's router, for POST /admin/hooks/* (the body as received):
+const out = await hooks.handle({ method, url, headers, body: rawBody });
+res.writeHead(out.status, out.headers).end(out.bodyText);
 ```
 
 The relay calls agent hooks through the tunnel while it exists. Before the tunnel is granted and after it is removed, the relay lists an **agent job** in `GET /api/tunnels/agent-config` (`agentJobs: [{ id, route, kind: "hook", stage, input, timeoutMs, deadlineAt }]`); the agent's sync calls the agent half on its own loopback with the installation secret it holds and reports `POST /api/agents/me/jobs/:id/result` (`{ ok: true, decision }` or `{ ok: false, error }`; hosting agent only, once). A job whose agent half does not answer yet waits for the next sync, until its deadline (timeout plus 90 s).

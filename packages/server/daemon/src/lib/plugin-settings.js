@@ -16,17 +16,33 @@
  * options — never `pattern`, which only the form and the agent half
  * evaluate, so a manifest's regular expression cannot stall the panel) and
  * sends it through the internal tunnel (`PUT /admin/settings`, caller
- * `lamaste`), answering with the agent half's verdict. A secret exists on
- * the relay only in the memory of that request: what the panel logs,
- * stores, audits and answers is built from key names and the agent half's
- * state, never from the request body, and no reference to it outlives the
- * request.
+ * `lamaste`), each secret sealed to that one request (core's
+ * `settings-secrets`), and answers with the agent half's verdict — once the
+ * answer has authenticated itself as the agent half's. A secret exists on
+ * the relay in clear only in the memory of that request: what the panel
+ * logs, stores, audits and answers is built from key names and the agent
+ * half's state, never from the request body, and no reference to it
+ * outlives the request.
  *
  * The cache is refreshed after a hosting succeeds, after an update, when the
- * health monitor sees the plugin come up, on every live read and from the
- * answer to every change; it goes when the hosting is removed and when the
- * plugin is uninstalled. Reads and writes of one plugin's settings are
- * serialized, so a slow read cannot put back what a change replaced.
+ * health monitor sees the plugin come up, once when the panel starts, on
+ * every live read and from the answer to every change; it goes when the
+ * hosting is removed and when the plugin is uninstalled. Reads and writes of
+ * one plugin's settings are serialized, so a slow read cannot put back what
+ * a change replaced. When the installed schema changes, the values and
+ * secrets whose field changed type leave the cache in the transaction that
+ * writes the plugin's row ({@link prunedSettingsCache}).
+ *
+ * Provenance: only Lamaste writes the settings (the forwarder reserves
+ * `/admin/settings*`), so every revision of the agent half's should be one
+ * Lamaste wrote. The cache remembers the last revision it wrote or adopted
+ * (`lamaste_revision`); a read that finds another found a change made
+ * outside Lamaste — by whatever holds the installation secret on the agent,
+ * or files put back there — and records it (audit
+ * `plugin.settings.changed-outside-lamaste` and a notification, key names
+ * only) before adopting it. A change whose answer never authenticated (a
+ * timeout, say) is remembered by its key names, so finding it stored later
+ * is recorded as the administrator's change, not as one made outside.
  */
 
 import {
@@ -37,6 +53,7 @@ import {
   callAgentHalf,
   effectiveSettingsValues,
   encryptSettingsSecret,
+  normalizeSettingsErrorMessage,
   parseAgentHalfSettingsState,
   settingsStatus,
   validateSettingsUpdate,
@@ -45,7 +62,8 @@ import { pluginHostingPhase, signingSecretFor } from '@lamalibre/lamaste/server'
 import { httpError } from './app-error.js';
 import { agentLastSeenAt } from './agent-presence.js';
 import { recordAuditBestEffort } from './audit.js';
-import { findPlugin } from './plugins.js';
+import { notifyAdminsBestEffort } from './notifications.js';
+import { findPlugin, readPlugins } from './plugins.js';
 import { getPluginOperation, isPluginOperationRunning } from './plugin-operations.js';
 import { getStateDb } from './state-db.js';
 
@@ -55,10 +73,13 @@ export const SETTINGS_READ_TIMEOUT_MS = 5_000;
 /** How long the agent half may take to store a change. */
 export const SETTINGS_WRITE_TIMEOUT_MS = 15_000;
 
-/** The longest message of the agent half's that is passed on. */
-const AGENT_HALF_MESSAGE_MAX = 300;
+/** The audit action of a change of the agent half's settings that Lamaste did not make. */
+export const SETTINGS_CHANGED_OUTSIDE_ACTION = 'plugin.settings.changed-outside-lamaste';
 
 const UPDATE_KEYS = new Set(['revision', 'values', 'secrets']);
+
+/** The key-name lists of a change, as its audit entry names them. */
+const CHANGE_LISTS = ['changed', 'cleared', 'secretsSet', 'secretsCleared'];
 
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -70,6 +91,10 @@ function parseJson(text, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function isRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 /**
@@ -92,6 +117,19 @@ export function settingsBlockOf(plugin) {
 // ---------------------------------------------------------------------------
 
 /**
+ * A change Lamaste sent whose answer never authenticated — key names only.
+ *
+ * @typedef {object} UnconfirmedChange
+ * @property {number} revision the revision the agent half would be at had it stored it
+ * @property {string} actor
+ * @property {string} [certSerial]
+ * @property {string[]} changed
+ * @property {string[]} cleared
+ * @property {string[]} secretsSet
+ * @property {string[]} secretsCleared
+ */
+
+/**
  * @typedef {object} SettingsCache
  * @property {number} schemaVersion the agent half's settings schema version
  * @property {number} revision the agent half's revision
@@ -100,7 +138,27 @@ export function settingsBlockOf(plugin) {
  * @property {boolean} configured
  * @property {string[]} missing
  * @property {string} syncedAt
+ * @property {number | null} lamasteRevision the revision Lamaste last wrote or adopted
+ * @property {UnconfirmedChange | null} unconfirmed
  */
+
+function isKeyList(value) {
+  return Array.isArray(value) && value.every((key) => typeof key === 'string');
+}
+
+/** A stored {@link UnconfirmedChange}, or null for anything else. */
+function parseUnconfirmed(text) {
+  if (typeof text !== 'string') return null;
+  const raw = parseJson(text, null);
+  if (!isRecord(raw) || !isRevision(raw.revision) || typeof raw.actor !== 'string') return null;
+  if (!CHANGE_LISTS.every((list) => isKeyList(raw[list]))) return null;
+  return {
+    revision: raw.revision,
+    actor: raw.actor,
+    ...(typeof raw.certSerial === 'string' ? { certSerial: raw.certSerial } : {}),
+    ...Object.fromEntries(CHANGE_LISTS.map((list) => [list, [...raw[list]]])),
+  };
+}
 
 /** @returns {SettingsCache | null} */
 function rowToCache(row) {
@@ -116,6 +174,8 @@ function rowToCache(row) {
     configured: row.configured === 1,
     missing: Array.isArray(missing) ? missing.filter((key) => typeof key === 'string') : [],
     syncedAt: row.synced_at,
+    lamasteRevision: isRevision(row.lamaste_revision) ? row.lamaste_revision : null,
+    unconfirmed: parseUnconfirmed(row.unconfirmed_change_json),
   };
 }
 
@@ -149,6 +209,51 @@ export async function deleteSettingsCache(name) {
 }
 
 /**
+ * What a cache row becomes when the installed settings schema changes from
+ * `prev` to `next` — an update, its revert, an install: each stored value
+ * and each set secret stays only while its field keeps its type (a value
+ * whose field became a secret goes; a secret whose field became a plain
+ * value loses its `setAt`; a field the new schema lacks goes), and whether
+ * the plugin is configured is worked out again against `next` until the
+ * agent half reports its own view. Null when there is no row or the schema
+ * did not change; `{ delete: true }` when `next` declares no settings.
+ * Pure: `lib/plugins.js` applies it in the transaction that writes the
+ * plugin's row, so no read ever pairs the new schema with values of the
+ * old one.
+ *
+ * @param {Record<string, unknown> | null | undefined} row the `plugin_settings` row
+ * @param {import('@lamalibre/lamaste').SettingsBlock | null} prev
+ * @param {import('@lamalibre/lamaste').SettingsBlock | null} next
+ * @returns {null | { delete: true } | { values: Record<string, unknown>, secretsSet: Record<string, string>, configured: boolean, missing: string[] }}
+ */
+export function prunedSettingsCache(row, prev, next) {
+  if (!row) return null;
+  const nextBlock = settingsBlockOf({ settings: next });
+  if (!nextBlock) return { delete: true };
+  const prevBlock = settingsBlockOf({ settings: prev });
+  if (prevBlock && JSON.stringify(prevBlock) === JSON.stringify(nextBlock)) return null;
+  const before = new Map((prevBlock?.fields ?? []).map((field) => [field.key, field.type]));
+  const after = new Map(nextBlock.fields.map((field) => [field.key, field.type]));
+  const keeps = (key, secret) =>
+    before.has(key) &&
+    before.get(key) === after.get(key) &&
+    (after.get(key) === 'secret') === secret;
+
+  const storedValues = parseJson(row.values_json, {});
+  const storedSecrets = parseJson(row.secrets_set_json, {});
+  const values = Object.fromEntries(
+    Object.entries(isRecord(storedValues) ? storedValues : {}).filter(([key]) => keeps(key, false)),
+  );
+  const secretsSet = Object.fromEntries(
+    Object.entries(isRecord(storedSecrets) ? storedSecrets : {}).filter(
+      ([key, setAt]) => typeof setAt === 'string' && keeps(key, true),
+    ),
+  );
+  const status = settingsStatus(nextBlock, { values, secretsSet: Object.keys(secretsSet) });
+  return { values, secretsSet, configured: status.configured, missing: status.missing };
+}
+
+/**
  * The stored non-secret values the installed schema knows and that still
  * suit their field (type, length, range, option) — the agent half's own
  * schema may differ from the relay's while an update is under way.
@@ -164,30 +269,44 @@ function knownStoredValues(block, values) {
 }
 
 /**
- * Cache the agent half's state of plugin `name`: its stored non-secret
- * values and set secrets for the keys the installed schema knows, and its
- * own `configured` / `missing`. The state never carries a secret's value
- * (`parseAgentHalfSettingsState` keeps `setAt` alone).
+ * The agent half's state of a plugin as the cache keeps it: its stored
+ * non-secret values and set secrets for the keys the installed schema
+ * knows, and its own `configured` / `missing`. The state never carries a
+ * secret's value (`parseAgentHalfSettingsState` keeps `setAt` alone).
  *
- * @param {string} name
  * @param {import('@lamalibre/lamaste').SettingsBlock} block the installed schema
  * @param {import('@lamalibre/lamaste').AgentHalfSettingsState} state
+ */
+function cacheOfState(block, state) {
+  return {
+    schemaVersion: state.schemaVersion,
+    revision: state.revision,
+    values: knownStoredValues(block, state.values),
+    secretsSet: Object.fromEntries(
+      block.fields
+        .filter((field) => field.type === 'secret' && Object.hasOwn(state.secrets, field.key))
+        .map((field) => [field.key, state.secrets[field.key].setAt]),
+    ),
+    configured: state.configured,
+    missing: [...state.missing],
+  };
+}
+
+/**
+ * Store the cache of plugin `name` with its provenance — the revision
+ * Lamaste wrote or adopted, and a change whose answer it is still waiting
+ * to find stored.
+ *
  * @returns {Promise<SettingsCache>}
  */
-async function writeSettingsCache(name, block, state) {
-  const values = knownStoredValues(block, state.values);
-  const secretsSet = Object.fromEntries(
-    block.fields
-      .filter((field) => field.type === 'secret' && Object.hasOwn(state.secrets, field.key))
-      .map((field) => [field.key, state.secrets[field.key].setAt]),
-  );
+async function storeSettingsCache(name, cache, { lamasteRevision, unconfirmed }) {
   const syncedAt = new Date().toISOString();
   const db = await getStateDb();
   db.prepare(
     `INSERT INTO plugin_settings
        (plugin, schema_version, revision, values_json, secrets_set_json, configured,
-        missing_json, synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        missing_json, synced_at, lamaste_revision, unconfirmed_change_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(plugin) DO UPDATE SET
        schema_version = excluded.schema_version,
        revision = excluded.revision,
@@ -195,26 +314,183 @@ async function writeSettingsCache(name, block, state) {
        secrets_set_json = excluded.secrets_set_json,
        configured = excluded.configured,
        missing_json = excluded.missing_json,
-       synced_at = excluded.synced_at`,
+       synced_at = excluded.synced_at,
+       lamaste_revision = excluded.lamaste_revision,
+       unconfirmed_change_json = excluded.unconfirmed_change_json`,
   ).run(
     name,
-    state.schemaVersion,
-    state.revision,
-    JSON.stringify(values),
-    JSON.stringify(secretsSet),
-    state.configured ? 1 : 0,
-    JSON.stringify(state.missing),
+    cache.schemaVersion,
+    cache.revision,
+    JSON.stringify(cache.values),
+    JSON.stringify(cache.secretsSet),
+    cache.configured ? 1 : 0,
+    JSON.stringify(cache.missing),
     syncedAt,
+    lamasteRevision,
+    unconfirmed ? JSON.stringify(unconfirmed) : null,
   );
+  return { ...cache, syncedAt, lamasteRevision, unconfirmed };
+}
+
+/** Remember a change whose answer never authenticated, on the plugin's cache row (if it has one). */
+async function recordUnconfirmedChange(name, change) {
+  const db = await getStateDb();
+  db.prepare('UPDATE plugin_settings SET unconfirmed_change_json = ? WHERE plugin = ?').run(
+    JSON.stringify(change),
+    name,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+
+/** The keys of `a` and `b` whose entry differs (present in one only, or another value). */
+function differingKeys(a, b) {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  return [...keys]
+    .filter((key) => Object.hasOwn(a, key) !== Object.hasOwn(b, key) || a[key] !== b[key])
+    .sort();
+}
+
+/**
+ * Which settings differ between two caches — names only: the non-secret
+ * values (`changed`) and the secrets set, replaced or cleared
+ * (`secretsChanged`, by their `setAt`).
+ */
+function changedSettings(before, after) {
   return {
-    schemaVersion: state.schemaVersion,
-    revision: state.revision,
-    values,
-    secretsSet,
-    configured: state.configured,
-    missing: [...state.missing],
-    syncedAt,
+    changed: differingKeys(before.values, after.values),
+    secretsChanged: differingKeys(before.secretsSet, after.secretsSet),
   };
+}
+
+/** `keys` without the keys an administrator's change named. */
+function withoutChange(keys, change) {
+  const own = new Set(CHANGE_LISTS.flatMap((list) => change[list]));
+  return {
+    changed: keys.changed.filter((key) => !own.has(key)),
+    secretsChanged: keys.secretsChanged.filter((key) => !own.has(key)),
+  };
+}
+
+/** Whether every key in `keys` is one the unconfirmed change named. */
+function withinChange(keys, change) {
+  const own = new Set(CHANGE_LISTS.flatMap((list) => change[list]));
+  return [...keys.changed, ...keys.secretsChanged].every((key) => own.has(key));
+}
+
+/**
+ * What finding the agent half at `revision`, changed in `keys` since the
+ * cache `previous`, says about who changed it:
+ *
+ * - `baseline` — the relay never knew a revision of Lamaste's to compare
+ *   with (no cache, or one from before provenance): adopted as it is;
+ * - `confirmed` — exactly the revision and keys of a change whose answer
+ *   never authenticated: the administrator's change, stored after all;
+ * - `unchanged` — the revision Lamaste last wrote or adopted;
+ * - `outside` — any other revision, higher or lower: a change Lamaste did
+ *   not make (only Lamaste can reach `/admin/settings` through the panel).
+ *
+ * @param {SettingsCache | null} previous
+ * @param {number} revision
+ * @param {{ changed: string[], secretsChanged: string[] }} keys
+ * @returns {'baseline' | 'confirmed' | 'unchanged' | 'outside'}
+ */
+function judgeProvenance(previous, revision, keys) {
+  if (!previous) return 'baseline';
+  const { unconfirmed } = previous;
+  if (unconfirmed && revision === unconfirmed.revision && withinChange(keys, unconfirmed)) {
+    return 'confirmed';
+  }
+  if (previous.lamasteRevision === null) return 'baseline';
+  return revision === previous.lamasteRevision ? 'unchanged' : 'outside';
+}
+
+/** Record an administrator's change that turned out stored after its answer failed. */
+async function recordConfirmedChange(name, change, logger) {
+  await recordAuditBestEffort(
+    {
+      actor: change.actor,
+      action: 'plugin.settings.updated',
+      plugin: name,
+      details: {
+        ...Object.fromEntries(CHANGE_LISTS.map((list) => [list, change[list]])),
+        revision: change.revision,
+        confirmedLater: true,
+        ...(change.certSerial ? { certSerial: change.certSerial } : {}),
+      },
+    },
+    logger,
+  );
+  logger?.info(
+    { plugin: name, revision: change.revision },
+    'A plugin settings change whose answer was lost turned out stored',
+  );
+}
+
+/**
+ * Record a change of the agent half's settings that Lamaste did not make:
+ * an audit entry and a warning for the administrators, with key names and
+ * revisions — never a value.
+ */
+async function recordOutsideChange(name, record, { fromRevision, revision, keys }, logger) {
+  await recordAuditBestEffort(
+    {
+      actor: 'lamaste',
+      action: SETTINGS_CHANGED_OUTSIDE_ACTION,
+      plugin: name,
+      details: {
+        changed: keys.changed,
+        secretsChanged: keys.secretsChanged,
+        fromRevision,
+        revision,
+        agentLabel: record.agentLabel,
+      },
+    },
+    logger,
+  );
+  const named = [...keys.changed, ...keys.secretsChanged];
+  await notifyAdminsBestEffort(
+    {
+      source: 'lamaste',
+      level: 'warning',
+      message:
+        `The settings of ${name} were changed outside Lamaste on agent "${record.agentLabel}" ` +
+        `(revision ${fromRevision} → ${revision}${named.length > 0 ? `: ${named.join(', ')}` : ''}). ` +
+        'Lamaste changes them only from the panel — check who holds the installation secret there, or whether files were restored.',
+    },
+    logger,
+  );
+  logger?.warn({ plugin: name, fromRevision, revision }, 'Plugin settings changed outside Lamaste');
+}
+
+/**
+ * Cache a state the agent half answered a read with, judging its
+ * provenance against the previous cache: adopted as it is, recorded as an
+ * administrator's change stored late, or recorded as a change made outside
+ * Lamaste — then adopted, so it is reported once.
+ */
+async function adoptReadState(name, record, block, state, logger) {
+  const previous = await readSettingsCache(name);
+  const next = cacheOfState(block, state);
+  const keys = previous ? changedSettings(previous, next) : { changed: [], secretsChanged: [] };
+  const verdict = judgeProvenance(previous, state.revision, keys);
+  const cache = await storeSettingsCache(name, next, {
+    lamasteRevision: verdict === 'unchanged' ? previous.lamasteRevision : state.revision,
+    // A change still unconfirmed may yet land while the revision is unchanged.
+    unconfirmed: verdict === 'unchanged' ? previous.unconfirmed : null,
+  });
+  if (verdict === 'confirmed') await recordConfirmedChange(name, previous.unconfirmed, logger);
+  if (verdict === 'outside') {
+    await recordOutsideChange(
+      name,
+      record,
+      { fromRevision: previous.lamasteRevision, revision: state.revision, keys },
+      logger,
+    );
+  }
+  return cache;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +544,7 @@ async function hostingBlock(record) {
   };
 }
 
-/** Why plugin `name`'s settings cannot be changed now (its hosting is not up). */
+/** Why plugin `name`'s settings cannot be changed now (its hosting is not active, or down). */
 function offlineMessage(name, record) {
   if (!record) {
     return `Plugin "${name}" is not hosted on an agent — its settings are kept by its agent half`;
@@ -285,7 +561,8 @@ function offlineMessage(name, record) {
 
 /**
  * Read the agent half's settings through the tunnel; null (logged, with
- * metadata only) when it cannot be read.
+ * metadata only) when it cannot be read — including an answer that does
+ * not authenticate itself as the agent half's.
  */
 async function readAgentHalfState(name, record, logger) {
   const result = await callAgentHalf({
@@ -326,7 +603,7 @@ async function refreshUnserialized(name, logger) {
   const record = await ownHostingOf(plugin);
   if (!record || pluginHostingPhase(record) !== 'active') return null;
   const state = await readAgentHalfState(name, record, logger);
-  return state ? writeSettingsCache(name, block, state) : null;
+  return state ? adoptReadState(name, record, block, state, logger) : null;
 }
 
 /**
@@ -345,7 +622,7 @@ export function refreshPluginSettings(name, { logger } = {}) {
 /**
  * {@link refreshPluginSettings} for the triggers beside other work — a
  * hosting or an update that succeeded, the health monitor seeing the plugin
- * come up. Never throws.
+ * come up, the panel starting. Never throws.
  */
 export async function refreshPluginSettingsBestEffort(name, logger) {
   try {
@@ -354,6 +631,45 @@ export async function refreshPluginSettingsBestEffort(name, logger) {
     logger?.warn({ plugin: name, err: err?.message }, 'Failed to refresh the plugin settings');
     return null;
   }
+}
+
+/**
+ * Refresh the cache of every plugin that declares settings and whose
+ * hosting is active and not known to be down — one plugin after another,
+ * each in its own chain, best effort. The panel runs it once when it
+ * starts: the health monitor resumes from the persisted health, so a
+ * plugin that was up before the restart sees no transition that would
+ * refresh it, and changes made while the panel was down would go unseen
+ * (and unreported) until the next one. A hosting that is down is refreshed
+ * by its transition to up. Returns how many plugins were read.
+ *
+ * @param {import('pino').Logger} [logger]
+ * @returns {Promise<number>}
+ */
+export async function refreshHostedPluginSettings(logger) {
+  let read = 0;
+  let plugins = [];
+  try {
+    plugins = (await readPlugins()).plugins.filter((plugin) => settingsBlockOf(plugin) !== null);
+  } catch (err) {
+    logger?.warn({ err: err?.message }, 'Could not list the plugins to refresh their settings');
+    return 0;
+  }
+  for (const plugin of plugins) {
+    let record;
+    try {
+      record = await ownHostingOf(plugin);
+    } catch (err) {
+      logger?.warn(
+        { plugin: plugin.name, err: err?.message },
+        'Could not read the hosting to refresh the plugin settings',
+      );
+      continue;
+    }
+    if (!record || !isReachable(record)) continue;
+    if (await refreshPluginSettingsBestEffort(plugin.name, logger)) read += 1;
+  }
+  return read;
 }
 
 // ---------------------------------------------------------------------------
@@ -487,7 +803,7 @@ function parseUpdateEnvelope(body) {
     return { ok: false, error: 'The body carries only revision, values and secrets' };
   }
   const { revision } = body;
-  if (!Number.isSafeInteger(revision) || revision < 0) {
+  if (!isRevision(revision)) {
     return {
       ok: false,
       error: '"revision" must be the revision the settings were read at (an integer of at least 0)',
@@ -502,23 +818,20 @@ function invalidSettings(errors, statusCode = 400) {
 }
 
 /**
- * The agent half's per-field messages, passed on only for keys a setting
- * can have (or `_`), shortened, and never with a secret of the change in
- * them — the agent half is Lamaste code that never repeats a value, but the
- * relay does not answer with one on its word.
+ * The agent half's per-field messages as the relay passes them on: only
+ * under the keys of the installed schema (or `_`), and only messages
+ * Lamaste's own validation produces — anything else reads "Invalid value"
+ * (core's `normalizeSettingsErrorMessage`). The agent half is Lamaste code
+ * that never repeats a value, but the relay does not answer an
+ * administrator with text it cannot vouch for.
  */
-function agentHalfErrors(body, secretValues) {
+function agentHalfErrors(block, body) {
+  const known = new Set(block.fields.map((field) => field.key));
   const raw = isRecord(body) && isRecord(body.errors) ? body.errors : {};
   const out = [];
   for (const [key, message] of Object.entries(raw).slice(0, SETTINGS_MAX_FIELDS + 1)) {
-    if (key !== '_' && !SETTINGS_KEY_RE.test(key)) continue;
-    const text =
-      typeof message === 'string' &&
-      message.length > 0 &&
-      !secretValues.some((secret) => message.includes(secret))
-        ? message.slice(0, AGENT_HALF_MESSAGE_MAX)
-        : 'Invalid value';
-    out.push([key, text]);
+    if (key !== '_' && !(SETTINGS_KEY_RE.test(key) && known.has(key))) continue;
+    out.push([key, normalizeSettingsErrorMessage(message)]);
   }
   if (out.length === 0) out.push(['_', 'The agent half refused the values']);
   return Object.fromEntries(out);
@@ -528,8 +841,7 @@ function agentHalfErrors(body, secretValues) {
 function agentHalfConflict(body) {
   const code = isRecord(body) ? body.code : undefined;
   if (code === 'revision_mismatch') {
-    const revision =
-      Number.isSafeInteger(body.revision) && body.revision >= 0 ? body.revision : null;
+    const revision = isRevision(body.revision) ? body.revision : null;
     return httpError(
       'The settings changed since they were read — reload them and make the change again',
       409,
@@ -546,7 +858,11 @@ function agentHalfConflict(body) {
   return httpError('The agent half refused the change as conflicting', 409, { code: 'conflict' });
 }
 
-/** A call through the tunnel that got no answer: 504 when it timed out, 502 otherwise. */
+/**
+ * A call through the tunnel that got no answer Lamaste can believe: 504
+ * when it timed out, 502 otherwise — `unauthenticated` when something
+ * answered without the agent half's responder signature.
+ */
 function agentHalfUnreachable(name, result) {
   switch (result.code) {
     case 'refused':
@@ -560,6 +876,12 @@ function agentHalfUnreachable(name, result) {
         `The agent half of plugin "${name}" did not answer within ${SETTINGS_WRITE_TIMEOUT_MS / 1000} s — the change may or may not have been stored; reload the settings`,
         504,
         { code: 'timeout' },
+      );
+    case 'unauthenticated':
+      return httpError(
+        `The agent half of plugin "${name}" did not authenticate its answer — something else may hold its internal tunnel's port, or the agent half was built against an older @lamalibre/lamaste and must be rebuilt. The change may or may not have been stored; reload the settings`,
+        502,
+        { code: 'unauthenticated' },
       );
     case 'invalid':
       return httpError(`The agent half of plugin "${name}" answered with too large a body`, 502, {
@@ -579,11 +901,13 @@ function agentHalfUnreachable(name, result) {
  * Checked here without `pattern` (400 `{ errors }`), refused while a plugin
  * operation runs (409 `operation_running`) and while the hosting is not
  * active or its health is down (503 `hosting_offline`, with the hosting),
- * then sent to the agent half, whose answer decides: its new state (cached,
- * audited with key names only, returned as the settings view), its 409
- * (`revision_mismatch` with the current revision, `schema_mismatch`), its
- * 422 (`errors`), or 502 `settings_unsupported` when it does not answer
- * `/admin/settings`. An empty change stores nothing and returns the
+ * then sent to the agent half — each secret sealed to the request — whose
+ * authenticated answer decides: its new state (cached, audited with key
+ * names only, returned as the settings view), its 409 (`revision_mismatch`
+ * with the current revision, `schema_mismatch`), its 422 (`errors`,
+ * normalized), or 502 `settings_unsupported` when it does not answer
+ * `/admin/settings`. An answer that does not authenticate itself is 502
+ * `unauthenticated`. An empty change stores nothing and returns the
  * settings as they are.
  *
  * Nothing derived from `body` is logged, stored or thrown, and nothing keeps
@@ -630,13 +954,13 @@ export function updatePluginSettings(name, body, { actor, certSerial = null, log
       });
     }
 
-    const changed = Object.keys(checked.values).filter((key) => checked.values[key] !== null);
-    const cleared = Object.keys(checked.values).filter((key) => checked.values[key] === null);
-    const secretsSet = Object.keys(checked.secrets).filter((key) => checked.secrets[key] !== null);
-    const secretsCleared = Object.keys(checked.secrets).filter(
-      (key) => checked.secrets[key] === null,
-    );
-    if (changed.length + cleared.length + secretsSet.length + secretsCleared.length === 0) {
+    const change = {
+      changed: Object.keys(checked.values).filter((key) => checked.values[key] !== null),
+      cleared: Object.keys(checked.values).filter((key) => checked.values[key] === null),
+      secretsSet: Object.keys(checked.secrets).filter((key) => checked.secrets[key] !== null),
+      secretsCleared: Object.keys(checked.secrets).filter((key) => checked.secrets[key] === null),
+    };
+    if (CHANGE_LISTS.every((list) => change[list].length === 0)) {
       // Nothing to store: the settings as they are.
       let cache = await refreshUnserialized(name, logger);
       let source = cache ? 'live' : 'none';
@@ -681,11 +1005,22 @@ export function updatePluginSettings(name, body, { actor, certSerial = null, log
       timeoutMs: SETTINGS_WRITE_TIMEOUT_MS,
       maxResponseBytes: AGENT_HALF_SETTINGS_MAX_BYTES,
     });
+
+    // The agent half may have stored a change whose answer Lamaste cannot
+    // believe: remembered by key names, so that finding it stored later is
+    // the administrator's change and not one made outside Lamaste.
+    const unconfirmed = {
+      revision: envelope.revision + 1,
+      actor,
+      ...(certSerial ? { certSerial } : {}),
+      ...change,
+    };
     if (!result.ok) {
       logger?.warn(
         { plugin: name, code: result.code, err: result.error },
         'Could not send the settings change to the agent half',
       );
+      if (result.code !== 'refused') await recordUnconfirmedChange(name, unconfirmed);
       throw agentHalfUnreachable(name, result);
     }
 
@@ -694,23 +1029,44 @@ export function updatePluginSettings(name, body, { actor, certSerial = null, log
         const state = parseAgentHalfSettingsState(result.body);
         if (!state) {
           logger?.warn({ plugin: name }, 'The agent half answered a settings change unexpectedly');
+          await recordUnconfirmedChange(name, unconfirmed);
           throw httpError(
             `The agent half of plugin "${name}" answered the change in an unexpected shape — reload the settings to see what it stored`,
             502,
             { code: 'invalid' },
           );
         }
-        const cache = await writeSettingsCache(name, block, state);
+        const previous = await readSettingsCache(name);
+        const next = cacheOfState(block, state);
+        // The change was made on `envelope.revision`: one Lamaste wrote or
+        // adopted, unless the administrator named a revision the relay
+        // never saw — then what changed before it is reported too.
+        const before = withoutChange(
+          previous ? changedSettings(previous, next) : { changed: [], secretsChanged: [] },
+          change,
+        );
+        const verdict = judgeProvenance(previous, envelope.revision, before);
+        const cache = await storeSettingsCache(name, next, {
+          lamasteRevision: state.revision,
+          unconfirmed: null,
+        });
+        if (verdict === 'confirmed')
+          await recordConfirmedChange(name, previous.unconfirmed, logger);
+        if (verdict === 'outside') {
+          await recordOutsideChange(
+            name,
+            record,
+            { fromRevision: previous.lamasteRevision, revision: envelope.revision, keys: before },
+            logger,
+          );
+        }
         await recordAuditBestEffort(
           {
             actor,
             action: 'plugin.settings.updated',
             plugin: name,
             details: {
-              changed,
-              cleared,
-              secretsSet,
-              secretsCleared,
+              ...change,
               revision: state.revision,
               ...(certSerial ? { certSerial } : {}),
             },
@@ -722,12 +1078,8 @@ export function updatePluginSettings(name, body, { actor, certSerial = null, log
       }
       case 409:
         throw agentHalfConflict(result.body);
-      case 422: {
-        const secretValues = Object.values(checked.secrets).filter(
-          (value) => typeof value === 'string' && value.length > 0,
-        );
-        throw invalidSettings(agentHalfErrors(result.body, secretValues), 422);
-      }
+      case 422:
+        throw invalidSettings(agentHalfErrors(block, result.body), 422);
       case 404:
         throw httpError(
           `The agent half of plugin "${name}" does not answer ${AGENT_HALF_SETTINGS_PATH} — it predates plugin settings`,

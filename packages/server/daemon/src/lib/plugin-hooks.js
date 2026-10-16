@@ -286,11 +286,13 @@ export async function hookStatus(plugin) {
  * status and in the update response alike: its version, the digest to
  * approve it with, what it brings (its relay hook set and the agent half
  * Lamaste installs, each null when it brings none), how it changes the
- * settings schema (`settings`: `{ added, removed, retyped, newRequired }`,
- * null when neither version declares settings — not part of the digest),
- * and — when the plugin has auto-approve on — why auto-approve did not
- * cover it (`autoApproveWithheld`, null otherwise). The stored record names
- * the relay hook set's preview `preview`.
+ * settings schema (`settings`: `{ added: [{ key, type }], removed:
+ * [{ key, type }], retyped: [{ key, from, to }], newRequired: [key],
+ * secretToPlain: [key] }`, null when neither version declares settings —
+ * not part of the digest), and — when the plugin has auto-approve on — why
+ * auto-approve did not cover it (`autoApproveWithheld`, sentences; null
+ * otherwise). The stored record names the relay hook set's preview
+ * `preview`.
  */
 export function pendingUpdateView(pending) {
   return {

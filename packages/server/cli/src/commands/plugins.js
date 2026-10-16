@@ -68,6 +68,7 @@ import { PANEL_SERVICE } from '../config.js';
 import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 import { configureCmd, settingsCmd } from './plugin-settings.js';
+import { settingsDiffLines, terminalText } from '../plugin-settings.js';
 
 /** npm runs inside the panel for install and uninstall (its own limit is 120 s). */
 const NPM_CALL_TIMEOUT_MS = 180_000;
@@ -765,6 +766,30 @@ function printApprovalContents({ digest, relay, agentHalf }) {
   }
 }
 
+/**
+ * Print what a pending update changes beyond what it asks to approve: how
+ * it changes the settings schema (outside the digest) — fields added and
+ * removed with their types, retyped ones, newly required ones, and a
+ * warning for secrets that become plain values — and why auto-approve did
+ * not cover it.
+ */
+function printPendingUpdateNotes(update) {
+  const lines = settingsDiffLines(update.settings);
+  if (lines.length > 0) {
+    console.log('');
+    console.log(chalk.bold('  Settings — what this version changes (not part of the digest)'));
+    for (const line of lines) {
+      console.log(`    ${line.warning ? chalk.red(line.text) : line.text}`);
+    }
+  }
+  const withheld = Array.isArray(update.autoApproveWithheld) ? update.autoApproveWithheld : [];
+  if (withheld.length > 0) {
+    console.log('');
+    console.log(chalk.bold('  Auto-approve does not cover it'));
+    for (const reason of withheld) console.log(chalk.yellow(`    ${terminalText(reason)}`));
+  }
+}
+
 /** The command that approves `digest` for plugin `name`. */
 function approveCommand(name, digest) {
   return chalk.cyan(`lamaste-server plugins approve-hooks ${name} --digest ${digest}`);
@@ -826,6 +851,7 @@ async function hooksCmd(name, { json }) {
     console.log('');
     console.log(chalk.bold(`  Update to ${update.version} — waits for approval`));
     printApprovalContents(update);
+    printPendingUpdateNotes(update);
     console.log(`\n    Approve and update with: ${approveCommand(name, update.digest)}`);
   }
   console.log('');
@@ -920,6 +946,7 @@ async function updateCmd(name, rest, { json }) {
     console.log('');
     console.log(chalk.bold(`  ${name} ${update.version} waits for approval`));
     printApprovalContents(update);
+    printPendingUpdateNotes(update);
     console.log(`\n    Approve and update with: ${approveCommand(name, update.digest)}\n`);
     return;
   }

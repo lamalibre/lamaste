@@ -232,14 +232,22 @@ export function parseTextAnswer(view, field, text) {
   return message ? { ok: false, message } : parsed;
 }
 
+/** `1 unknown setting`, `3 unknown settings` — core's words for names the schema does not know. */
+function unknownSettingsMessage(count) {
+  return count === 1 ? '1 unknown setting' : `${count} unknown settings`;
+}
+
 /**
  * The partial update the flags of `configure` make: `--set` values parsed
  * by their field's type (refused for a secret — those come on stdin or from
  * the interactive mode), `--clear` as `null` (in `values` or `secrets` by the
  * field's type), the secrets read with `--secrets-stdin`; then the core
  * library's checks (required fields, length, range, option). Errors are
- * keyed by setting (`_` for a key on stdin that could not be a setting) and
- * never contain a value.
+ * keyed by setting and never contain a value. A name the schema does not
+ * know — on the command line or on stdin — is counted under `_` ("2 unknown
+ * settings"), as the core library and the panel count them, and never
+ * named: it is text the administrator typed, and a token pasted where a key
+ * belongs must not come back on the terminal.
  *
  * @param {{ schemaVersion: number, fields: Array<object>, revision: number | null }} view
  * @param {{ sets?: Array<{ key: string, raw: string }>, clears?: string[], secrets?: Record<string, unknown> }} flags
@@ -263,12 +271,16 @@ export function buildSettingsUpdate(view, { sets = [], clears = [], secrets = {}
   // Keys are setting names (SETTINGS_KEY_RE), so `__proto__` never is one.
   const values = {};
   const secretValues = {};
+  let unknown = 0;
 
   for (const { key, raw } of sets) {
-    if (!firstMention(key)) continue;
     const field = fields.get(key);
-    if (!field) fail(key, 'Unknown setting');
-    else if (field.type === 'secret') {
+    if (!field) {
+      unknown += 1;
+      continue;
+    }
+    if (!firstMention(key)) continue;
+    if (field.type === 'secret') {
       // Refused, but too late for the value itself: it was typed on the command line.
       fail(
         key,
@@ -282,26 +294,29 @@ export function buildSettingsUpdate(view, { sets = [], clears = [], secrets = {}
   }
 
   for (const key of clears) {
-    if (!firstMention(key)) continue;
     const field = fields.get(key);
-    if (!field) fail(key, 'Unknown setting');
-    else if (field.type === 'secret') secretValues[key] = null;
+    if (!field) {
+      unknown += 1;
+      continue;
+    }
+    if (!firstMention(key)) continue;
+    if (field.type === 'secret') secretValues[key] = null;
     else values[key] = null;
   }
 
   for (const [key, value] of Object.entries(secrets)) {
-    if (!SETTINGS_KEY_RE.test(key)) {
-      fail('_', 'A key on stdin is not a setting name');
+    const field = SETTINGS_KEY_RE.test(key) ? fields.get(key) : undefined;
+    if (!field) {
+      unknown += 1;
       continue;
     }
     if (!firstMention(key)) continue;
-    const field = fields.get(key);
-    if (!field) fail(key, 'Unknown setting');
-    else if (field.type !== 'secret') fail(key, 'Is not a secret — give it with --set');
+    if (field.type !== 'secret') fail(key, 'Is not a secret — give it with --set');
     else if (value !== null && typeof value !== 'string') {
       fail(key, 'Must be a string, or null to clear it');
     } else secretValues[key] = value;
   }
+  if (unknown > 0) fail('_', unknownSettingsMessage(unknown));
 
   for (const [key, message] of Object.entries(
     coreErrors(view, { values, secrets: secretValues }),
@@ -621,6 +636,12 @@ export function settingsRefusal(err, name, now) {
     case 'timeout':
       details.push(`See what the agent half stored with: lamaste-server plugins settings ${name}`);
       break;
+    case 'unauthenticated':
+      details.push(
+        "Something other than the agent half may hold the plugin's internal tunnel port, or its agent half was built against an older @lamalibre/lamaste and must be rebuilt.",
+        `See what the agent half stored with: lamaste-server plugins settings ${name}`,
+      );
+      break;
     case 'settings_unsupported':
       details.push(
         `Update the plugin to a version whose agent half keeps settings: lamaste-server plugins update ${name}`,
@@ -630,4 +651,49 @@ export function settingsRefusal(err, name, now) {
       break;
   }
   return { message: terminalText(err.message), details: details.map(terminalText) };
+}
+
+/**
+ * The lines of an update's settings schema diff (`pendingUpdate.settings`:
+ * `{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key,
+ * from, to }], newRequired: [key], secretToPlain: [key] }`) — added and
+ * removed fields with their types, retyped ones `from → to`, newly required
+ * ones, and a warning line for secrets that become plain values. Empty when
+ * nothing changes. Every line as {@link terminalText}.
+ *
+ * @param {object | null | undefined} diff
+ * @returns {Array<{ text: string, warning: boolean }>}
+ */
+export function settingsDiffLines(diff) {
+  if (!diff || typeof diff !== 'object') return [];
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const ref = (entry) =>
+    entry !== null && typeof entry === 'object' ? `${entry.key} (${entry.type})` : String(entry);
+  const lines = [];
+  const add = (label, entries, note = null, warning = false) => {
+    if (entries.length === 0) return;
+    lines.push({
+      text: terminalText(`${label}: ${entries.join(', ')}${note ? ` — ${note}` : ''}`),
+      warning,
+    });
+  };
+  add('added', list(diff.added).map(ref));
+  add('removed', list(diff.removed).map(ref), 'their values are dropped');
+  add(
+    'type changed',
+    list(diff.retyped).map((entry) =>
+      entry !== null && typeof entry === 'object'
+        ? `${entry.key} (${entry.from} → ${entry.to})`
+        : String(entry),
+    ),
+    'their values are dropped, not converted',
+  );
+  add('newly required', list(diff.newRequired).map(String), 'to be set after the update');
+  add(
+    'secrets become plain values',
+    list(diff.secretToPlain).map(String),
+    'what is typed into them next is stored on the relay and shown in clear',
+    true,
+  );
+  return lines;
 }

@@ -74,8 +74,14 @@ async function getStmts() {
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
     // The relay's cache of the plugin's settings (lib/plugin-settings.js)
-    // goes with its row.
+    // goes with its row, and follows its settings schema.
     deleteSettingsByName: db.prepare('DELETE FROM plugin_settings WHERE plugin = ?'),
+    selectSettingsByName: db.prepare('SELECT * FROM plugin_settings WHERE plugin = ?'),
+    updatePrunedSettings: db.prepare(`
+      UPDATE plugin_settings
+        SET values_json = ?, secrets_set_json = ?, configured = ?, missing_json = ?
+      WHERE plugin = ?
+    `),
     deleteAll: db.prepare('DELETE FROM plugins'),
     updateStatusEnable: db.prepare(`
       UPDATE plugins SET status = 'enabled', enabled_at = ? WHERE name = ?
@@ -460,6 +466,9 @@ export function installPlugin(packageName, logger) {
 
     s.begin.run();
     try {
+      // No settings are cached for a plugin that is not installed (its
+      // uninstall dropped them); none from before may meet this schema.
+      s.deleteSettingsByName.run(entry.name);
       s.insert.run(
         entry.name,
         entry.route,
@@ -609,29 +618,60 @@ const updateRowSql = `
 /**
  * Rewrite an installed plugin's row from a manifest (an update, or its
  * reversal) with the agent half pinned for that version (null when Lamaste
- * installs none). Status and install time stay.
+ * installs none). Status and install time stay. When the settings schema
+ * changes, the relay's cache of the settings is pruned in the same
+ * transaction — values and secrets whose field changed type or went
+ * (`prunedSettingsCache`) — so no read pairs the new schema with values
+ * stored for the old one: a value whose field became a secret never shows
+ * beside it, and a secret whose field became a plain value is no longer
+ * reported set.
  */
 export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalfPin) {
   const s = await getStmts();
-  s.db
-    .prepare(updateRowSql)
-    .run(
-      nullableString(manifest.displayName),
-      manifest.version,
-      nullableString(manifest.description),
-      JSON.stringify(manifest.capabilities ?? []),
-      nullableJson(manifest.packages),
-      nullableJson(manifest.panel),
-      nullableJson(manifest.config),
-      nullableJson(manifest.modes),
-      manifest.hosting ?? DEFAULT_PLUGIN_HOSTING,
-      nullableJson(manifest.agent),
-      nullableJson(manifest.hooks),
-      nullableString(hooksEntrySha256),
-      nullableJson(agentHalfPin),
-      nullableJson(manifest.settings),
-      name,
+  const { prunedSettingsCache } = await import('./plugin-settings.js');
+  s.begin.run();
+  try {
+    const before = s.selectByName.get(name);
+    s.db
+      .prepare(updateRowSql)
+      .run(
+        nullableString(manifest.displayName),
+        manifest.version,
+        nullableString(manifest.description),
+        JSON.stringify(manifest.capabilities ?? []),
+        nullableJson(manifest.packages),
+        nullableJson(manifest.panel),
+        nullableJson(manifest.config),
+        nullableJson(manifest.modes),
+        manifest.hosting ?? DEFAULT_PLUGIN_HOSTING,
+        nullableJson(manifest.agent),
+        nullableJson(manifest.hooks),
+        nullableString(hooksEntrySha256),
+        nullableJson(agentHalfPin),
+        nullableJson(manifest.settings),
+        name,
+      );
+    const pruned = prunedSettingsCache(
+      s.selectSettingsByName.get(name),
+      before?.settings != null ? JSON.parse(before.settings) : null,
+      manifest.settings ?? null,
     );
+    if (pruned?.delete) {
+      s.deleteSettingsByName.run(name);
+    } else if (pruned) {
+      s.updatePrunedSettings.run(
+        JSON.stringify(pruned.values),
+        JSON.stringify(pruned.secretsSet),
+        pruned.configured ? 1 : 0,
+        JSON.stringify(pruned.missing),
+        name,
+      );
+    }
+    s.commit.run();
+  } catch (err) {
+    s.rollback.run();
+    throw err;
+  }
 }
 
 /**

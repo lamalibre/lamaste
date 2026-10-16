@@ -20,6 +20,7 @@ import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { refusalText } from '../lib/pluginRefusal.js';
+import { settingsDiffRows } from '../lib/pluginSettings.js';
 
 /** `0123…cdef` — enough of a digest to compare by eye. */
 function short(digest) {
@@ -353,31 +354,53 @@ function ApprovalContents({ relay, agentHalf }) {
 /**
  * What an update changes in the plugin's settings schema
  * (`pendingUpdate.settings`) — outside the approval, which covers code:
- * fields added and removed, fields whose type changed (their stored values
- * are dropped on both sides, never converted) and fields it newly requires
- * without a default (the plugin needs configuring after the update).
+ * fields added and removed with their types, fields whose type changed
+ * (`from → to`; their stored values are dropped on both sides, never
+ * converted), fields it newly requires without a default (the plugin needs
+ * configuring after the update) and — as a warning — secrets that become
+ * plain values, whose next values the relay keeps and shows in clear.
  */
 function SettingsSchemaChanges({ diff }) {
-  if (!diff) return null;
-  const rows = [
-    { label: 'added', keys: diff.added, note: null },
-    { label: 'removed', keys: diff.removed, note: 'their values are dropped' },
-    { label: 'type changed', keys: diff.retyped, note: 'their values are dropped, not converted' },
-    { label: 'newly required', keys: diff.newRequired, note: 'to be set after the update' },
-  ].filter((row) => Array.isArray(row.keys) && row.keys.length > 0);
-  if (rows.length === 0) return null;
+  const shown = settingsDiffRows(diff);
+  if (!shown) return null;
   return (
     <div>
       <p className="mb-1 text-zinc-500">Settings — what this version changes in them:</p>
       <div className="space-y-0.5 text-zinc-400">
-        {rows.map((row) => (
+        {shown.rows.map((row) => (
           <div key={row.label}>
             <span className="text-zinc-500">{row.label} </span>
-            <span className="font-mono text-zinc-300">{row.keys.join(', ')}</span>
+            <span className="font-mono text-zinc-300">{row.entries.join(', ')}</span>
             {row.note && <span className="text-yellow-400"> — {row.note}</span>}
           </div>
         ))}
       </div>
+      {shown.secretToPlain.length > 0 && (
+        <p className="mt-1.5 flex items-start gap-1.5 text-red-400">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          <span>
+            Secrets become plain values:{' '}
+            <span className="font-mono">{shown.secretToPlain.join(', ')}</span>. Their secrets are
+            dropped, but what is typed into them after the update is stored on the relay and shown
+            in clear — never put a credential there.
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Why auto-approve did not cover a pending update (`pendingUpdate.autoApproveWithheld`). */
+function AutoApproveWithheld({ reasons }) {
+  if (!Array.isArray(reasons) || reasons.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-1 text-zinc-500">Auto-approve does not cover it:</p>
+      <ul className="list-disc space-y-0.5 pl-5 text-yellow-400/90">
+        {reasons.map((reason) => (
+          <li key={reason}>{reason}</li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -552,6 +575,7 @@ export function PluginHooks({ plugin, isActing }) {
                 agentHalf={hooks.pendingUpdate.agentHalf}
               />
               <SettingsSchemaChanges diff={hooks.pendingUpdate.settings} />
+              <AutoApproveWithheld reasons={hooks.pendingUpdate.autoApproveWithheld} />
               <div className="flex items-center gap-2">
                 {approveButton(
                   hooks.pendingUpdate.digest,

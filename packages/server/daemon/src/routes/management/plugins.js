@@ -607,11 +607,14 @@ export default async function pluginRoutes(fastify, _opts) {
   // the agent half, which stores it: 200 with the settings as above. 400
   // `errors` (checked here), 409 (`operation_running`, the agent half's
   // `revision_mismatch` with `revision`, `schema_mismatch`), 422 `errors`
-  // (the agent half's check), 503 `hosting_offline` with `hosting`, 502
-  // `settings_unsupported` / `refused`, 504 `timeout`.
+  // (the agent half's check, normalized), 503 `hosting_offline` with
+  // `hosting`, 502 `settings_unsupported` / `refused` / `unauthenticated`
+  // (an answer without the agent half's responder signature), 504 `timeout`.
   //
   // The body may carry secrets. It is handed to the settings library once
-  // and dropped from the request; nothing here logs or repeats it.
+  // and dropped from the request; nothing here logs or repeats it. The
+  // library seals each secret to the one call that carries it through the
+  // tunnel.
   // ------------------------------------------------------------------
   fastify.put(
     '/plugins/:name/settings',

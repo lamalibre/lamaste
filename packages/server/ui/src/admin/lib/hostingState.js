@@ -128,10 +128,14 @@ export function panelAvailability(plugin, now) {
 }
 
 /**
- * Why a plugin's settings cannot be changed now, or null when they can:
- * they are written to the agent half through the tunnel, so only while its
- * hosting is active and up — and a change names the revision it was made
- * on, so not before the relay has read them once (`revision` null).
+ * Why a plugin's settings cannot be changed now, or null when they can —
+ * the relay's own rule: they are written to the agent half through the
+ * tunnel, so only while its hosting is active and its health is not `down`
+ * (`unknown`, right after hosting, is writable: an answer that does not
+ * authenticate itself as the agent half's is refused, so nothing else on
+ * the tunnel's port can take a change) — and a change names the revision it
+ * was made on, so not before the relay has read them once (`revision`
+ * null).
  *
  * @param {{ hosting: object | null, revision: number | null }} view  the settings view
  * @param {number} now
@@ -147,9 +151,6 @@ export function settingsReadOnlyReason(view, now) {
   }
   const outage = settingsHostingOutage(hosting);
   if (outage) return outageMessage(outage, now);
-  if (hosting.state !== 'up') {
-    return `The hosting on ${hosting.agentLabel} is not up yet (health ${hosting.state ?? 'unknown'})`;
-  }
   if (typeof view.revision !== 'number') {
     return 'The settings could not be read from the agent half yet';
   }

@@ -9,9 +9,10 @@ import { formatMoment } from './hostingState.js';
  * The view (`GET /api/plugins/:name/settings`) carries the field
  * definitions, the effective non-secret values (defaults overlaid by what
  * the agent half stores) and, for each secret, only `{ set, setAt? }` —
- * never a value. A secret is typed into a password input that is never
- * prefilled; the form reads it from the input when it submits and it goes
- * into the request body alone.
+ * never a value. A secret is typed into a masked text input — not a
+ * password input, which browsers offer to save in their password managers —
+ * that is never prefilled; the form reads it from the input when it submits
+ * and it goes into the request body alone.
  *
  * The checks mirror the core library's `checkSettingsValue` with the
  * pattern tested — the form and the agent half test a manifest's pattern,
@@ -304,4 +305,104 @@ export function settingsSourceText(view, now) {
       : "From the relay's copy";
   }
   return 'Never synced from the agent half — showing the defaults';
+}
+
+/**
+ * Words a key or label of a credential has. A plain string field named so
+ * is likely to be given one — and a plain value is stored on the relay and
+ * shown in clear, which is what a secret field avoids.
+ */
+const CREDENTIAL_WORDS = /key|token|secret|password|passwd|credential/i;
+
+/**
+ * Whether to warn under a non-secret string field that a credential does
+ * not belong there: its key or label looks like one. Only a hint — the
+ * plugin decides its fields' types.
+ *
+ * @param {{ key: string, label?: string, type: string }} field
+ */
+export function looksLikeCredential(field) {
+  if (field.type !== 'string') return false;
+  return CREDENTIAL_WORDS.test(field.key) || CREDENTIAL_WORDS.test(field.label ?? '');
+}
+
+/** What the credential hint says. */
+export const CREDENTIAL_HINT =
+  'Stored on the relay and shown in clear — use a secret field for credentials.';
+
+/**
+ * Whether this browser can mask a text input (`-webkit-text-security`):
+ * Chrome, Edge and Safari always could, Firefox since 114. A secret input is
+ * a masked text input rather than a password input so that no browser
+ * offers to save it in its password manager; where masking is missing the
+ * form says the value shows as it is typed instead of falling back to a
+ * password input.
+ *
+ * @param {{ supports?: (property: string, value: string) => boolean } | undefined} css  the page's `CSS`
+ */
+export function secretMaskSupported(css) {
+  try {
+    return typeof css?.supports === 'function' && css.supports('-webkit-text-security', 'disc');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A field's type in a few words, for lists of fields: `secret`, `integer
+ * 0–10`, `enum: eu | us`, `string`, with `required` when it is.
+ *
+ * @param {{ type: string, required?: boolean, min?: number, max?: number, options?: Array<{ value: string }> }} field
+ */
+export function fieldTypeText(field) {
+  let text = field.type;
+  if (field.type === 'integer' || field.type === 'number') {
+    if (field.min !== undefined && field.max !== undefined) text += ` ${field.min}–${field.max}`;
+    else if (field.min !== undefined) text += ` ≥ ${field.min}`;
+    else if (field.max !== undefined) text += ` ≤ ${field.max}`;
+  }
+  if (field.type === 'enum') {
+    const values = (field.options ?? []).map((o) => o.value);
+    text += `: ${values.length > 5 ? `${values.slice(0, 5).join(' | ')} | …` : values.join(' | ')}`;
+  }
+  return field.required ? `${text}, required` : text;
+}
+
+/**
+ * The rows of an update's settings schema diff (`pendingUpdate.settings`:
+ * `{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key,
+ * from, to }], newRequired: [key], secretToPlain: [key] }`) as the update
+ * preview lists them — each with a label, its entries in words and what
+ * the change does to stored values — and the warning for secrets that
+ * become plain values. Empty rows are left out; null when nothing changes.
+ *
+ * @param {object | null | undefined} diff
+ * @returns {{ rows: Array<{ label: string, entries: string[], note: string | null }>, secretToPlain: string[] } | null}
+ */
+export function settingsDiffRows(diff) {
+  if (!diff || typeof diff !== 'object') return null;
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const ref = (entry) =>
+    entry && typeof entry === 'object' ? `${entry.key} (${entry.type})` : String(entry);
+  const rows = [
+    { label: 'added', entries: list(diff.added).map(ref), note: null },
+    { label: 'removed', entries: list(diff.removed).map(ref), note: 'their values are dropped' },
+    {
+      label: 'type changed',
+      entries: list(diff.retyped).map((entry) =>
+        entry && typeof entry === 'object'
+          ? `${entry.key} (${entry.from} → ${entry.to})`
+          : String(entry),
+      ),
+      note: 'their values are dropped, not converted',
+    },
+    {
+      label: 'newly required',
+      entries: list(diff.newRequired).map(String),
+      note: 'to be set after the update',
+    },
+  ].filter((row) => row.entries.length > 0);
+  const secretToPlain = list(diff.secretToPlain).map(String);
+  if (rows.length === 0 && secretToPlain.length === 0) return null;
+  return { rows, secretToPlain };
 }
