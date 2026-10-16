@@ -31,7 +31,7 @@ Newest first. Query: `plugin`, `action` (exact, or a prefix ending in `.` such a
 | `auto-approve`   | a plugin's auto-approve                                      |
 | `lamaste`        | the panel itself                                             |
 
-Actions written by Lamaste: `plugin.installed`, `plugin.uninstalled`, `plugin.hosted`, `plugin.unhosted`, `plugin.updated`, `plugin.update.reverted`, `plugin.update.awaiting-approval`, `plugin.update.discarded`, `hooks.approved`, `hooks.auto-approve.enabled|disabled`, `hooks.auto-approve.withheld`, `hooks.rules-updated`, `hooks.effects-dropped`, and for an [agent half Lamaste installs](app-host.md):
+Actions written by Lamaste: `plugin.installed`, `plugin.uninstalled`, `plugin.hosted`, `plugin.unhosted`, `plugin.updated`, `plugin.update.reverted`, `plugin.update.awaiting-approval`, `plugin.update.discarded`, `hooks.approved`, `hooks.auto-approve.enabled|disabled`, `hooks.auto-approve.withheld`, `hooks.rules-updated`, `hooks.effects-dropped`, `plugin.settings.updated` (a change of a plugin's [settings](agent-hosted-plugins.md#settings), by key name only — `changed`, `cleared`, `secretsSet`, `secretsCleared`, the new `revision` — never a value), and for an [agent half Lamaste installs](app-host.md):
 
 | Action                                      | When                                                                                                                                                 |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

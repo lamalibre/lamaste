@@ -325,6 +325,7 @@ The contract:
   The verifier re-reads the file when a signature does not verify, so a rotated secret needs no restart; a changed port restarts the unit.
 
 - **Lifecycle hooks** are answered at `POST /admin/hooks/<stage>` ([agent hooks](lifecycle-hooks.md#agent-hooks)); the agent's own `install:pre-tunnel` reaches the service on its loopback once it runs.
+- **Settings**, when the manifest declares them, are kept with `createSettingsStore` over `LAMASTE_APP_DATA_DIR` — `settings.json` and `secrets.json`, 0600 — and answered at `/admin/settings` with `createSettingsHandler` ([Settings](agent-hosted-plugins.md#in-the-agent-half)); they stay with the retained data and a purge deletes them.
 - **Limits of the sandbox:** no capabilities (no port below 1024), IP and Unix sockets only, no `os.networkInterfaces()`, only its own processes in `/proc`. Its output goes to the journal; `NODE_ENV=production`.
 - **System packages** (`agent.requires.systemPackages`) are installed with `apt-get` after approval, on Debian and Ubuntu only.
 - **Name** the plugin by its route: a plugin with an agent half is named exactly its route (its packages keep their names), and the route starts and ends with a letter or digit.

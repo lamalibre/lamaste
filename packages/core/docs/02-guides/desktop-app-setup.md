@@ -93,7 +93,7 @@ Server mode provides the full admin panel — the same management pages availabl
 - **Users** — Authelia user CRUD + TOTP enrollment
 - **Certificates** — Let's Encrypt + mTLS cert listing + renewal + rotation
 - **Tickets** — agent-to-agent authorization scope and session management
-- **Plugins** — plugin management + push install UI
+- **Plugins** — plugin management + push install UI + agent-hosted plugins' hosting, retained data and settings (secrets are sent to the panel in the request body on curl's stdin, never as arguments)
 - **Logs** — live journald log streaming
 - **Settings** — panel configuration, 2FA, admin auth mode
 

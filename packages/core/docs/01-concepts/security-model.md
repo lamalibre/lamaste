@@ -175,6 +175,24 @@ An agent half Lamaste installs runs on its agent as a service of its own, so som
 
 **What a compromised agent account can still do:** read and rewrite the plugin configs it already holds (`config` is not signed) — breaking the admin API of that agent half; run `status`; run a signed job it received when it likes before the job expires, or not at all; report results that are not true (the relay's view of what runs on the agent is the agent's report); stop its tunnel and its sync. **What it cannot:** run anything as root beyond those fixed operations; install, switch or remove anything the relay did not sign, or anything other than exactly what it signed; replay a job; pin a key (root only); read or write an agent half's data directory (0700, another account); act on a route another label or package owns. **A compromised relay** can do on its agents what its signature allows: install any `@lamalibre/` package from its registry at any version, with system packages from the agent's configured apt sources, running as a service account — never plugin code as root — and remove or purge the agent halves it owns.
 
+#### 5e. Plugin settings and secrets
+
+An agent-hosted plugin's settings may hold secrets — a data provider's API key, a token for another service. The agent half uses them, so the agent half keeps them; the relay never does. See [Settings](../04-api-reference/agent-hosted-plugins.md#settings) for the contract.
+
+**The secret's path.** An administrator types the secret into the panel's form — a password input whose value never enters the page's state or its query cache — or gives it to `lamaste-server plugins configure` (a masked prompt, or a JSON object on stdin; `--set` refuses a secret, since a command line is readable by other local users) or to the desktop app; both clients hand the request body to curl on stdin. The panel's route takes the body off the request before anything else, checks it — with messages that never contain a value — and sends the change through the plugin's internal tunnel to the agent half, `PUT /admin/settings` with a caller assertion naming Lamaste itself. The agent half writes the secret to `secrets.json` in its data directory — `0600`, its own service account's, atomically, refusing a link in the file's place — and answers with its state, which names the secrets that are set and when, never their values. On the relay the secret existed only in the memory of that request; nothing keeps a reference to it afterwards.
+
+**What the relay keeps.** A cache per plugin in `state.db` (`plugin_settings`): the non-secret values, `{ key: setAt }` for each secret that is set, and whether the plugin still needs configuration. The table has no column for a secret's value, and the relay parses every answer of the agent half into a fresh object of the contract's fields, so nothing else the agent half sends reaches it. The panel can therefore show the settings while the agent is offline, and a backup of the relay holds none of these secrets.
+
+**Where a secret never appears:** a log line, an error or validation message, an API response (a secret reads as `{ "set": true, "setAt": … }`), the audit log (`plugin.settings.updated` names keys only), a notification, an operation step, a process argument, a relay hook's input (relay hooks get the non-secret values only), or any file on the relay. Hosting takes no settings, so no secret waits in the panel's memory through an operation that can take minutes. A field an update retypes is dropped, never converted: a secret whose field becomes a string never lands in `settings.json` or in the relay's cache.
+
+**Only Lamaste reads and writes settings.** The forwarder reserves `/admin/settings` and everything under it — `404` however the path is spelled, in any case or percent-encoded — as it reserves `/admin/hooks/*`, and the agent half's settings handler accepts only the caller `lamaste` (`401` for a bad assertion, `403` for an administrator or an agent). No forwarded caller, administrator or agent with the plugin's capability, can read the settings or change them past the panel's checks, and the relay's cache cannot drift from the agent half.
+
+**The agent half's answers.** When the agent half refuses a change field by field (`422`), the relay passes its messages on only under keys a setting can have, cut to 300 characters, and replaces any that contains a secret of the change with `Invalid value`: the agent half is Lamaste code that never repeats a value, but the relay does not answer with one on its word.
+
+**A manifest's regular expressions.** A string field's `pattern` comes from the plugin's manifest. It runs in the administrator's browser and in the agent half — never in the panel process, and never in `lamaste-server`, which runs as root — so a pathological expression can neither stall the panel nor run as root.
+
+**What remains.** The agent half — the plugin's own code — holds its secrets in memory and in its file and uses them as it likes; its account and unit (5d above) keep them from other accounts on the agent, but root on the agent can read them, and they stay with the agent half's retained data when it is removed without purge. On the relay, a secret is readable for the duration of a change by whoever can read the panel process's memory (root, or the `lamaste` account itself). A process on the relay holding the plugin's installation secret (`plugin-hostings.json`, `0600`, `lamaste`) can sign as Lamaste and read or change the settings — though never read a secret back: no answer carries one.
+
 #### 6. TOTP 2FA for app access
 
 Visitors to your tunneled apps authenticate through Authelia with a password and a TOTP code from their phone. See [Authentication](authentication.md) for full details.
@@ -467,6 +485,7 @@ Sensitive files use restrictive permissions:
 | `/etc/sudoers.d/lamaste-apphost`                                    | `440` | The app host rule (agent machine)                 |
 | `/etc/lamalibre/apps/<route>/plugin-config.json`                    | `600` | An agent half's port and secret; its account      |
 | `/var/lib/lamalibre/apps/<route>/`                                  | `700` | An agent half's data; its account                 |
+| `/var/lib/lamalibre/apps/<route>/secrets.json`, `settings.json`     | `600` | A plugin's settings and secrets; its account      |
 | `/var/lib/lamalibre/apps/.jobs/`, `.trash/`                         | `700` | Signed jobs that ran; purged data (root)          |
 
 Mode `600` means only the file owner can read or write. Mode `640` adds read access for the file's group, `660` also write access. Mode `700` means only the directory owner can list, read, or modify contents. See [Configuration Files](../06-reference/config-files.md#file-permissions-table) for the owner of every directory.
@@ -584,6 +603,9 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 | `packages/agent/cli/scripts/lamaste-apphost`                        | The app host helper (root, Node.js built-ins only)     |
 | `packages/agent/cli/src/lib/apphost-setup.js`                       | Root-owned install check, sudoers rule, relay key pins |
 | `packages/server/daemon/src/lib/agent-jobs.js`                      | Agent jobs; app jobs signed when created               |
+| `packages/core/lib/src/plugin-settings.ts`                          | Settings schema, validation without values, wire types |
+| `packages/core/lib/src/agent/plugin-settings-store.ts`              | The agent half's settings files and `/admin/settings`  |
+| `packages/server/daemon/src/lib/plugin-settings.js`                 | Settings through the tunnel; the cache without secrets |
 
 ## Quick Reference
 
@@ -605,6 +627,7 @@ Configuration files that are read live by services (like Authelia's `users.yml`)
 | Agent daemon auth    | Relay assertions (Ed25519), owner token | Callers forged on an agent's loopback |
 | Agent root helper    | Relay-signed app jobs, pinned key       | Root actions the relay did not sign   |
 | Agent half sandbox   | Own account, hardened systemd unit      | Plugin code as root                   |
+| Plugin secrets       | Agent half only, through the tunnel     | Plugin secrets at rest on the relay   |
 | App auth             | Authelia TOTP 2FA                       | Unauthorized app access               |
 | Service isolation    | `127.0.0.1` binding                     | Direct access to internal services    |
 | File permissions     | `chmod 600`                             | Unauthorized secret access            |

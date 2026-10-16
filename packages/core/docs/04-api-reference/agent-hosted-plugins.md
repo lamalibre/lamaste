@@ -1,6 +1,6 @@
 # Agent-Hosted Plugins
 
-An **agent-hosted plugin** is an application that runs on one of your agents — typically a VM — while its admin pages live in the Lamaste panel. Lamaste never runs the plugin's code on the relay. This page covers what Lamaste adds for a plugin whose manifest has an `agent` block: hosting it on an agent, the internal plugin tunnel, the forwarded admin API, the installation secret and the health monitor — and, for a plugin that names its agent package, installing, updating and removing that agent half on the agent from the panel ([Hosting with an agent half](#hosting-with-an-agent-half)). What happens on the agent machine itself — the root helper, the unit, the signed jobs — is in [App Host](app-host.md). The hooks a plugin can run around all of these — and their approval — are in [Lifecycle Hooks](lifecycle-hooks.md). The full design is `plugin-development/design/agent-hosted-app-plugins.md`.
+An **agent-hosted plugin** is an application that runs on one of your agents — typically a VM — while its admin pages live in the Lamaste panel. Lamaste never runs the plugin's code on the relay. This page covers what Lamaste adds for a plugin whose manifest has an `agent` block: hosting it on an agent, the internal plugin tunnel, the forwarded admin API, the installation secret, the health monitor and what the panel shows while the hosting agent is offline, the plugin's [settings and secrets](#settings) — and, for a plugin that names its agent package, installing, updating and removing that agent half on the agent from the panel ([Hosting with an agent half](#hosting-with-an-agent-half)). What happens on the agent machine itself — the root helper, the unit, the signed jobs — is in [App Host](app-host.md). The hooks a plugin can run around all of these — and their approval — are in [Lifecycle Hooks](lifecycle-hooks.md). The full design is `plugin-development/design/agent-hosted-app-plugins.md`.
 
 ## In Plain English
 
@@ -39,6 +39,7 @@ Hosting a plugin on an agent does three things at once: it creates the internal 
 | `agent.service`  | Required with `agent.package`, and only with it. `entry`: a relative `.js`, `.mjs` or `.cjs` path inside the package, run as the service; `memoryMax` (optional): the unit's `MemoryMax=`, `[1-9][0-9]{0,5}` followed by `K`, `M` or `G`.                                                                                                                                                 |
 | `panel`          | Allowed with an `agent` block: the pages are listed in the panel, and the bundle at `/api/<route>/panel.js` comes from the agent half (`/admin/panel.js`).                                                                                                                                                                                                                                |
 | `hooks`          | Lifecycle hooks on the relay and in the agent half — see [Lifecycle Hooks](lifecycle-hooks.md).                                                                                                                                                                                                                                                                                           |
+| `settings`       | What an administrator configures — values and secrets the agent half stores. Only with an `agent` block. See [Settings](#settings).                                                                                                                                                                                                                                                       |
 
 There is no port in the manifest: Lamaste assigns it when the plugin is hosted.
 
@@ -84,11 +85,12 @@ The hosting record (`GET`, and `agentHosting` on the plugin list):
     "version": "1.0.0",
     "installedAt": "2026-10-15T10:01:30.000Z"
   },
-  "pluginName": "market-indicators"
+  "pluginName": "market-indicators",
+  "agentLastSeenAt": "2026-10-15T10:04:51.000Z"
 }
 ```
 
-`phase` is `installing` (the install pipeline runs: secret delivered, tunnel not yet granted), `active`, or `removing` (the uninstall pipeline runs: tunnel gone, secret not yet). The forwarder and the health monitor use only active hostings. `agentHalf` is the version of the agent half Lamaste installed that the agent reported running (`null`: installed by hand, or not yet). `pluginName` is the plugin that owns the hosting: no operation of one plugin reads, changes or removes a hosting another plugin owns (`409`, `code: "hosting_owner_mismatch"`).
+`phase` is `installing` (the install pipeline runs: secret delivered, tunnel not yet granted), `active`, or `removing` (the uninstall pipeline runs: tunnel gone, secret not yet). The forwarder and the health monitor use only active hostings. `agentHalf` is the version of the agent half Lamaste installed that the agent reported running (`null`: installed by hand, or not yet). `pluginName` is the plugin that owns the hosting: no operation of one plugin reads, changes or removes a hosting another plugin owns (`409`, `code: "hosting_owner_mismatch"`). `agentLastSeenAt` is when the hosting agent last contacted the relay (`null` until its first such call) — see [When the hosting agent is offline](#when-the-hosting-agent-is-offline).
 
 ### `GET /api/plugins/:name/hosting`
 
@@ -206,7 +208,7 @@ What a version brings that Lamaste runs or installs — relay hooks and the agen
 }
 ```
 
-An update whose agent half differs waits for approval like a changed hook set: `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, autoApproveWithheld }` (`relay` and `agentHalf` are `null` when the version brings none). **Auto-approve** covers a new version and tarball of the same agent half — what every release brings — and is **withheld** when the version brings an agent half where there was none, changes the agent package, adds system packages, or changes the service entry or memory limit: those run as root on the agent and wait for an administrator. `autoApproveWithheld` says why; the audit log records `hooks.auto-approve.withheld` and the administrators are notified.
+An update whose agent half differs waits for approval like a changed hook set: `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, autoApproveWithheld }` (`relay` and `agentHalf` are `null` when the version brings none; `settings` is how it changes the [settings schema](#in-the-plugin-list-and-the-update-preview), outside the digest). **Auto-approve** covers a new version and tarball of the same agent half — what every release brings — and is **withheld** when the version brings an agent half where there was none, changes the agent package, adds system packages, or changes the service entry or memory limit: those run as root on the agent and wait for an administrator. `autoApproveWithheld` says why; the audit log records `hooks.auto-approve.withheld` and the administrators are notified.
 
 ### Retained data
 
@@ -351,7 +353,7 @@ if (!result.ok) return reply.code(401).send({ error: result.reason });
 Once the plugin is enabled and hosted, the panel answers `/api/<route>` and `/api/<route>/*`:
 
 - **Authentication** is the panel's: an administrator certificate, or an agent certificate holding one of the plugin's declared capabilities. `plugin:<route>:host` does not admit calls — hosting the application is not using it. `403` otherwise.
-- **Mapping:** `/api/<route>/<rest>?query` → `http://127.0.0.1:<port>/admin/<rest>?query` on the relay's loopback, the relay end of the internal tunnel. Only `/admin/*` of the agent half is reachable; its `/app/*` (the user surface) is not, and neither is `/admin/hooks/*` (Lamaste's lifecycle hook calls; `404` however it is spelled). A path segment with an encoded `/` or `\` is refused (`400`).
+- **Mapping:** `/api/<route>/<rest>?query` → `http://127.0.0.1:<port>/admin/<rest>?query` on the relay's loopback, the relay end of the internal tunnel. Only `/admin/*` of the agent half is reachable; its `/app/*` (the user surface) is not, and neither are `/admin/hooks/*` (Lamaste's lifecycle hook calls) and `/admin/settings` with everything under it (where Lamaste writes the plugin's [settings](#between-the-relay-and-the-agent-half)) — `404` however they are spelled. A path segment with an encoded `/` or `\` is refused (`400`).
 - **Request hooks:** a plugin's approved `request:pre-forward` / `request:post-forward` hooks run on the routes they name; a plugin whose relay hooks are not approved is refused (`503`, `code: "hooks_not_approved"`). See [Lifecycle Hooks](lifecycle-hooks.md#request).
 - **Caller assertion:** `X-Lamalibre-Caller: <base64url(payload)>.<base64url(hmac)>` — payload `{ v: 1, plugin, caller, method, path, iat, nonce }`, HMAC-SHA256 with the installation secret, valid 60 seconds (5 seconds of clock skew), nonces refused on a second sight.
 - **Streaming:** request and response bodies are piped, never buffered; `text/event-stream` responses pass through unbuffered (nginx is told `X-Accel-Buffering: no`). The tunnel's body limit (`maxBodySizeMb`, default 10) is enforced: a larger `Content-Length` is `413` before anything is sent, and a chunked body that grows past it is cut off.
@@ -363,6 +365,287 @@ Once the plugin is enabled and hosted, the panel answers `/api/<route>` and `/ap
 ## Health
 
 Every 10 seconds, for every active hosting of an enabled plugin, the panel connects to the relay-loopback port and then calls `GET /admin/health` on the agent half with a caller assertion naming Lamaste itself (`{ "type": "lamaste" }`). A refused connect means the **tunnel** is down; a failed health call means the tunnel is up and the **application** is down. The state changes to `down` after three consecutive failures of the same reason and to `up` after two consecutive successes; each transition is persisted (`health` on the hosting record, with `reason`, `since`, `lastError`) and runs the plugin's `tunnel:down` / `tunnel:up` relay hook. The forwarder still attempts every request; the state decides whether a failure is answered with the hook's fallback.
+
+## When the hosting agent is offline
+
+A hosting that is `down` is one of two outages. Reason **`tunnel`**: nothing listens on the internal tunnel's port on the relay — the hosting agent is offline, or its chisel client is. Reason **`app`**: the tunnel answers and the agent half does not. For the first, what an administrator wants to know is how long the agent has been gone, which the health monitor's `since` cannot say (it is when the monitor noticed), so the relay keeps each agent's **last contact**.
+
+Every call an agent certificate makes to `GET /api/tunnels/agent-config` — the agent's sync, every 30 seconds — records that agent; an administrator naming an agent with `?agent=` does not. The time is kept in memory and written to `state.db` (`agent_presence`) at most once a minute per agent, never through the `agents` table, which the registry rewrites whole; a restart of the panel loses at most that minute. Revoking the agent's certificate forgets it, so a later enrollment under the label does not inherit it. It is reported as:
+
+- `lastSeenAt` on each entry of `GET /api/certs/agent` — `null` until the agent's first such call, and for a revoked agent;
+- `agentLastSeenAt` on a hosting — `GET /api/plugins/:name/hosting`, `agentHosting` on `GET /api/plugins` — and on `hosting` of the [settings view](#get-api-plugins-name-settings).
+
+What the panel shows while a hosting is down:
+
+- **The plugin's pages** check the hosting before they fetch the bundle — which comes from the agent half, so it could only fail, after the forwarder's 30-second timeout. They show "Hosting agent vm1 is offline since 14:05:12 (12m ago) — last sync 14:04:40 (13m ago)" for `tunnel` or "The agent half is not responding since 14:05:12 (12m ago)" for `app`, read the plugin list again every 10 seconds and open the pages once the hosting is up. A plugin that is not hosted, or whose hosting is being set up or removed, says so in the same place. Pages already open stay open, with the outage shown above them. A server plugin loads as before, and so does any plugin when the plugin list cannot be read.
+- **The sidebar** marks the plugin's pages, with the same sentence.
+- **The plugin's card** on the Plugins page shows the outage with its health, and its Settings section is read-only from the relay's cache, with the same reason ([Settings](#in-the-panel)).
+
+`lamaste-server plugins settings <name>` prints the same sentence, and `plugins configure` refuses with it.
+
+## Settings
+
+A plugin with an agent half may declare **settings**: what an administrator configures for it — an API key, a schedule, a region. The **agent half is the system of record**: it stores the values in its own data directory and answers `GET` and `PUT /admin/settings` for Lamaste alone. The panel shows them as a form, checks a change and carries it to the agent half through the internal tunnel; it keeps a cache of the non-secret values and of _when_ each secret was set — never a secret's value. A secret exists on the relay only in the memory of the request that carries it to the agent half ([Security Model](../01-concepts/security-model.md), 5e).
+
+Settings are not part of the [approval digest](#approval): they declare data, not code, and nothing they change runs with more privilege. Because the agent half holds them, they can be changed only while its hosting is up; while it is offline the panel shows them from its cache, read-only.
+
+### The settings block
+
+```json
+"settings": {
+  "schemaVersion": 1,
+  "fields": [
+    { "key": "apiKey", "label": "API key", "type": "secret", "required": true },
+    {
+      "key": "schedule",
+      "label": "Daily sync time",
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "default": "06:00"
+    },
+    { "key": "retries", "label": "Retries", "type": "integer", "min": 0, "max": 10, "default": 3 },
+    {
+      "key": "region",
+      "label": "Region",
+      "type": "enum",
+      "options": [
+        { "value": "eu", "label": "Europe" },
+        { "value": "us", "label": "United States" }
+      ]
+    },
+    { "key": "verbose", "label": "Verbose logging", "type": "boolean", "default": false }
+  ]
+}
+```
+
+Only in a manifest with an `agent` block — the agent half stores the values (`400`, "settings needs an agent block"). Both the block and its fields are strict: an unknown property is refused.
+
+| Property        | Meaning                                                                                                                                                                                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemaVersion` | An integer of at least 1, bumped by the plugin when its fields change. Every change the relay sends names the installed manifest's version, and an agent half running another one refuses it (`409`, `schema_mismatch`) — during an update, until both sides run the same version. |
+| `fields`        | 1–50 fields; keys are unique.                                                                                                                                                                                                                                                      |
+| `key`           | A lower-case letter, then letters and digits, at most 64 characters (`^[a-z][A-Za-z0-9]{0,63}$`).                                                                                                                                                                                  |
+| `label`         | 1–100 characters. `description` (optional): at most 500.                                                                                                                                                                                                                           |
+| `type`          | `string`, `secret` (a non-empty string the panel never shows), `integer` (a safe integer), `number` (finite), `boolean` or `enum`.                                                                                                                                                 |
+| `required`      | A required secret that is not set, or a required non-secret field with neither a stored value nor a default, leaves the plugin **needing configuration**.                                                                                                                          |
+| `default`       | Never on a secret. Must itself be a valid value of the field — its type, length, range, option and pattern, checked once when the manifest is validated.                                                                                                                           |
+| `maxLength`     | `string` and `secret` only: 1–4096; 1024 when not set.                                                                                                                                                                                                                             |
+| `min`, `max`    | `integer` and `number` only; `min` not greater than `max`.                                                                                                                                                                                                                         |
+| `pattern`       | `string` only, at most 256 characters; must compile as `new RegExp(pattern, 'u')`. Tested **unanchored** — anchor it with `^` and `$` when it means the whole value.                                                                                                               |
+| `options`       | `enum` only, and required there: 1–100 `{ value, label }` (a value of 1–200 characters, unique; a label of 1–100).                                                                                                                                                                 |
+
+**Who tests `pattern`.** The form, in the administrator's browser, and the agent half — never the panel process, and never `lamaste-server`, which runs as root on the relay: a manifest's regular expression must not be able to stall the panel or run as root. The panel checks everything else — type, required, length, range, option — so a value that only the pattern refuses comes back from the agent half (`422`). **Validation messages never contain the value**: a secret typed into the wrong field must not come back in an error, a log line or a response. That is why settings values are checked by hand and not with zod's enum or literal schemas, whose messages repeat what they received.
+
+### Reading and changing settings
+
+Admin only.
+
+#### `GET /api/plugins/:name/settings`
+
+```json
+{
+  "schemaVersion": 1,
+  "fields": [{ "key": "apiKey", "label": "API key", "type": "secret", "required": true }, "…"],
+  "values": {
+    "apiKey": { "set": true, "setAt": "2026-10-16T10:00:00.000Z" },
+    "schedule": "06:00",
+    "retries": 5,
+    "verbose": false
+  },
+  "configured": true,
+  "missing": [],
+  "revision": 3,
+  "source": "live",
+  "syncedAt": "2026-10-16T10:05:00.000Z",
+  "hosting": {
+    "agentLabel": "vm1",
+    "phase": "active",
+    "state": "up",
+    "reason": null,
+    "since": "2026-10-16T09:00:00.000Z",
+    "agentLastSeenAt": "2026-10-16T10:04:51.000Z"
+  }
+}
+```
+
+| Field                   | Meaning                                                                                                                                                                                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fields`                | The installed manifest's fields, as declared (`pattern` included, for the form)                                                                                                                                                                                 |
+| `values`                | Each non-secret field's effective value — the stored one, else its default; absent when it has neither (`region` above). Each secret as `{ "set": true, "setAt" }` or `{ "set": false }` — never a value                                                        |
+| `configured`, `missing` | Whether a required field lacks a value, and which, in schema order — as the agent half reported them                                                                                                                                                            |
+| `revision`              | The agent half's revision (+1 per change), which a change names; `null` while the relay never read the settings                                                                                                                                                 |
+| `source`                | `live`: read from the agent half for this answer (the hosting is `active` and its health is not `down`; 5 s). `cache`: the relay's last read, at `syncedAt` — the agent half is offline or did not answer. `none`: never read — the defaults, `revision` `null` |
+| `hosting`               | `null` when the plugin is not hosted; else the hosting agent, the hosting's `phase`, the health monitor's `state`, `reason` and `since`, and when the agent last contacted the relay ([offline](#when-the-hosting-agent-is-offline))                            |
+
+`404` when the plugin is not installed, and with `code: "no_settings"` when it declares no settings.
+
+#### `PUT /api/plugins/:name/settings`
+
+```json
+{
+  "revision": 3,
+  "values": { "retries": 5, "region": null },
+  "secrets": { "apiKey": "…" }
+}
+```
+
+A partial change: only the keys it names change. `revision` is the revision the administrator read. A secret goes in `secrets`, every other field in `values` (each in the wrong one is refused per key), and the body holds nothing else. `null` puts a non-secret field back to its default — or unset, when it has none — and clears a secret; both are refused for a field that must have a value. At most 256 KiB (`413`); 30 requests a minute.
+
+The panel checks the change against the installed schema — without `pattern` — and sends it to the agent half (`PUT /admin/settings`, 15 s), whose answer decides: on success the panel caches the agent half's new state, records the change and answers `200` with the settings as `GET` returns them (`source: "live"`). A change that changes nothing stores nothing and answers the settings as they are. Changes and reads of one plugin's settings run one at a time, so a slow read cannot put back what a change replaced.
+
+| Status | `code`                 | When                                                                                                                                 |
+| ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | —                      | The panel refused it: `errors`, a message per field key (`_` for the body as a whole, or a name that could not be a setting)         |
+| 404    | `no_settings`          | The plugin declares no settings (without a code: it is not installed)                                                                |
+| 409    | `operation_running`    | An operation of the plugin runs (`operationId`) — an update may be changing the schema                                               |
+| 409    | `revision_mismatch`    | The settings changed since they were read; `revision` is the current one. Read them again and make the change on them                |
+| 409    | `schema_mismatch`      | The agent half runs another version of the settings schema — let the plugin's update finish                                          |
+| 409    | `conflict`             | The agent half refused it as conflicting, for another reason                                                                         |
+| 422    | —                      | The agent half refused it: `errors` per field — its `pattern`, or its own schema                                                     |
+| 502    | `settings_unsupported` | The agent half does not answer `/admin/settings` (`404`) — it predates settings; update the plugin                                   |
+| 502    | `refused`              | Nothing answers on the internal tunnel's port                                                                                        |
+| 502    | `invalid`, `other`     | The agent half answered too large a body or in another shape (reload the settings to see what it stored), or could not be reached    |
+| 502    | `agent_half_error`     | The agent half answered another status (`status`)                                                                                    |
+| 503    | `hosting_offline`      | The plugin is not hosted, its hosting is not `active`, or its health is `down` — with `hosting` as in `GET` (`null` when not hosted) |
+| 504    | `timeout`              | No answer within 15 s — the change may or may not have been stored; read the settings again                                          |
+
+Once the plugin and its settings block are found, the checks run in this order: the body (`400`), a running operation (`409`), the hosting (`503`), then the agent half. A refusal answers `{ error, code?, errors?, revision?, operationId?, hosting?, status? }`, built from what Lamaste found and never from the request body. The agent half's per-field messages are passed on only under keys a setting can have, cut to 300 characters, and replaced by `Invalid value` when one contains a secret of the change: the agent half is Lamaste code that never repeats a value, but the relay does not answer with one on its word.
+
+A stored change is recorded in the [audit log](audit-and-notifications.md) as `plugin.settings.updated` with key names only — `changed`, `cleared`, `secretsSet`, `secretsCleared` — the new `revision` and the certificate serial.
+
+#### In the plugin list and the update preview
+
+`GET /api/plugins`, `GET /api/plugins/:name` and the install response carry, for a plugin that declares settings, `settings: { configured, missing, syncedAt }` in place of its schema — no values — from the relay's cache, or from the schema alone while the relay never read the settings (`syncedAt: null`). The Plugins page shows **Needs configuration** from it.
+
+An update's preview — `pendingUpdate.settings`, in `GET /api/plugins/:name/hooks` and the update response — says how the version changes the schema: `{ added, removed, retyped, newRequired }`, `null` when neither version declares settings. `retyped` are fields whose type changes; their values are dropped on both sides, never converted. `newRequired` are fields required without a default in the new version that were not before (absent, optional or with a default), and required fields that are retyped. The panel shows it next to what the update asks to approve, but it is not part of the digest. After the update the plugin needs configuration until those fields are filled.
+
+### Between the relay and the agent half
+
+The relay calls the agent half with `callAgentHalf` (`@lamalibre/lamaste`, also exported from `@lamalibre/lamaste/server`): one JSON request to `http://127.0.0.1:<port>/admin/…` — the relay end of the internal tunnel — with a caller assertion naming Lamaste itself (`{ "type": "lamaste" }`), answered with whatever status the agent half gives. It calls only paths under `/admin/` without `.` or `..` segments, with `GET`, `PUT`, `POST` or `DELETE`, and throws before sending anything otherwise; it sends a body as `application/json`, bounds the time and the response size, and resolves `{ ok: true, status, body }` (the parsed JSON, or `null`) or `{ ok: false, code, error }` — `refused` (nothing listens), `timeout`, `invalid` (a response over the size limit) or `other` — with an error that never contains the request body. The hook call `callAgentHalfHook` is built on the same request.
+
+| Call                          | Body                                                                | Answer                                                                                                                                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /admin/settings`         | —                                                                   | `200` the state                                                                                                                                                                                                                       |
+| `PUT /admin/settings`         | `{ schemaVersion, baseRevision, values, secrets }`, at most 256 KiB | `200` the new state; `409 { error, code: "schema_mismatch" }`; `409 { error, code: "revision_mismatch", revision }`; `422 { error: "Invalid settings", errors }`; `400` a body that is not JSON or not of that shape; `413` too large |
+| `POST /admin/settings/reload` | —                                                                   | `200` the state, read again from the files                                                                                                                                                                                            |
+
+The state, which every answer of the relay's reads and changes is built from:
+
+```json
+{
+  "schemaVersion": 1,
+  "revision": 3,
+  "values": { "retries": 5 },
+  "secrets": { "apiKey": { "setAt": "2026-10-16T10:00:00.000Z" } },
+  "configured": true,
+  "missing": []
+}
+```
+
+`values` are the explicitly stored non-secret values — no defaults; `secrets` names the secrets that are set, and when — never a value. In a change, `schemaVersion` is the relay's installed manifest's, `baseRevision` the revision the administrator edited, and `values` and `secrets` the change the panel validated (`null` clears). Responses are 256 KiB at most. The relay parses every state with `parseAgentHalfSettingsState`, which builds a fresh object of the contract's fields: nothing else the agent half sent — a secret's value in particular — survives into the cache.
+
+Only Lamaste: a caller assertion that does not verify is `401`, one naming an administrator or an agent `403`; another path under `/admin/settings` is `404`, a method a path does not take `405`. The **forwarder reserves `/admin/settings`** and everything under it as it reserves `/admin/hooks/*`: `/api/<route>/settings`, `/api/<route>/Settings` and `/api/<route>/%73ettings/x` all answer `404` and reach nothing. No forwarded caller — an administrator, or an agent holding one of the plugin's capabilities — reads or changes the settings behind the panel's validation, and the relay's cache cannot drift from the agent half. An agent half's own admin routes cannot live there.
+
+`POST /admin/settings/reload` is for a restore that puts older files in place while the agent half runs; Lamaste does not call it today, and since the forwarder reserves it nothing else can. An agent half that is restarted after a restore reads its files when it starts.
+
+### In the agent half
+
+`@lamalibre/lamaste/agent` holds the store and the handler, so that no plugin reimplements how a secret is stored:
+
+- **`settingsFromManifest(manifest)`** — the `settings` block of the agent half's own copy of its manifest (bundled with it), validated; throws `ManifestValidationError` when it is missing or invalid. The agent half checks values against this schema, not the relay's.
+- **`createSettingsStore({ dataDir, settings })`** — the store over two files in `dataDir`, which must exist: for an agent half Lamaste installs, `LAMASTE_APP_DATA_DIR`, the only directory its unit may write ([App Host](app-host.md)). One store per process. `load()` reads and reconciles the files and must run before anything else; then `state()` is what `GET` answers, `values()` the values the plugin runs with (defaults overlaid by the stored values, never a secret), `secret(key)` a secret's value for the agent half's own use (`undefined` when it is not set), `configured()`, `update(change)`, `reload()`, and `onChange(listener)` — called with the new state after every update and reload, returning its unsubscribe function; a listener that throws does not fail the update, which is stored.
+- **`createSettingsHandler({ verifier, store })`** — answers `/admin/settings` as above. Framework-agnostic, like `createAgentHookHandler`: pass `{ method, url, headers, body }` (the raw body, or an object a framework already parsed) and send the `{ status, body }` it returns. No answer carries a secret's value; a store that fails is `500` without its message.
+
+| File                      | Contents                                                                                                                                                              |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<dataDir>/settings.json` | `{ v: 1, schemaVersion, revision, values: { <key>: { type, value } } }` — each non-secret value with the type of the field it was stored for; written on every change |
+| `<dataDir>/secrets.json`  | `{ v: 1, secrets: { <key>: { value, setAt } } }` — written only when a secret changes                                                                                 |
+
+Both are 0600, owned by the account the agent half runs as, and written atomically: an exclusive temp file in the same directory (`wx` — never opened through an existing file or link), `fsync`, rename, `fsync` of the directory. A symbolic link — or anything but a regular file — where either belongs is refused, on read (checked, then opened with `O_NOFOLLOW`) and on write. A missing file is empty; a malformed one, or one over 4 MiB, is an error that names the file and never repeats its contents. A secret never goes into `settings.json`.
+
+**Reconcile.** `load()` and `reload()` reconcile the stored values with the agent half's own schema. A key the schema no longer knows is dropped; so is a value recorded for another type than its field has now — a **retyped value is dropped, never converted**: a secret whose field became a string leaves `secrets.json` and never lands in `settings.json`, and a string whose field became a secret leaves `settings.json` — and so is a value that no longer passes its field's checks, pattern included. A file is rewritten only when something was dropped from it; the revision stays.
+
+**A change** is serialized with every other. A `schemaVersion` other than the agent half's is `409 schema_mismatch`, a `baseRevision` other than the current revision `409 revision_mismatch` with the current `revision`, and a value its checks refuse — pattern included — `422` per field. Otherwise it is applied (`null` clears): `secrets.json` first, when a secret changed, each new secret with `setAt` now; then `settings.json` with the revision plus one; then the listeners.
+
+```js
+import {
+  createCallerAssertionVerifier,
+  createSettingsHandler,
+  createSettingsStore,
+  settingsFromManifest,
+} from '@lamalibre/lamaste/agent';
+import manifest from '../lamaste-plugin.json' with { type: 'json' }; // bundled into the agent half
+
+const verifier = createCallerAssertionVerifier({
+  configPath: process.env.LAMASTE_APP_CONFIG,
+  plugin: 'market-indicators',
+});
+const settings = createSettingsStore({
+  dataDir: process.env.LAMASTE_APP_DATA_DIR,
+  settings: settingsFromManifest(manifest),
+});
+await settings.load();
+settings.onChange(() => scheduler.reschedule(settings.values()));
+const settingsHandler = createSettingsHandler({ verifier, store: settings });
+
+// in the agent half's router, for /admin/settings and /admin/settings/*:
+const { status, body } = await settingsHandler.handle({ method, url, headers, body: rawBody });
+
+// where the plugin uses them:
+const { schedule, retries } = settings.values();
+const apiKey = settings.secret('apiKey'); // undefined until an administrator sets it
+if (!settings.configured()) pauseSync(); // required settings missing
+```
+
+### The relay's cache
+
+`state.db` holds one row per plugin in `plugin_settings` (migration `0012`): the agent half's schema version and revision, the non-secret values it stored — for the keys the installed schema knows, and only values that still suit their field — `{ key: setAt }` for the secrets it holds, whether it is configured and what is missing, and when the relay read them (`synced_at`). There is no column for a secret's value. The installed manifest's `settings` block itself is kept on the plugin's row (`plugins.settings`).
+
+The relay reads the agent half's settings after a hosting succeeds, after an update or its revert, whenever the health monitor sees the plugin come up, on every live read, and from the answer to every change. A read that fails is logged with metadata only and keeps the row. The row is deleted when the plugin's hosting is removed — a later hosting reads the settings afresh, from files the agent kept or from none — and when the plugin is uninstalled, with its registry row.
+
+Hook inputs read the cache: a **relay hook**'s `settings` is the plugin's effective non-secret values — each stored value or its default, `{}` while the relay never read them — and an **agent hook** gets `{}`, since the agent half holds the settings itself ([Lifecycle Hooks](lifecycle-hooks.md#writing-hooks)). Neither ever gets a secret.
+
+### Hosting, retained data and updates
+
+- **Hosting takes no settings.** The agent half starts without them — or with the files it kept on that agent — and reports `configured: false` until an administrator fills the required fields. Secrets would otherwise wait in the relay's memory through an operation that can take minutes. Once the hosting is active the relay reads the settings, and the plugin's card shows whether it needs configuration.
+- **Retained data.** The files are in the agent half's data directory, so for an agent half Lamaste installs they stay with its [retained data](#retained-data) when it is removed without purge, and come back when the same package is hosted on that agent again; the relay reads them then. A **purge** deletes them with the data directory.
+- **Updates.** A version may add, remove or retype fields and bump `schemaVersion`. The new agent half reconciles the files with its schema when it starts: values of fields it no longer has are dropped, and a retyped field's value is dropped — on the relay too, whose cache keeps only values that suit the installed schema — never converted. While the two sides run different schema versions a change is refused (`409 schema_mismatch`), and while the update runs as an operation it is refused anyway (`409 operation_running`); the relay reads the settings again once the update finished or was reverted. Fields the new version newly requires leave the plugin needing configuration.
+
+### In the panel
+
+A plugin that declares settings gets a **Settings** section on its card on the Plugins page: a form generated from its fields — a text input for a string (its length and `pattern` checked in the browser before anything is sent), a number input with its range, a checkbox, a select of an enum's options; a secret as a password input that is never prefilled, says when it was set, and offers **Replace** and — for an optional secret — **Clear**. A secret's value never enters the page's state or its query cache: the form reads the input when it submits and empties it. Only the fields that changed are sent; the panel's and the agent half's messages appear under their fields, and a stale revision reloads the settings. While the hosting is not up, the form is read-only from the cache and says why ("Hosting agent vm1 is offline since … — last sync …"), and reads the settings again every 10 seconds until it can open. The card shows **Needs configuration** while required settings are missing, and an update's approval lists how it changes the settings.
+
+The desktop app's server mode shows the same section, through `AdminClient` `getPluginSettings(name)` and `updatePluginSettings(name, body)` — Tauri commands `admin_get_plugin_settings` and `admin_update_plugin_settings`, which hand the body to curl on stdin, never in its arguments.
+
+### From the CLI
+
+```
+lamaste-server plugins settings <name> [--json]
+lamaste-server plugins configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]
+lamaste-server plugins configure <name>          # in a terminal: asked field by field
+```
+
+`settings` prints each field — its key, type and value (a secret only as `set <when>` or `not set`), its label, whether it is required, its range, options and default — then whether the plugin is configured or what is missing, where the values come from (the agent half, the relay's copy and when it was synced, or the defaults when it never was), and the hosting in the panel's words. With `--json` it prints the `GET` answer as one line.
+
+`configure` with flags makes one change from one read: it reads the settings — the schema and the revision — builds the change and sends it with that revision.
+
+| Flag                                     | Meaning                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--set key=value` (or `--set=key=value`) | A non-secret field, the value parsed by the field's type: an integer, a number, `true`/`yes`/`on` or `false`/`no`/`off`, one of an enum's option values, or the text as given. An empty value is refused — use `--clear`. **Refused for a secret**: a command line is readable by other local users |
+| `--clear key` (or `--clear=key`)         | Puts a non-secret field back to its default (or unset) and clears a secret; refused for a field that must have a value                                                                                                                                                                              |
+| `--secrets-stdin`                        | Reads one JSON object from stdin — `{ "apiKey": "…", "oldToken": null }`: secret keys only, `null` clears — at most 256 KiB. Refused when stdin is a terminal: pipe it in or redirect it from a file                                                                                                |
+
+```bash
+lamaste-server plugins configure market-indicators --set retries=5 --clear region --secrets-stdin < secrets.json
+```
+
+Each key may be named once across the flags. The change is checked against the schema before anything is sent — without `pattern`, which the agent half tests — and a refused one prints a message per field and sends nothing. Messages name keys, never a value; an argument that could be a secret typed in the wrong place is never repeated.
+
+Without flags, in a terminal (stdin and stdout both), `configure` asks for each field in turn: a secret is kept, replaced — typed into a masked prompt, never shown — or cleared; a boolean is a yes or no; an enum a choice among its options (or back to its default); a string or a number a text prefilled with the current value, empty putting it back to its default. It then lists what changes — a non-secret field with its old and new value, a secret only as set, replaced or cleared — and asks before saving. Without flags it refuses to run with `--json` or without a terminal.
+
+Before sending, `configure` refuses what the panel would: the settings of a plugin that is not hosted, whose hosting is being set up or removed, or whose hosting is down (`hosting_offline`, with since when and the agent's last sync), or that the relay has never read (`settings_not_read`). A refusal of the panel is explained: each field's message; a stale revision (nothing was saved — run it again); a running operation (`plugins operations <name>`); a timeout (`plugins settings <name>` shows what the agent half stored); an agent half that predates settings (`plugins update <name>`).
+
+Both commands exit `0` when they did what was asked — for `configure`, saved the change, found nothing to change, or the administrator declined to save — and `1` for a usage error, a refusal, or a prompt cancelled with Ctrl-C (nothing is saved). With `--json`, `configure` prints `{ "event": "complete", "name", "changed", "cleared", "secretsSet", "secretsCleared", "settings" }` — key names, and the settings as `GET` answers them — and every failure of either command `{ "event": "error", "message", "recoverable": false, "code"?, "errors"?, "revision"?, "operationId"?, "hosting"? }`.
 
 ## Internal tunnels
 
@@ -381,13 +664,15 @@ lamaste-server plugins retained-data [<name>]             # what agents keep of 
 lamaste-server plugins purge-data <name> --agent <label>  # delete it on the agent (follows the operation)
 lamaste-server plugins forget-data <name> --agent <label> # drop the relay's record only
 lamaste-server plugins hooks <name>                       # what needs approval: relay hooks, the agent half
+lamaste-server plugins settings <name>                    # its settings (secrets only as set), the hosting
+lamaste-server plugins configure <name> [--set key=value]... [--clear key]... [--secrets-stdin]
 lamaste-server push-install status|on|off                 # the switch, policies, every agent's window
 lamaste-server push-install open <agent> [--minutes <n>] [--policy <id>]
 lamaste-server push-install close <agent>
 lamaste-server push-install default-policy <id>
 ```
 
-`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's. `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
+`lamaste-server plugins list` shows where each hosted plugin runs, its health and the agent half version. `host` and `unhost` follow the operation step by step and exit non-zero unless it succeeded. A refusal is explained: `agent_not_eligible` lists the reasons (and points at `eligibility`), `push_install_refused` says which gates a push passes — `lamaste-server` calls the panel from `127.0.0.1`, so the agent's policy must allow that address. `--purge` names the data directory it deletes before it starts. `retained-data` lists every agent's records — marking those of uninstalled plugins — or one plugin's, with the data directory and account of each; `purge-data` says which directory and account it deletes, follows the operation and exits non-zero unless it succeeded; `forget-data` says that nothing on the agent changed and how to remove the data there. `hooks` prints the approval digest, the relay hook set and the agent half (package and version, integrity, entry and memory limit, the account and unit it runs as, its data directory, its system packages), and a pending update's. `settings` and `configure` — interactive in a terminal, a secret only from a masked prompt or stdin, never an argument — are described under [Settings](#from-the-cli). `push-install status` lists the switch, the default policy, each policy's actions, packages and addresses, and each enrolled machine agent's window (`open until …` with its policy, or `closed`); `open` checks the minutes against the bounds the panel reports (default 30).
 
 ## State
 
@@ -400,8 +685,12 @@ lamaste-server push-install default-policy <id>
 | `state.db` `agents.push_install_enabled_until`, `push_install_policy`           | Each agent's push-install window and policy                                                     |
 | `state.db` `agent_jobs.payload`, `agent_jobs.signature`                         | App job parameters and the relay's signature over them                                          |
 | `state.db` `retained_agent_data`                                                | Data agents keep of removed agent halves                                                        |
+| `state.db` `plugins.settings`                                                   | The installed manifest's settings block — the schema the panel checks a change against          |
+| `state.db` `plugin_settings`                                                    | The cache of each plugin's settings: non-secret values, `{ key: setAt }` for secrets, status    |
+| `state.db` `agent_presence`                                                     | When each agent last contacted the relay (written at most once a minute per agent)              |
 | `/etc/lamalibre/lamaste/push-install-config.json`, `push-install-sessions.json` | The switch and policies; the push log (last 500)                                                |
 | `<agent>/agents/<label>/app-plugins/<route>.json`                               | The agent's copy of the port and secret (0600)                                                  |
 | `/etc/lamalibre/apps/<route>/plugin-config.json` (agent)                        | The service's copy, for an agent half Lamaste installed (0600, its account)                     |
+| `<data directory>/settings.json`, `secrets.json` (agent)                        | The plugin's settings and secrets, kept by the agent half (0600, its account)                   |
 
-Secrets leave the relay only through `GET /api/agents/me/plugin-config/:route`, over TLS, to the hosting agent's certificate. Files on the agent: [App Host](app-host.md#what-it-creates).
+Installation secrets leave the relay only through `GET /api/agents/me/plugin-config/:route`, over TLS, to the hosting agent's certificate. Settings secrets never rest on the relay: they cross it in the memory of one request, to the agent half. Files on the agent: [App Host](app-host.md#what-it-creates).

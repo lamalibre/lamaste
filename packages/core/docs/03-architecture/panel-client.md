@@ -327,7 +327,7 @@ const baseNavItems = [
 ];
 ```
 
-The sidebar dynamically appends navigation items for enabled plugins. Plugins with a `panel.pages` array get a section header followed by per-page links; plugins with a single `panel.label` get one link. Plugin nav items are fetched via the `AdminClientContext` and appended after the base items.
+The sidebar dynamically appends navigation items for enabled plugins. Plugins with a `panel.pages` array get a section header followed by per-page links; plugins with a single `panel.label` get one link. Plugin nav items come from the plugin list — fetched via the `AdminClientContext` under the `['plugins']` query, which the Plugins page and the plugin loader share — and are appended after the base items. The items of an agent-hosted plugin whose hosting is down are marked with why: the hosting agent offline since when, and its last sync, or the agent half not responding ([Agent-Hosted Plugins](../04-api-reference/agent-hosted-plugins.md#when-the-hosting-agent-is-offline)); the plugin loader then shows that instead of fetching the bundle.
 
 Each item renders a `SidebarLink` component with active-state highlighting via React Router's `useLocation`.
 

@@ -132,7 +132,7 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 }
 ```
 
-`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, autoApproveWithheld }` while an update waits — `autoApproveWithheld` lists why auto-approve did not cover it (`null` otherwise).
+`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, autoApproveWithheld }` while an update waits — `settings` lists how the version changes the plugin's [settings schema](agent-hosted-plugins.md#in-the-plugin-list-and-the-update-preview) (`{ added, removed, retyped, newRequired }`, `null` when neither version declares settings; not part of the digest), and `autoApproveWithheld` why auto-approve did not cover it (`null` otherwise).
 
 ### `POST /api/plugins/:name/hooks/approve`
 
@@ -259,6 +259,8 @@ export default defineRelayHooks({
 | `request:pre-forward`       | `method`, `path`, `query`, `caller`, `headers`, `route`, `body?`                                                                        | `{ action: 'continue', setHeaders?, removeHeaders? }` / `{ action: 'reject', status: 400–499, body? }`                     |
 | `request:post-forward`      | `status`, `headers`, `request`, `route`, `body?`                                                                                        | `{ action: 'pass' }` / `{ action: 'replace', body, contentType?, setHeaders? }` / `{ action: 'block', status?, reasonId }` |
 | `tunnel:down` / `tunnel:up` | `state`, `reason`, `since`, `lastError?`                                                                                                | `{ fallback? }` (down) / `{}`                                                                                              |
+
+`settings` in a relay hook's input is the plugin's effective non-secret [settings](agent-hosted-plugins.md#settings) — each stored value or its default, from the relay's cache (`{}` while it never read them); an agent hook gets `{}`, since the agent half holds the settings itself. Neither ever gets a secret.
 
 Every decision may carry `effects` (at most 10): `{ type: 'audit', event, data? }`, `{ type: 'notify-admins', message, level? }`, `{ type: 'log', message, level?, data? }` — rate-limited per plugin (60, 6 and 120 a minute). Header edits may not touch `Host`, framing, `Cookie`/`Set-Cookie`, `Authorization`, `X-Forwarded-*`, `X-Lamalibre-*`, `X-SSL-Client-*`, `Remote-*` or `X-Accel-*`.
 

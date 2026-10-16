@@ -275,7 +275,7 @@ curl -s --cert client.p12:password \
 
 ### `GET /api/tunnels/agent-config`
 
-Returns the Chisel client configuration for one agent: the enabled tunnels it carries that the Chisel authfile actually grants it, and nothing else. A tunnel on a reserved port or sharing its port with another tunnel (possible only in state written before those checks) is withheld — Chisel would refuse the agent's whole session for it. Used by `lamaste-agent setup`, `update`, and the agent's 30-second sync timer (`lamaste-agent sync`), on both macOS and Linux.
+Returns the Chisel client configuration for one agent: the enabled tunnels it carries that the Chisel authfile actually grants it, and nothing else. A tunnel on a reserved port or sharing its port with another tunnel (possible only in state written before those checks) is withheld — Chisel would refuse the agent's whole session for it. Used by `lamaste-agent setup`, `update`, and the agent's 30-second sync timer (`lamaste-agent sync`), on both macOS and Linux. A call with an agent certificate is also that agent's contact with the relay: the panel records when each agent last called (`lastSeenAt` on [`GET /api/certs/agent`](certificates.md), `agentLastSeenAt` on the hostings of [agent-hosted plugins](agent-hosted-plugins.md#when-the-hosting-agent-is-offline)); an administrator's `?agent=` call is not.
 
 **Required capability:** `tunnels:read`
 
