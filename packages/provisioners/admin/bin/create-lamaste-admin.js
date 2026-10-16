@@ -12,6 +12,7 @@ if (args.includes('--json')) {
   };
 
   const panelUrl = getArg('--panel-url');
+  const panelPin = getArg('--panel-pin');
   const p12Path = getArg('--p12-path');
   const outputP12Path = getArg('--output-p12');
   const passwordFile = getArg('--password-file');
@@ -21,14 +22,14 @@ if (args.includes('--json')) {
     const line = JSON.stringify({
       event: 'error',
       message:
-        'Missing required arguments. Usage: create-lamaste-admin --json --panel-url <url> --p12-path <path> --output-p12 <path> [--password-file <path>] (with LAMALIBRE_LAMASTE_P12_PASS env var)',
+        'Missing required arguments. Usage: create-lamaste-admin --json --panel-url <url> [--panel-pin sha256//<pin>] --p12-path <path> --output-p12 <path> [--password-file <path>] (with LAMALIBRE_LAMASTE_P12_PASS env var; --panel-pin is required for a panel at its IP address)',
       recoverable: false,
     });
     process.stdout.write(line + '\n');
     process.exit(1);
   }
 
-  await upgradeJson({ panelUrl, p12Path, p12Password, outputP12Path, passwordFile });
+  await upgradeJson({ panelUrl, panelPin, p12Path, p12Password, outputP12Path, passwordFile });
 } else {
   try {
     await upgrade();

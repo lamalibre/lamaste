@@ -15,6 +15,8 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   XCircle,
+  KeyRound,
+  ShieldAlert,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -208,6 +210,184 @@ function ServerUpdateDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Panel TLS key (an IP panel's self-signed certificate, verified by its pin)
+// ---------------------------------------------------------------------------
+
+/** Whether the panel URL's host is an IP address — verified by a key pin. */
+function isIpPanel(panelUrl) {
+  try {
+    const host = new URL(panelUrl).hostname.replace(/^\[|\]$/g, '');
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':');
+  } catch {
+    return false;
+  }
+}
+
+const PIN_SOURCES = {
+  ssh: 'read from the server over SSH',
+  installer: 'from the installer',
+  local: "read from this machine's certificate",
+  agent: "from the agent's enrollment",
+  'first-use': 'pinned on first connection',
+  're-pin': 're-pinned by you',
+};
+
+function PanelKeyRow({ server, keyMismatch, onRepin }) {
+  const pin = server.panelServerPubkeySha256;
+  const shown = pin ? `sha256//${pin}` : null;
+  const when = server.panelServerPinnedAt
+    ? new Date(server.panelServerPinnedAt).toLocaleDateString()
+    : null;
+  return (
+    <div className="flex items-start gap-2 text-xs text-zinc-400">
+      <KeyRound size={12} className="mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        {keyMismatch && (
+          <div className="flex items-center gap-1 text-amber-400 mb-0.5">
+            <ShieldAlert size={12} />
+            The panel presented a different TLS key; nothing was sent to it.
+          </div>
+        )}
+        {shown ? (
+          <>
+            <div className="font-mono text-zinc-300 break-all select-all" title="Panel TLS key pin">
+              {shown}
+            </div>
+            <div className="text-zinc-500">
+              {PIN_SOURCES[server.panelServerPinSource] ?? 'pinned'}
+              {when && ` · ${when}`}
+              {' · compare with '}
+              <span className="font-mono">sudo lamaste-server panel-pin</span>
+            </div>
+          </>
+        ) : (
+          <div className="text-zinc-500">TLS key is pinned on the first connection</div>
+        )}
+      </div>
+      {shown && (
+        <button
+          type="button"
+          onClick={onRepin}
+          className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+        >
+          Re-pin
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RepinDialog({ server, onClose }) {
+  const queryClient = useQueryClient();
+  const inspectQuery = useQuery({
+    queryKey: ['panel-key', server.id],
+    queryFn: () => invoke('inspect_panel_key', { serverId: server.id }),
+    retry: false,
+    gcTime: 0,
+  });
+  const repinMutation = useMutation({
+    mutationFn: (pin) => invoke('repin_panel_key', { serverId: server.id, pin }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers'] });
+      queryClient.invalidateQueries({ queryKey: ['server-health', server.id] });
+      onClose();
+    },
+  });
+  const check = inspectQuery.data;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="w-full max-w-md rounded-lg bg-zinc-900 border border-zinc-700 shadow-xl">
+        <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+          <div className="flex items-center gap-2">
+            <KeyRound size={16} className="text-cyan-400" />
+            <span className="text-white font-semibold text-sm">Panel TLS key</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={repinMutation.isPending}
+            className="text-zinc-500 hover:text-zinc-300 disabled:opacity-30"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3 text-xs">
+          {inspectQuery.isPending && (
+            <div className="flex items-center gap-2 text-zinc-400">
+              <Loader2 size={12} className="animate-spin" />
+              Reading the key {server.panelUrl} presents…
+            </div>
+          )}
+          {inspectQuery.isError && <p className="text-red-400">{inspectQuery.error?.toString()}</p>}
+          {check && (
+            <>
+              <div>
+                <div className="text-zinc-500 mb-0.5">Pinned</div>
+                <div className="font-mono text-zinc-300 break-all">{check.pinned ?? '—'}</div>
+              </div>
+              <div>
+                <div className="text-zinc-500 mb-0.5">Presented now</div>
+                <div
+                  className={`font-mono break-all ${check.matches ? 'text-green-400' : 'text-amber-400'}`}
+                >
+                  {check.presented}
+                </div>
+              </div>
+              {check.matches ? (
+                <div className="flex items-center gap-2 text-green-400">
+                  <CheckCircle2 size={14} />
+                  The panel presents the pinned key. Nothing to change.
+                </div>
+              ) : (
+                <div className="p-3 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300 space-y-1.5">
+                  <div className="flex items-center gap-2 font-medium">
+                    <ShieldAlert size={14} />
+                    The panel presents a different key
+                  </div>
+                  <p className="text-amber-200/80 leading-relaxed">
+                    Trust it only if you reinstalled this server or replaced its certificate, and it
+                    matches what <span className="font-mono">sudo lamaste-server panel-pin</span>{' '}
+                    prints on the server. Otherwise something may be intercepting the connection —
+                    keep the pinned key.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+          {repinMutation.isError && (
+            <p className="text-red-400">{repinMutation.error?.toString()}</p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={repinMutation.isPending}
+            className="rounded px-3 py-1.5 text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30"
+          >
+            {check && !check.matches ? 'Keep pinned key' : 'Close'}
+          </button>
+          {check && !check.matches && (
+            <button
+              type="button"
+              onClick={() => repinMutation.mutate(check.presented)}
+              disabled={repinMutation.isPending}
+              className="rounded px-3 py-1.5 text-xs text-amber-300 bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-30 flex items-center gap-1"
+            >
+              {repinMutation.isPending && <Loader2 size={12} className="animate-spin" />}
+              Trust new key
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main ServerCard
 // ---------------------------------------------------------------------------
 
@@ -221,12 +401,23 @@ export default function ServerCard({ server, onSetActive, onManage }) {
   const [updateStep, setUpdateStep] = useState(null);
   const [updateError, setUpdateError] = useState(null);
   const [updateSuccess, setUpdateSuccess] = useState(false);
+  const [showRepin, setShowRepin] = useState(false);
+  const ipPanel = isIpPanel(server.panelUrl);
 
   const healthQuery = useQuery({
     queryKey: ['server-health', server.id],
     queryFn: () => invoke('check_server_health', { serverId: server.id }),
     refetchInterval: 30000,
   });
+
+  // A server registered before panels were pinned gets its key pinned on its
+  // first connection (the health check): show it once that has happened.
+  const pinMissing = ipPanel && !server.panelServerPubkeySha256;
+  useEffect(() => {
+    if (pinMissing && healthQuery.data?.online) {
+      queryClient.invalidateQueries({ queryKey: ['servers'] });
+    }
+  }, [pinMissing, healthQuery.data?.online, queryClient]);
 
   const updateQuery = useQuery({
     queryKey: ['panel-update', server.id],
@@ -288,6 +479,8 @@ export default function ServerCard({ server, onSetActive, onManage }) {
   });
 
   const online = healthQuery.data?.online ?? false;
+  // The panel answered with another key than the pinned one (see Re-pin).
+  const keyMismatch = healthQuery.data?.status === 'key-mismatch';
   const hasCloudControls = !!server.providerId;
   const updateInfo = updateQuery.data;
   const hasUpdate = updateInfo?.hasUpdate === true;
@@ -318,8 +511,12 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 rounded-full ${online ? 'bg-green-400' : 'bg-red-400'}`} />
-          <span className="text-xs text-zinc-500">{online ? 'Online' : 'Offline'}</span>
+          <span
+            className={`h-2 w-2 rounded-full ${online ? 'bg-green-400' : keyMismatch ? 'bg-amber-400' : 'bg-red-400'}`}
+          />
+          <span className="text-xs text-zinc-500">
+            {online ? 'Online' : keyMismatch ? 'Key mismatch' : 'Offline'}
+          </span>
         </div>
       </div>
 
@@ -339,6 +536,13 @@ export default function ServerCard({ server, onSetActive, onManage }) {
               <span className="text-green-400/60 ml-1">(up to date)</span>
             )}
           </div>
+        )}
+        {ipPanel && (
+          <PanelKeyRow
+            server={server}
+            keyMismatch={keyMismatch}
+            onRepin={() => setShowRepin(true)}
+          />
         )}
       </div>
 
@@ -506,6 +710,8 @@ export default function ServerCard({ server, onSetActive, onManage }) {
           </div>
         </div>
       )}
+
+      {showRepin && <RepinDialog server={server} onClose={() => setShowRepin(false)} />}
 
       {showUpdateDialog && updateInfo && (
         <ServerUpdateDialog

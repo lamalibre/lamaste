@@ -19,6 +19,7 @@
  *   sites         Manage static sites
  *   certs         Certificate status and renewal
  *   reset-admin   Emergency admin authentication reset
+ *   panel-pin     The public-key pin of the panel's IP listener
  *   uninstall     Full server teardown
  */
 
@@ -66,6 +67,7 @@ ${b('COMMANDS')}
   ${c('sites')}           Manage static sites (list, create, delete)
   ${c('certs')}           Certificate status, renewal, and agent cert listing
   ${c('reset-admin')}     Emergency admin reset (reverts to P12, clears 2FA)
+  ${c('panel-pin')}       The panel's TLS key pin, to compare with what agents and the desktop pinned
   ${c('chisel')}          Manage chisel tunnel-server credentials (rotate-credential)
   ${c('registry-credential')} Registry (Feria) service credential used to broker agent install tokens
   ${c('uninstall')}       Full server teardown (requires confirmation)
@@ -196,6 +198,11 @@ async function main() {
         }
       }
       await runResetAdmin({ json, passwordFile });
+      break;
+    }
+    case 'panel-pin': {
+      const { runPanelPin } = await import('../src/commands/panel-pin.js');
+      await runPanelPin({ json });
       break;
     }
     case 'registry-credential': {

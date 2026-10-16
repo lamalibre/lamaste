@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
-import { X, Loader2, CheckCircle2 } from 'lucide-react';
+import { X, Loader2, CheckCircle2, KeyRound } from 'lucide-react';
 
 export default function AddManagedServer({ onClose }) {
   const queryClient = useQueryClient();
   const [panelUrl, setPanelUrl] = useState('');
   const [label, setLabel] = useState('');
+  // A panel added at its IP address: the TLS key pinned on this first
+  // connection, shown once before the dialog closes.
+  const [pinnedEntry, setPinnedEntry] = useState(null);
 
   const addMutation = useMutation({
     mutationFn: () =>
@@ -22,11 +25,54 @@ export default function AddManagedServer({ onClose }) {
             .slice(0, 64) ||
           'my-server',
       }),
-    onSuccess: () => {
+    onSuccess: (entry) => {
       queryClient.invalidateQueries({ queryKey: ['servers'] });
-      onClose();
+      if (entry?.panelServerPubkeySha256) {
+        setPinnedEntry(entry);
+      } else {
+        onClose();
+      }
     },
   });
+
+  if (pinnedEntry) {
+    return (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 w-full max-w-md">
+          <div className="flex items-center gap-2 mb-4">
+            <CheckCircle2 size={16} className="text-green-400" />
+            <h2 className="text-sm font-bold text-white">Server added</h2>
+          </div>
+          <div className="flex items-start gap-2 text-xs text-zinc-400">
+            <KeyRound size={12} className="mt-0.5 shrink-0" />
+            <div className="space-y-2">
+              <p>
+                The panel at <span className="font-mono">{pinnedEntry.panelUrl}</span> uses a
+                self-signed certificate. Its TLS key is now pinned; every connection must present
+                it:
+              </p>
+              <p className="font-mono text-zinc-200 break-all select-all">
+                sha256//{pinnedEntry.panelServerPubkeySha256}
+              </p>
+              <p className="text-zinc-500">
+                Compare it with <span className="font-mono">sudo lamaste-server panel-pin</span> on
+                the server. If they differ, remove this server: something answered in the
+                panel&apos;s place.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end mt-5">
+            <button
+              onClick={onClose}
+              className="text-xs px-3 py-1.5 rounded bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">

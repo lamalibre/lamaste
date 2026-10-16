@@ -58,6 +58,9 @@ export type {
 // Errors
 export { CloudHttpError, TokenScopeError, CloudError } from './errors.js';
 
+// The panel's TLS key pin
+export { PANEL_IP_CERT_PATH, panelKeyPin, readPanelKeyPin } from './panel-pin.js';
+
 // Provider interfaces
 export type { CloudProvider } from './provider.js';
 export type { StorageProvider } from './storage-provider.js';

@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { Listr } from 'listr2';
 import chalk from 'chalk';
 import { execa } from 'execa';
+import { fetchPanelKeyPin, panelNeedsPin, panelTlsArgs } from './panel-tls.js';
 
 // ---------------------------------------------------------------------------
 // Branded identifiers — single source of truth for this package.
@@ -92,7 +93,8 @@ async function createCurlConfig(p12Path, p12Password) {
 /**
  * Core upgrade logic shared between interactive and JSON modes.
  *
- * @param {object} ctx - Must contain: panelUrl, p12Path, p12Password, outputP12Path
+ * @param {object} ctx - Must contain: panelUrl, p12Path, p12Password, outputP12Path;
+ *   panelPin for a panel reached at its IP address (see panel-tls.js)
  * @param {(step: string, status: string, output?: string) => void} onStep - Progress callback
  * @returns {Promise<{p12Path: string, p12Password: string, identity: string}>}
  */
@@ -116,6 +118,10 @@ async function runUpgradeSteps(ctx, onStep) {
   };
 
   try {
+    // Every call verifies the panel: what it answers is the admin
+    // certificate and the CA the login keychain will trust.
+    const tlsArgs = panelTlsArgs(ctx.panelUrl, ctx.panelPin);
+
     // Step 1: Verify panel connectivity
     onStep('verify-panel', 'running');
     const configPath1 = await createCurlConfig(ctx.p12Path, ctx.p12Password);
@@ -127,7 +133,7 @@ async function runUpgradeSteps(ctx, onStep) {
         '-f',
         '--max-time',
         '30',
-        '-k',
+        ...tlsArgs,
         `${ctx.panelUrl}/api/health`,
       ]);
       const health = JSON.parse(stdout);
@@ -147,7 +153,7 @@ async function runUpgradeSteps(ctx, onStep) {
         '-f',
         '--max-time',
         '30',
-        '-k',
+        ...tlsArgs,
         `${ctx.panelUrl}/api/certs/admin/auth-mode`,
       ]);
       const data = JSON.parse(stdout);
@@ -188,7 +194,7 @@ async function runUpgradeSteps(ctx, onStep) {
         '-f',
         '--max-time',
         '60',
-        '-k',
+        ...tlsArgs,
         '-X',
         'POST',
         '-H',
@@ -390,6 +396,20 @@ export async function upgrade() {
   const p12Password = await prompt('P12 password');
   if (!p12Password) throw new Error('P12 password is required.');
 
+  // A panel at its IP address has a self-signed certificate: show the key it
+  // presents, for the operator to compare before anything is sent to it.
+  let panelPin;
+  if (panelNeedsPin(normalizedUrl)) {
+    panelPin = await fetchPanelKeyPin(normalizedUrl);
+    console.log('');
+    console.log(`  The panel presents the TLS key ${chalk.cyan(`sha256//${panelPin}`)}`);
+    console.log(
+      chalk.dim('  Compare it with `sudo lamaste-server panel-pin` on the server; confirm only'),
+    );
+    console.log(chalk.dim('  if they are the same. Every request below is pinned to it.'));
+    console.log('');
+  }
+
   const confirm = await prompt('Type "upgrade" to confirm');
   if (confirm !== 'upgrade') {
     console.log('\n  Aborted.\n');
@@ -433,7 +453,7 @@ export async function upgrade() {
 
   // Run upgrade steps in parallel with Listr2 rendering
   const upgradePromise = runUpgradeSteps(
-    { panelUrl: normalizedUrl, p12Path, p12Password, outputP12Path },
+    { panelUrl: normalizedUrl, panelPin, p12Path, p12Password, outputP12Path },
     (step, status, output) => {
       // Wait for the resolver to be registered by Listr2
       const waitForResolver = () => {
@@ -538,6 +558,8 @@ export async function upgrade() {
  *
  * @param {object} options
  * @param {string} options.panelUrl - Panel URL
+ * @param {string} [options.panelPin] - The panel's TLS key pin (`sha256//…`),
+ *   required for a panel reached at its IP address
  * @param {string} options.p12Path - Path to current admin P12
  * @param {string} options.p12Password - Current P12 password
  * @param {string} options.outputP12Path - Where to write the new P12
@@ -545,7 +567,7 @@ export async function upgrade() {
  *   (default: `${outputP12Path}.password`). The file is created with mode 0600.
  */
 export async function upgradeJson(options) {
-  const { panelUrl, p12Path, p12Password, outputP12Path, passwordFile } = options;
+  const { panelUrl, panelPin, p12Path, p12Password, outputP12Path, passwordFile } = options;
 
   if (!panelUrl) throw new Error('panelUrl is required');
   if (!p12Path) throw new Error('p12Path is required');
@@ -571,6 +593,7 @@ export async function upgradeJson(options) {
     const result = await runUpgradeSteps(
       {
         panelUrl: normalizedUrl,
+        panelPin,
         p12Path: resolvedP12,
         p12Password,
         outputP12Path: resolvedOutP12,

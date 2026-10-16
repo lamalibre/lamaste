@@ -80,15 +80,10 @@ fn panel_request(
     body: Option<&str>,
     token: Option<&str>,
 ) -> Result<String, String> {
-    // User-access routes go through panel.<domain> which has a valid Let's Encrypt cert.
-    // Only disable cert verification for IP-based URLs (self-signed).
-    let is_ip_url = url.contains("://") && {
-        let host_part = url.split("://").nth(1).unwrap_or("");
-        let host = host_part.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
-        host.parse::<std::net::Ipv4Addr>().is_ok() || host.parse::<std::net::Ipv6Addr>().is_ok()
-    };
+    // User-access routes are only served at panel.<domain>, whose Let's
+    // Encrypt certificate is verified as any other: the session token and the
+    // login exchange never go to a server that cannot prove it is the panel.
     let client = reqwest::blocking::Client::builder()
-        .danger_accept_invalid_certs(is_ip_url)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 

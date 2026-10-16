@@ -86,26 +86,41 @@ fn upgrade_impl(server_id: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to create server directory: {}", e))?;
     let output_p12_path = server_dir.join("admin.p12");
 
-    // 3. Spawn the CLI in --json mode
+    // 3. The panel's key pin for an IP panel (the CLI verifies the panel by
+    //    it — what the panel answers is the CA this Mac will trust); none for
+    //    a domain, which its CA verifies.
+    let panel_pin = if crate::panel_tls::needs_pin(&admin_cfg.panel_url)? {
+        Some(match &admin_cfg.panel_pin {
+            Some(pin) => pin.clone(),
+            None => crate::cloud::server_panel_pin(server_id)?,
+        })
+    } else {
+        None
+    };
+
+    // 4. Spawn the CLI in --json mode
     let cli_path = admin_upgrade_cli_path()?;
-    let mut child = std::process::Command::new("node")
-        .arg(&cli_path)
-        .args([
-            "--json",
-            "--panel-url",
-            &admin_cfg.panel_url,
-            "--p12-path",
-            p12_path,
-            "--output-p12",
-            &output_p12_path.to_string_lossy(),
-        ])
+    let mut command = std::process::Command::new("node");
+    command.arg(&cli_path).args([
+        "--json",
+        "--panel-url",
+        &admin_cfg.panel_url,
+        "--p12-path",
+        p12_path,
+        "--output-p12",
+        &output_p12_path.to_string_lossy(),
+    ]);
+    if let Some(pin) = &panel_pin {
+        command.args(["--panel-pin", &crate::panel_tls::display_pin(pin)]);
+    }
+    let mut child = command
         .env("LAMALIBRE_LAMASTE_P12_PASS", p12_password)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to spawn create-lamaste-admin: {}", e))?;
 
-    // 4. Parse NDJSON output.
+    // 5. Parse NDJSON output.
     //
     // The `complete` event carries `p12PasswordPath` — a 0600-mode file the
     // CLI wrote the new password into. The password value itself never crosses
@@ -162,10 +177,10 @@ fn upgrade_impl(server_id: &str) -> Result<(), String> {
         return Err(format!("P12 password file at {} is empty", password_path));
     }
 
-    // 5. Store the new P12 password in the credential store
+    // 6. Store the new P12 password in the credential store
     credentials::store_admin_credential(server_id, &new_password)?;
 
-    // 6. Update servers.json — keep P12 auth method with the new P12 path
+    // 7. Update servers.json — keep P12 auth method with the new P12 path
     let registry_path = config::servers_registry_path();
     let content = std::fs::read_to_string(&registry_path)
         .map_err(|e| format!("Failed to read servers.json: {}", e))?;

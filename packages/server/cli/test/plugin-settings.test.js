@@ -8,7 +8,7 @@
  * bidirectional formatting character.
  */
 
-import { test } from 'node:test';
+import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readdir, rmdir } from 'node:fs/promises';
 import chalk from 'chalk';
@@ -40,6 +40,7 @@ import {
 } from '../src/commands/plugin-settings.js';
 import { curlPanelRequest } from '../src/panel-api.js';
 import { standInPanel } from './stand-in-panel.js';
+import { makeTlsFixtures } from './tls-fixtures.js';
 
 const SECRET = 'sk-live-0123456789abcdefSECRET';
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
@@ -695,6 +696,17 @@ test('configure asks with nothing a terminal would act on — and an answer is d
 // A run through curl
 // ---------------------------------------------------------------------------
 
+const P12_PASSWORD = 'p12-password-SECRET';
+
+/** The panel's certificate and the admin P12 the run through curl uses. */
+let tls;
+before(async () => {
+  tls = await makeTlsFixtures(P12_PASSWORD);
+});
+after(async () => {
+  await tls?.cleanup();
+});
+
 test("configure: a secret read on stdin reaches the panel in the body, never on curl's command line", async () => {
   const saved = view({
     revision: 5,
@@ -704,7 +716,7 @@ test("configure: a secret read on stdin reaches the panel in the body, never on 
       apiKey: { set: true, setAt: '2026-10-16T12:00:00.000Z' },
     },
   });
-  const panel = await standInPanel((req) =>
+  const panel = await standInPanel(tls.panel, (req) =>
     req.method === 'GET'
       ? { status: 200, body: JSON.stringify(view()) }
       : { status: 200, body: JSON.stringify(saved) },
@@ -721,12 +733,12 @@ test("configure: a secret read on stdin reaches the panel in the body, never on 
     assert.equal(read.ok, true);
     const request = (method, path, body) =>
       curlPanelRequest({
-        panelUrl: panel.panelUrl,
+        identity: panel.identity,
         method,
         path,
         body,
-        p12Path: '/nonexistent/client.p12',
-        p12Password: 'p12-password-SECRET',
+        p12Path: tls.p12Path,
+        p12Password: P12_PASSWORD,
       });
 
     const result = await configureWithFlags(

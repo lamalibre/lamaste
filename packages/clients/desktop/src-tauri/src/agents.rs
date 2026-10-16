@@ -50,6 +50,14 @@ pub struct AgentEntry {
     pub setup_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// The panel's TLS public-key pin the agent captured when it enrolled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_server_pubkey_sha256: Option<String>,
+    /// Fields this build does not know (the cert hash and pin date, the
+    /// agent panel's settings, ...). The registry belongs to the agent CLI;
+    /// rewriting it must not drop what it wrote.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The multi-agent registry file structure.
@@ -306,6 +314,7 @@ pub fn agent_entry_to_config(entry: &AgentEntry) -> config::AgentConfig {
         chisel_version: entry.chisel_version.clone(),
         setup_at: entry.setup_at.clone(),
         updated_at: entry.updated_at.clone(),
+        panel_server_pubkey_sha256: entry.panel_server_pubkey_sha256.clone(),
     }
 }
 
@@ -1332,3 +1341,42 @@ pub async fn check_agent_plugin_update(
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// agents.json belongs to the agent CLI: the app reads the agent's panel
+    /// pin from it, and a rewrite (an uninstall removing another agent) keeps
+    /// every field the app has no name for.
+    #[test]
+    fn an_agent_entry_keeps_its_pin_and_unknown_fields() {
+        let raw = serde_json::json!({
+            "label": "vm1",
+            "panelUrl": "https://203.0.113.42:9292",
+            "authMethod": "p12",
+            "p12Path": "/home/u/.lamalibre/lamaste/agents/vm1/client.p12",
+            "panelServerPubkeySha256": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+            "panelServerCertSha256Hex": "ab".repeat(32),
+            "panelServerCertPinnedAt": "2026-10-16T08:00:00.000Z",
+            "panelEnabled": true,
+            "panelPort": 9393
+        });
+        let entry: AgentEntry = serde_json::from_value(raw.clone()).unwrap();
+        let cfg = agent_entry_to_config(&entry);
+        assert_eq!(
+            cfg.panel_server_pubkey_sha256.as_deref(),
+            Some("47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=")
+        );
+        let back = serde_json::to_value(&entry).unwrap();
+        for key in [
+            "panelServerPubkeySha256",
+            "panelServerCertSha256Hex",
+            "panelServerCertPinnedAt",
+            "panelEnabled",
+            "panelPort",
+        ] {
+            assert_eq!(back[key], raw[key], "{} is kept", key);
+        }
+    }
+}

@@ -149,6 +149,7 @@ The multi-server management page:
 - **Add existing server** — connect to a server you already set up manually by providing the panel URL and certificate
 - **Server switching** — switch the active server; the app reloads configuration and reconnects
 - **Server removal** — remove a server from the registry (cloud-provisioned servers can also be destroyed)
+- **Panel TLS key** — a panel reached at its IP address (`https://<ip>:9292`) has a self-signed certificate, so the app pins its public key: read from the server over SSH when the app provisioned it, otherwise on the first connection. The card shows the pin (`sha256//…`) and where it came from; compare it with `sudo lamaste-server panel-pin` on the server. Every call to the panel must present that key — a different one is refused before anything is sent. After reinstalling a server or replacing its certificate, **Re-pin** shows the key the panel presents now next to the pinned one and replaces it only when you accept. A panel reached at its domain is verified by its Let's Encrypt certificate instead
 
 **Cloud provider tokens** are stored in your OS credential store (macOS Keychain or Linux libsecret) — never in plaintext files or process arguments. P12 passwords for each server are also stored in the credential store.
 

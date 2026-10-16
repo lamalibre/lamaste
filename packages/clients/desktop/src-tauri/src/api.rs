@@ -1,4 +1,5 @@
 use crate::config;
+use crate::panel_tls;
 
 // ---------------------------------------------------------------------------
 // agentd auth token (~/.lamalibre/lamaste/agentd.token)
@@ -125,12 +126,37 @@ impl<'a> CurlStdin<'a> {
     }
 }
 
+/// Whether `arg` could make curl read stdin: an option value of `-` (`-K -`,
+/// `-T -`, `-b -`) or one starting with `@-` or `<-` (`-d @-`, `-H @-`,
+/// `-F name=<-`), in every spelling curl accepts — the value as its own
+/// argument, attached to a short option or a cluster of them (`-K-`, `-T-`,
+/// `-sK-`, `-d@-`), after a long option's `=` (`--data-binary=@-`,
+/// `--config=-`), after a form field's `=` (`files=@-`), or a
+/// `--data-urlencode name@-`. A URL is never an option value.
+fn reads_stdin(arg: &str) -> bool {
+    let reads = |value: &str| value == "-" || value.starts_with("@-") || value.starts_with("<-");
+    if arg.starts_with("http://") || arg.starts_with("https://") {
+        return false;
+    }
+    if reads(arg) || arg.ends_with("@-") {
+        return true;
+    }
+    // A short option or a cluster of them, its value attached at any letter.
+    if arg.starts_with('-')
+        && !arg.starts_with("--")
+        && arg.char_indices().skip(2).any(|(i, _)| reads(&arg[i..]))
+    {
+        return true;
+    }
+    // `--name=value`, `field=value`: the value after any `=`.
+    arg.match_indices('=').any(|(i, _)| reads(&arg[i + 1..]))
+}
+
 /// The arguments curl runs with: what makes it read `stdin`, then `args`.
-/// `args` must not make curl read stdin themselves — neither `-` nor anything
-/// ending in `@-` (`-H @-`, `-d@-`, `-F name=@-`) — since stdin carries the
-/// body or the config.
+/// `args` must not make curl read stdin themselves (`reads_stdin`), since
+/// stdin carries the body or the config.
 fn curl_argv(args: &[String], stdin: &CurlStdin) -> Result<Vec<String>, String> {
-    if args.iter().any(|a| a == "-" || a.ends_with("@-")) {
+    if args.iter().any(|a| reads_stdin(a)) {
         return Err(
             "curl arguments must not read stdin: it carries the request body or config".to_string(),
         );
@@ -336,6 +362,38 @@ pub(crate) fn build_curl_auth_for_server(cfg: &config::AdminApiConfig) -> Result
     CurlAuth::create(&admin_client_cert(cfg)?, None)
 }
 
+/// curl's TLS arguments for a call to the panel of an admin config: none
+/// for a domain (its CA verifies it), the pinned key for an IP panel — read
+/// from the panel and stored with the server on first use when the server
+/// has none yet (see `panel_tls`).
+pub(crate) fn admin_tls_args(cfg: &config::AdminApiConfig) -> Result<Vec<String>, String> {
+    if !panel_tls::needs_pin(&cfg.panel_url)? {
+        return Ok(Vec::new());
+    }
+    let pin = match (&cfg.panel_pin, &cfg.server_id) {
+        (Some(pin), _) => pin.clone(),
+        (None, Some(server_id)) => crate::cloud::server_panel_pin(server_id)?,
+        (None, None) => return panel_tls::tls_args(&cfg.panel_url, None),
+    };
+    panel_tls::tls_args(&cfg.panel_url, Some(&pin))
+}
+
+/// curl's TLS arguments for an agent's call to its panel: the key the agent
+/// pinned when it enrolled (`lamaste-agent setup`, `panel reset-pin`). The
+/// app never pins for an agent; it uses the agent's own pin.
+fn agent_tls_args(cfg: &config::AgentConfig) -> Result<Vec<String>, String> {
+    panel_tls::tls_args(&cfg.panel_url, cfg.panel_server_pubkey_sha256.as_deref()).map_err(|e| {
+        if cfg.panel_server_pubkey_sha256.is_none() {
+            format!(
+                "{}. Run `lamaste-agent panel reset-pin` for this agent (with its --label) to pin it.",
+                e
+            )
+        } else {
+            e
+        }
+    })
+}
+
 pub(crate) fn curl_panel(
     cfg: &config::AgentConfig,
     method: &str,
@@ -343,19 +401,20 @@ pub(crate) fn curl_panel(
     body: Option<&str>,
 ) -> Result<String, String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let tls = agent_tls_args(cfg)?;
     let auth = CurlAuth::new(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
+    args.extend(tls);
+    args.extend(["-X".to_string(), method.to_string(), url]);
 
     let output = run_curl(&args, CurlStdin::json(body))?;
 
     // auth is dropped here (or on early return), deleting its config file
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Request failed: {}", stderr));
+        return Err(panel_tls::curl_error("Request failed", &cfg.panel_url, &output));
     }
 
     let body = String::from_utf8_lossy(&output.stdout).to_string();
@@ -596,20 +655,22 @@ fn run_admin_curl(
     extra: &[&str],
 ) -> Result<String, String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    // The panel verified first: nothing is sent to anything else.
+    let tls = admin_tls_args(cfg)?;
     // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.extend(["-k".to_string(), "-X".to_string(), method.to_string()]);
+    args.extend(tls);
+    args.extend(["-X".to_string(), method.to_string()]);
     args.extend(extra.iter().map(|a| a.to_string()));
     args.push(url);
 
     let output = run_curl(&args, CurlStdin::json(body))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Request failed: {}", stderr));
+        return Err(panel_tls::curl_error("Request failed", &cfg.panel_url, &output));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -624,6 +685,8 @@ pub(crate) fn curl_panel_admin_with_headers(
     body: Option<&str>,
 ) -> Result<(String, String), String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    // The panel verified first: a TOTP code or password goes nowhere else.
+    let tls = admin_tls_args(cfg)?;
     // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
@@ -631,13 +694,13 @@ pub(crate) fn curl_panel_admin_with_headers(
     // would too, but a `-` argument is refused: stdin carries the body).
     let mut args = vec!["-s".to_string(), "-i".to_string()];
     args.extend(auth.auth_args());
-    args.extend(["-k".to_string(), "-X".to_string(), method.to_string(), url]);
+    args.extend(tls);
+    args.extend(["-X".to_string(), method.to_string(), url]);
 
     let output = run_curl(&args, CurlStdin::json(body))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Request failed: {}", stderr));
+        return Err(panel_tls::curl_error("Request failed", &cfg.panel_url, &output));
     }
 
     let raw = String::from_utf8_lossy(&output.stdout).to_string();
@@ -665,13 +728,14 @@ pub(crate) fn curl_panel_admin_binary(
     output_path: &std::path::Path,
 ) -> Result<(), String> {
     let url = format!("{}{}", cfg.panel_url.trim_end_matches('/'), path);
+    let tls = admin_tls_args(cfg)?;
     // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
+    args.extend(tls);
     args.extend([
-        "-k".to_string(),
         "-o".to_string(),
         output_path.to_string_lossy().to_string(),
         url,
@@ -680,8 +744,7 @@ pub(crate) fn curl_panel_admin_binary(
     let output = run_curl(&args, CurlStdin::Nothing)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Download failed: {}", stderr));
+        return Err(panel_tls::curl_error("Download failed", &cfg.panel_url, &output));
     }
 
     Ok(())
@@ -700,12 +763,13 @@ pub(crate) fn curl_panel_admin_multipart(
     } else {
         base_url
     };
+    let tls = admin_tls_args(cfg)?;
     // The client certificate and the 2FA session cookie, in its config file.
     let auth = admin_curl_auth(cfg)?;
 
     let mut args = vec!["-s".to_string()];
     args.extend(auth.auth_args());
-    args.push("-k".to_string());
+    args.extend(tls);
 
     for file_path in file_paths {
         // Validate file path: must be a regular file, no curl -F special characters
@@ -725,8 +789,7 @@ pub(crate) fn curl_panel_admin_multipart(
     let output = run_curl(&args, CurlStdin::Nothing)?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Upload failed: {}", stderr));
+        return Err(panel_tls::curl_error("Upload failed", &cfg.panel_url, &output));
     }
 
     let body = String::from_utf8_lossy(&output.stdout).to_string();
@@ -817,10 +880,73 @@ mod tests {
 
     #[test]
     fn arguments_that_read_stdin_are_refused() {
-        for bad in ["-", "@-", "-d@-", "files=@-"] {
+        for bad in [
+            "-", "@-", "@-x", "<-", "-d@-", "files=@-", "name=<-", "name@-",
+            // A value attached to a short option or a cluster of them.
+            "-K-", "-T-", "-b-", "-sK-", "-sd@-", "-H@-",
+            // After a long option's `=`.
+            "--data-binary=@-", "--config=-", "--upload-file=-", "--json=@-",
+            "files=@-;type=text/plain",
+        ] {
+            let args = strings(&["-s", bad, "http://127.0.0.1/"]);
+            assert!(curl_argv(&args, &CurlStdin::Nothing).is_err(), "{}", bad);
             let args = strings(&["-s", "-H", bad, "http://127.0.0.1/"]);
             assert!(curl_argv(&args, &CurlStdin::Nothing).is_err(), "{}", bad);
         }
+        // What the app does pass stays allowed.
+        let fine = strings(&[
+            "-s", "-sS", "-i", "-k", "--max-time", "10", "-X", "POST", "-o", "/tmp/out.bin",
+            "--pinnedpubkey", "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+            "-H", "Accept: application/json", "-w", "\n%{http_code}",
+            "-F", "files=@/Users/me/site/index.html",
+            "https://203.0.113.7:9292/api/x?offset=-1&q=@-",
+        ]);
+        assert!(curl_argv(&fine, &CurlStdin::Nothing).is_ok());
+    }
+
+    fn agent_config(panel_url: &str, pin: Option<&str>) -> config::AgentConfig {
+        serde_json::from_value(serde_json::json!({
+            "panelUrl": panel_url,
+            "authMethod": "p12",
+            "panelServerPubkeySha256": pin,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn an_agent_call_uses_the_agents_pin_and_never_goes_unverified() {
+        let pin = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+        assert_eq!(
+            agent_tls_args(&agent_config("https://203.0.113.42:9292", Some(pin))).unwrap(),
+            strings(&["-k", "--pinnedpubkey", &format!("sha256//{}", pin)])
+        );
+        assert!(agent_tls_args(&agent_config("https://panel.example.com", None))
+            .unwrap()
+            .is_empty());
+        let err = agent_tls_args(&agent_config("https://203.0.113.42:9292", None)).unwrap_err();
+        assert!(err.contains("No TLS key is pinned"), "{}", err);
+        assert!(err.contains("lamaste-agent panel reset-pin"), "{}", err);
+    }
+
+    #[test]
+    fn an_admin_call_uses_the_servers_pin() {
+        let pin = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+        let cfg = |url: &str, pin: Option<&str>| config::AdminApiConfig {
+            panel_url: url.to_string(),
+            auth_method: "p12".to_string(),
+            p12_path: None,
+            p12_password: None,
+            keychain_identity: None,
+            server_id: None,
+            panel_pin: pin.map(String::from),
+        };
+        assert_eq!(
+            admin_tls_args(&cfg("https://203.0.113.42:9292", Some(pin))).unwrap(),
+            strings(&["-k", "--pinnedpubkey", &format!("sha256//{}", pin)])
+        );
+        assert!(admin_tls_args(&cfg("https://panel.example.com", None)).unwrap().is_empty());
+        // Without a pin and without a server to store one with: refused.
+        assert!(admin_tls_args(&cfg("https://203.0.113.42:9292", None)).is_err());
     }
 
     #[test]
@@ -1042,17 +1168,38 @@ mod tests {
 
     #[test]
     fn an_admin_request_answers_the_status_with_the_refusal_and_sends_the_body_on_stdin() {
-        let (base, server) = one_request_server_answering(
+        use crate::panel_tls::tests::{openssl_pin, self_signed, temp_dir, tls_one_request_server};
+        let dir = temp_dir();
+        let (cert, key) = self_signed(&dir, "panel");
+        let (base, server) = tls_one_request_server(
+            &cert,
+            &key,
             "HTTP/1.1 422 Unprocessable Entity\r\nContent-Type: application/json\r\nContent-Length: 49\r\nConnection: close\r\n\r\n{\"error\":\"Invalid settings\",\"errors\":{\"a\":\"Bad\"}}",
         );
-        // curl presents a client certificate only over TLS: this plain-HTTP
-        // request checks the status, the answer and the body.
+        // The admin's P12 (3DES/SHA-1, which every curl build reads), and
+        // the panel verified by its pinned key.
+        let (client_cert, client_key) = self_signed(&dir, "client");
+        let p12 = dir.join("client.p12");
+        let made = std::process::Command::new("openssl")
+            .args(["pkcs12", "-export", "-inkey"])
+            .arg(&client_key)
+            .arg("-in")
+            .arg(&client_cert)
+            .arg("-out")
+            .arg(&p12)
+            .args(["-passout", "pass:p12-test", "-certpbe", "PBE-SHA1-3DES"])
+            .args(["-keypbe", "PBE-SHA1-3DES", "-macalg", "sha1"])
+            .output()
+            .expect("openssl runs");
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
         let cfg = config::AdminApiConfig {
             panel_url: base,
-            auth_method: "keychain".to_string(),
-            p12_path: None,
-            p12_password: None,
-            keychain_identity: Some("unused".to_string()),
+            auth_method: "p12".to_string(),
+            p12_path: Some(p12.to_string_lossy().to_string()),
+            p12_password: Some("p12-test".to_string()),
+            keychain_identity: None,
+            server_id: None,
+            panel_pin: Some(openssl_pin(&cert)),
         };
         let body = serde_json::json!({ "revision": 1, "secrets": { "apiKey": SECRET } }).to_string();
         let (status, answer) =
@@ -1063,5 +1210,6 @@ mod tests {
         assert!(head.starts_with("PUT /api/plugins/fx/settings "), "{}", head);
         assert!(head.contains("Content-Type: application/json\r\n"), "{}", head);
         assert_eq!(received, body);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

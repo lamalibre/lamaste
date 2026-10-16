@@ -5,6 +5,7 @@
 /// and passed to Node.js via environment variables (never CLI args).
 use crate::config;
 use crate::credentials;
+use crate::panel_tls;
 
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -86,18 +87,50 @@ pub struct ServerEntry {
     /// "agent" or "admin" — which panel the desktop shows for this server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_mode: Option<String>,
+    /// The panel's TLS public-key pin (base64 SHA-256 of the key of its
+    /// self-signed IP certificate) that every call to an IP panel must
+    /// match — see `panel_tls`. None for a panel reached at its domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_server_pubkey_sha256: Option<String>,
+    /// When the pin was stored (RFC 3339).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_server_pinned_at: Option<String>,
+    /// Where the pin came from: `ssh` (read over SSH while the app
+    /// provisioned or recovered the server), `installer` (a local install),
+    /// `local` (an imported local install's certificate), `agent` (the
+    /// agent's enrollment pin), `first-use` (the first connection) or
+    /// `re-pin` (the user replaced it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_server_pin_source: Option<String>,
     /// Fields this build does not know. The registry is shared with the
     /// agent CLI and daemon; rewriting it must not drop what they wrote.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+/// Pin sources (`ServerEntry::panel_server_pin_source`). `ssh`: read from
+/// the server over SSH while the app provisioned or recovered it — the cloud
+/// provisioner (lamaste-cloud) writes it itself.
+pub const PIN_SOURCE_SSH: &str = "ssh";
+pub const PIN_SOURCE_INSTALLER: &str = "installer";
+/// Read from this machine's own panel certificate (an imported local install).
+pub const PIN_SOURCE_LOCAL: &str = "local";
+pub const PIN_SOURCE_AGENT: &str = "agent";
+pub const PIN_SOURCE_FIRST_USE: &str = "first-use";
+pub const PIN_SOURCE_REPIN: &str = "re-pin";
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerHealth {
     pub online: bool,
+    /// The panel's `status`; for a panel that is not reached,
+    /// `HEALTH_KEY_MISMATCH` when it presented another key than the pinned one.
     pub status: Option<String>,
 }
+
+/// `ServerHealth::status` of a panel that presented a different TLS key than
+/// the one pinned for it (curl's exit code 90): nothing was sent to it.
+pub const HEALTH_KEY_MISMATCH: &str = "key-mismatch";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProvisionProgress {
@@ -613,10 +646,17 @@ pub async fn discover_servers(token: String) -> Result<Vec<DiscoveredServer>, St
 
         // Health-check each panel URL
         let results: Vec<DiscoveredServer> = raw.into_iter().map(|r| {
+            // A reachability hint for droplets not registered yet: no pin
+            // exists for them, and the probe sends nothing (see probe_args).
             let healthy = r.panel_url.as_ref().is_some_and(|url| {
+                let Ok(tls) = panel_tls::probe_args(url) else {
+                    return false;
+                };
                 let health_url = format!("{}/api/health", url.trim_end_matches('/'));
                 std::process::Command::new("curl")
-                    .args(["-s", "-f", "--max-time", "10", "-k", "--proto", "=https", &health_url])
+                    .args(["-s", "-f", "--max-time", "10", "--proto", "=https"])
+                    .args(&tls)
+                    .arg(&health_url)
                     .output()
                     .is_ok_and(|o| o.status.success())
             });
@@ -640,6 +680,8 @@ pub async fn discover_servers(token: String) -> Result<Vec<DiscoveredServer>, St
     .map_err(|e| format!("Task failed: {}", e))?
 }
 
+// A Tauri command takes one argument per field the wizard sends.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn register_discovered_server(
     droplet_id: String,
@@ -649,12 +691,28 @@ pub async fn register_discovered_server(
     domain: Option<String>,
     panel_url: String,
     label: String,
+    panel_server_pubkey_sha256: Option<String>,
 ) -> Result<ServerEntry, String> {
     validate_label(&label)?;
     validate_panel_url(&panel_url)?;
 
     let panel_url_clone = panel_url.clone();
     tokio::task::spawn_blocking(move || {
+        // An IP panel's key: the pin an SSH recovery read from the server
+        // (`recover_admin_via_ssh`), else the key it presents now, on this
+        // first connection. Registering never needed the panel to answer: if
+        // it does not now, its first use pins it (`server_panel_pin`).
+        let (pin, source) = match panel_server_pubkey_sha256 {
+            Some(pin) if panel_tls::needs_pin(&panel_url_clone)? => {
+                panel_tls::validate_pin(&pin)?;
+                (Some(pin), PIN_SOURCE_SSH)
+            }
+            _ => (
+                first_use_pin(&panel_url_clone).unwrap_or(None),
+                PIN_SOURCE_FIRST_USE,
+            ),
+        };
+
         // Prevent duplicate registration
         let path = config::servers_registry_path();
         let dir = path.parent().unwrap();
@@ -696,6 +754,9 @@ pub async fn register_discovered_server(
             p12_password: None,
             admin_auth: None,
             active_mode: None,
+            panel_server_pinned_at: pin.as_ref().map(|_| chrono::Utc::now().to_rfc3339()),
+            panel_server_pin_source: pin.as_ref().map(|_| source.to_string()),
+            panel_server_pubkey_sha256: pin,
             extra: Default::default(),
         };
 
@@ -1073,6 +1134,16 @@ pub fn load_servers_registry() -> Result<Vec<ServerEntry>, String> {
                 p12_password: cfg.p12_password,
                 admin_auth: None,
                 active_mode: None,
+                // The agent's own pin of this panel, from its enrollment.
+                panel_server_pinned_at: cfg
+                    .panel_server_pubkey_sha256
+                    .as_ref()
+                    .map(|_| chrono::Utc::now().to_rfc3339()),
+                panel_server_pin_source: cfg
+                    .panel_server_pubkey_sha256
+                    .as_ref()
+                    .map(|_| PIN_SOURCE_AGENT.to_string()),
+                panel_server_pubkey_sha256: cfg.panel_server_pubkey_sha256,
                 extra: Default::default(),
             };
 
@@ -1153,26 +1224,33 @@ pub async fn add_managed_server(
     validate_label(&label)?;
     validate_panel_url(&panel_url)?;
 
-    // Verify panel is reachable via health check (no mTLS needed for health)
+    // An IP panel's key is pinned on this first connection; then the panel
+    // is checked reachable, verified (no mTLS needed for health).
     let health_url = format!("{}/api/health", panel_url.trim_end_matches('/'));
     let panel_url_ref = panel_url.clone();
-    let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("curl")
-            .args([
-                "-s", "-f", "--max-time", "10", "-k",
-                "--proto", "=https",
-                &health_url,
-            ])
+    let panel_url_probe = panel_url.clone();
+    let (pin, output) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let pin = first_use_pin(&panel_url_probe)?;
+        let tls = panel_tls::tls_args(&panel_url_probe, pin.as_deref())?;
+        let output = std::process::Command::new("curl")
+            .args(["-s", "-f", "--max-time", "10", "--proto", "=https"])
+            .args(&tls)
+            .arg(&health_url)
             .output()
+            .map_err(|e| format!("Failed to check panel health: {}", e))?;
+        Ok((pin, output))
     })
     .await
-    .map_err(|e| format!("Task failed: {}", e))?
-    .map_err(|e| format!("Failed to check panel health: {}", e))?;
+    .map_err(|e| format!("Task failed: {}", e))??;
 
     if !output.status.success() {
-        return Err(format!(
-            "Panel at {} is not reachable. Verify the URL and try again.",
-            panel_url_ref
+        return Err(panel_tls::curl_error(
+            &format!(
+                "Panel at {} is not reachable. Verify the URL and try again",
+                panel_url_ref
+            ),
+            &panel_url_ref,
+            &output,
         ));
     }
 
@@ -1200,6 +1278,9 @@ pub async fn add_managed_server(
         p12_password: None,
         admin_auth: None,
         active_mode: None,
+        panel_server_pinned_at: pin.as_ref().map(|_| chrono::Utc::now().to_rfc3339()),
+        panel_server_pin_source: pin.as_ref().map(|_| PIN_SOURCE_FIRST_USE.to_string()),
+        panel_server_pubkey_sha256: pin,
         extra: Default::default(),
     };
 
@@ -1298,21 +1379,22 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
 
-    let result = tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || -> Result<std::process::Output, String> {
+        let cfg = admin_cfg?;
+        // The panel verified before the client certificate is presented.
+        let tls = crate::api::admin_tls_args(&cfg)?;
         let mut args = vec![
             "-s".to_string(), "-f".to_string(),
             "--max-time".to_string(), "10".to_string(),
-            "-k".to_string(),
             "--proto".to_string(), "=https".to_string(),
         ];
+        args.extend(tls);
 
         // Attach client cert if available (required for nginx mTLS)
         let _auth_guard;
-        if let Ok(cfg) = &admin_cfg {
-            if let Ok(auth) = crate::api::build_curl_auth_for_server(cfg) {
-                args.extend(auth.auth_args());
-                _auth_guard = Some(auth);
-            }
+        if let Ok(auth) = crate::api::build_curl_auth_for_server(&cfg) {
+            args.extend(auth.auth_args());
+            _auth_guard = Some(auth);
         }
 
         args.push(health_url);
@@ -1320,6 +1402,7 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
         std::process::Command::new("curl")
             .args(&args)
             .output()
+            .map_err(|e| format!("Failed to run curl: {}", e))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?;
@@ -1335,11 +1418,154 @@ pub async fn check_server_health(server_id: String) -> Result<ServerHealth, Stri
                 status,
             })
         }
+        // CURLE_SSL_PINNEDPUBKEYNOTMATCH: the card offers a re-pin.
+        Ok(output) if output.status.code() == Some(90) => Ok(ServerHealth {
+            online: false,
+            status: Some(HEALTH_KEY_MISMATCH.to_string()),
+        }),
         _ => Ok(ServerHealth {
             online: false,
             status: None,
         }),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Panel TLS key pins (see panel_tls)
+// ---------------------------------------------------------------------------
+
+/// Serialises the pin updates of servers.json, so two first uses of one
+/// server store one pin.
+static PIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The pin to store for a panel the user is adding: for an IP panel, the key
+/// it presents now (trust on first use); none for a panel's domain.
+fn first_use_pin(panel_url: &str) -> Result<Option<String>, String> {
+    if panel_tls::needs_pin(panel_url)? {
+        Ok(Some(panel_tls::fetch_pin(panel_url)?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// The pin of the IP panel registered as `server_id`. A server registered
+/// before the app pinned panels has none: its key is read on this first use
+/// and stored with the server, where the Servers page shows it. After that
+/// only `repin_panel_key` changes it.
+pub(crate) fn server_panel_pin(server_id: &str) -> Result<String, String> {
+    let _guard = PIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut servers = load_servers_registry()?;
+    let (pin, stored) = pin_on_first_use(&mut servers, server_id, panel_tls::fetch_pin)?;
+    if stored {
+        save_servers_registry(&config::servers_registry_path(), &servers)?;
+    }
+    Ok(pin)
+}
+
+/// The pin stored for `server_id` in `servers`; when there is none, the one
+/// `fetch` reads from its panel, now stored in the entry (`true`: the
+/// registry must be saved). A stored pin is never replaced here.
+fn pin_on_first_use(
+    servers: &mut [ServerEntry],
+    server_id: &str,
+    fetch: impl FnOnce(&str) -> Result<String, String>,
+) -> Result<(String, bool), String> {
+    let server = servers
+        .iter_mut()
+        .find(|s| s.id == server_id)
+        .ok_or_else(|| format!("No server with ID \"{}\"", server_id))?;
+    if let Some(pin) = &server.panel_server_pubkey_sha256 {
+        return Ok((pin.clone(), false));
+    }
+    let pin = fetch(&server.panel_url)?;
+    server.panel_server_pubkey_sha256 = Some(pin.clone());
+    server.panel_server_pinned_at = Some(chrono::Utc::now().to_rfc3339());
+    server.panel_server_pin_source = Some(PIN_SOURCE_FIRST_USE.to_string());
+    Ok((pin, true))
+}
+
+/// A panel's key as it presents it now, next to the pin stored for it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelKeyCheck {
+    /// The stored pin, in curl's `sha256//` form; None if none is stored yet.
+    pub pinned: Option<String>,
+    /// The pin of the key the panel presents now, in the same form.
+    pub presented: String,
+    pub matches: bool,
+}
+
+/// The server entry for `server_id`, refusing a panel reached at its domain:
+/// its certificate authority verifies it and it has no key pin.
+fn pinnable_server(servers: &[ServerEntry], server_id: &str) -> Result<ServerEntry, String> {
+    let server = servers
+        .iter()
+        .find(|s| s.id == server_id)
+        .ok_or_else(|| "Server not found".to_string())?;
+    if !panel_tls::needs_pin(&server.panel_url)? {
+        return Err(format!(
+            "{} is verified by its certificate authority; it has no pinned key",
+            server.panel_url
+        ));
+    }
+    Ok(server.clone())
+}
+
+/// The first step of a re-pin: read the key the panel of `server_id`
+/// presents now and compare it with the stored pin. Changes nothing.
+#[tauri::command]
+pub async fn inspect_panel_key(server_id: String) -> Result<PanelKeyCheck, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_server_id(&server_id)?;
+        let server = pinnable_server(&load_servers_registry()?, &server_id)?;
+        let presented = panel_tls::fetch_pin(&server.panel_url)?;
+        let matches = server.panel_server_pubkey_sha256.as_deref() == Some(presented.as_str());
+        Ok(PanelKeyCheck {
+            pinned: server
+                .panel_server_pubkey_sha256
+                .as_deref()
+                .map(panel_tls::display_pin),
+            presented: panel_tls::display_pin(&presented),
+            matches,
+        })
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+/// Replace the pin of `server_id` with the key the user was shown by
+/// `inspect_panel_key` and accepted (`pin`, in `sha256//` form or bare) —
+/// the only way a stored pin changes. The panel must still present exactly
+/// that key, so what is stored is what the user approved.
+#[tauri::command]
+pub async fn repin_panel_key(server_id: String, pin: String) -> Result<ServerEntry, String> {
+    tokio::task::spawn_blocking(move || {
+        validate_server_id(&server_id)?;
+        let pin = pin.trim().trim_start_matches("sha256//").to_string();
+        panel_tls::validate_pin(&pin)?;
+        let _guard = PIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut servers = load_servers_registry()?;
+        let panel_url = pinnable_server(&servers, &server_id)?.panel_url;
+        if panel_tls::fetch_pin(&panel_url)? != pin {
+            return Err(
+                "The panel's key changed since it was shown; check it again before re-pinning"
+                    .to_string(),
+            );
+        }
+        let server = servers
+            .iter_mut()
+            .find(|s| s.id == server_id)
+            .ok_or("Server not found")?;
+        server.panel_server_pubkey_sha256 = Some(pin);
+        server.panel_server_pinned_at = Some(chrono::Utc::now().to_rfc3339());
+        server.panel_server_pin_source = Some(PIN_SOURCE_REPIN.to_string());
+        let mut entry = server.clone();
+        save_servers_registry(&config::servers_registry_path(), &servers)?;
+        entry.p12_password = None;
+        Ok(entry)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
 }
 
 // ---------------------------------------------------------------------------
@@ -1655,6 +1881,8 @@ fn build_server_admin_config(
         p12_path,
         p12_password,
         keychain_identity,
+        server_id: Some(server_id.to_string()),
+        panel_pin: server.panel_server_pubkey_sha256.clone(),
     })
 }
 
@@ -1782,21 +2010,19 @@ pub async fn check_panel_update(server_id: String) -> Result<PanelUpdateInfo, St
         validate_panel_url(&server.panel_url)?;
         let health_url = format!("{}/api/health", server.panel_url);
 
-        let admin_cfg = build_server_admin_config(&server.id, server);
+        let admin_cfg = build_server_admin_config(&server.id, server)?;
 
         let mut args = vec![
             "-s".to_string(), "-f".to_string(),
             "--max-time".to_string(), "10".to_string(),
-            "-k".to_string(),
             "--proto".to_string(), "=https".to_string(),
         ];
+        args.extend(crate::api::admin_tls_args(&admin_cfg)?);
 
         let _auth_guard;
-        if let Ok(cfg) = &admin_cfg {
-            if let Ok(auth) = crate::api::build_curl_auth_for_server(cfg) {
-                args.extend(auth.auth_args());
-                _auth_guard = Some(auth);
-            }
+        if let Ok(auth) = crate::api::build_curl_auth_for_server(&admin_cfg) {
+            args.extend(auth.auth_args());
+            _auth_guard = Some(auth);
         }
 
         args.push(health_url);
@@ -1899,10 +2125,10 @@ pub async fn update_panel_server(
         let mut args = vec![
             "-s".to_string(), "-f".to_string(),
             "--max-time".to_string(), "30".to_string(),
-            "-k".to_string(),
             "--proto".to_string(), "=https".to_string(),
             "-X".to_string(), "POST".to_string(),
         ];
+        args.extend(crate::api::admin_tls_args(&admin_cfg)?);
         args.extend(auth.auth_args());
         args.push(update_url.clone());
 
@@ -1910,9 +2136,12 @@ pub async fn update_panel_server(
         let output = crate::api::run_curl(&args, crate::api::CurlStdin::JsonBody(&body))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(format!("Update request failed: {} {}", stderr, stdout));
+            return Err(format!(
+                "{} {}",
+                panel_tls::curl_error("Update request failed", &server.panel_url, &output),
+                stdout
+            ));
         }
 
         Ok(server.panel_url.clone())
@@ -1943,23 +2172,24 @@ pub async fn update_panel_server(
         let server = servers.iter().find(|s| s.id == server_id)
             .ok_or("Server not found")?;
 
+        // The update keeps the panel's certificate; its pin still holds.
+        let admin_cfg = build_server_admin_config(&server.id, server)?;
+        let tls = crate::api::admin_tls_args(&admin_cfg)?;
+
         for i in 0..max_retries {
-            let admin_cfg = build_server_admin_config(&server.id, server);
             let health_url = format!("{}/api/health", panel_url);
 
             let mut args = vec![
                 "-s".to_string(), "-f".to_string(),
                 "--max-time".to_string(), "10".to_string(),
-                "-k".to_string(),
                 "--proto".to_string(), "=https".to_string(),
             ];
+            args.extend(tls.iter().cloned());
 
             let _auth_guard;
-            if let Ok(cfg) = &admin_cfg {
-                if let Ok(auth) = crate::api::build_curl_auth_for_server(cfg) {
-                    args.extend(auth.auth_args());
-                    _auth_guard = Some(auth);
-                }
+            if let Ok(auth) = crate::api::build_curl_auth_for_server(&admin_cfg) {
+                args.extend(auth.auth_args());
+                _auth_guard = Some(auth);
             }
 
             args.push(health_url);
@@ -2036,6 +2266,10 @@ pub struct RecoveryKeyPair {
 pub struct RecoveryResult {
     pub p12_path: String,
     pub p12_password: String,
+    /// The panel's IP certificate key pin, read over the recovery's SSH
+    /// session (absent from an older lamaste-cloud).
+    #[serde(default)]
+    pub panel_server_pubkey_sha256: Option<String>,
 }
 
 /// Generate an ephemeral SSH key pair for admin certificate recovery.
@@ -2173,5 +2407,97 @@ mod tests {
         for bad in ["", "..", "a/b", "a\\b", "a.b", "a b"] {
             assert!(validate_server_id(bad).is_err(), "{bad:?} must be rejected");
         }
+    }
+    const PIN: &str = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    fn entry(id: &str, panel_url: &str, pin: Option<&str>) -> ServerEntry {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "label": id,
+            "panelUrl": panel_url,
+            "ip": "203.0.113.42",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "active": false,
+            "authMethod": "p12",
+            "panelServerPubkeySha256": pin,
+        }))
+        .unwrap()
+    }
+
+    /// The pin is stored under the names the cloud provisioner and the agent
+    /// registry use, and survives a load/save.
+    #[test]
+    fn the_panel_pin_round_trips_under_its_registry_names() {
+        let raw = serde_json::json!({
+            "id": "s1",
+            "label": "relay",
+            "panelUrl": "https://203.0.113.42:9292",
+            "ip": "203.0.113.42",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "active": true,
+            "authMethod": "p12",
+            "panelServerPubkeySha256": PIN,
+            "panelServerPinnedAt": "2026-10-16T08:00:00Z",
+            "panelServerPinSource": "provisioning"
+        });
+        let pinned: ServerEntry = serde_json::from_value(raw).unwrap();
+        assert_eq!(pinned.panel_server_pubkey_sha256.as_deref(), Some(PIN));
+        assert_eq!(pinned.panel_server_pin_source.as_deref(), Some("provisioning"));
+        assert!(pinned.extra.is_empty(), "named fields, not unknown ones");
+        let back = serde_json::to_value(&pinned).unwrap();
+        assert_eq!(back["panelServerPubkeySha256"], PIN);
+        assert_eq!(back["panelServerPinnedAt"], "2026-10-16T08:00:00Z");
+        // A server without a pin writes no pin fields.
+        let bare = serde_json::to_value(entry("s2", "https://panel.example.com", None)).unwrap();
+        assert!(bare.get("panelServerPubkeySha256").is_none());
+    }
+
+    #[test]
+    fn the_first_use_pins_once_and_never_replaces_a_stored_pin() {
+        let mut servers = vec![
+            entry("old", "https://203.0.113.42:9292", None),
+            entry("pinned", "https://198.51.100.7:9292", Some(PIN)),
+        ];
+        // A server registered before pins: its first use reads and stores one.
+        let mut fetched = Vec::new();
+        let (pin, stored) = pin_on_first_use(&mut servers, "old", |url| {
+            fetched.push(url.to_string());
+            Ok("Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyMTI=".to_string())
+        })
+        .unwrap();
+        assert!(stored);
+        assert_eq!(fetched, vec!["https://203.0.113.42:9292".to_string()]);
+        assert_eq!(pin, "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyMTI=");
+        assert_eq!(servers[0].panel_server_pubkey_sha256.as_deref(), Some(pin.as_str()));
+        assert_eq!(servers[0].panel_server_pin_source.as_deref(), Some(PIN_SOURCE_FIRST_USE));
+        assert!(servers[0].panel_server_pinned_at.is_some());
+
+        // Stored pins are used as they are — the panel is not even asked.
+        for id in ["old", "pinned"] {
+            let (again, stored) = pin_on_first_use(&mut servers, id, |_| {
+                panic!("a stored pin must not be fetched again")
+            })
+            .unwrap();
+            assert!(!stored);
+            assert_eq!(Some(again.as_str()), servers.iter().find(|s| s.id == id).unwrap().panel_server_pubkey_sha256.as_deref());
+        }
+
+        // An unreachable panel stores nothing; an unknown server is refused.
+        let mut fresh = vec![entry("x", "https://203.0.113.9:9292", None)];
+        assert!(pin_on_first_use(&mut fresh, "x", |_| Err("offline".to_string())).is_err());
+        assert!(fresh[0].panel_server_pubkey_sha256.is_none());
+        assert!(pin_on_first_use(&mut fresh, "nope", |_| Ok(PIN.to_string())).is_err());
+    }
+
+    #[test]
+    fn only_an_ip_panel_has_a_key_to_re_pin() {
+        let servers = vec![
+            entry("ip", "https://203.0.113.42:9292", Some(PIN)),
+            entry("domain", "https://panel.example.com", None),
+        ];
+        assert_eq!(pinnable_server(&servers, "ip").unwrap().id, "ip");
+        let err = pinnable_server(&servers, "domain").unwrap_err();
+        assert!(err.contains("verified by its certificate authority"), "{}", err);
+        assert!(pinnable_server(&servers, "missing").is_err());
     }
 }

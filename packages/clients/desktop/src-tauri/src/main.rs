@@ -34,6 +34,7 @@ mod feria;
 mod local_install;
 mod local_plugins;
 mod mode;
+mod panel_tls;
 mod services;
 mod shell_env;
 mod plugins;
@@ -231,6 +232,8 @@ fn main() {
             cloud::recover_admin_via_ssh,
             cloud::cleanup_recovery_ssh_key,
             cloud::check_server_health,
+            cloud::inspect_panel_key,
+            cloud::repin_panel_key,
             cloud::check_panel_update,
             cloud::update_panel_server,
             // Storage server management

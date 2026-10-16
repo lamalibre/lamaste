@@ -39,6 +39,16 @@ export interface ServerEntry {
   p12Password?: string | undefined;
   adminAuth?: AdminAuth | undefined;
   activeMode?: string | undefined;
+  /**
+   * The pin of the panel's TLS key for a panel reached at its IP address
+   * (base64 SHA-256 of its SubjectPublicKeyInfo — curl's `sha256//` form, as
+   * agents keep it): the desktop app verifies every call to the panel by it.
+   */
+  panelServerPubkeySha256?: string | undefined;
+  /** When the pin was stored (ISO 8601). */
+  panelServerPinnedAt?: string | undefined;
+  /** Where it came from: `ssh`, `installer`, `local`, `agent`, `first-use` or `re-pin`. */
+  panelServerPinSource?: string | undefined;
 }
 
 export interface StorageServerEntry {

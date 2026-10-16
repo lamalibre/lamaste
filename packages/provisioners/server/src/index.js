@@ -14,6 +14,7 @@ import chalk from 'chalk';
 import { execa } from 'execa';
 import { detectOS, detectIP, checkRoot } from './lib/env.js';
 import { printSummary } from './lib/summary.js';
+import { readPanelKeyPin } from './lib/panel-pin.js';
 import { hardenTasks } from './tasks/harden.js';
 import { nodeTasks } from './tasks/node.js';
 import { mtlsTasks } from './tasks/mtls.js';
@@ -630,6 +631,7 @@ export async function main() {
   }
 
   if (flags.json) {
+    const panelServerPubkeySha256 = await readPanelKeyPin(ctx.pkiDir);
     emitJson({
       event: 'complete',
       server: {
@@ -637,6 +639,8 @@ export async function main() {
         panelUrl: `https://${ctx.ip}:9292`,
         p12Path: `${ctx.pkiDir}/client.p12`,
         p12PasswordPath: `${ctx.pkiDir}/.p12-password`,
+        // The key pin of the panel's IP certificate, for the desktop app.
+        ...(panelServerPubkeySha256 ? { panelServerPubkeySha256 } : {}),
       },
     });
   } else {

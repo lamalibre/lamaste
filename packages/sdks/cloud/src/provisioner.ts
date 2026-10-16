@@ -30,6 +30,7 @@ import {
   type SSHKeyPair,
 } from './ssh.js';
 import { addServer } from './registry.js';
+import { readPanelKeyPin } from './panel-pin.js';
 import { CleanupStack } from './cleanup.js';
 import { LAMASTE_DIR, serverDataDir, tmpDir } from '@lamalibre/lamaste/agent';
 
@@ -193,6 +194,10 @@ async function sshCurl(
 ): Promise<{ status: string; body: string }> {
   // Use nginx (port 9292) with the admin P12 cert for mTLS.
   // The P12 and its password are on the server filesystem from the installer.
+  // `-k` here is curl on the droplet itself, as root, minutes after it was
+  // created: no other account exists that could listen on 9292, and nginx
+  // holds it (panel 2FA, which would release it, cannot be on yet). The
+  // desktop's own calls verify the panel by its key pin (readPanelKeyPin).
   //
   // Security: the P12 password MUST NOT appear in the curl argv on the remote
   // host (it would be visible in `ps`). We write it into a curl config file
@@ -516,6 +521,15 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
       localP12Path,
       knownHostsPath,
     );
+
+    // The panel's IP certificate, through the same SSH session: the desktop
+    // verifies https://<ip>:9292 by this key pin from its first call on.
+    const panelServerPubkeySha256 = await readPanelKeyPin(
+      ip,
+      sshKeyPair.privateKeyPath,
+      knownHostsPath,
+      { useSudo: false },
+    );
     emitStep('retrieve_credentials', 'done');
 
     // Step 9: Enroll admin cert
@@ -613,6 +627,9 @@ export async function provision(options: ProvisionOptions): Promise<ServerEntry>
       keychainIdentity,
       p12Path: finalP12Path,
       p12Password: finalP12Password,
+      panelServerPubkeySha256,
+      panelServerPinnedAt: new Date().toISOString(),
+      panelServerPinSource: 'ssh',
     };
     await addServer(entry);
     emitStep('save_registry', 'done');
