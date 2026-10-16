@@ -124,25 +124,10 @@ fn curl_local_host(
 ) -> Result<String, String> {
     let url = format!("http://127.0.0.1:{}{}", PLUGIN_HOST_PORT, path);
 
-    let mut args = vec![
-        "-s".to_string(),
-        "-X".to_string(),
-        method.to_string(),
-    ];
+    let args = vec!["-s".to_string(), "-X".to_string(), method.to_string(), url];
 
-    if let Some(json_body) = body {
-        args.push("-H".to_string());
-        args.push("Content-Type: application/json".to_string());
-        args.push("-d".to_string());
-        args.push(json_body.to_string());
-    }
-
-    args.push(url);
-
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    // A body reaches curl on stdin, never in its arguments.
+    let output = crate::api::run_curl(&args, crate::api::CurlStdin::json(body))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

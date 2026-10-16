@@ -196,7 +196,7 @@ Agent certificates only; identity is the certificate label, never a parameter. R
 - An agent may be issued at most **ten new tokens per hour**; beyond that the route answers `429` with `Retry-After` (seconds) and `retryAfterSeconds`. The per-IP limit (30 per minute) remains as a backstop.
 - `403` for any other certificate — an admin certificate has no agent identity to broker for (plugin-agent certificates get `400`); `404` when no registry credential is configured (the agent installs from the public registry as before); `502` when the registry refuses.
 
-CLI: `lamaste-server registry-credential show | set --url <registry> (--oidc | --token-stdin) | clear`. The token for `--token-stdin` is read from stdin (or `LAMASTE_REGISTRY_TOKEN`), never from an argument.
+CLI: `lamaste-server registry-credential show | set --url <registry> (--oidc | --token-stdin) | clear`. The token for `--token-stdin` is read from stdin (or `LAMASTE_REGISTRY_TOKEN`), never from an argument, and the CLI hands the request body to curl on stdin, so the token is not in curl's arguments either.
 
 ### Group changes
 

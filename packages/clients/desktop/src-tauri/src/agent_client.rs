@@ -160,12 +160,15 @@ fn download_certificate_blocking(label: &str) -> Result<Vec<u8>, String> {
 
     // Capture HTTP status and body separately so we can detect a JSON error
     // (which indicates the daemon returned a 4xx instead of P12 bytes).
-    let output = crate::api::curl_agentd_as_owner(&[
-        "-s".to_string(),
-        "-w".to_string(),
-        "\n%{http_code}".to_string(),
-        url,
-    ])?;
+    let output = crate::api::curl_agentd_as_owner(
+        &[
+            "-s".to_string(),
+            "-w".to_string(),
+            "\n%{http_code}".to_string(),
+            url,
+        ],
+        None,
+    )?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

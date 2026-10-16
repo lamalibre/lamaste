@@ -92,6 +92,9 @@ export type { AgentRegistryEntry, AgentRegistry } from './registry.js';
 export { loadAgentConfig, saveAgentConfig, requireAgentConfig } from './config.js';
 export type { AgentConfig } from './config.js';
 
+// Curl config files (-K) left behind by a crash
+export { CURL_CONFIG_STALE_MS, sweepStaleCurlConfigs } from './curl-config.js';
+
 // Service lifecycle (unified dispatch)
 export {
   isAgentLoaded,
