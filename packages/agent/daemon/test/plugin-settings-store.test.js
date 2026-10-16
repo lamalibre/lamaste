@@ -5,8 +5,9 @@
  * `settings.json` — reconciles them with the half's own schema on load
  * (retyped and unknown keys dropped, never converted), refuses a stale
  * revision or another schema version, and `/admin/settings` answers only
- * Lamaste, never with a secret's value. End to end: the relay's
- * `callAgentHalf` against the handler over HTTP.
+ * Lamaste — an update only with its body as signed and its secrets sealed
+ * to that request — never with a secret's value, every answer authenticated.
+ * End to end: the relay's `callAgentHalf` against the handler over HTTP.
  */
 
 import { test, before, after } from 'node:test';
@@ -18,8 +19,13 @@ import path from 'node:path';
 
 import {
   ManifestValidationError,
+  RESPONDER_HEADER,
   signCallerAssertion,
+  signResponder,
+  bodySha256Hex,
+  generateCallerAssertionNonce,
   generateHostingSecret,
+  encryptSettingsSecret,
   callAgentHalf,
   AGENT_HALF_SETTINGS_MAX_BYTES,
 } from '@lamalibre/lamaste';
@@ -475,6 +481,32 @@ test('store: a malformed file is a clear error that never repeats its contents',
 // The handler
 // ---------------------------------------------------------------------------
 
+/**
+ * The wire form of a plaintext update, as the relay builds it for one
+ * request: each secret sealed to that request's nonce and the update's
+ * revision.
+ */
+function sealedUpdate(update, secret, nonce) {
+  return {
+    ...update,
+    secrets: Object.fromEntries(
+      Object.entries(update.secrets ?? {}).map(([key, value]) => [
+        key,
+        value === null
+          ? null
+          : encryptSettingsSecret({
+              secret,
+              plugin: PLUGIN,
+              nonce,
+              key,
+              baseRevision: update.baseRevision,
+              value,
+            }),
+      ]),
+    ),
+  };
+}
+
 async function handlerFor(dataDir) {
   const secret = generateHostingSecret();
   const configPath = path.join(dataDir, '..', `${path.basename(dataDir)}-config.json`);
@@ -493,25 +525,57 @@ async function handlerFor(dataDir) {
   const verifier = createCallerAssertionVerifier({ configPath, plugin: PLUGIN });
   const store = await loadedStore(dataDir);
   const handler = createSettingsHandler({ verifier, store });
-  const request = (method, url, body, caller = { type: 'lamaste' }, extraHeaders = {}) =>
-    handler.handle({
+  /**
+   * A request as Lamaste makes it: the assertion signs the method, the
+   * path and — for a raw body — its bytes. `body` may be a function of the
+   * nonce (a sealed update).
+   */
+  const request = (method, url, body, caller = { type: 'lamaste' }) => {
+    const nonce = generateCallerAssertionNonce();
+    const built = typeof body === 'function' ? body(nonce) : body;
+    const raw = Buffer.isBuffer(built) || typeof built === 'string';
+    return handler.handle({
       method,
       url,
       headers: {
         'x-lamalibre-caller': signCallerAssertion(
-          { plugin: PLUGIN, caller, method, path: url },
+          {
+            plugin: PLUGIN,
+            caller,
+            method,
+            path: url,
+            nonce,
+            ...(raw ? { bodySha256: bodySha256Hex(built) } : {}),
+          },
           secret,
         ),
-        ...extraHeaders,
       },
-      body,
+      body: built,
     });
-  return { secret, store, handler, request };
+  };
+  /** A PUT of a plaintext update, sealed and serialized as the relay sends it. */
+  const put = (update, caller) =>
+    request(
+      'PUT',
+      '/admin/settings',
+      (nonce) => Buffer.from(JSON.stringify(sealedUpdate(update, secret, nonce))),
+      caller,
+    );
+  return { secret, store, handler, request, put };
+}
+
+/** The answer a response authenticates: its responder header over its exact bytes. */
+function assertAuthenticated(out, secret, nonce) {
+  assert.equal(
+    out.headers[RESPONDER_HEADER],
+    signResponder({ secret, nonce, status: out.status, body: out.bodyText }),
+  );
+  assert.deepEqual(JSON.parse(out.bodyText), out.body);
 }
 
 test('handler: only Lamaste reads and changes settings', async () => {
   const dir = await freshDir();
-  const { secret, handler, request } = await handlerFor(dir);
+  const { secret, handler, request, put } = await handlerFor(dir);
   const ok = await request('GET', '/admin/settings');
   assert.equal(ok.status, 200);
   assert.equal(ok.body.revision, 0);
@@ -520,32 +584,93 @@ test('handler: only Lamaste reads and changes settings', async () => {
     (await request('GET', '/admin/settings', undefined, { type: 'agent', label: 'vm1' })).status,
     403,
   );
+  assert.equal((await put(FULL_UPDATE, { type: 'admin' })).status, 403);
   const unsigned = await handler.handle({ method: 'GET', url: '/admin/settings', headers: {} });
-  assert.deepEqual(unsigned, { status: 401, body: { error: 'malformed' } });
-  const assertion = (secret, method, p) =>
-    signCallerAssertion({ plugin: PLUGIN, caller: { type: 'lamaste' }, method, path: p }, secret);
+  assert.equal(unsigned.status, 401);
+  assert.deepEqual(unsigned.body, { error: 'malformed' });
+  // Not verified: nothing to bind a responder signature to.
+  assert.equal(unsigned.headers[RESPONDER_HEADER], undefined);
+  const assertion = (withSecret, method, p, extra = {}) =>
+    signCallerAssertion(
+      { plugin: PLUGIN, caller: { type: 'lamaste' }, method, path: p, ...extra },
+      withSecret,
+    );
   // Signed with a secret the agent half does not hold.
   const forged = await handler.handle({
     method: 'GET',
     url: '/admin/settings',
     headers: { 'x-lamalibre-caller': assertion(generateHostingSecret(), 'GET', '/admin/settings') },
   });
-  assert.deepEqual(forged, { status: 401, body: { error: 'bad_signature' } });
+  assert.equal(forged.status, 401);
+  assert.deepEqual(forged.body, { error: 'bad_signature' });
+  const body = Buffer.from(JSON.stringify({ ...FULL_UPDATE, secrets: {} }));
   // A GET's assertion does not open a PUT.
   const replayed = await handler.handle({
     method: 'PUT',
     url: '/admin/settings',
     headers: { 'x-lamalibre-caller': assertion(secret, 'GET', '/admin/settings') },
-    body: Buffer.from(JSON.stringify(FULL_UPDATE)),
+    body,
   });
-  assert.deepEqual(replayed, { status: 401, body: { error: 'wrong_request' } });
+  assert.equal(replayed.status, 401);
+  assert.deepEqual(replayed.body, { error: 'wrong_request' });
+  // A PUT whose assertion does not sign the body, or signs another one.
+  const unbound = await handler.handle({
+    method: 'PUT',
+    url: '/admin/settings',
+    headers: { 'x-lamalibre-caller': assertion(secret, 'PUT', '/admin/settings') },
+    body,
+  });
+  assert.deepEqual(unbound.body, { error: 'wrong_body' });
+  const swapped = await handler.handle({
+    method: 'PUT',
+    url: '/admin/settings',
+    headers: {
+      'x-lamalibre-caller': assertion(secret, 'PUT', '/admin/settings', {
+        bodySha256: bodySha256Hex('{"other":"body"}'),
+      }),
+    },
+    body,
+  });
+  assert.deepEqual(swapped.body, { error: 'wrong_body' });
+});
+
+test('handler: every answer to a verified request is authenticated over its exact bytes', async () => {
+  const dir = await freshDir();
+  const { secret, handler } = await handlerFor(dir);
+  for (const [method, url, caller] of [
+    ['GET', '/admin/settings', { type: 'lamaste' }],
+    ['POST', '/admin/settings/reload', { type: 'lamaste' }],
+    ['GET', '/admin/settings', { type: 'admin' }],
+  ]) {
+    const nonce = generateCallerAssertionNonce();
+    const out = await handler.handle({
+      method,
+      url,
+      headers: {
+        'x-lamalibre-caller': signCallerAssertion(
+          { plugin: PLUGIN, caller, method, path: url, nonce },
+          secret,
+        ),
+      },
+    });
+    if (caller.type === 'lamaste') {
+      assertAuthenticated(out, secret, nonce);
+    } else {
+      // A forwarded caller would read a stream: the `-` form.
+      assert.equal(out.status, 403);
+      assert.equal(out.headers[RESPONDER_HEADER], signResponder({ secret, nonce, status: 403 }));
+    }
+    assert.equal(out.headers['content-type'], 'application/json');
+  }
 });
 
 test('handler: paths and methods', async () => {
   const dir = await freshDir();
   const { request } = await handlerFor(dir);
   for (const url of ['/admin/settings/x', '/admin/settings/', '/admin/settingsx', '/admin/other']) {
-    assert.equal((await request('GET', url)).status, 404, url);
+    const out = await request('GET', url);
+    assert.equal(out.status, 404, url);
+    assert.equal(out.headers[RESPONDER_HEADER], undefined, url);
   }
   assert.equal((await request('DELETE', '/admin/settings')).status, 405);
   assert.equal((await request('POST', '/admin/settings')).status, 405);
@@ -558,53 +683,109 @@ test('handler: paths and methods', async () => {
   assert.equal((await request('GET', '/admin/settings?fresh=1')).status, 200);
 });
 
-test('handler: PUT — parsed, sized, stored; 400 / 409 / 413 / 422; never a secret back', async () => {
+test('handler: PUT — raw, sized, opened, stored; 400 / 409 / 413 / 422; never a secret back', async () => {
   const dir = await freshDir();
-  const { request, store } = await handlerFor(dir);
-  const put = (body) => request('PUT', '/admin/settings', body);
+  const { secret, request, put, store } = await handlerFor(dir);
 
-  const stored = await put(Buffer.from(JSON.stringify(FULL_UPDATE)));
-  assert.equal(stored.status, 200);
+  const stored = await put(FULL_UPDATE);
+  assert.equal(stored.status, 200, JSON.stringify(stored.body));
   assert.equal(stored.body.revision, 1);
   assert.ok(!JSON.stringify(stored).includes(SECRET));
   assert.equal(store.secret('apiKey'), SECRET);
 
-  // A body a framework already parsed, or a string.
-  const parsed = await put({ ...FULL_UPDATE, baseRevision: 1, secrets: {} });
-  assert.equal(parsed.status, 200);
-  assert.equal(parsed.body.revision, 2);
-  const asString = await put(JSON.stringify({ ...FULL_UPDATE, baseRevision: 2, secrets: {} }));
+  // A body passed as a string is as good as a Buffer.
+  const asString = await request('PUT', '/admin/settings', (nonce) =>
+    JSON.stringify(sealedUpdate({ ...FULL_UPDATE, baseRevision: 1, secrets: {} }, secret, nonce)),
+  );
   assert.equal(asString.status, 200);
+  assert.equal(asString.body.revision, 2);
 
-  const stale = await put(Buffer.from(JSON.stringify(FULL_UPDATE)));
+  // A body a framework already parsed: the signed bytes are gone.
+  const parsed = await request('PUT', '/admin/settings', { ...FULL_UPDATE, baseRevision: 2 });
+  assert.equal(parsed.status, 400);
+  assert.deepEqual(parsed.body, { error: 'The body must be passed as received' });
+
+  const stale = await put(FULL_UPDATE);
   assert.equal(stale.status, 409);
   assert.equal(stale.body.code, 'revision_mismatch');
-  assert.equal(stale.body.revision, 3);
+  assert.equal(stale.body.revision, 2);
 
-  const invalid = await put({ ...FULL_UPDATE, baseRevision: 3, values: { retries: SECRET } });
+  const invalid = await put({ ...FULL_UPDATE, baseRevision: 2, values: { retries: SECRET } });
   assert.equal(invalid.status, 422);
   assert.deepEqual(invalid.body.errors, { retries: 'Must be an integer' });
   assert.ok(!JSON.stringify(invalid).includes(SECRET));
 
-  assert.equal((await put(Buffer.from('{not json'))).status, 400);
-  assert.equal((await put(undefined)).status, 400);
-  assert.equal((await put({ values: {} })).status, 400);
-  const huge = {
-    ...FULL_UPDATE,
-    baseRevision: 3,
-    values: { gone: 'x'.repeat(AGENT_HALF_SETTINGS_MAX_BYTES) },
-  };
-  assert.equal((await put(Buffer.from(JSON.stringify(huge)))).status, 413);
-  assert.equal((await put(huge)).status, 413);
-  assert.equal(store.state().revision, 3);
+  // A secret in clear is not an update; nor is a body that is not JSON.
+  const clear = Buffer.from(JSON.stringify({ ...FULL_UPDATE, baseRevision: 2 }));
+  assert.equal((await request('PUT', '/admin/settings', clear)).status, 400);
+  assert.equal((await request('PUT', '/admin/settings', Buffer.from('{not json'))).status, 400);
+  assert.equal((await request('PUT', '/admin/settings', Buffer.alloc(0))).status, 400);
+  const envelope = Buffer.from(JSON.stringify({ values: {} }));
+  assert.equal((await request('PUT', '/admin/settings', envelope)).status, 400);
+  const huge = Buffer.from(
+    JSON.stringify({
+      ...FULL_UPDATE,
+      baseRevision: 2,
+      secrets: {},
+      values: { gone: 'x'.repeat(AGENT_HALF_SETTINGS_MAX_BYTES) },
+    }),
+  );
+  const tooLarge = await request('PUT', '/admin/settings', huge);
+  assert.equal(tooLarge.status, 413);
+  assert.equal(store.state().revision, 2);
+});
+
+test('handler: a secret sealed for another request, key or revision does not open (422)', async () => {
+  const dir = await freshDir();
+  const { secret, request, store } = await handlerFor(dir);
+  const send = (build) =>
+    request('PUT', '/admin/settings', (nonce) => Buffer.from(JSON.stringify(build(nonce))));
+  const sealed = (overrides) =>
+    encryptSettingsSecret({
+      secret,
+      plugin: PLUGIN,
+      nonce: generateCallerAssertionNonce(),
+      key: 'apiKey',
+      baseRevision: 0,
+      value: SECRET,
+      ...overrides,
+    });
+  const base = { schemaVersion: 1, baseRevision: 0, values: { region: 'eu' } };
+  const cases = [
+    // Sealed to another request's nonce: a replay of a captured value.
+    () => ({ ...base, secrets: { apiKey: sealed({}) } }),
+    (nonce) => ({ ...base, secrets: { apiKey: sealed({ nonce, key: 'token' }) } }),
+    (nonce) => ({ ...base, secrets: { apiKey: sealed({ nonce, baseRevision: 1 }) } }),
+    (nonce) => ({ ...base, secrets: { apiKey: sealed({ nonce, plugin: 'other' }) } }),
+    (nonce) => ({
+      ...base,
+      secrets: { apiKey: sealed({ nonce, secret: generateHostingSecret() }) },
+    }),
+  ];
+  for (const build of cases) {
+    const out = await send(build);
+    assert.equal(out.status, 422, JSON.stringify(out.body));
+    assert.deepEqual(out.body, {
+      error: 'Invalid settings',
+      errors: { apiKey: 'Could not be decrypted' },
+    });
+    assert.ok(!out.bodyText.includes(SECRET));
+  }
+  assert.equal(store.state().revision, 0);
+  assert.equal(store.secret('apiKey'), undefined);
+  // Sealed for this request: stored.
+  const good = await send((nonce) => ({ ...base, secrets: { apiKey: sealed({ nonce }) } }));
+  assert.equal(good.status, 200);
+  assert.equal(store.secret('apiKey'), SECRET);
 });
 
 test('handler: a store failure is a 500 that says nothing more', async () => {
   const dir = await freshDir();
-  const { request } = await handlerFor(dir);
+  const { put } = await handlerFor(dir);
   await symlink(path.join(root, 'nowhere.json'), path.join(dir, 'secrets.json'));
-  const failed = await request('PUT', '/admin/settings', FULL_UPDATE);
-  assert.deepEqual(failed, { status: 500, body: { error: 'The settings store failed' } });
+  const failed = await put(FULL_UPDATE);
+  assert.equal(failed.status, 500);
+  assert.deepEqual(failed.body, { error: 'The settings store failed' });
 });
 
 test('end to end: the relay calls the agent half with callAgentHalf', async () => {
@@ -620,8 +801,8 @@ test('end to end: the relay calls the agent half with callAgentHalf', async () =
         headers: req.headers,
         body: Buffer.concat(chunks),
       });
-      res.writeHead(out.status, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(out.body));
+      res.writeHead(out.status, out.headers);
+      res.end(out.bodyText);
     });
   });
   const port = await new Promise((resolve) =>
@@ -642,11 +823,12 @@ test('end to end: the relay calls the agent half with callAgentHalf', async () =
     const read = await call('GET', '/admin/settings');
     assert.equal(read.status, 200);
     assert.equal(read.body.configured, false);
-    const written = await call('PUT', '/admin/settings', FULL_UPDATE);
+    const sealed = (nonce) => sealedUpdate(FULL_UPDATE, secret, nonce);
+    const written = await call('PUT', '/admin/settings', sealed);
     assert.equal(written.status, 200, JSON.stringify(written));
     assert.equal(written.body.configured, true);
     assert.ok(!JSON.stringify(written).includes(SECRET));
-    const conflict = await call('PUT', '/admin/settings', FULL_UPDATE);
+    const conflict = await call('PUT', '/admin/settings', sealed);
     assert.equal(conflict.status, 409);
     assert.equal(conflict.body.revision, 1);
     const reloaded = await call('POST', '/admin/settings/reload');

@@ -27,9 +27,13 @@
  *
  * {@link createSettingsHandler} answers `/admin/settings` for Lamaste alone
  * (caller `lamaste`, through the tunnel): the relay's panel validates an
- * admin's change and calls `PUT /admin/settings`, so a secret travels from
- * the admin's request to this file and nowhere else. No answer of the
- * handler ever contains a secret's value.
+ * admin's change and calls `PUT /admin/settings` with each secret sealed to
+ * that one request (`settings-secrets.ts`), under an assertion that signs
+ * the exact body; the handler opens the secrets with the verified request
+ * and hands the store plaintext, so a secret travels from the admin's
+ * request to this file and is readable nowhere in between. No answer of the
+ * handler ever contains a secret's value, and every answer to a verified
+ * request is authenticated (`admin-handlers.ts`).
  */
 
 import { constants as fsConstants } from 'node:fs';
@@ -41,6 +45,7 @@ import {
   AGENT_HALF_SETTINGS_MAX_BYTES,
   AGENT_HALF_SETTINGS_PATH,
   AGENT_HALF_SETTINGS_RELOAD_PATH,
+  SETTINGS_SECRET_UNDECRYPTABLE,
   SettingsBlockSchema,
   checkSettingsValue,
   effectiveSettingsValues,
@@ -50,14 +55,14 @@ import {
 } from '../plugin-settings.js';
 import type {
   AgentHalfSettingsState,
-  AgentHalfSettingsUpdate,
   SettingsBlock,
   SettingsField,
   SettingsValue,
   SettingsValues,
 } from '../plugin-settings.js';
 import { ManifestValidationError } from '../schemas.js';
-import type { AgentHookRequest, AgentHookResponse } from './app-plugin-hooks.js';
+import { BODY_NOT_AS_RECEIVED, adminAnswer, rawBodyOf } from './admin-handlers.js';
+import type { AgentHookRequest, AgentHookResponse } from './admin-handlers.js';
 import type { CallerAssertionVerifier } from './app-plugins.js';
 
 const SETTINGS_FILE = 'settings.json';
@@ -77,7 +82,9 @@ const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 /**
  * The agent half's settings schema, from its bundled manifest (or any
  * object with a `settings` block). Throws {@link ManifestValidationError}
- * when the block is missing or invalid.
+ * when the block is missing or invalid — including a string default that
+ * does not match its field's `pattern`, which only the agent half tests:
+ * the relay's schema never runs a manifest's regular expression.
  */
 export function settingsFromManifest(manifest: unknown): SettingsBlock {
   if (typeof manifest !== 'object' || manifest === null || Array.isArray(manifest)) {
@@ -98,7 +105,35 @@ export function settingsFromManifest(manifest: unknown): SettingsBlock {
       })),
     );
   }
+  const issues: { path: string; message: string }[] = [];
+  parsed.data.fields.forEach((field, idx) => {
+    if (field.type !== 'string' || field.pattern === undefined || field.default === undefined) {
+      return;
+    }
+    const checked = checkSettingsValue(field, field.default, { checkPattern: true });
+    if (!checked.ok) {
+      issues.push({
+        path: `settings.fields.${idx}.default`,
+        message: `The default is not a valid value: ${checked.message}`,
+      });
+    }
+  });
+  if (issues.length > 0) throw new ManifestValidationError(issues);
   return parsed.data;
+}
+
+/**
+ * An update as the store applies it: the wire form
+ * (`AgentHalfSettingsUpdate`) with its secrets opened — the handler opens
+ * them with the verified request; nothing else ever holds them in clear.
+ */
+export interface SettingsStoreUpdate {
+  readonly schemaVersion: number;
+  readonly baseRevision: number;
+  /** `null`: back to the default, or unset. */
+  readonly values: Record<string, SettingsValue | null>;
+  /** Plaintext; `null`: clear. */
+  readonly secrets: Record<string, string | null>;
 }
 
 export type SettingsUpdateOutcome =
@@ -120,7 +155,7 @@ export interface SettingsStore {
    * (`schema_mismatch`) or on a stale revision (`revision_mismatch`), with
    * 422 when a value does not suit its field. Serialized.
    */
-  update(u: AgentHalfSettingsUpdate): Promise<SettingsUpdateOutcome>;
+  update(u: SettingsStoreUpdate): Promise<SettingsUpdateOutcome>;
   /** Re-read the files — after a restore put older ones in place. */
   reload(): Promise<AgentHalfSettingsState>;
   /**
@@ -523,28 +558,27 @@ const ROUTES: ReadonlySet<string> = new Set([
   `POST ${AGENT_HALF_SETTINGS_RELOAD_PATH}`,
 ]);
 
-/** The body's size in bytes: raw as received, or re-encoded when a framework parsed it. */
-function bodyBytes(body: unknown): number {
-  if (Buffer.isBuffer(body)) return body.length;
-  if (typeof body === 'string') return Buffer.byteLength(body, 'utf-8');
-  if (body === undefined || body === null) return 0;
-  try {
-    return Buffer.byteLength(JSON.stringify(body) ?? '', 'utf-8');
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-}
-
 /**
  * Answer `/admin/settings` in an agent half: `GET` the state, `PUT` an
  * update, `POST /admin/settings/reload` after a restore. Only Lamaste may
  * call it (a valid caller assertion naming `lamaste`; 401 otherwise, 403
  * for an admin or agent caller); 404 for any other path under
- * `/admin/settings`, 405 for a method a path does not take. Framework-
- * agnostic, like `createAgentHookHandler`: pass the request, send the
- * response it returns. No response carries a secret's value — nor an
- * error's own message, which the store keeps free of values but which is
- * not the handler's to forward.
+ * `/admin/settings`, 405 for a method a path does not take.
+ *
+ * A `PUT` must be passed its body as received (400 "The body must be passed
+ * as received" for an object a framework parsed): its assertion signs the
+ * exact bytes (`wrong_body`, 401, for any others), and each secret in it is
+ * sealed to that request — opened here with the verified request, a value
+ * that does not open answering 422 "Could not be decrypted" for its key.
+ * 413 over {@link AGENT_HALF_SETTINGS_MAX_BYTES}, 400 for a body that is not
+ * an update, then the store's 200 / 409 / 422.
+ *
+ * Framework-agnostic, like `createAgentHookHandler`: pass the request,
+ * send `status`, `headers` and `bodyText` — every answer to a verified
+ * request carries the responder header over exactly those bytes. No
+ * response carries a secret's value — nor an error's own message, which
+ * the store keeps free of values but which is not the handler's to
+ * forward.
  */
 export function createSettingsHandler(opts: SettingsHandlerOptions): {
   handle(request: AgentHookRequest): Promise<AgentHookResponse>;
@@ -553,52 +587,78 @@ export function createSettingsHandler(opts: SettingsHandlerOptions): {
     async handle(request) {
       const pathOnly = request.url.split('?')[0] ?? '';
       if (pathOnly !== AGENT_HALF_SETTINGS_PATH && pathOnly !== AGENT_HALF_SETTINGS_RELOAD_PATH) {
-        return { status: 404, body: { error: 'Not found' } };
+        return adminAnswer(404, { error: 'Not found' });
       }
       const method = request.method.toUpperCase();
       if (!ROUTES.has(`${method} ${pathOnly}`)) {
-        return {
-          status: 405,
-          body: {
-            error:
-              pathOnly === AGENT_HALF_SETTINGS_PATH
-                ? 'Settings are read with GET and changed with PUT'
-                : 'A settings reload is POST',
-          },
-        };
+        return adminAnswer(405, {
+          error:
+            pathOnly === AGENT_HALF_SETTINGS_PATH
+              ? 'Settings are read with GET and changed with PUT'
+              : 'A settings reload is POST',
+        });
       }
-      const verified = await opts.verifier.verify(request.headers, method, request.url);
-      if (!verified.ok) return { status: 401, body: { error: verified.reason } };
+      const raw = rawBodyOf(request.body);
+      const isUpdate = method === 'PUT';
+      if (isUpdate && !raw) return adminAnswer(400, { error: BODY_NOT_AS_RECEIVED });
+      if (raw && raw.length > AGENT_HALF_SETTINGS_MAX_BYTES) {
+        return adminAnswer(413, { error: 'The settings update is too large' });
+      }
+      const verified = await opts.verifier.verify(request.headers, method, request.url, {
+        ...(raw ? { body: raw } : {}),
+        requireBodyHash: isUpdate,
+      });
+      if (!verified.ok) return adminAnswer(401, { error: verified.reason });
       if (verified.payload.caller.type !== 'lamaste') {
-        return { status: 403, body: { error: 'Only Lamaste reads or changes settings' } };
+        return adminAnswer(403, { error: 'Only Lamaste reads or changes settings' }, verified);
       }
 
       try {
-        if (method === 'GET') {
-          return { status: 200, body: { ...opts.store.state() } };
-        }
+        if (method === 'GET') return adminAnswer(200, { ...opts.store.state() }, verified);
         if (method === 'POST') {
-          return { status: 200, body: { ...(await opts.store.reload()) } };
+          return adminAnswer(200, { ...(await opts.store.reload()) }, verified);
         }
 
-        if (bodyBytes(request.body) > AGENT_HALF_SETTINGS_MAX_BYTES) {
-          return { status: 413, body: { error: 'The settings update is too large' } };
-        }
-        let parsed: unknown = request.body;
-        if (Buffer.isBuffer(parsed) || typeof parsed === 'string') {
-          try {
-            parsed = JSON.parse(parsed.toString());
-          } catch {
-            return { status: 400, body: { error: 'The settings update is not JSON' } };
-          }
+        let parsed: unknown;
+        try {
+          // Safe: a PUT without a raw body was answered 400 above.
+          parsed = JSON.parse((raw as Buffer).toString('utf-8'));
+        } catch {
+          return adminAnswer(400, { error: 'The settings update is not JSON' }, verified);
         }
         const update = parseAgentHalfSettingsUpdate(parsed);
-        if (!update) return { status: 400, body: { error: 'Malformed settings update' } };
-        const outcome = await opts.store.update(update);
-        if (outcome.ok) return { status: 200, body: { ...outcome.state } };
-        return { status: outcome.status, body: outcome.body };
+        if (!update) return adminAnswer(400, { error: 'Malformed settings update' }, verified);
+
+        const secrets: [string, string | null][] = [];
+        const undecryptable: [string, string][] = [];
+        for (const [key, sealed] of Object.entries(update.secrets)) {
+          if (sealed === null) {
+            secrets.push([key, null]);
+            continue;
+          }
+          try {
+            secrets.push([key, verified.decryptSettingsSecret(key, update.baseRevision, sealed)]);
+          } catch {
+            undecryptable.push([key, SETTINGS_SECRET_UNDECRYPTABLE]);
+          }
+        }
+        if (undecryptable.length > 0) {
+          return adminAnswer(
+            422,
+            { error: 'Invalid settings', errors: Object.fromEntries(undecryptable) },
+            verified,
+          );
+        }
+        const outcome = await opts.store.update({
+          schemaVersion: update.schemaVersion,
+          baseRevision: update.baseRevision,
+          values: update.values,
+          secrets: Object.fromEntries(secrets),
+        });
+        if (outcome.ok) return adminAnswer(200, { ...outcome.state }, verified);
+        return adminAnswer(outcome.status, outcome.body, verified);
       } catch {
-        return { status: 500, body: { error: 'The settings store failed' } };
+        return adminAnswer(500, { error: 'The settings store failed' }, verified);
       }
     },
   };

@@ -179,6 +179,7 @@ export type {
   AppPluginSyncResult,
   CallerAssertionVerifierOptions,
   CallerAssertionVerifier,
+  CallerAssertionVerifyOptions,
 } from './app-plugins.js';
 export {
   PANEL_LOSS_DOWN_AFTER_MS,
@@ -206,10 +207,17 @@ export type {
   AgentJobRunResult,
   AgentTunnelHookDecl,
   TunnelHookAssignment,
-  AgentHookRequest,
-  AgentHookResponse,
   AgentHookHandlerOptions,
 } from './app-plugin-hooks.js';
+// The agent half's admin answers: the request/response shape core's
+// handlers share, the health route, and the responder header every
+// /admin/* answer to a verified request carries
+export { createHealthHandler, responderHeaderFor } from './admin-handlers.js';
+export type {
+  AgentHookRequest,
+  AgentHookResponse,
+  HealthHandlerOptions,
+} from './admin-handlers.js';
 // Plugin settings in the agent half: the store (settings.json, secrets.json
 // in its data directory) and its /admin/settings handler for Lamaste
 export {
@@ -220,6 +228,7 @@ export {
 export type {
   SettingsStore,
   SettingsStoreOptions,
+  SettingsStoreUpdate,
   SettingsUpdateOutcome,
   SettingsHandlerOptions,
 } from './plugin-settings-store.js';

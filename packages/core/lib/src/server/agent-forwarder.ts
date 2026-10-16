@@ -9,11 +9,20 @@
  * the agent half is reachable this way; its `/app/*` (the user surface) is
  * not, because the forwarder prefixes `/admin` to whatever it is given.
  * Within `/admin`, two subtrees are Lamaste's own and answered 404 however
- * they are spelled ({@link isAgentHalfReservedPath}): `/admin/hooks/*`, the
+ * they are spelled ({@link isAgentHalfReservedPath}): `/admin/hooks*`, the
  * lifecycle hook calls, and `/admin/settings*`, where Lamaste writes the
  * plugin's settings and secrets after validating them — no forwarded
  * caller reads or changes them behind the panel's back, so the relay's
  * cache cannot drift from the agent half.
+ *
+ * Every answer must authenticate itself: the agent half signs it with
+ * `X-Lamalibre-Responder` (the `-` form: the request's nonce and the
+ * answer's status, keyed with the installation secret — `responderHeaderFor`
+ * in `@lamalibre/lamaste/agent`), and the forwarder checks that before it
+ * sends the client a status, a header or a byte. A process that took the
+ * relay-loopback port while the hosting agent was away cannot serve
+ * anything — a plugin's `panel.js` least of all, which runs in the panel's
+ * own document — and gets a 502 (`reason: 'app'`) instead.
  *
  * Streaming both ways over Node's own HTTP client (no dependency): bodies
  * are piped, never buffered, so uploads, downloads and server-sent events
@@ -35,9 +44,18 @@
  * client sent under `X-Lamalibre-*` or `Remote-*`, and hop-by-hop headers.
  * What never reaches the client: `Set-Cookie` from the application (the
  * assertion is the authentication; a cookie on the panel's origin would be
- * the application's, not the panel's). Nothing of a body is ever logged —
- * one metadata line per request: plugin, caller, method, path (no query),
- * status, duration.
+ * the application's, not the panel's), `Service-Worker-Allowed` and
+ * `Clear-Site-Data` (a plugin's answer must not widen a service worker's
+ * scope over the panel or wipe the panel's storage), and anything under
+ * `X-Lamalibre-*` (the responder signature is the relay's to check, not the
+ * client's to see). A request that fetches a service worker's script
+ * (`Service-Worker: script`) is refused with 403 before it enters the
+ * tunnel: no plugin installs a service worker on the panel's origin. Plugin
+ * admin bundles share the panel's document — a documented boundary until
+ * plugin UIs are isolated in sandboxed frames.
+ *
+ * Nothing of a body is ever logged — one metadata line per request:
+ * plugin, caller, method, path (no query), status, duration.
  */
 
 import http from 'node:http';
@@ -51,7 +69,13 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-import { CALLER_ASSERTION_HEADER, signCallerAssertion } from '../caller-assertion.js';
+import {
+  CALLER_ASSERTION_HEADER,
+  RESPONDER_HEADER,
+  generateCallerAssertionNonce,
+  signCallerAssertion,
+  verifyResponder,
+} from '../caller-assertion.js';
 import type { CallerIdentity } from '../caller-assertion.js';
 import { RESERVED_API_PREFIXES } from '../constants.js';
 import {
@@ -195,8 +219,21 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   'forwarded',
 ]);
 
-/** Response headers the panel keeps to itself. */
-const STRIPPED_RESPONSE_HEADERS = new Set(['set-cookie', 'set-cookie2']);
+/**
+ * Response headers the panel keeps to itself: the application's cookies,
+ * and what would let an answer reach beyond itself into the panel's
+ * origin — a service worker scope widened over the panel, the panel's
+ * storage and cookies cleared.
+ */
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  'set-cookie',
+  'set-cookie2',
+  'service-worker-allowed',
+  'clear-site-data',
+]);
+
+/** What a forwarded answer that does not authenticate itself gets instead. */
+const UNAUTHENTICATED_ANSWER = 'The agent half did not authenticate its answer';
 
 function isStrippedRequestHeader(name: string): boolean {
   return (
@@ -226,16 +263,35 @@ export function forwardedRequestHeaders(
   return out;
 }
 
-/** The response headers passed back to the client. Pure; exported for tests. */
+/**
+ * The response headers passed back to the client: without hop-by-hop
+ * headers, the ones the panel keeps to itself, and anything under
+ * `X-Lamalibre-*` (the responder signature among them). Pure; exported for
+ * tests.
+ */
 export function forwardedResponseHeaders(incoming: IncomingHttpHeaders): OutgoingHttpHeaders {
   const out: OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(incoming)) {
-    if (value === undefined || HOP_BY_HOP.has(name) || STRIPPED_RESPONSE_HEADERS.has(name)) {
+    if (
+      value === undefined ||
+      HOP_BY_HOP.has(name) ||
+      STRIPPED_RESPONSE_HEADERS.has(name) ||
+      name.startsWith('x-lamalibre-')
+    ) {
       continue;
     }
     out[name] = value;
   }
   return out;
+}
+
+/**
+ * Whether a request fetches a service worker's script: browsers send
+ * `Service-Worker: script` for that (any value is refused — no plugin route
+ * has a reason to be asked for a service worker). Pure; exported for tests.
+ */
+export function isServiceWorkerRequest(headers: IncomingHttpHeaders): boolean {
+  return headers['service-worker'] !== undefined;
 }
 
 /**
@@ -274,48 +330,70 @@ const AGENT_HALF_HOOKS_SEGMENT = AGENT_HALF_HOOKS_PREFIX.split('/')[2] ?? 'hooks
 /** `settings`, the other one. */
 const AGENT_HALF_SETTINGS_SEGMENT = AGENT_HALF_SETTINGS_PATH.split('/')[2] ?? 'settings';
 
+/** How many times a segment is percent-decoded before it counts as undecodable. */
+const RESERVED_DECODE_ROUNDS = 3;
+
 /**
- * The segment after `/admin` of an agent-half path, decoded and lower
- * case; undefined when there is none, null when it does not decode (which
- * the callers treat as reserved — a path no one can read is no one's).
+ * The segment after `/admin` of an agent-half path, reduced to what a
+ * router could take it for: percent-decoded until it no longer changes (at
+ * most {@link RESERVED_DECODE_ROUNDS} rounds), lower case, and stripped of
+ * everything but `a-z` and `0-9`. Undefined when there is no such segment,
+ * null when it does not decode — or still decodes further after the last
+ * round — which the callers treat as reserved: a path no one can read is
+ * no one's.
  */
 function reservableSegment(targetPath: string): string | null | undefined {
   const query = targetPath.indexOf('?');
   const pathOnly = query === -1 ? targetPath : targetPath.slice(0, query);
   const segments = pathOnly.split('/').filter((s) => s.length > 0);
-  const second = segments[1];
-  if (second === undefined) return undefined;
-  try {
-    return decodeURIComponent(second).toLowerCase();
-  } catch {
-    return null;
+  let segment = segments[1];
+  if (segment === undefined) return undefined;
+  for (let round = 0; ; round += 1) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return null;
+    }
+    if (decoded === segment) break;
+    if (round === RESERVED_DECODE_ROUNDS) return null;
+    segment = decoded;
   }
+  return segment.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**
  * Whether an agent-half path is under `/admin/hooks` — Lamaste's lifecycle
- * hook calls, which no forwarded caller may reach. Compared decoded and
- * case-insensitively, like a request hook's route pattern. Pure; exported
- * for tests.
+ * hook calls, which no forwarded caller may reach. The segment after
+ * `/admin` is compared as {@link reservableSegment} reduces it, and
+ * reserved when it *starts with* `hooks`: `/admin/Hooks`,
+ * `/admin/%2568ooks`, `/admin/hooks.json` and `/admin/hooks-v2` alike,
+ * whatever a framework's router would make of them. Pure; exported for
+ * tests.
  */
 export function isAgentHalfHooksPath(targetPath: string): boolean {
   const segment = reservableSegment(targetPath);
-  return segment === null || segment === AGENT_HALF_HOOKS_SEGMENT;
+  return (
+    segment === null || (segment !== undefined && segment.startsWith(AGENT_HALF_HOOKS_SEGMENT))
+  );
 }
 
 /**
  * Whether an agent-half path is one the forwarder must never reach:
  * `/admin/hooks*` (lifecycle hook calls) or `/admin/settings*` (settings
- * and secrets, written only by Lamaste after its own validation). Compared
- * decoded and case-insensitively, so `/admin/Settings` and
- * `/admin/%73ettings/x` are reserved too. Pure; exported for tests.
+ * and secrets, written only by Lamaste after its own validation) — the
+ * segment after `/admin` reduced as {@link reservableSegment} does, then
+ * compared by prefix, so `/admin/Settings`, `/admin/%73ettings/x`,
+ * `/admin/settings.json` and `/admin/settings_v2` are reserved too. Pure;
+ * exported for tests.
  */
 export function isAgentHalfReservedPath(targetPath: string): boolean {
   const segment = reservableSegment(targetPath);
   return (
     segment === null ||
-    segment === AGENT_HALF_HOOKS_SEGMENT ||
-    segment === AGENT_HALF_SETTINGS_SEGMENT
+    (segment !== undefined &&
+      (segment.startsWith(AGENT_HALF_HOOKS_SEGMENT) ||
+        segment.startsWith(AGENT_HALF_SETTINGS_SEGMENT)))
   );
 }
 
@@ -767,6 +845,10 @@ async function forward(
   const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
   const fallback = plan?.runtime.fallbackFor(target.plugin) ?? null;
 
+  if (isServiceWorkerRequest(request.headers)) {
+    return answer(reply, 403, errorBody('A plugin route cannot serve a service worker'));
+  }
+
   const declared = request.headers['content-length'];
   if (declared !== undefined) {
     const length = Number(declared);
@@ -871,8 +953,11 @@ async function forward(
   // --- forward ----------------------------------------------------------------
   const wantedResponse = plan ? largestBodyMax(plan.post) : 0;
   if (wantedResponse > 0) headers['accept-encoding'] = 'identity';
+  // The nonce is chosen here so the answer's responder signature can be
+  // checked against it.
+  const nonce = generateCallerAssertionNonce();
   headers[CALLER_ASSERTION_HEADER] = signCallerAssertion(
-    { plugin: target.plugin, caller, method, path: targetPath },
+    { plugin: target.plugin, caller, method, path: targetPath, nonce },
     target.secret,
   );
   if (body.kind === 'buffer') headers['content-length'] = String(body.bytes.length);
@@ -889,6 +974,32 @@ async function forward(
   });
   if (!upstream.ok) return answerFailure(res, upstream, fallback);
   const upstreamRes = upstream.res;
+
+  // Nothing of an answer reaches the client — not its status, not a header —
+  // before it has shown it is the agent half's.
+  const responder = upstreamRes.headers[RESPONDER_HEADER];
+  if (
+    !verifyResponder(responder, {
+      secret: target.secret,
+      nonce,
+      status: upstreamRes.statusCode ?? 0,
+    })
+  ) {
+    upstreamRes.destroy();
+    const outcome = answerFailure(
+      res,
+      { ok: false, status: 502, error: UNAUTHENTICATED_ANSWER, extra: { reason: 'app' } },
+      fallback,
+    );
+    // The log line says which: an old or foreign answer, or a forged one.
+    return {
+      ...outcome,
+      error:
+        responder === undefined
+          ? `${UNAUTHENTICATED_ANSWER} (no X-Lamalibre-Responder header)`
+          : `${UNAUTHENTICATED_ANSWER} (its X-Lamalibre-Responder header does not verify)`,
+    };
+  }
 
   if (!plan || plan.post.length === 0) return streamResponse(upstreamRes, res, opts);
 

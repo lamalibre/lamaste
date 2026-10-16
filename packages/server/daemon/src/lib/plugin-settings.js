@@ -36,6 +36,7 @@ import {
   SETTINGS_MAX_FIELDS,
   callAgentHalf,
   effectiveSettingsValues,
+  encryptSettingsSecret,
   parseAgentHalfSettingsState,
   settingsStatus,
   validateSettingsUpdate,
@@ -646,18 +647,37 @@ export function updatePluginSettings(name, body, { actor, certSerial = null, log
       return settingsView(block, cache, source, await hostingBlock(record));
     }
 
+    // Each secret is sealed to this one request: under the secret the call
+    // is signed with, bound to the plugin, the assertion's nonce, the key
+    // and the revision (core's settings-secrets), so nothing that takes the
+    // tunnel's port can read it.
+    const signingSecret = signingSecretFor(record);
     const result = await callAgentHalf({
       plugin: record.plugin,
       port: record.port,
-      secret: signingSecretFor(record),
+      secret: signingSecret,
       method: 'PUT',
       path: AGENT_HALF_SETTINGS_PATH,
-      body: {
+      body: (nonce) => ({
         schemaVersion: block.schemaVersion,
         baseRevision: envelope.revision,
         values: checked.values,
-        secrets: checked.secrets,
-      },
+        secrets: Object.fromEntries(
+          Object.entries(checked.secrets).map(([key, value]) => [
+            key,
+            value === null
+              ? null
+              : encryptSettingsSecret({
+                  secret: signingSecret,
+                  plugin: record.plugin,
+                  nonce,
+                  key,
+                  baseRevision: envelope.revision,
+                  value,
+                }),
+          ]),
+        ),
+      }),
       timeoutMs: SETTINGS_WRITE_TIMEOUT_MS,
       maxResponseBytes: AGENT_HALF_SETTINGS_MAX_BYTES,
     });

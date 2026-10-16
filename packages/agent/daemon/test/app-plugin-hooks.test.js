@@ -86,8 +86,9 @@ async function startHalf() {
       headers: req.headers,
       body: Buffer.concat(chunks),
     });
-    res.writeHead(out.status, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(out.body));
+    // Exactly the bytes the responder header covers.
+    res.writeHead(out.status, out.headers);
+    res.end(out.bodyText);
   });
   await new Promise((r) => half.listen(halfPort, '127.0.0.1', r));
 }
@@ -105,7 +106,13 @@ function call(stage, input, caller = { type: 'lamaste' }) {
           path: pathName,
           headers: {
             'x-lamalibre-caller': core.signCallerAssertion(
-              { plugin: ROUTE, caller, method: 'POST', path: pathName },
+              {
+                plugin: ROUTE,
+                caller,
+                method: 'POST',
+                path: pathName,
+                bodySha256: core.bodySha256Hex(body),
+              },
               config.secret,
             ),
             'content-type': 'application/json',

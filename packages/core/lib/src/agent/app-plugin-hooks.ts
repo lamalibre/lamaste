@@ -29,7 +29,11 @@
  * hook may take minutes and must not hold up a start or a stop.
  *
  * {@link createAgentHookHandler} is the agent half's side: it answers
- * `POST /admin/hooks/<stage>` for whatever framework the agent half uses.
+ * `POST /admin/hooks/<stage>` for whatever framework the agent half uses,
+ * checking that the call's assertion signs the body it came with and
+ * authenticating its answer (`admin-handlers.ts`). An answer the agent
+ * half does not authenticate is a failed call (`unauthenticated`), here on
+ * the agent's loopback as on the relay.
  */
 
 import path from 'node:path';
@@ -61,6 +65,8 @@ import type {
   AgentHooks,
   TunnelHookInput,
 } from '../hooks/index.js';
+import { BODY_NOT_AS_RECEIVED, adminAnswer, rawBodyOf } from './admin-handlers.js';
+import type { AgentHookRequest, AgentHookResponse } from './admin-handlers.js';
 import { loadAppPluginConfig } from './app-plugins.js';
 import type { CallerAssertionVerifier } from './app-plugins.js';
 import { agentDataDir } from './platform.js';
@@ -758,20 +764,6 @@ export async function agentTunnelHooksOnPanelLoss(
 // The agent half's side
 // ---------------------------------------------------------------------------
 
-export interface AgentHookRequest {
-  readonly method: string;
-  /** The request path with its query string, as the caller assertion signs it. */
-  readonly url: string;
-  readonly headers: Record<string, string | string[] | undefined>;
-  /** The raw body (Buffer or string), or an object a framework already parsed. */
-  readonly body: unknown;
-}
-
-export interface AgentHookResponse {
-  readonly status: number;
-  readonly body: Record<string, unknown>;
-}
-
 export interface AgentHookHandlerOptions {
   /** The agent half's verifier ({@link createCallerAssertionVerifier}). */
   readonly verifier: CallerAssertionVerifier;
@@ -781,10 +773,13 @@ export interface AgentHookHandlerOptions {
 /**
  * Answer `POST /admin/hooks/<stage>` in an agent half: the call must carry a
  * valid caller assertion naming Lamaste (no admin or forwarded caller may
- * run a hook), the stage must be one the agent half implements, and its
- * answer is checked before it is sent. A hook that throws answers
- * `{ ok: false, reason }` — the stage fails, as the pipeline expects.
- * Framework-agnostic: pass the request, send the response it returns.
+ * run a hook) that signs exactly the body received — so the body must be
+ * passed as received (a parsed object is refused with 400) — the stage must
+ * be one the agent half implements, and its answer is checked before it is
+ * sent. A hook that throws answers `{ ok: false, reason }` — the stage
+ * fails, as the pipeline expects. Every answer to a verified call carries
+ * the responder header over its exact body. Framework-agnostic: pass the
+ * request, send `status`, `headers` and `bodyText`.
  */
 export function createAgentHookHandler(opts: AgentHookHandlerOptions): {
   handle(request: AgentHookRequest): Promise<AgentHookResponse>;
@@ -793,50 +788,60 @@ export function createAgentHookHandler(opts: AgentHookHandlerOptions): {
     async handle(request) {
       const pathOnly = request.url.split('?')[0] ?? '';
       const prefix = `${AGENT_HALF_HOOKS_PREFIX}/`;
-      if (!pathOnly.startsWith(prefix)) return { status: 404, body: { error: 'Not found' } };
+      if (!pathOnly.startsWith(prefix)) return adminAnswer(404, { error: 'Not found' });
       const stage = pathOnly.slice(prefix.length);
-      if (!isAgentHookStage(stage)) return { status: 404, body: { error: 'Unknown hook stage' } };
+      if (!isAgentHookStage(stage)) return adminAnswer(404, { error: 'Unknown hook stage' });
       if (request.method.toUpperCase() !== 'POST') {
-        return { status: 405, body: { error: 'Hook calls are POST' } };
+        return adminAnswer(405, { error: 'Hook calls are POST' });
       }
-      const verified = await opts.verifier.verify(request.headers, 'POST', request.url);
-      if (!verified.ok) return { status: 401, body: { error: verified.reason } };
+      const raw = rawBodyOf(request.body);
+      if (!raw) return adminAnswer(400, { error: BODY_NOT_AS_RECEIVED });
+      const verified = await opts.verifier.verify(request.headers, 'POST', request.url, {
+        body: raw,
+        requireBodyHash: true,
+      });
+      if (!verified.ok) return adminAnswer(401, { error: verified.reason });
       if (verified.payload.caller.type !== 'lamaste') {
-        return { status: 403, body: { error: 'Only Lamaste calls lifecycle hooks' } };
+        return adminAnswer(403, { error: 'Only Lamaste calls lifecycle hooks' }, verified);
       }
 
-      let parsed: unknown = request.body;
-      if (Buffer.isBuffer(parsed) || typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed.toString());
-        } catch {
-          return { status: 400, body: { error: 'The hook call is not JSON' } };
-        }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw.toString('utf-8'));
+      } catch {
+        return adminAnswer(400, { error: 'The hook call is not JSON' }, verified);
       }
       const call = parseAgentHookCall(parsed, stage);
-      if (!call) return { status: 400, body: { error: 'Malformed hook call' } };
+      if (!call) return adminAnswer(400, { error: 'Malformed hook call' }, verified);
 
       const fn = opts.hooks[stage] as
         | ((input: unknown) => AgentHookDecision | void | Promise<AgentHookDecision | void>)
         | undefined;
-      if (!fn) return { status: 404, body: { error: `This agent half has no ${stage} hook` } };
+      if (!fn) {
+        return adminAnswer(404, { error: `This agent half has no ${stage} hook` }, verified);
+      }
       let decision: unknown;
       try {
         decision = await fn(call.input);
       } catch (err: unknown) {
-        return {
-          status: 200,
-          body: { ok: false, reason: err instanceof Error ? err.message : String(err) },
-        };
+        return adminAnswer(
+          200,
+          { ok: false, reason: err instanceof Error ? err.message : String(err) },
+          verified,
+        );
       }
       if (decision === undefined && (stage === 'tunnel:down' || stage === 'tunnel:up')) {
-        return { status: 200, body: { ok: true } };
+        return adminAnswer(200, { ok: true }, verified);
       }
       const valid = parseAgentHookDecision(decision);
       if (!valid) {
-        return { status: 500, body: { error: `The ${stage} hook returned no valid decision` } };
+        return adminAnswer(
+          500,
+          { error: `The ${stage} hook returned no valid decision` },
+          verified,
+        );
       }
-      return { status: 200, body: valid as unknown as Record<string, unknown> };
+      return adminAnswer(200, valid as unknown as Record<string, unknown>, verified);
     },
   };
 }

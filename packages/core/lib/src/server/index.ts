@@ -416,6 +416,7 @@ export {
   agentHalfPath,
   isAgentHalfHooksPath,
   isAgentHalfReservedPath,
+  isServiceWorkerRequest,
   callerLabel,
 } from './agent-forwarder.js';
 export type {

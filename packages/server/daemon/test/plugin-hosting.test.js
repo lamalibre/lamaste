@@ -2,8 +2,9 @@
  * Hosting an agent-hosted plugin's agent half (4.3, slice 2a): the hosting
  * store and its secret rotation with overlap, the panel's forwarder against
  * a fake agent half that verifies caller assertions with the agent-side
- * helper, the health probe with its hysteresis, and the hosting agent's
- * plugin-config routes.
+ * helper and authenticates its answers (slice 4: `responderHeaderFor`, the
+ * health route's body form), the health probe with its hysteresis, and the
+ * hosting agent's plugin-config routes.
  */
 
 import { test, before, after } from 'node:test';
@@ -15,13 +16,14 @@ import path from 'node:path';
 
 import {
   CALLER_ASSERTION_HEADER,
+  RESPONDER_HEADER,
   NonceStore,
   signCallerAssertion,
   verifyCallerAssertion,
   generateHostingSecret,
   pluginHostCapability,
 } from '@lamalibre/lamaste';
-import { createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
+import { createCallerAssertionVerifier, responderHeaderFor } from '@lamalibre/lamaste/agent';
 import {
   agentForwarderPlugin,
   agentHalfPath,
@@ -49,7 +51,7 @@ let halfConfigPath;
 let half; // the fake agent half (http.Server)
 let halfPort;
 let halfSeen; // last request the half received
-let brokenHalf; // answers 500 to everything
+let brokenHalf; // answers 500 to everything, without authenticating it — a squatter
 let brokenPort;
 
 const PLUGIN = 'fx';
@@ -87,22 +89,46 @@ async function startFakeHalf() {
       headers: req.headers,
       caller: result.payload.caller,
     };
+    // Every answer to a verified forwarded request carries the responder header.
+    const head = (status, headers = {}) =>
+      res.writeHead(status, { ...headers, ...responderHeaderFor(result, status) });
     if (url.pathname === '/admin/health') {
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      // Lamaste's own call: the body form, over the exact bytes.
+      const text = JSON.stringify({ ok: true });
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        [RESPONDER_HEADER]: result.responder(200, text),
+      });
+      res.end(text);
       return;
     }
     if (url.pathname === '/admin/echo') {
       let bytes = 0;
       req.on('data', (c) => (bytes += c.length));
       req.on('end', () => {
-        res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'app=1' });
+        head(200, {
+          'content-type': 'application/json',
+          'set-cookie': 'app=1',
+          'service-worker-allowed': '/',
+          'clear-site-data': '"*"',
+        });
         res.end(JSON.stringify({ bytes }));
       });
       return;
     }
+    if (url.pathname === '/admin/fail') {
+      head(500, { 'content-type': 'text/plain' });
+      res.end('genuinely broken');
+      return;
+    }
+    if (url.pathname === '/admin/forged') {
+      // A responder header for another status: it does not verify.
+      res.writeHead(200, { [RESPONDER_HEADER]: result.responder(201) });
+      res.end('forged');
+      return;
+    }
     if (url.pathname === '/admin/events') {
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      head(200, { 'content-type': 'text/event-stream' });
       let n = 0;
       const timer = setInterval(() => {
         n += 1;
@@ -116,12 +142,12 @@ async function startFakeHalf() {
     }
     if (url.pathname === '/admin/slow') {
       setTimeout(() => {
-        res.writeHead(200);
+        head(200);
         res.end('late');
       }, 500);
       return;
     }
-    res.writeHead(200, { 'content-type': 'application/json' });
+    head(200, { 'content-type': 'application/json' });
     res.end(
       JSON.stringify({
         caller: result.payload.caller,
@@ -328,8 +354,11 @@ test('forwarder: /admin/hooks is Lamaste-only, however it is spelled', () => {
   assert.equal(isAgentHalfHooksPath('/admin/HOOKS/tunnel:down?x=1'), true);
   assert.equal(isAgentHalfHooksPath('/admin/%68ooks/tunnel:up'), true);
   assert.equal(isAgentHalfHooksPath('/admin//hooks/x'), true);
-  assert.equal(isAgentHalfHooksPath('/admin/hooksx'), false);
+  // By prefix, after stripping what a router might ignore (slice 4).
+  assert.equal(isAgentHalfHooksPath('/admin/hooksx'), true);
+  assert.equal(isAgentHalfHooksPath('/admin/hooks.json'), true);
   assert.equal(isAgentHalfHooksPath('/admin/jobs/hooks'), false);
+  assert.equal(isAgentHalfHooksPath('/admin/hook'), false);
   assert.equal(isAgentHalfHooksPath('/admin'), false);
 });
 
@@ -348,7 +377,7 @@ test('forwarder: /admin/hooks and /admin/settings are reserved, however they are
   ]) {
     assert.equal(isAgentHalfReservedPath(reserved), true, reserved);
   }
-  for (const open of ['/admin', '/admin/settingsx', '/admin/jobs/settings', '/admin/setting']) {
+  for (const open of ['/admin', '/admin/jobs/settings', '/admin/setting', '/admin/xsettings']) {
     assert.equal(isAgentHalfReservedPath(open), false, open);
   }
   // The hooks predicate keeps its own meaning.
@@ -382,6 +411,9 @@ test('forwarder: credentials and proxy verdicts are stripped, cookies never pass
       'set-cookie': ['a=1'],
       'content-type': 'text/plain',
       connection: 'close',
+      'service-worker-allowed': '/',
+      'clear-site-data': '"*"',
+      'x-lamalibre-responder': 'x'.repeat(43),
     }),
     { 'content-type': 'text/plain' },
   );
@@ -526,14 +558,23 @@ test('forwarder: /api/<route>/settings and /api/<route>/hooks never reach the ag
       assert.equal(res.statusCode, 404, `${method} ${url}`);
       assert.equal(halfSeen, null, `${method} ${url}: the agent half never saw it`);
     }
-    // A path that only starts like a reserved one is forwarded.
-    const near = await app.inject({
+    // A segment that starts like a reserved one is reserved too (slice 4);
+    // one that does not is forwarded.
+    halfSeen = null;
+    const prefixed = await app.inject({
       method: 'GET',
       url: '/api/fx/settingsx',
       headers: { 'x-test-role': 'admin' },
     });
+    assert.equal(prefixed.statusCode, 404);
+    assert.equal(halfSeen, null);
+    const near = await app.inject({
+      method: 'GET',
+      url: '/api/fx/setting',
+      headers: { 'x-test-role': 'admin' },
+    });
     assert.equal(near.statusCode, 200);
-    assert.equal(halfSeen.url, '/admin/settingsx');
+    assert.equal(halfSeen.url, '/admin/setting');
   } finally {
     await app.close();
   }
@@ -596,7 +637,7 @@ test('forwarder: refusals — unauthorized, disabled, not hosted, unknown, reser
   }
 });
 
-test('forwarder: a dead port is a clean 502 and a broken app is passed through', async () => {
+test('forwarder: a dead port is a clean 502; only an authenticated answer is passed through', async () => {
   const app = await forwarderApp();
   try {
     const started = Date.now();
@@ -608,13 +649,34 @@ test('forwarder: a dead port is a clean 502 and a broken app is passed through',
     assert.equal(dead.statusCode, 502);
     assert.equal(dead.json().reason, 'tunnel');
     assert.ok(Date.now() - started < 2000, 'answered without hanging');
+    // A process answering on the port without the secret serves nothing.
     const broken = await app.inject({
       method: 'GET',
       url: '/api/broken/ping',
       headers: { 'x-test-role': 'admin' },
     });
-    assert.equal(broken.statusCode, 500);
-    assert.equal(broken.body, 'broken');
+    assert.equal(broken.statusCode, 502);
+    assert.deepEqual(broken.json(), {
+      error: 'The agent half did not authenticate its answer',
+      reason: 'app',
+    });
+    assert.doesNotMatch(broken.body, /broken/);
+    const forged = await app.inject({
+      method: 'GET',
+      url: '/api/fx/forged',
+      headers: { 'x-test-role': 'admin' },
+    });
+    assert.equal(forged.statusCode, 502);
+    assert.equal(forged.json().reason, 'app');
+    // The agent half's own failure, authenticated, is its answer.
+    const failed = await app.inject({
+      method: 'GET',
+      url: '/api/fx/fail',
+      headers: { 'x-test-role': 'admin' },
+    });
+    assert.equal(failed.statusCode, 500);
+    assert.equal(failed.body, 'genuinely broken');
+    assert.equal(failed.headers[RESPONDER_HEADER], undefined, 'the signature stays on the relay');
     const slow = await app.inject({
       method: 'GET',
       url: '/api/fx/slow',
@@ -639,6 +701,19 @@ test('forwarder: bodies stream through, the body limit holds, set-cookie never r
     assert.equal(ok.statusCode, 200, ok.body);
     assert.equal(ok.json().bytes, 10_000);
     assert.equal(ok.headers['set-cookie'], undefined);
+    assert.equal(ok.headers['service-worker-allowed'], undefined);
+    assert.equal(ok.headers['clear-site-data'], undefined);
+    assert.equal(ok.headers[RESPONDER_HEADER], undefined);
+
+    // Fetching a service worker's script never enters the tunnel.
+    halfSeen = null;
+    const worker = await app.inject({
+      method: 'GET',
+      url: '/api/fx/sw.js',
+      headers: { 'x-test-role': 'admin', 'service-worker': 'script' },
+    });
+    assert.equal(worker.statusCode, 403);
+    assert.equal(halfSeen, null);
 
     const declared = await app.inject({
       method: 'POST',
@@ -827,6 +902,21 @@ test('health: the probe tells a dead tunnel from a broken application', async ()
   const app = await probePluginHosting({ plugin: PLUGIN, port: brokenPort, secret });
   assert.equal(app.ok, false);
   assert.equal(app.reason, 'app');
+  assert.match(app.error, /did not authenticate its answer/);
+  // A squatter answering 200 without the secret is not the application either.
+  const squatter = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const squatterPort = await listen(squatter);
+  try {
+    const squatted = await probePluginHosting({ plugin: PLUGIN, port: squatterPort, secret });
+    assert.equal(squatted.ok, false);
+    assert.equal(squatted.reason, 'app');
+    assert.match(squatted.error, /no.*X-Lamalibre-Responder|without an X-Lamalibre-Responder/);
+  } finally {
+    squatter.close();
+  }
   // The wrong secret is an application failure too: the half refuses the health call.
   const refused = await probePluginHosting({
     plugin: PLUGIN,

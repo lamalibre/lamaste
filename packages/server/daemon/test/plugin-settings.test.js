@@ -27,6 +27,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { AGENT_HALF_SETTINGS_MAX_BYTES, RESPONDER_HEADER } from '@lamalibre/lamaste';
 import {
   createCallerAssertionVerifier,
   createSettingsHandler,
@@ -139,6 +140,8 @@ const halves = {};
 const responses = [];
 /** Every log line the panel wrote in this file. */
 const logLines = [];
+/** Every request body that crossed the tunnel to a fake agent half — what a squatter would get. */
+const wireBodies = [];
 let now = Date.parse('2026-10-16T08:00:00.000Z');
 
 function listen(server, port = 0) {
@@ -150,8 +153,10 @@ function listen(server, port = 0) {
 /**
  * A fake agent half: core's settings store and handler over a data
  * directory of its own, behind the agent-side caller-assertion verifier,
- * answering its lifecycle hooks too. `mode: 'unsupported'` plays an agent
- * half from before plugin settings (404 on /admin/settings).
+ * answering its lifecycle hooks too — every answer authenticated with the
+ * responder header, as core's handlers make it. `mode: 'unsupported'` plays
+ * an agent half that does not serve plugin settings (an authenticated 404
+ * on /admin/settings).
  */
 async function startFakeHalf(route, block) {
   const half = {
@@ -196,26 +201,39 @@ async function startFakeHalf(route, block) {
     req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
       const body = Buffer.concat(chunks);
-      const send = (status, payload) => {
-        res.writeHead(status, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(payload));
+      wireBodies.push(body);
+      /** A JSON answer; authenticated over its exact bytes when the request verified. */
+      const send = (status, payload, verified = null) => {
+        const text = JSON.stringify(payload);
+        const headers = { 'content-type': 'application/json' };
+        if (verified) headers[RESPONDER_HEADER] = verified.responder(status, text);
+        res.writeHead(status, headers);
+        res.end(text);
       };
       const pathOnly = req.url.split('?')[0];
       if (pathOnly.startsWith('/admin/hooks/')) {
-        const verified = await half.verifier.verify(req.headers, req.method, req.url);
+        const verified = await half.verifier.verify(req.headers, req.method, req.url, {
+          body,
+          requireBodyHash: true,
+        });
         if (!verified.ok) return send(401, { error: verified.reason });
         half.hookInputs.push(JSON.parse(body.toString('utf-8')));
-        return send(200, { ok: true });
+        return send(200, { ok: true }, verified);
       }
       if (pathOnly === '/admin/settings' || pathOnly.startsWith('/admin/settings/')) {
-        if (half.mode === 'unsupported') return send(404, { error: 'Not found' });
+        if (half.mode === 'unsupported') {
+          const verified = await half.verifier.verify(req.headers, req.method, req.url);
+          if (!verified.ok) return send(401, { error: verified.reason });
+          return send(404, { error: 'Not found' }, verified);
+        }
         const out = await half.handler.handle({
           method: req.method,
           url: req.url,
           headers: req.headers,
           body,
         });
-        return send(out.status, out.body);
+        res.writeHead(out.status, out.headers);
+        return res.end(out.bodyText);
       }
       return send(404, { error: 'Not found' });
     });
@@ -624,11 +642,8 @@ test('validation: 400 with a message per field — never the value', async () =>
       { region: 'Is not a secret; send it in values' },
     ],
     [{ revision: 2, values: { region: MISPLACED } }, { region: 'Must be one of the options' }],
-    [{ revision: 2, values: { nope: MISPLACED } }, { nope: 'Unknown setting' }],
-    [
-      { revision: 2, values: { [MISPLACED]: 1 } },
-      { _: 'Unknown setting (not a valid setting name)' },
-    ],
+    [{ revision: 2, values: { nope: MISPLACED } }, { _: '1 unknown setting' }],
+    [{ revision: 2, values: { [MISPLACED]: 1 } }, { _: '1 unknown setting' }],
     [{ revision: 2, secrets: { apiKey: null } }, { apiKey: 'Is required' }],
     [{ revision: 2, values: { region: null } }, { region: 'Is required' }],
     [{ revision: 2, values: { retries: 11 } }, { retries: 'Must be at most 10' }],
@@ -669,7 +684,12 @@ test('validation: 400 with a message per field — never the value', async () =>
     method: 'PUT',
     url: '/api/plugins/sx/settings',
     headers: { 'x-test-role': 'admin', 'content-type': 'application/json' },
-    payload: JSON.stringify({ revision: 2, secrets: { apiKey: MISPLACED.repeat(10_000) } }),
+    payload: JSON.stringify({
+      revision: 2,
+      secrets: {
+        apiKey: MISPLACED.repeat(Math.ceil(AGENT_HALF_SETTINGS_MAX_BYTES / MISPLACED.length) + 1),
+      },
+    }),
   });
   responses.push(big.body);
   assert.equal(big.statusCode, 413);
@@ -861,10 +881,11 @@ test('update: the agent half is re-read afterwards; the preview lists the settin
     sourceIp: IP,
   });
   const expected = {
-    added: ['endpoint'],
-    removed: ['verbose'],
-    retyped: ['retries'],
+    added: [{ key: 'endpoint', type: 'string' }],
+    removed: [{ key: 'verbose', type: 'boolean' }],
+    retyped: [{ key: 'retries', from: 'integer', to: 'string' }],
     newRequired: ['retries', 'endpoint'],
+    secretToPlain: [],
   };
   assert.deepEqual(staged.pendingUpdate.settings, expected);
   const hooks = await call('GET', '/api/plugins/px/hooks');
@@ -883,6 +904,7 @@ test('update: the agent half is re-read afterwards; the preview lists the settin
     removed: [],
     retyped: [],
     newRequired: [],
+    secretToPlain: [],
   });
 });
 
@@ -1031,7 +1053,7 @@ async function filesUnder(root) {
   return out;
 }
 
-test('the secrets appear in no response, log line, row or relay file', async () => {
+test('the secrets appear in no response, log line, row, relay file — nor in clear on the tunnel', async () => {
   const secrets = [SECRET, TOKEN_SECRET, MISPLACED];
   assert.ok(responses.length > 30, `${responses.length} responses checked`);
   assert.ok(logLines.length > 30, `${logLines.length} log lines checked`);
@@ -1039,6 +1061,18 @@ test('the secrets appear in no response, log line, row or relay file', async () 
     for (const body of responses) assert.ok(!body.includes(secret), 'a response');
     for (const line of logLines) assert.ok(!line.includes(secret), `a log line: ${line}`);
   }
+  // Every secret crossed the tunnel sealed to its request.
+  const updates = wireBodies.filter((b) => b.includes(Buffer.from('"baseRevision"')));
+  assert.ok(updates.length > 3, `${updates.length} updates checked`);
+  for (const body of wireBodies) {
+    for (const secret of secrets) {
+      assert.equal(body.includes(Buffer.from(secret)), false, 'a request body on the tunnel');
+    }
+  }
+  assert.ok(
+    updates.some((b) => /"secrets":\{"apiKey":\{"v":1,"iv":"/.test(b.toString('utf-8'))),
+    'a sealed secret on the wire',
+  );
   // No log line carries a request body at all.
   for (const line of logLines) {
     const entry = JSON.parse(line);

@@ -139,6 +139,7 @@ export {
   settingsStatus,
   effectiveSettingsValues,
   settingsSchemaDiff,
+  normalizeSettingsErrorMessage,
   parseAgentHalfSettingsState,
   parseAgentHalfSettingsUpdate,
 } from './plugin-settings.js';
@@ -154,9 +155,20 @@ export type {
   SettingsUpdateValidation,
   SettingsStatus,
   SettingsSchemaDiff,
+  SettingsFieldRef,
+  SettingsFieldRetype,
   AgentHalfSettingsState,
   AgentHalfSettingsUpdate,
 } from './plugin-settings.js';
+
+// Settings secrets on the wire: sealed by the relay to the one request that
+// carries them, opened by the agent half with the verified request
+export {
+  SETTINGS_SECRET_ENCRYPTION_VERSION,
+  encryptSettingsSecret,
+  decryptSettingsSecret,
+} from './settings-secrets.js';
+export type { EncryptedSettingsSecret, SettingsSecretContext } from './settings-secrets.js';
 
 // Hook sets (lifecycle hooks of agent-hosted plugins; the contract itself is
 // `@lamalibre/lamaste/hooks`)
@@ -271,24 +283,33 @@ export {
 
 export type { AtomicWriteOptions } from './file-helpers.js';
 
-// Caller assertions (relay forwarder → agent half of an agent-hosted plugin)
+// Caller assertions (relay → agent half of an agent-hosted plugin) and the
+// responder signatures the agent half authenticates its answers with
 export {
   CALLER_ASSERTION_HEADER,
   CALLER_ASSERTION_MAX_AGE_MS,
   CALLER_ASSERTION_CLOCK_SKEW_MS,
   CALLER_ASSERTION_VERSION,
   HOSTING_SECRET_BYTES,
+  RESPONDER_HEADER,
   generateHostingSecret,
+  generateCallerAssertionNonce,
   assertHostingSecret,
+  bodySha256Hex,
   signCallerAssertion,
   verifyCallerAssertion,
+  signResponder,
+  verifyResponder,
   NonceStore,
 } from './caller-assertion.js';
 
 export type {
   CallerIdentity,
+  CallerAssertionInput,
   CallerAssertionPayload,
   CallerAssertionRejection,
+  ResponderInput,
+  VerifiedCallerAssertion,
   VerifyCallerAssertionResult,
   VerifyCallerAssertionOptions,
 } from './caller-assertion.js';
@@ -301,8 +322,9 @@ export type {
   AgentHookCallResult,
 } from './agent-hook-call.js';
 
-// Lamaste's own calls to an agent half's admin surface (settings through the tunnel)
-export { callAgentHalf } from './agent-half-call.js';
+// Lamaste's own calls to an agent half's admin surface (settings and health
+// through the tunnel)
+export { AGENT_HALF_HEALTH_PATH, callAgentHalf } from './agent-half-call.js';
 export type {
   AgentHalfCallFailure,
   AgentHalfCallMethod,

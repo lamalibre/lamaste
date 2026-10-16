@@ -266,7 +266,9 @@ export type AgentHookDecision =
  * An agent half's hooks: one function per stage it declares under
  * `hooks.agent`. Tunnel stages may return nothing (`{ ok: true }`).
  * Served at `POST /admin/hooks/<stage>` with `createAgentHookHandler` from
- * `@lamalibre/lamaste/agent`, which verifies that Lamaste made the call.
+ * `@lamalibre/lamaste/agent`, which verifies that Lamaste made the call
+ * with exactly the body received and authenticates the answer
+ * (`X-Lamalibre-Responder`) — an answer without that is not believed.
  */
 export interface AgentHooks {
   'install:pre-tunnel'?: (i: LifecycleHookInput) => MaybePromise<AgentHookDecision>;

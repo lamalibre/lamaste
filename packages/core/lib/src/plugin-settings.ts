@@ -17,9 +17,19 @@
  * echoes the received value in those messages. A string field's `pattern`
  * is checked only where `checkPattern` is set — the agent half and the
  * form, never the relay, where a manifest's regular expression could stall
- * the panel. A pattern is tested as `new RegExp(pattern, 'u').test(value)`,
- * unanchored: a manifest anchors it with `^` and `$` when it means the
- * whole value.
+ * the panel; for the same reason the manifest schema compiles a pattern but
+ * never runs it, not even against the field's own default (the agent half
+ * checks that, `settingsFromManifest`). A pattern is tested as
+ * `new RegExp(pattern, 'u').test(value)`, unanchored: a manifest anchors it
+ * with `^` and `$` when it means the whole value. Text a manifest shows an
+ * administrator (labels, descriptions, options, string defaults, patterns)
+ * refuses control characters and bidirectional overrides, which could
+ * disguise what a field asks for.
+ *
+ * A secret travels from the relay to the agent half sealed to the request
+ * that carries it (`settings-secrets.ts`), so the update on the wire holds
+ * no secret in clear — not even for whatever takes a tunnel's loopback
+ * port.
  *
  * Settings are outside the approval digest: they declare data, not code.
  * When an update changes a field's type, the stored value is dropped on
@@ -28,6 +38,9 @@
  */
 
 import { z } from 'zod';
+
+import { parseEncryptedSettingsSecret } from './settings-secrets.js';
+import type { EncryptedSettingsSecret } from './settings-secrets.js';
 
 // ---------------------------------------------------------------------------
 // Limits and paths
@@ -66,11 +79,61 @@ export const AGENT_HALF_SETTINGS_PATH = '/admin/settings';
 /** `POST` on the agent half: re-read the settings files, after a restore. */
 export const AGENT_HALF_SETTINGS_RELOAD_PATH = '/admin/settings/reload';
 
-/** The largest request or response body of a settings call. */
-export const AGENT_HALF_SETTINGS_MAX_BYTES = 256 * 1024;
+/**
+ * The largest request or response body of a settings call. The largest
+ * valid one: 50 fields, each a string of 4096 UTF-16 units that JSON
+ * escapes to six bytes apiece (`\u0001`) — 24,576 bytes — plus its key (at
+ * most 64 characters) and punctuation, about 1.23 MB. A sealed secret is
+ * smaller than that per field: at most 3 UTF-8 bytes per unit (12,288),
+ * the 16-byte tag, base64url (16,406 characters) and the IV. 2 MiB leaves
+ * room for the envelope and keeps a margin of about 40 %.
+ */
+export const AGENT_HALF_SETTINGS_MAX_BYTES = 2 * 1024 * 1024;
 
-/** Longest `setAt` a state may carry (an ISO 8601 timestamp is 24 characters). */
-const SET_AT_MAX_LENGTH = 64;
+/**
+ * The largest plaintext a sealed secret may carry: a secret is at most
+ * {@link SETTINGS_STRING_MAX_LENGTH} UTF-16 units, each at most 3 UTF-8
+ * bytes (a surrogate pair is two units and 4 bytes).
+ */
+const SETTINGS_SECRET_MAX_PLAINTEXT_BYTES = SETTINGS_STRING_MAX_LENGTH * 3;
+
+/** `setAt` as the store writes it: `Date.prototype.toISOString`, UTC. */
+const SET_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+/** The message of a sealed secret that does not open (the agent half's 422). */
+export const SETTINGS_SECRET_UNDECRYPTABLE = 'Could not be decrypted';
+
+/** The schema issue of manifest text with control or bidirectional-override characters. */
+const CONTROL_CHARACTERS_MESSAGE = 'Contains control characters';
+
+/**
+ * Whether `text` has a C0 or C1 control character (DEL included) or a
+ * bidirectional mark, embedding, override or isolate (U+061C, U+200E/F,
+ * U+202A–U+202E, U+2066–U+2069) — characters that can make a label read
+ * as something it is not. Checked by code unit, which covers them all
+ * (none is a surrogate).
+ */
+function hasControlCharacters(text: string): boolean {
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    if (
+      c <= 0x1f ||
+      (c >= 0x7f && c <= 0x9f) ||
+      c === 0x061c ||
+      c === 0x200e ||
+      c === 0x200f ||
+      (c >= 0x202a && c <= 0x202e) ||
+      (c >= 0x2066 && c <= 0x2069)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** A manifest string an administrator reads: no control or bidirectional-override characters. */
+const displayText = (schema: z.ZodString) =>
+  schema.refine((text) => !hasControlCharacters(text), CONTROL_CHARACTERS_MESSAGE);
 
 // ---------------------------------------------------------------------------
 // Manifest schema
@@ -78,8 +141,8 @@ const SET_AT_MAX_LENGTH = 64;
 
 const SettingsOptionSchema = z
   .object({
-    value: z.string().min(1).max(200),
-    label: z.string().min(1).max(100),
+    value: displayText(z.string().min(1).max(200)),
+    label: displayText(z.string().min(1).max(100)),
   })
   .strict();
 
@@ -96,19 +159,19 @@ export const SettingsFieldSchema = z
         SETTINGS_KEY_RE,
         'A setting key starts with a lower-case letter and has only letters and digits (at most 64)',
       ),
-    label: z.string().min(1).max(100),
-    description: z.string().max(500).optional(),
+    label: displayText(z.string().min(1).max(100)),
+    description: displayText(z.string().max(500)).optional(),
     type: z.enum(SETTINGS_FIELD_TYPES),
     required: z.boolean().optional(),
     /** Never on a secret. */
-    default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+    default: z.union([displayText(z.string()), z.number(), z.boolean()]).optional(),
     /** string / secret; {@link SETTINGS_DEFAULT_MAX_LENGTH} when unset. */
     maxLength: z.number().int().min(1).max(SETTINGS_STRING_MAX_LENGTH).optional(),
     /** integer / number. */
     min: z.number().finite().optional(),
     max: z.number().finite().optional(),
-    /** string only; compiled with the `u` flag, tested unanchored. */
-    pattern: z.string().max(SETTINGS_PATTERN_MAX_LENGTH).optional(),
+    /** string only; compiled with the `u` flag, tested unanchored — never by the relay. */
+    pattern: displayText(z.string().max(SETTINGS_PATTERN_MAX_LENGTH)).optional(),
     /** enum only, and required there. */
     options: z.array(SettingsOptionSchema).min(1).max(SETTINGS_ENUM_MAX_OPTIONS).optional(),
   })
@@ -118,7 +181,12 @@ export type SettingsField = z.infer<typeof SettingsFieldSchema>;
 
 /**
  * The manifest's `settings` block. Only on a plugin with an agent half —
- * the agent half stores the values (`ManifestSchema` checks that).
+ * the agent half stores the values (`ManifestSchema` checks that). The
+ * relay validates manifests with it at install, at update and at every
+ * start, so it runs no manifest-supplied regular expression: a `pattern`
+ * is compiled here, and a default is checked against everything but it
+ * (the agent half tests the default against the pattern when it reads its
+ * own manifest, `settingsFromManifest`).
  */
 export const SettingsBlockSchema = z
   .object({
@@ -169,12 +237,11 @@ export const SettingsBlockSchema = z
         });
       }
 
-      let patternCompiles = true;
       if (field.pattern !== undefined) {
         try {
+          // Compiled, never run: compiling is linear in the pattern's length.
           new RegExp(field.pattern, 'u');
         } catch {
-          patternCompiles = false;
           issue(['pattern'], '"pattern" is not a valid regular expression (with the "u" flag)');
         }
       }
@@ -186,8 +253,8 @@ export const SettingsBlockSchema = z
       }
       // An enum without options is reported above; its default could not match anything.
       if (field.type === 'enum' && field.options === undefined) return;
-      // A manifest's own default, compiled and tested once at validation.
-      const checked = checkSettingsValue(field, field.default, { checkPattern: patternCompiles });
+      // Everything but the pattern: a catastrophic one must not stall the panel.
+      const checked = checkSettingsValue(field, field.default, { checkPattern: false });
       if (!checked.ok) issue(['default'], `The default is not a valid value: ${checked.message}`);
     });
   });
@@ -323,9 +390,10 @@ export type SettingsUpdateValidation =
  * Validate a partial update against the schema. An empty update is valid
  * (it changes nothing). `null` clears a field — a non-secret one goes back
  * to its default — refused when that leaves a required field without a value.
- * Errors are keyed by the field's key, or `_` for a malformed envelope (and
- * for a name that could not be a setting key at all, so that nothing but a
- * key is ever echoed). Messages never contain a submitted value.
+ * Errors are keyed by the field's key, or `_` for a malformed envelope and
+ * for names the schema does not know — counted (`"2 unknown settings"`),
+ * never named: a name is submitted text too, and a secret pasted where a
+ * key belongs must not come back. Messages never contain a submitted value.
  */
 export function validateSettingsUpdate(
   block: SettingsBlock,
@@ -354,16 +422,16 @@ export function validateSettingsUpdate(
   if (errors.length > 0) return failure();
 
   const fields = new Map(block.fields.map((field) => [field.key, field]));
-  const unknownSetting = (key: string): void => {
-    if (SETTINGS_KEY_RE.test(key)) fail(key, 'Unknown setting');
-    else fail('_', 'Unknown setting (not a valid setting name)');
+  let unknown = 0;
+  const unknownSetting = (): void => {
+    unknown += 1;
   };
 
   const values: [string, SettingsValue | null][] = [];
   for (const [key, value] of Object.entries(isRecord(rawValues) ? rawValues : {})) {
     const field = fields.get(key);
     if (!field) {
-      unknownSetting(key);
+      unknownSetting();
       continue;
     }
     if (field.type === 'secret') {
@@ -385,7 +453,7 @@ export function validateSettingsUpdate(
   for (const [key, value] of Object.entries(isRecord(rawSecrets) ? rawSecrets : {})) {
     const field = fields.get(key);
     if (!field) {
-      unknownSetting(key);
+      unknownSetting();
       continue;
     }
     if (field.type !== 'secret') {
@@ -402,8 +470,59 @@ export function validateSettingsUpdate(
     else fail(key, checked.ok ? 'Must be a string' : checked.message);
   }
 
+  if (unknown > 0) fail('_', unknownSettingsMessage(unknown));
   if (errors.length > 0) return failure();
   return { ok: true, values: Object.fromEntries(values), secrets: Object.fromEntries(secrets) };
+}
+
+function unknownSettingsMessage(count: number): string {
+  return count === 1 ? '1 unknown setting' : `${count} unknown settings`;
+}
+
+/**
+ * The messages {@link checkSettingsValue}, {@link validateSettingsUpdate}
+ * and the agent half's settings handler produce, verbatim.
+ */
+const FIXED_SETTINGS_MESSAGES: ReadonlySet<string> = new Set([
+  'Must be a string',
+  'Must not be empty',
+  'Cannot be checked: the pattern does not compile',
+  'Does not match the required format',
+  'Must be an integer',
+  'Must be a number',
+  'Must be true or false',
+  'Must be one of the options',
+  'The update must be an object',
+  '"values" must be an object',
+  '"secrets" must be an object',
+  'Is a secret; send it in secrets',
+  'Is not a secret; send it in values',
+  'Is required',
+  SETTINGS_SECRET_UNDECRYPTABLE,
+]);
+
+/**
+ * The templated ones, anchored and bounded: a length (an integer of at most
+ * four digits), a range bound (a finite number as JavaScript prints it,
+ * exponent form included) and the unknown-name count.
+ */
+const TEMPLATED_SETTINGS_MESSAGES: readonly RegExp[] = [
+  /^Must be at most \d{1,4} characters$/,
+  /^Must be at (?:least|most) -?(?:\d{1,21}(?:\.\d{1,20})?|\d(?:\.\d{1,20})?e[+-]\d{1,3})$/,
+  /^\d{1,3} unknown settings?$/,
+];
+
+/**
+ * A per-field message of the agent half's 422, as the relay may pass it on:
+ * the message itself when it is one Lamaste's own validation produces,
+ * else `"Invalid value"`. The agent half runs Lamaste code that never
+ * repeats a value, but the relay does not answer an administrator with
+ * text it cannot vouch for.
+ */
+export function normalizeSettingsErrorMessage(message: unknown): string {
+  if (typeof message !== 'string' || message.length > 100) return 'Invalid value';
+  if (FIXED_SETTINGS_MESSAGES.has(message)) return message;
+  return TEMPLATED_SETTINGS_MESSAGES.some((re) => re.test(message)) ? message : 'Invalid value';
 }
 
 export interface SettingsStatus {
@@ -454,13 +573,33 @@ export function effectiveSettingsValues(
   return Object.fromEntries(out);
 }
 
+/** A field, by key and type, in a schema diff. */
+export interface SettingsFieldRef {
+  readonly key: string;
+  readonly type: SettingsFieldType;
+}
+
+/** A field whose type an update changes. */
+export interface SettingsFieldRetype {
+  readonly key: string;
+  readonly from: SettingsFieldType;
+  readonly to: SettingsFieldType;
+}
+
 export interface SettingsSchemaDiff {
-  readonly added: string[];
-  readonly removed: string[];
+  readonly added: SettingsFieldRef[];
+  readonly removed: SettingsFieldRef[];
   /** Same key, different type: the stored value is dropped, never converted. */
-  readonly retyped: string[];
+  readonly retyped: SettingsFieldRetype[];
   /** Fields the plugin will need filled after the update (required, no default). */
   readonly newRequired: string[];
+  /**
+   * Fields that are secrets now and plain values after the update. Their
+   * secrets are dropped (never moved into plain storage), but whatever is
+   * typed into them next is kept on the relay and shown in clear — which is
+   * why such an update is never approved automatically.
+   */
+  readonly secretToPlain: string[];
 }
 
 function needsValue(field: SettingsField): boolean {
@@ -480,20 +619,26 @@ export function settingsSchemaDiff(
   const before = new Map((prev?.fields ?? []).map((field) => [field.key, field]));
   const after = next?.fields ?? [];
   const afterKeys = new Set(after.map((field) => field.key));
-  const added: string[] = [];
-  const retyped: string[] = [];
+  const added: SettingsFieldRef[] = [];
+  const retyped: SettingsFieldRetype[] = [];
   const newRequired: string[] = [];
+  const secretToPlain: string[] = [];
   for (const field of after) {
     const old = before.get(field.key);
-    if (!old) added.push(field.key);
+    if (!old) added.push({ key: field.key, type: field.type });
     const isRetyped = old !== undefined && old.type !== field.type;
-    if (isRetyped) retyped.push(field.key);
+    if (isRetyped) {
+      retyped.push({ key: field.key, from: old.type, to: field.type });
+      if (old.type === 'secret') secretToPlain.push(field.key);
+    }
     if (needsValue(field) && (old === undefined || isRetyped || !needsValue(old))) {
       newRequired.push(field.key);
     }
   }
-  const removed = [...before.keys()].filter((key) => !afterKeys.has(key));
-  return { added, removed, retyped, newRequired };
+  const removed = [...before.values()]
+    .filter((field) => !afterKeys.has(field.key))
+    .map((field) => ({ key: field.key, type: field.type }));
+  return { added, removed, retyped, newRequired, secretToPlain };
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +658,7 @@ export interface AgentHalfSettingsState {
   readonly missing: string[];
 }
 
-/** `PUT /admin/settings`. */
+/** `PUT /admin/settings`, as it travels. */
 export interface AgentHalfSettingsUpdate {
   /** The relay's installed manifest's `settings.schemaVersion`. */
   readonly schemaVersion: number;
@@ -521,14 +666,20 @@ export interface AgentHalfSettingsUpdate {
   readonly baseRevision: number;
   /** `null`: back to the default, or unset. */
   readonly values: Record<string, SettingsValue | null>;
-  /** `null`: clear. */
-  readonly secrets: Record<string, string | null>;
+  /**
+   * Each secret sealed to this request (`encryptSettingsSecret`, bound to
+   * the plugin, the assertion's nonce, the key and `baseRevision`); `null`:
+   * clear.
+   */
+  readonly secrets: Record<string, EncryptedSettingsSecret | null>;
 }
 
 /**
  * The agent half's answer to `GET /admin/settings`, or null on any shape
  * error. Builds a fresh object, so nothing the agent half sent beyond the
- * contract — a secret's value in particular — survives parsing.
+ * contract — a secret's value in particular — survives parsing; a `setAt`
+ * must be an ISO 8601 UTC timestamp, so not even that field can carry
+ * free text.
  */
 export function parseAgentHalfSettingsState(raw: unknown): AgentHalfSettingsState | null {
   if (!isRecord(raw)) return null;
@@ -552,7 +703,11 @@ export function parseAgentHalfSettingsState(raw: unknown): AgentHalfSettingsStat
   for (const [key, entry] of secretEntries) {
     if (!SETTINGS_KEY_RE.test(key) || !isRecord(entry)) return null;
     const setAt = entry['setAt'];
-    if (typeof setAt !== 'string' || setAt.length === 0 || setAt.length > SET_AT_MAX_LENGTH) {
+    if (
+      typeof setAt !== 'string' ||
+      !SET_AT_RE.test(setAt) ||
+      !Number.isFinite(Date.parse(setAt))
+    ) {
       return null;
     }
     outSecrets.push([key, { setAt }]);
@@ -577,8 +732,10 @@ export function parseAgentHalfSettingsState(raw: unknown): AgentHalfSettingsStat
 
 /**
  * A `PUT /admin/settings` body, or null on any shape error. Only the
- * envelope: whether each value suits its field is
- * {@link validateSettingsUpdate}'s to say, with a message per field.
+ * envelope — and each sealed secret's form and size: whether it opens is
+ * the verified request's to say (`decryptSettingsSecret`), and whether each
+ * value suits its field {@link validateSettingsUpdate}'s, with a message
+ * per field.
  */
 export function parseAgentHalfSettingsUpdate(raw: unknown): AgentHalfSettingsUpdate | null {
   if (!isRecord(raw)) return null;
@@ -597,11 +754,16 @@ export function parseAgentHalfSettingsUpdate(raw: unknown): AgentHalfSettingsUpd
 
   const secretEntries = Object.entries(secrets);
   if (secretEntries.length > SETTINGS_MAX_FIELDS) return null;
-  const outSecrets: [string, string | null][] = [];
+  const outSecrets: [string, EncryptedSettingsSecret | null][] = [];
   for (const [key, value] of secretEntries) {
     if (!SETTINGS_KEY_RE.test(key)) return null;
-    if (value !== null && typeof value !== 'string') return null;
-    outSecrets.push([key, value]);
+    if (value === null) {
+      outSecrets.push([key, null]);
+      continue;
+    }
+    const sealed = parseEncryptedSettingsSecret(value, SETTINGS_SECRET_MAX_PLAINTEXT_BYTES);
+    if (!sealed) return null;
+    outSecrets.push([key, sealed]);
   }
 
   return {

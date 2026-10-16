@@ -1,29 +1,56 @@
 /**
  * Caller assertions — how the relay proves to an agent-hosted plugin's
  * application (its *agent half*) that a request on the plugin's internal
- * tunnel came through the panel's forwarder, and who the caller was.
+ * tunnel came through the panel's forwarder, and who the caller was — and
+ * responder signatures, how the agent half proves its answer back.
  *
- * The internal tunnel ends on the relay's loopback, which every process on
- * the relay can reach, so the agent half must not trust the network
- * position. Each forwarded request therefore carries
+ * The internal tunnel ends on loopback ports, which every process on the
+ * relay (and on the agent) can reach — and take, while the tunnel or the
+ * agent half is down. Neither end may therefore trust the network
+ * position. Each request carries
  *
  *     X-Lamalibre-Caller: <base64url(payload)>.<base64url(hmac)>
  *
  * where the payload names the plugin, the caller, the method and the target
- * path, the issue time and a nonce, and the HMAC-SHA256 is keyed with the
- * installation secret both halves hold. The agent half verifies with a
- * constant-time comparison, rejects anything older than
- * {@link CALLER_ASSERTION_MAX_AGE_MS} (allowing {@link CALLER_ASSERTION_CLOCK_SKEW_MS}
- * of clock difference) and rejects a nonce it has already seen.
+ * path, the issue time, a nonce and — for a request Lamaste sends with a
+ * body — the SHA-256 of the exact body bytes (`bodySha256`), and the
+ * HMAC-SHA256 is keyed with the installation secret both halves hold. The
+ * agent half verifies with a constant-time comparison, rejects anything
+ * older than {@link CALLER_ASSERTION_MAX_AGE_MS} (allowing
+ * {@link CALLER_ASSERTION_CLOCK_SKEW_MS} of clock difference), a nonce it
+ * has already seen, and — where it requires the binding — a body whose
+ * hash is not the signed one, so an assertion cannot be lifted onto
+ * another body. A verifier built before `bodySha256` existed ignores the
+ * field.
  *
- * Shared between the server subpath (signing) and the agent subpath
- * (verifying); the two never import each other.
+ * Every answer the agent half gives to a verified request carries
+ *
+ *     X-Lamalibre-Responder: base64url(HMAC-SHA256(secret,
+ *       "lamaste.responder.v1\n" + nonce + "\n" + status + "\n" + (bodySha256 | "-")))
+ *
+ * keyed with the secret that verified the request and bound to the
+ * request's nonce and the answer's status — and, for the buffered answers
+ * to Lamaste's own calls (settings, hooks, health), to the SHA-256 of the
+ * exact answer body; `-` for forwarded answers, which stream. The relay
+ * verifies it before it believes or passes on anything, so whatever squats
+ * a port without the secret can serve nothing: not a health answer, not a
+ * hook decision, not `panel.js`.
+ *
+ * Shared between the server subpath (signing, responder checks) and the
+ * agent subpath (verifying, responder signing); the two never import each
+ * other.
  */
 
 import crypto from 'node:crypto';
 
+import { decryptSettingsSecret } from './settings-secrets.js';
+import type { EncryptedSettingsSecret } from './settings-secrets.js';
+
 /** The request header that carries the assertion (lower case, as Node reports headers). */
 export const CALLER_ASSERTION_HEADER = 'x-lamalibre-caller';
+
+/** The response header with which the agent half authenticates its answer (lower case). */
+export const RESPONDER_HEADER = 'x-lamalibre-responder';
 
 /** How long an assertion is valid after it was issued. */
 export const CALLER_ASSERTION_MAX_AGE_MS = 60_000;
@@ -38,11 +65,19 @@ export const HOSTING_SECRET_BYTES = 32;
 const HOSTING_SECRET_RE = /^[a-f0-9]{64}$/;
 const NONCE_BYTES = 16;
 const NONCE_RE = /^[a-f0-9]{32}$/;
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
+
+/** Domain separation: a responder signature can never pass for anything else keyed alike. */
+const RESPONDER_CONTEXT = 'lamaste.responder.v1';
+
+/** The base64url length of an HMAC-SHA256 (32 bytes, unpadded). */
+const MAC_BASE64URL_LENGTH = 43;
 
 /**
  * Who made the request. `admin` and `agent` are callers the panel admitted
- * and forwards; `lamaste` is Lamaste itself — its health probes and the
- * lifecycle hook calls (`/admin/hooks/*`), which no forwarded caller can
+ * and forwards; `lamaste` is Lamaste itself — its health probes, the
+ * lifecycle hook calls (`/admin/hooks/*`) and the settings calls
+ * (`/admin/settings*`), the last two of which no forwarded caller can
  * reach.
  */
 export type CallerIdentity =
@@ -63,6 +98,30 @@ export interface CallerAssertionPayload {
   readonly iat: number;
   /** 16 random bytes, hex; rejected on a second sight. */
   readonly nonce: string;
+  /**
+   * SHA-256 (64 lower-case hex characters) of the exact request body bytes.
+   * Lamaste's own calls with a body always carry it; forwarded requests,
+   * whose bodies stream, never do.
+   */
+  readonly bodySha256?: string;
+}
+
+/** What {@link signCallerAssertion} signs; `iat`, `nonce` and `bodySha256` are optional. */
+export interface CallerAssertionInput {
+  readonly plugin: string;
+  readonly caller: CallerIdentity;
+  readonly method: string;
+  readonly path: string;
+  /** Filled in with the current time when omitted. */
+  readonly iat?: number | undefined;
+  /**
+   * Filled in with 16 random bytes when omitted. A caller that must know
+   * the nonce before it signs — to bind a responder check or a sealed
+   * secret to it — passes one from {@link generateCallerAssertionNonce}.
+   */
+  readonly nonce?: string | undefined;
+  /** {@link bodySha256Hex} of the body the request will carry. */
+  readonly bodySha256?: string | undefined;
 }
 
 /** A fresh installation secret. */
@@ -76,20 +135,33 @@ export function assertHostingSecret(secret: string): void {
   }
 }
 
+/** A fresh assertion nonce (16 random bytes, hex). */
+export function generateCallerAssertionNonce(): string {
+  return crypto.randomBytes(NONCE_BYTES).toString('hex');
+}
+
+/** SHA-256 of the exact bytes of a body (a string counts as its UTF-8 bytes), lower-case hex. */
+export function bodySha256Hex(body: Buffer | string): string {
+  return crypto.createHash('sha256').update(body).digest('hex');
+}
+
 function hmac(secret: string, data: string): Buffer {
   return crypto.createHmac('sha256', Buffer.from(secret, 'hex')).update(data).digest();
 }
 
 /**
- * Sign a caller assertion for one forwarded request. `iat` and `nonce` are
- * filled in when omitted; passing them is for tests.
+ * Sign a caller assertion for one request. `iat` and `nonce` are filled in
+ * when omitted; `bodySha256` is included only when given. Throws on a
+ * malformed secret, nonce or body hash — a mistake in Lamaste, never sent.
  */
-export function signCallerAssertion(
-  input: Omit<CallerAssertionPayload, 'v' | 'iat' | 'nonce'> &
-    Partial<Pick<CallerAssertionPayload, 'iat' | 'nonce'>>,
-  secret: string,
-): string {
+export function signCallerAssertion(input: CallerAssertionInput, secret: string): string {
   assertHostingSecret(secret);
+  if (input.nonce !== undefined && !NONCE_RE.test(input.nonce)) {
+    throw new Error('Invalid caller assertion nonce');
+  }
+  if (input.bodySha256 !== undefined && !SHA256_HEX_RE.test(input.bodySha256)) {
+    throw new Error('Invalid caller assertion body hash');
+  }
   const payload: CallerAssertionPayload = {
     v: CALLER_ASSERTION_VERSION,
     plugin: input.plugin,
@@ -97,11 +169,78 @@ export function signCallerAssertion(
     method: input.method.toUpperCase(),
     path: input.path,
     iat: input.iat ?? Date.now(),
-    nonce: input.nonce ?? crypto.randomBytes(NONCE_BYTES).toString('hex'),
+    nonce: input.nonce ?? generateCallerAssertionNonce(),
+    ...(input.bodySha256 !== undefined ? { bodySha256: input.bodySha256 } : {}),
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url');
   return `${encoded}.${hmac(secret, encoded).toString('base64url')}`;
 }
+
+// ---------------------------------------------------------------------------
+// Responder signatures (the agent half's answer)
+// ---------------------------------------------------------------------------
+
+/** What a responder signature covers. */
+export interface ResponderInput {
+  /** The secret that verified the request (relay: the one it signed with). */
+  readonly secret: string;
+  /** The request's assertion nonce. */
+  readonly nonce: string;
+  /** The answer's HTTP status. */
+  readonly status: number;
+  /**
+   * The exact answer body, for a buffered answer to Lamaste's own call (an
+   * empty body is `''`); null or omitted for a forwarded answer, whose body
+   * streams (the `-` form).
+   */
+  readonly body?: Buffer | string | null | undefined;
+}
+
+function isStatus(status: unknown): status is number {
+  return typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599;
+}
+
+function responderMac(input: ResponderInput): string {
+  const bodyPart =
+    input.body === null || input.body === undefined ? '-' : bodySha256Hex(input.body);
+  return hmac(
+    input.secret,
+    `${RESPONDER_CONTEXT}\n${input.nonce}\n${input.status}\n${bodyPart}`,
+  ).toString('base64url');
+}
+
+/**
+ * The `X-Lamalibre-Responder` value for one answer. An agent half uses the
+ * `responder` of its verified request instead, which keeps the secret
+ * inside the verifier; this is the primitive under it. Throws on a
+ * malformed secret, nonce or status.
+ */
+export function signResponder(input: ResponderInput): string {
+  assertHostingSecret(input.secret);
+  if (typeof input.nonce !== 'string' || !NONCE_RE.test(input.nonce)) {
+    throw new Error('Invalid caller assertion nonce');
+  }
+  if (!isStatus(input.status)) throw new Error('Invalid HTTP status');
+  return responderMac(input);
+}
+
+/**
+ * Whether `header` (the answer's `X-Lamalibre-Responder`, as Node reports
+ * it) authenticates an answer with this status — and this body, unless the
+ * body is omitted (the `-` form). Constant time in the signature; false for
+ * anything missing or malformed.
+ */
+export function verifyResponder(header: unknown, input: ResponderInput): boolean {
+  if (typeof header !== 'string' || header.length !== MAC_BASE64URL_LENGTH) return false;
+  if (typeof input.secret !== 'string' || !HOSTING_SECRET_RE.test(input.secret)) return false;
+  if (typeof input.nonce !== 'string' || !NONCE_RE.test(input.nonce)) return false;
+  if (!isStatus(input.status)) return false;
+  return crypto.timingSafeEqual(Buffer.from(header, 'utf-8'), Buffer.from(responderMac(input)));
+}
+
+// ---------------------------------------------------------------------------
+// Verifying
+// ---------------------------------------------------------------------------
 
 export type CallerAssertionRejection =
   | 'malformed'
@@ -110,10 +249,38 @@ export type CallerAssertionRejection =
   | 'future'
   | 'replayed'
   | 'wrong_plugin'
-  | 'wrong_request';
+  | 'wrong_request'
+  /** The body is not the one the assertion signed, or a required body hash is missing. */
+  | 'wrong_body';
+
+/**
+ * A verified request. The functions close over the secret that verified
+ * it, so whoever answers can authenticate the answer and open the sealed
+ * secrets of this request without ever holding the secret.
+ */
+export interface VerifiedCallerAssertion {
+  readonly ok: true;
+  readonly payload: CallerAssertionPayload;
+  /** Which of the accepted secrets verified it (0: current, 1: previous). */
+  readonly secretIndex: number;
+  /**
+   * The `X-Lamalibre-Responder` value for an answer with `status` — and,
+   * when `body` is given, exactly that body (the form Lamaste's own calls
+   * expect: pass `''` for an empty one); without `body` the `-` form a
+   * forwarded answer carries.
+   */
+  responder(status: number, body?: Buffer | string | null): string;
+  /**
+   * Open a secret value sealed for this request (`PUT /admin/settings`):
+   * bound to this plugin and this request's nonce, the setting's `key` and
+   * the update's `baseRevision`. Throws, without the value, when it does
+   * not open.
+   */
+  decryptSettingsSecret(key: string, baseRevision: number, sealed: EncryptedSettingsSecret): string;
+}
 
 export type VerifyCallerAssertionResult =
-  | { readonly ok: true; readonly payload: CallerAssertionPayload; readonly secretIndex: number }
+  | VerifiedCallerAssertion
   | { readonly ok: false; readonly reason: CallerAssertionRejection };
 
 /**
@@ -152,6 +319,18 @@ export interface VerifyCallerAssertionOptions {
   readonly path: string;
   readonly nonces: NonceStore;
   readonly now?: number | undefined;
+  /**
+   * The request body exactly as received; null for a request without one.
+   * When given and the assertion carries `bodySha256`, the two must match.
+   */
+  readonly body?: Buffer | string | null | undefined;
+  /**
+   * Refuse an assertion without `bodySha256` (and check it against `body`,
+   * an absent body counting as empty). For routes only Lamaste calls with a
+   * body — settings updates and hook calls — so an assertion cannot be
+   * replayed with another body.
+   */
+  readonly requireBodyHash?: boolean | undefined;
 }
 
 function parsePayload(encoded: string): CallerAssertionPayload | null {
@@ -178,6 +357,13 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
   ) {
     return null;
   }
+  const bodySha256 = p['bodySha256'];
+  if (
+    bodySha256 !== undefined &&
+    (typeof bodySha256 !== 'string' || !SHA256_HEX_RE.test(bodySha256))
+  ) {
+    return null;
+  }
   let identity: CallerIdentity;
   if (caller['type'] === 'admin') {
     identity = { type: 'admin' };
@@ -196,15 +382,29 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
     path: p['path'],
     iat: p['iat'],
     nonce: p['nonce'],
+    ...(bodySha256 !== undefined ? { bodySha256 } : {}),
   };
+}
+
+/** Whether the signed body hash matches the body, as the options require. */
+function bodyMatches(payload: CallerAssertionPayload, opts: VerifyCallerAssertionOptions): boolean {
+  const check = opts.requireBodyHash === true || opts.body !== undefined;
+  if (!check) return true;
+  if (payload.bodySha256 === undefined) return opts.requireBodyHash !== true;
+  const actual = crypto
+    .createHash('sha256')
+    .update(opts.body ?? Buffer.alloc(0))
+    .digest();
+  return crypto.timingSafeEqual(actual, Buffer.from(payload.bodySha256, 'hex'));
 }
 
 /**
  * Verify the `X-Lamalibre-Caller` header of a request the agent half
  * received. Checks, in order: shape, signature against each accepted secret
- * (constant time), plugin, method and path, age, and replay. The nonce is
- * recorded only when everything else passed, so a forged assertion cannot
- * poison the store.
+ * (constant time), plugin, method and path, body (constant time), age, and
+ * replay. The nonce is recorded only when everything else passed, so a
+ * forged assertion — or a true one with another body — cannot poison the
+ * store.
  */
 export function verifyCallerAssertion(
   header: string | undefined,
@@ -231,6 +431,7 @@ export function verifyCallerAssertion(
   if (payload.method !== opts.method.toUpperCase() || payload.path !== opts.path) {
     return { ok: false, reason: 'wrong_request' };
   }
+  if (!bodyMatches(payload, opts)) return { ok: false, reason: 'wrong_body' };
 
   const now = opts.now ?? Date.now();
   if (payload.iat > now + CALLER_ASSERTION_CLOCK_SKEW_MS) return { ok: false, reason: 'future' };
@@ -239,5 +440,22 @@ export function verifyCallerAssertion(
   if (!opts.nonces.record(payload.nonce, expiresAt, now)) {
     return { ok: false, reason: 'replayed' };
   }
-  return { ok: true, payload, secretIndex };
+
+  // Safe: findIndex matched this index, so it holds a string.
+  const secret = opts.secrets[secretIndex] as string;
+  return {
+    ok: true,
+    payload,
+    secretIndex,
+    responder: (status, body) => signResponder({ secret, nonce: payload.nonce, status, body }),
+    decryptSettingsSecret: (key, baseRevision, sealed) =>
+      decryptSettingsSecret({
+        secret,
+        plugin: payload.plugin,
+        nonce: payload.nonce,
+        key,
+        baseRevision,
+        sealed,
+      }),
+  };
 }

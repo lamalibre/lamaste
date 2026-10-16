@@ -21,6 +21,9 @@
  * The agent half reads that file for its port and verifies every request on
  * `/admin/*` with {@link createCallerAssertionVerifier}, which re-reads the
  * file when a signature does not verify, so a rotation needs no restart.
+ * A verified request answers with the verifier's closures — the responder
+ * signature every answer carries and, for a settings update, the opening
+ * of its sealed secrets — so no route of the agent half holds the secret.
  */
 
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
@@ -364,17 +367,35 @@ export interface CallerAssertionVerifierOptions {
   readonly reloadIntervalMs?: number | undefined;
 }
 
+/** What {@link CallerAssertionVerifier.verify} also checks the assertion against. */
+export interface CallerAssertionVerifyOptions {
+  /**
+   * The request body exactly as received (null: none). When given and the
+   * assertion signs a body hash, the two must match (`wrong_body`).
+   */
+  readonly body?: Buffer | string | null | undefined;
+  /**
+   * Refuse an assertion that does not sign the body — for routes only
+   * Lamaste calls with a body (hook calls, settings updates).
+   */
+  readonly requireBodyHash?: boolean | undefined;
+}
+
 export interface CallerAssertionVerifier {
   /**
    * Verify the `X-Lamalibre-Caller` header of a request for `method` and
-   * `path` (the request's path with its query string). On a signature that
-   * does not verify the config file is re-read once — a rotated secret
-   * arrives that way — and the check repeated.
+   * `path` (the request's path with its query string) — and its body, as
+   * `opts` asks. On a signature that does not verify the config file is
+   * re-read once — a rotated secret arrives that way — and the check
+   * repeated. A verified result carries `responder` (the header every
+   * answer to it must carry) and `decryptSettingsSecret`, both closed over
+   * the secret that verified it.
    */
   verify(
     headers: Record<string, string | string[] | undefined>,
     method: string,
     path: string,
+    opts?: CallerAssertionVerifyOptions,
   ): Promise<VerifyCallerAssertionResult>;
   /** The port from the config file, once loaded. */
   port(): Promise<number>;
@@ -415,26 +436,22 @@ export function createCallerAssertionVerifier(
   }
 
   return {
-    async verify(headers, method, path) {
+    async verify(headers, method, path, verifyOpts = {}) {
       const raw = headers[CALLER_ASSERTION_HEADER];
       const header = Array.isArray(raw) ? raw[0] : raw;
-      let c = await load(false);
-      let result = verifyCallerAssertion(header, {
-        secrets: secretsOf(c),
-        plugin: opts.plugin,
-        method,
-        path,
-        nonces,
-      });
-      if (!result.ok && result.reason === 'bad_signature') {
-        c = await load(true);
-        result = verifyCallerAssertion(header, {
+      const check = (c: AgentAppPluginConfig): VerifyCallerAssertionResult =>
+        verifyCallerAssertion(header, {
           secrets: secretsOf(c),
           plugin: opts.plugin,
           method,
           path,
           nonces,
+          body: verifyOpts.body,
+          requireBodyHash: verifyOpts.requireBodyHash,
         });
+      let result = check(await load(false));
+      if (!result.ok && result.reason === 'bad_signature') {
+        result = check(await load(true));
       }
       return result;
     },

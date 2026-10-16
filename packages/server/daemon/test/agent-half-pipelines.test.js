@@ -26,9 +26,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  CALLER_ASSERTION_HEADER,
+  NonceStore,
+  RESPONDER_HEADER,
   parseRelayVerifyKey,
   pluginHostCapability,
   verifyAppJobSignature,
+  verifyCallerAssertion,
 } from '@lamalibre/lamaste';
 
 import { installFakeNpm } from './fake-npm.js';
@@ -244,15 +248,42 @@ before(async () => {
   relayKey = parseRelayVerifyKey({ kid: signing.kid, publicKey: signing.publicKey });
   LINUX.apphost.relayKid = signing.kid;
 
+  // The agent half of whichever hosting signed the call: it verifies the
+  // assertion (with its body) against the hostings' secrets and
+  // authenticates its answer, as core's hook handler does.
+  const nonces = new NonceStore();
   half = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', async () => {
+      const body = Buffer.concat(chunks);
+      let verified = null;
+      for (const record of Object.values(await lib.core.readPluginHostings(stateDir))) {
+        const result = verifyCallerAssertion(req.headers[CALLER_ASSERTION_HEADER], {
+          secrets: [lib.core.signingSecretFor(record)],
+          plugin: record.plugin,
+          method: req.method,
+          path: req.url,
+          nonces,
+          body,
+          requireBodyHash: true,
+        });
+        if (result.ok) verified = result;
+      }
+      if (!verified) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'caller assertion refused' }));
+        return;
+      }
       const stage = req.url.replace('/admin/hooks/', '');
       halfCalls.push(stage);
       events.push(`half:${stage}`);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      const text = JSON.stringify({ ok: true });
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        [RESPONDER_HEADER]: verified.responder(200, text),
+      });
+      res.end(text);
     });
   });
   halfPort = await listen(half);

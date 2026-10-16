@@ -9,8 +9,13 @@
  *    listener only while the hosting agent is connected, so a refused
  *    connection means the **tunnel** is down;
  * 2. when that connects, `GET /admin/health` on the agent half with a caller
- *    assertion. A failure here means the tunnel is up but the **application**
- *    is down — a different state and a different reason.
+ *    assertion (`callAgentHalf`). Only a 2xx answer authenticated with the
+ *    responder header (`createHealthHandler` in `@lamalibre/lamaste/agent`)
+ *    counts: whatever squats the port without the installation secret — a
+ *    process that took it while the agent was away — is not the plugin's
+ *    application, however it answers. A failure here means the tunnel is up
+ *    but the **application** is down — a different state and a different
+ *    reason.
  *
  * Hysteresis: `down` after `downAfter` consecutive failures, `up` after
  * `upAfter` consecutive successes, so one missed probe changes nothing. Each
@@ -20,10 +25,11 @@
  * truth — so the monitor is for what the panel shows and for the hooks.
  */
 
-import http from 'node:http';
 import net from 'node:net';
-import { CALLER_ASSERTION_HEADER, signCallerAssertion } from '../caller-assertion.js';
+import { AGENT_HALF_HEALTH_PATH, callAgentHalf } from '../agent-half-call.js';
 import type { PluginHostingHealth, PluginHostingHealthState } from './plugin-hosting.js';
+
+export { AGENT_HALF_HEALTH_PATH };
 
 export const PLUGIN_HEALTH_DEFAULTS = Object.freeze({
   intervalMs: 10_000,
@@ -33,8 +39,8 @@ export const PLUGIN_HEALTH_DEFAULTS = Object.freeze({
   healthTimeoutMs: 5_000,
 });
 
-/** The agent half's health route, called with an assertion like any admin call. */
-export const AGENT_HALF_HEALTH_PATH = '/admin/health';
+/** The largest health answer read; the agent half's is a few bytes. */
+const HEALTH_ANSWER_MAX_BYTES = 64 * 1024;
 
 export type PluginProbeResult =
   | { readonly ok: true }
@@ -71,45 +77,6 @@ function tcpConnect(host: string, port: number, timeoutMs: number): Promise<void
   });
 }
 
-function healthRequest(
-  host: string,
-  target: PluginProbeTarget,
-  timeoutMs: number,
-): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        host,
-        port: target.port,
-        method: 'GET',
-        path: AGENT_HALF_HEALTH_PATH,
-        headers: {
-          [CALLER_ASSERTION_HEADER]: signCallerAssertion(
-            {
-              plugin: target.plugin,
-              caller: { type: 'lamaste' },
-              method: 'GET',
-              path: AGENT_HALF_HEALTH_PATH,
-            },
-            target.secret,
-          ),
-          accept: 'application/json',
-        },
-        timeout: timeoutMs,
-      },
-      (res) => {
-        res.resume();
-        resolve(res.statusCode ?? 0);
-      },
-    );
-    req.once('timeout', () => {
-      req.destroy(new Error(`health request timed out after ${timeoutMs} ms`));
-    });
-    req.once('error', reject);
-    req.end();
-  });
-}
-
 /** One probe of one hosting: tunnel first, then the application. */
 export async function probePluginHosting(
   target: PluginProbeTarget,
@@ -126,13 +93,25 @@ export async function probePluginHosting(
     return { ok: false, reason: 'tunnel', error: err instanceof Error ? err.message : String(err) };
   }
   try {
-    const status = await healthRequest(
+    // Any failure past the connect — no answer, an unauthenticated one, a
+    // status other than 2xx — is the application's.
+    const answer = await callAgentHalf({
+      plugin: target.plugin,
+      port: target.port,
       host,
-      target,
-      opts.healthTimeoutMs ?? PLUGIN_HEALTH_DEFAULTS.healthTimeoutMs,
-    );
-    if (status >= 200 && status < 300) return { ok: true };
-    return { ok: false, reason: 'app', error: `${AGENT_HALF_HEALTH_PATH} answered ${status}` };
+      secret: target.secret,
+      method: 'GET',
+      path: AGENT_HALF_HEALTH_PATH,
+      timeoutMs: opts.healthTimeoutMs ?? PLUGIN_HEALTH_DEFAULTS.healthTimeoutMs,
+      maxResponseBytes: HEALTH_ANSWER_MAX_BYTES,
+    });
+    if (!answer.ok) return { ok: false, reason: 'app', error: answer.error };
+    if (answer.status >= 200 && answer.status < 300) return { ok: true };
+    return {
+      ok: false,
+      reason: 'app',
+      error: `${AGENT_HALF_HEALTH_PATH} answered ${answer.status}`,
+    };
   } catch (err: unknown) {
     return { ok: false, reason: 'app', error: err instanceof Error ? err.message : String(err) };
   }

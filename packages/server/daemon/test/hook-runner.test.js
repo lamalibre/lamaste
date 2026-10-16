@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 
 import { validateManifest, relayHookSetOf, signCallerAssertion } from '@lamalibre/lamaste';
-import { createCallerAssertionVerifier } from '@lamalibre/lamaste/agent';
+import { createCallerAssertionVerifier, responderHeaderFor } from '@lamalibre/lamaste/agent';
 import {
   callRelayHook,
   createHookedForwarder,
@@ -227,6 +227,10 @@ before(async () => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     halfLog.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
+    // Every answer to a verified forwarded request authenticates itself.
+    const writeHead = res.writeHead.bind(res);
+    res.writeHead = (status, headers = {}) =>
+      writeHead(status, { ...headers, ...responderHeaderFor(v, status) });
     if (req.url.startsWith('/admin/export')) {
       res.writeHead(200, { 'content-type': 'application/json', etag: '"v1"' });
       res.end(JSON.stringify({ token: TOKEN, n: 12345678901234567890n.toString() }));

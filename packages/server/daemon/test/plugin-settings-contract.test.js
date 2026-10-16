@@ -29,9 +29,13 @@ import {
   callAgentHalf,
   generateHostingSecret,
   verifyCallerAssertion,
+  encryptSettingsSecret,
   NonceStore,
   CALLER_ASSERTION_HEADER,
+  RESPONDER_HEADER,
+  bodySha256Hex,
 } from '@lamalibre/lamaste';
+import { settingsFromManifest } from '@lamalibre/lamaste/agent';
 
 /** Appears in submitted values only; no message, error or answer may contain it. */
 const DISTINCT = 'Zq9-distinctive-VALUE-7731';
@@ -200,7 +204,6 @@ test('schema: no default on a secret, a pattern must compile, a default must be 
     { key: 'k', label: 'K', type: 'string', default: 7 },
     { key: 'k', label: 'K', type: 'string', maxLength: 3, default: 'abcd' },
     { key: 'k', label: 'K', type: 'string', default: 'x'.repeat(SETTINGS_DEFAULT_MAX_LENGTH + 1) },
-    { key: 'k', label: 'K', type: 'string', pattern: '^[0-9]+$', default: 'abc' },
     { key: 'k', label: 'K', type: 'integer', default: 1.5 },
     { key: 'k', label: 'K', type: 'integer', min: 0, max: 10, default: 11 },
     { key: 'k', label: 'K', type: 'number', min: 0, default: -0.5 },
@@ -215,6 +218,20 @@ test('schema: no default on a secret, a pattern must compile, a default must be 
       withField({ key: 'k', label: 'K', type: 'string', pattern: '^[0-9]+$', default: '12' }),
     ),
     null,
+  );
+  // The relay's schema never runs a manifest's pattern, not even on its own
+  // default: the agent half checks that when it reads its manifest.
+  const mismatched = { key: 'k', label: 'K', type: 'string', pattern: '^[0-9]+$', default: 'abc' };
+  assert.equal(blockError(withField(mismatched)), null);
+  assert.throws(
+    () => settingsFromManifest({ settings: withField(mismatched) }),
+    (err) =>
+      err instanceof ManifestValidationError &&
+      err.issues.some(
+        (i) =>
+          i.path === 'settings.fields.0.default' &&
+          i.message === 'The default is not a valid value: Does not match the required format',
+      ),
   );
 });
 
@@ -272,8 +289,8 @@ test('update: valid values and secrets pass, null clears an optional field, empt
 
 test('update: every rule has its message, and no message carries the submitted value', () => {
   const cases = [
-    [{ values: { nope: DISTINCT } }, 'nope', 'Unknown setting'],
-    [{ secrets: { nope: DISTINCT } }, 'nope', 'Unknown setting'],
+    [{ values: { nope: DISTINCT } }, '_', '1 unknown setting'],
+    [{ secrets: { nope: DISTINCT } }, '_', '1 unknown setting'],
     [{ values: { apiKey: DISTINCT } }, 'apiKey', 'Is a secret; send it in secrets'],
     [{ secrets: { note: DISTINCT } }, 'note', 'Is not a secret; send it in values'],
     [{ values: { region: null } }, 'region', 'Is required'],
@@ -298,7 +315,8 @@ test('update: every rule has its message, and no message carries the submitted v
     [{ secrets: { apiKey: DISTINCT.repeat(3) } }, 'apiKey', 'Must be at most 64 characters'],
     [{ values: DISTINCT }, '_', '"values" must be an object'],
     [{ secrets: [DISTINCT] }, '_', '"secrets" must be an object'],
-    [{ values: { [`bad key ${DISTINCT}`]: 1 } }, '_', 'Unknown setting (not a valid setting name)'],
+    [{ values: { [`bad key ${DISTINCT}`]: 1 } }, '_', '1 unknown setting'],
+    [{ values: { [DISTINCT.toLowerCase().replace(/-/g, '')]: 1 } }, '_', '1 unknown setting'],
   ];
   for (const [input, key, message] of cases) {
     for (const opts of [RELAY, HALF]) {
@@ -335,7 +353,7 @@ test('update: a submitted __proto__ is an unknown setting, not a prototype', () 
   const input = JSON.parse(`{"values": {"__proto__": {"polluted": "${DISTINCT}"}}}`);
   const result = validateSettingsUpdate(block, input, HALF);
   assert.equal(result.ok, false);
-  assert.equal(result.errors._, 'Unknown setting (not a valid setting name)');
+  assert.equal(result.errors._, '1 unknown setting');
   assert.equal({}.polluted, undefined);
   assert.ok(!JSON.stringify(result).includes(DISTINCT));
 });
@@ -412,36 +430,60 @@ test('schema diff: added, removed, retyped, and the fields an update newly requi
     ],
   });
   assert.deepEqual(settingsSchemaDiff(v1, v2), {
-    added: ['endpoint', 'extra'],
-    removed: ['gone'],
-    retyped: ['retries'],
+    added: [
+      { key: 'endpoint', type: 'string' },
+      { key: 'extra', type: 'boolean' },
+    ],
+    removed: [{ key: 'gone', type: 'boolean' }],
+    retyped: [{ key: 'retries', from: 'integer', to: 'string' }],
     // retries: retyped; region: was optional; label: had a default; endpoint: new.
     newRequired: ['retries', 'region', 'label', 'endpoint'],
+    secretToPlain: [],
   });
+  const v1Fields = v1.fields.map((f) => ({ key: f.key, type: f.type }));
   assert.deepEqual(settingsSchemaDiff(null, v1), {
-    added: ['apiKey', 'retries', 'gone', 'region', 'mode', 'label'],
+    added: v1Fields,
     removed: [],
     retyped: [],
     newRequired: ['apiKey', 'mode'],
+    secretToPlain: [],
   });
   assert.deepEqual(settingsSchemaDiff(v1, null), {
     added: [],
-    removed: ['apiKey', 'retries', 'gone', 'region', 'mode', 'label'],
+    removed: v1Fields,
     retyped: [],
     newRequired: [],
+    secretToPlain: [],
   });
-  assert.deepEqual(settingsSchemaDiff(null, null), {
-    added: [],
-    removed: [],
-    retyped: [],
-    newRequired: [],
+  const none = { added: [], removed: [], retyped: [], newRequired: [], secretToPlain: [] };
+  assert.deepEqual(settingsSchemaDiff(null, null), none);
+  assert.deepEqual(settingsSchemaDiff(v1, v1), none);
+});
+
+test('schema diff: a secret that becomes a plain value is named in secretToPlain', () => {
+  const v1 = SettingsBlockSchema.parse({
+    schemaVersion: 1,
+    fields: [
+      { key: 'apiKey', label: 'API key', type: 'secret' },
+      { key: 'token', label: 'Token', type: 'secret' },
+      { key: 'note', label: 'Note', type: 'string' },
+    ],
   });
-  assert.deepEqual(settingsSchemaDiff(v1, v1), {
-    added: [],
-    removed: [],
-    retyped: [],
-    newRequired: [],
+  const v2 = SettingsBlockSchema.parse({
+    schemaVersion: 2,
+    fields: [
+      { key: 'apiKey', label: 'API key', type: 'string' },
+      { key: 'token', label: 'Token', type: 'secret' },
+      { key: 'note', label: 'Note', type: 'secret' },
+    ],
   });
+  const diff = settingsSchemaDiff(v1, v2);
+  assert.deepEqual(diff.retyped, [
+    { key: 'apiKey', from: 'secret', to: 'string' },
+    { key: 'note', from: 'string', to: 'secret' },
+  ]);
+  // Plain to secret is safe (the value is dropped); only secret to plain is named.
+  assert.deepEqual(diff.secretToPlain, ['apiKey']);
 });
 
 // ---------------------------------------------------------------------------
@@ -487,6 +529,11 @@ test('state parser: any shape error is null', () => {
     { ...state, secrets: { apiKey: 'set' } },
     { ...state, secrets: { apiKey: {} } },
     { ...state, secrets: { apiKey: { setAt: '' } } },
+    { ...state, secrets: { apiKey: { setAt: `2026-10-16T10:00:00.000Z ${DISTINCT}` } } },
+    { ...state, secrets: { apiKey: { setAt: '2026-10-16 10:00:00' } } },
+    { ...state, secrets: { apiKey: { setAt: '2026-10-16T10:00:00.000+02:00' } } },
+    { ...state, secrets: { apiKey: { setAt: '2026-13-45T10:00:00.000Z' } } },
+    { ...state, secrets: { apiKey: { setAt: 'yesterday' } } },
     { ...state, missing: 'region' },
     { ...state, missing: [1] },
     { ...state, missing: undefined },
@@ -496,11 +543,19 @@ test('state parser: any shape error is null', () => {
 });
 
 test('update parser: the envelope only; values are checked by validateSettingsUpdate', () => {
+  const sealed = encryptSettingsSecret({
+    secret: generateHostingSecret(),
+    plugin: 'fx',
+    nonce: 'a'.repeat(32),
+    key: 'apiKey',
+    baseRevision: 0,
+    value: 'k',
+  });
   const update = {
     schemaVersion: 1,
     baseRevision: 0,
     values: { retries: 4, note: null },
-    secrets: { apiKey: 'k', webhookToken: null },
+    secrets: { apiKey: sealed, webhookToken: null },
   };
   assert.deepEqual(parseAgentHalfSettingsUpdate(update), update);
   // A value of the wrong type for its field still parses — the store answers 422.
@@ -514,7 +569,15 @@ test('update parser: the envelope only; values are checked by validateSettingsUp
     { ...update, values: { retries: { n: 1 } } },
     { ...update, values: { 'not a key': 1 } },
     { ...update, secrets: { apiKey: 5 } },
-    { ...update, secrets: { Bad: 'x' } },
+    // A secret in clear is not an update any more: it travels sealed.
+    { ...update, secrets: { apiKey: 'k' } },
+    { ...update, secrets: { apiKey: { ...sealed, v: 2 } } },
+    { ...update, secrets: { apiKey: { ...sealed, extra: 1 } } },
+    { ...update, secrets: { apiKey: { ...sealed, iv: sealed.iv.slice(1) } } },
+    { ...update, secrets: { apiKey: { ...sealed, ct: 'AAAA' } } },
+    { ...update, secrets: { apiKey: { ...sealed, ct: `${sealed.ct}=` } } },
+    { ...update, secrets: { apiKey: { ...sealed, ct: 'A'.repeat(20_000) } } },
+    { ...update, secrets: { Bad: sealed } },
   ]) {
     assert.equal(parseAgentHalfSettingsUpdate(bad), null, JSON.stringify(bad));
   }
@@ -523,7 +586,7 @@ test('update parser: the envelope only; values are checked by validateSettingsUp
 test('paths and limits', () => {
   assert.equal(AGENT_HALF_SETTINGS_PATH, '/admin/settings');
   assert.equal(AGENT_HALF_SETTINGS_RELOAD_PATH, '/admin/settings/reload');
-  assert.equal(AGENT_HALF_SETTINGS_MAX_BYTES, 256 * 1024);
+  assert.equal(AGENT_HALF_SETTINGS_MAX_BYTES, 2 * 1024 * 1024);
 });
 
 // ---------------------------------------------------------------------------
@@ -562,25 +625,25 @@ before(async () => {
         body: Buffer.concat(chunks).toString('utf-8'),
       };
       const url = new URL(req.url, 'http://127.0.0.1');
+      // The agent half's answer, authenticated over its exact body.
+      const send = (status, text, type = 'application/json') => {
+        const headers = type ? { 'content-type': type } : {};
+        if (verified.ok) headers[RESPONDER_HEADER] = verified.responder(status, text);
+        res.writeHead(status, headers);
+        res.end(text);
+      };
       if (url.pathname === '/admin/json') {
-        res.writeHead(Number(url.searchParams.get('status') ?? 200), {
-          'content-type': 'application/json',
-        });
-        res.end(JSON.stringify({ answered: true }));
+        send(Number(url.searchParams.get('status') ?? 200), JSON.stringify({ answered: true }));
       } else if (url.pathname === '/admin/empty') {
-        res.writeHead(204);
-        res.end();
+        send(204, '', null);
       } else if (url.pathname === '/admin/text') {
-        res.writeHead(200, { 'content-type': 'text/plain' });
-        res.end('not json');
+        send(200, 'not json', 'text/plain');
       } else if (url.pathname === '/admin/big') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ pad: 'x'.repeat(4096) }));
+        send(200, JSON.stringify({ pad: 'x'.repeat(4096) }));
       } else if (url.pathname === '/admin/hang') {
         // Never answers.
       } else {
-        res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
+        send(404, JSON.stringify({ error: 'Not found' }));
       }
     });
   });
@@ -605,20 +668,35 @@ function call(overrides) {
   });
 }
 
-test('callAgentHalf: signs as Lamaste over method and path; sends the body as JSON', async () => {
+test('callAgentHalf: signs as Lamaste over method, path and body; sends the body as JSON', async () => {
   const result = await call({ method: 'PUT', path: '/admin/json?x=1', body: { secret: DISTINCT } });
   assert.deepEqual(result, { ok: true, status: 200, body: { answered: true } });
   assert.equal(seen.verified.ok, true, JSON.stringify(seen.verified));
   assert.deepEqual(seen.verified.payload.caller, { type: 'lamaste' });
   assert.equal(seen.verified.payload.method, 'PUT');
   assert.equal(seen.verified.payload.path, '/admin/json?x=1');
+  assert.equal(seen.verified.payload.bodySha256, bodySha256Hex(seen.body));
   assert.equal(seen.contentType, 'application/json');
   assert.deepEqual(JSON.parse(seen.body), { secret: DISTINCT });
 
-  // No body: nothing sent, no content type.
+  // No body: nothing sent, no content type, no body hash.
   await call({});
   assert.equal(seen.body, '');
   assert.equal(seen.contentType, null);
+  assert.equal(seen.verified.payload.bodySha256, undefined);
+
+  // A body function is handed the assertion's nonce before anything is signed.
+  let handed = null;
+  await call({
+    method: 'PUT',
+    body: (nonce) => {
+      handed = nonce;
+      return { bound: nonce };
+    },
+  });
+  assert.match(handed, /^[a-f0-9]{32}$/);
+  assert.equal(seen.verified.payload.nonce, handed);
+  assert.deepEqual(JSON.parse(seen.body), { bound: handed });
 });
 
 test('callAgentHalf: any status passes through; empty or non-JSON bodies are null', async () => {
