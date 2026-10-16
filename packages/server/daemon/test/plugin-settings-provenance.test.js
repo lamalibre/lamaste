@@ -14,8 +14,12 @@
  *   is audited (`plugin.settings.changed-outside-lamaste`) and notified
  *   once, with key names only; a change whose answer was lost and that
  *   turns out stored is the administrator's, not an outside one;
- * - auto-approve is withheld for an update that turns a secret into a
- *   plain value (`settings.secret-to-plain`), audited and notified;
+ * - an update that turns a secret into a plain value always waits for an
+ *   administrator's approval (`settings.secret-to-plain` in its
+ *   `approvalRequired`) — its digest already approved or not, relay hooks
+ *   and agent half or neither, auto-approve on or off — audited and
+ *   notified; approving it (by digest, or by version) applies it, and an
+ *   approval covers only the secrets that were shown;
  * - the panel reads every reachable hosting's settings once when it starts.
  *
  * The agent half is core's real settings store and handler over a
@@ -85,11 +89,18 @@ const QX_V2 = {
   ],
 };
 
-/** px (an agent half Lamaste installs): `token` is a secret in v1, a string in v2. */
+/**
+ * px (an agent half Lamaste installs: every version has another approval
+ * digest), rx (relay hooks only: an unchanged module keeps its digest) and
+ * ux (an agent half installed by hand, no hooks: nothing to approve) share
+ * these: `token` is a secret in v1 and a string from v2, `pin` a secret
+ * until v3.
+ */
 const PX_V1 = {
   schemaVersion: 1,
   fields: [
     { key: 'token', label: 'Token', type: 'secret' },
+    { key: 'pin', label: 'PIN', type: 'secret' },
     { key: 'retries', label: 'Retries', type: 'integer', default: 3 },
   ],
 };
@@ -97,9 +108,25 @@ const PX_V2 = {
   schemaVersion: 2,
   fields: [
     { key: 'token', label: 'Token', type: 'string' },
+    { key: 'pin', label: 'PIN', type: 'secret' },
     { key: 'retries', label: 'Retries', type: 'integer', default: 3 },
   ],
 };
+const PX_V3 = {
+  schemaVersion: 3,
+  fields: [
+    { key: 'token', label: 'Token', type: 'string' },
+    { key: 'pin', label: 'PIN', type: 'string' },
+    { key: 'retries', label: 'Retries', type: 'integer', default: 3 },
+  ],
+};
+/** v1 with another default: a settings change that turns no secret plain. */
+const PX_V1_RETRIES = {
+  ...PX_V1,
+  schemaVersion: 4,
+  fields: [PX_V1.fields[0], PX_V1.fields[1], { ...PX_V1.fields[2], default: 5 }],
+};
+const RELAY_MODULE = 'export default { "tunnel:down": () => ({}) };\n';
 
 const manifests = {
   sx: (version, settings = SX_SETTINGS) => ({
@@ -121,6 +148,21 @@ const manifests = {
     version,
     hosting: 'agent',
     agent: { package: '@lamalibre/px-agent', service: { entry: 'dist/agentd.js' } },
+    settings,
+  }),
+  rx: (version, settings = PX_V1) => ({
+    name: 'rx',
+    version,
+    hosting: 'agent',
+    agent: {},
+    settings,
+    hooks: { relay: { entry: 'hooks/relay.mjs', tunnel: { down: {} } } },
+  }),
+  ux: (version, settings = PX_V1) => ({
+    name: 'ux',
+    version,
+    hosting: 'agent',
+    agent: {},
     settings,
   }),
 };
@@ -260,9 +302,9 @@ async function enroll(label) {
 }
 
 async function publish(name, version, manifest = manifests[name](version)) {
-  await npm.publish(`@lamalibre/${name}-server`, version, {
-    'lamaste-plugin.json': JSON.stringify(manifest),
-  });
+  const files = { 'lamaste-plugin.json': JSON.stringify(manifest) };
+  if (manifest.hooks?.relay) files['hooks/relay.mjs'] = RELAY_MODULE;
+  await npm.publish(`@lamalibre/${name}-server`, version, files);
   if (manifest.agent?.package) {
     await npm.setIntegrity(`${manifest.agent.package}@${version}`, integrity(`${name}-${version}`));
   }
@@ -409,7 +451,7 @@ before(async () => {
 
   await enroll('vm1');
   await startFakeHalf('sx', SX_SETTINGS);
-  for (const name of ['sx', 'qx', 'px']) {
+  for (const name of ['sx', 'qx', 'px', 'rx', 'ux']) {
     await publish(name, '1.0.0');
     await lib.installPlugin(`@lamalibre/${name}-server`, app.log);
     await approve(name);
@@ -782,55 +824,298 @@ test('pruning: writing the plugin row prunes the cache in the same transaction',
 });
 
 // ---------------------------------------------------------------------------
-// Auto-approve and secrets that become plain values
+// Secrets that become plain values: always an administrator's approval
 // ---------------------------------------------------------------------------
 
-test('auto-approve is withheld for an update that turns a secret into a plain value', async () => {
-  await lib.setAutoApprove('px', true, { actor: 'admin', certSerial: null });
-  await publish('px', '1.1.0', manifests.px('1.1.0', PX_V2));
-  const staged = await lib.updatePlugin('px', '1.1.0', {
+const TOKEN_TURNS_PLAIN =
+  'it turns secret settings into plain ones (token) — what is typed into them next is kept on the relay and shown in clear';
+
+function stageUpdate(name, version) {
+  return lib.updatePlugin(name, version, {
     actor: 'admin',
     certSerial: null,
     logger: app.log,
     sourceIp: IP,
   });
-  assert.ok(staged.pendingUpdate, 'it waits for an administrator');
-  assert.deepEqual(staged.pendingUpdate.settings.secretToPlain, ['token']);
-  assert.deepEqual(staged.pendingUpdate.settings.retyped, [
-    { key: 'token', from: 'secret', to: 'string' },
+}
+
+async function finished(name, operation) {
+  assert.ok(operation, 'an operation started');
+  const done = await lib.waitForPluginOperation(name);
+  assert.equal(done.id, operation.id);
+  assert.equal(done.status, 'succeeded', JSON.stringify(done));
+  return done;
+}
+
+async function updateApprovals(name) {
+  return (await auditOf('hooks.approved', name)).filter((entry) => entry.details.for === 'update');
+}
+
+test('a secret turned plain waits for approval even when the digest is already approved', async () => {
+  const before = await lib.hookStatus(await lib.findPlugin('rx'));
+  assert.equal(before.approval.state, 'approved');
+  const { digest } = before.approval;
+
+  // As before: the same relay hooks and the same settings run at once; so
+  // does a settings change that turns no secret plain.
+  await publish('rx', '1.0.1');
+  await finished('rx', (await stageUpdate('rx', '1.0.1')).operation);
+  await publish('rx', '1.0.2', manifests.rx('1.0.2', PX_V1_RETRIES));
+  await finished('rx', (await stageUpdate('rx', '1.0.2')).operation);
+  assert.equal((await lib.findPlugin('rx')).version, '1.0.2');
+  assert.equal((await auditOf('plugin.update.awaiting-approval', 'rx')).length, 0);
+
+  // token turns plain; the relay hooks — and so the digest — stay the same.
+  await publish('rx', '1.1.0', manifests.rx('1.1.0', PX_V2));
+  const staged = await stageUpdate('rx', '1.1.0');
+  assert.ok(staged.pendingUpdate, JSON.stringify(staged));
+  assert.equal(staged.pendingUpdate.digest, digest, 'the digest is the approved one');
+  assert.deepEqual(staged.pendingUpdate.approvalRequired, [
+    { code: 'settings.secret-to-plain', reason: TOKEN_TURNS_PLAIN },
   ]);
-  assert.equal(staged.pendingUpdate.autoApproveWithheld.length, 1);
-  assert.match(
-    staged.pendingUpdate.autoApproveWithheld[0],
-    /turns secret settings into plain ones \(token\)/,
-  );
-  const [withheld] = await auditOf('hooks.auto-approve.withheld', 'px');
-  assert.equal(withheld.actor, 'auto-approve');
-  assert.deepEqual(withheld.details.codes, ['settings.secret-to-plain']);
-  assert.deepEqual(withheld.details.reasons, staged.pendingUpdate.autoApproveWithheld);
-  assert.equal(withheld.details.version, '1.1.0');
-  const notes = await notificationsMatching(/px 1\.1\.0 waits for your approval/);
-  assert.equal(notes.length, 1);
-  assert.match(notes[0].message, /auto-approve does not cover it: it turns secret settings/);
-  const hooks = await call('GET', '/api/plugins/px/hooks');
+  assert.equal(staged.pendingUpdate.autoApproveWithheld, null, 'auto-approve is off');
+  assert.deepEqual(staged.pendingUpdate.settings.secretToPlain, ['token']);
+  assert.equal((await lib.findPlugin('rx')).version, '1.0.2', 'the installed version stays');
+
+  // The same pending state and view as an update whose digest changed.
+  const hooks = (await call('GET', '/api/plugins/rx/hooks')).json().hooks;
+  assert.deepEqual(hooks.pendingUpdate, staged.pendingUpdate);
+  assert.equal(hooks.approval.state, 'approved');
+  const listed = (await call('GET', '/api/plugins')).json().plugins.find((p) => p.name === 'rx');
+  assert.deepEqual(listed.hooks.pendingUpdate, { version: '1.1.0', digest });
+
+  const waiting = await auditOf('plugin.update.awaiting-approval', 'rx');
+  assert.equal(waiting.length, 1);
+  assert.deepEqual(waiting[0].details, {
+    from: '1.0.2',
+    to: '1.1.0',
+    digest,
+    codes: ['settings.secret-to-plain'],
+    certSerial: null,
+  });
+  assert.equal((await auditOf('hooks.auto-approve.withheld', 'rx')).length, 0);
+  const notes = await notificationsMatching(/^rx 1\.1\.0 /);
   assert.deepEqual(
-    hooks.json().hooks.pendingUpdate.autoApproveWithheld,
-    staged.pendingUpdate.autoApproveWithheld,
+    notes.map((n) => [n.level, n.message]),
+    [['warning', `rx 1.1.0 waits for your approval: ${TOKEN_TURNS_PLAIN}.`]],
   );
 
-  // The same agent half with the settings unchanged is auto-approved.
-  await publish('px', '1.1.1', manifests.px('1.1.1', PX_V1));
-  const auto = await lib.updatePlugin('px', '1.1.1', {
-    actor: 'admin',
+  // Approved with the digest it shows — the one already approved: applied.
+  const approved = await call('POST', '/api/plugins/rx/hooks/approve', { digest });
+  assert.equal(approved.statusCode, 202, approved.body);
+  await finished('rx', approved.json().operation);
+  const updated = await lib.findPlugin('rx');
+  assert.equal(updated.version, '1.1.0');
+  assert.deepEqual(updated.settings, PX_V2);
+  const after = await lib.hookStatus(updated);
+  assert.equal(after.pendingUpdate, null);
+  assert.equal(after.approval.state, 'approved');
+  assert.equal(after.approval.approvedDigest, digest);
+  assert.equal(after.approval.approvedVersion, '1.1.0');
+  assert.equal(after.approval.approvedBy, 'admin');
+  const approvals = await updateApprovals('rx');
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].actor, 'admin');
+  assert.deepEqual(approvals[0].details, {
+    digest,
+    version: '1.1.0',
+    for: 'update',
+    codes: ['settings.secret-to-plain'],
     certSerial: null,
-    logger: app.log,
-    sourceIp: IP,
   });
-  assert.ok(auto.operation, JSON.stringify(auto));
-  const done = await lib.waitForPluginOperation('px');
-  assert.equal(done.status, 'succeeded', JSON.stringify(done));
-  assert.equal((await auditOf('hooks.auto-approve.withheld', 'px')).length, 1);
-  assert.equal(lib.settingsWithheld(null).length, 0);
+  const updates = await auditOf('plugin.updated', 'rx');
+  assert.equal(updates.at(-1).details.to, '1.1.0');
+  assert.equal(updates.at(-1).details.approvedBy, 'admin');
+});
+
+test('auto-approve never covers a secret turned plain; the approval binds the update as shown', async () => {
+  await lib.setAutoApprove('px', true, { actor: 'admin', certSerial: null });
+  const installedDigest = (await lib.hookStatus(await lib.findPlugin('px'))).approval.digest;
+  await publish('px', '1.1.0', manifests.px('1.1.0', PX_V2));
+  const staged = await stageUpdate('px', '1.1.0');
+  assert.ok(staged.pendingUpdate, 'it waits for an administrator, auto-approve on');
+  const { digest } = staged.pendingUpdate;
+  assert.notEqual(digest, installedDigest, 'a new agent half: another digest');
+  assert.deepEqual(staged.pendingUpdate.approvalRequired, [
+    { code: 'digest.unapproved', reason: 'its agent half is not what was approved' },
+    { code: 'settings.secret-to-plain', reason: TOKEN_TURNS_PLAIN },
+  ]);
+  // Auto-approve would cover the agent half (same package and service): only the secret withholds it.
+  assert.deepEqual(staged.pendingUpdate.autoApproveWithheld, [TOKEN_TURNS_PLAIN]);
+  const withheld = await auditOf('hooks.auto-approve.withheld', 'px');
+  assert.equal(withheld.length, 1);
+  assert.equal(withheld[0].actor, 'auto-approve');
+  assert.deepEqual(withheld[0].details, {
+    digest,
+    version: '1.1.0',
+    reasons: [TOKEN_TURNS_PLAIN],
+    codes: ['settings.secret-to-plain'],
+    requestedBy: 'admin',
+  });
+  const [waiting] = await auditOf('plugin.update.awaiting-approval', 'px');
+  assert.deepEqual(waiting.details.codes, ['digest.unapproved', 'settings.secret-to-plain']);
+  const notes = await notificationsMatching(/^px 1\.1\.0 /);
+  assert.deepEqual(
+    notes.map((n) => n.message),
+    [
+      `px 1.1.0 waits for your approval: its agent half is not what was approved; ${TOKEN_TURNS_PLAIN}.`,
+    ],
+  );
+
+  // An approval names the update that was shown.
+  const refusals = [
+    [{ digest, version: '1.0.9' }, 409, /is version 1\.1\.0, not 1\.0\.9/],
+    [{ version: '1.1.0' }, 400, /approve it with the approval digest it shows/],
+    [{ digest: null, version: '1.1.0' }, 400, /approve it with the approval digest it shows/],
+    [{ digest: installedDigest, version: '1.1.0' }, 409, /changed since it was shown/],
+    [{}, 400, null],
+    [{ digest: null }, 400, null],
+    [{ digest, version: '1.1.0', extra: true }, 400, null],
+  ];
+  for (const [body, status, message] of refusals) {
+    const res = await call('POST', '/api/plugins/px/hooks/approve', body);
+    assert.equal(res.statusCode, status, `${JSON.stringify(body)}: ${res.body}`);
+    if (message) assert.match(res.json().error, message);
+  }
+  const mismatch = await call('POST', '/api/plugins/px/hooks/approve', {
+    digest: installedDigest,
+    version: '1.1.0',
+  });
+  assert.equal(mismatch.json().currentDigest, digest);
+
+  // 1.1.0 is published again turning pin plain too: approving token alone
+  // does not cover it, and nothing is applied or audited as approved.
+  await publish('px', '1.1.0', manifests.px('1.1.0', PX_V3));
+  const stale = await call('POST', '/api/plugins/px/hooks/approve', { digest, version: '1.1.0' });
+  assert.equal(stale.statusCode, 409, stale.body);
+  assert.match(stale.json().error, /plain ones that were not approved \(pin\) — review it again/);
+  assert.equal((await lib.findPlugin('px')).version, '1.0.0');
+  assert.equal((await updateApprovals('px')).length, 0);
+
+  // Reviewed again — token and pin — and approved by version and digest: applied.
+  const again = await stageUpdate('px', '1.1.0');
+  assert.deepEqual(again.pendingUpdate.settings.secretToPlain, ['token', 'pin']);
+  assert.equal(again.pendingUpdate.digest, digest, 'settings are outside the digest');
+  const approved = await call('POST', '/api/plugins/px/hooks/approve', {
+    digest,
+    version: '1.1.0',
+  });
+  assert.equal(approved.statusCode, 202, approved.body);
+  await finished('px', approved.json().operation);
+  const status = await lib.hookStatus(await lib.findPlugin('px'));
+  assert.equal(status.pendingUpdate, null);
+  assert.equal(status.approval.approvedDigest, digest);
+  assert.equal(status.approval.approvedBy, 'admin');
+  const approvals = await updateApprovals('px');
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].actor, 'admin');
+  assert.deepEqual(approvals[0].details.codes, ['digest.unapproved', 'settings.secret-to-plain']);
+
+  // As before: the same agent half with no secret turned plain is auto-approved.
+  await publish('px', '1.1.1', manifests.px('1.1.1', PX_V3));
+  const auto = await stageUpdate('px', '1.1.1');
+  await finished('px', auto.operation);
+  const [autoApproval] = (await updateApprovals('px')).slice(-1);
+  assert.equal(autoApproval.actor, 'auto-approve');
+  assert.deepEqual(autoApproval.details.codes, ['digest.unapproved']);
+  assert.equal(
+    (await lib.hookStatus(await lib.findPlugin('px'))).approval.approvedBy,
+    'auto-approve',
+  );
+  assert.equal((await auditOf('hooks.auto-approve.withheld', 'px')).length, 2);
+  await lib.setAutoApprove('px', false, { actor: 'admin', certSerial: null });
+});
+
+test('nothing else to approve: a secret turned plain still waits, approved by its version', async () => {
+  // ux brings neither relay hooks nor an agent half Lamaste installs.
+  await lib.setAutoApprove('ux', true, { actor: 'admin', certSerial: null });
+  assert.equal((await lib.hookStatus(await lib.findPlugin('ux'))).approval.state, 'not-required');
+
+  // As before: an update that needs no approval runs at once, settings changed or not.
+  await publish('ux', '1.0.1', manifests.ux('1.0.1', PX_V1_RETRIES));
+  await finished('ux', (await stageUpdate('ux', '1.0.1')).operation);
+
+  await publish('ux', '1.1.0', manifests.ux('1.1.0', PX_V2));
+  const staged = await stageUpdate('ux', '1.1.0');
+  assert.ok(staged.pendingUpdate, JSON.stringify(staged));
+  assert.equal(staged.pendingUpdate.digest, null, 'there is no digest to approve it with');
+  assert.equal(staged.pendingUpdate.relay, null);
+  assert.equal(staged.pendingUpdate.agentHalf, null);
+  assert.deepEqual(staged.pendingUpdate.approvalRequired, [
+    { code: 'settings.secret-to-plain', reason: TOKEN_TURNS_PLAIN },
+  ]);
+  assert.deepEqual(staged.pendingUpdate.autoApproveWithheld, [TOKEN_TURNS_PLAIN]);
+  const hooks = (await call('GET', '/api/plugins/ux/hooks')).json().hooks;
+  assert.deepEqual(hooks.pendingUpdate, staged.pendingUpdate);
+  assert.equal(hooks.approval.state, 'not-required');
+  assert.equal((await lib.findPlugin('ux')).version, '1.0.1');
+  const [waiting] = await auditOf('plugin.update.awaiting-approval', 'ux');
+  assert.deepEqual(waiting.details, {
+    from: '1.0.1',
+    to: '1.1.0',
+    digest: null,
+    codes: ['settings.secret-to-plain'],
+    certSerial: null,
+  });
+
+  // A digest cannot approve it; a digest where it has none is a changed update.
+  const byDigest = await call('POST', '/api/plugins/ux/hooks/approve', { digest: 'a'.repeat(64) });
+  assert.equal(byDigest.statusCode, 400);
+  assert.match(byDigest.json().error, /nothing to approve/);
+  const withDigest = await call('POST', '/api/plugins/ux/hooks/approve', {
+    digest: 'a'.repeat(64),
+    version: '1.1.0',
+  });
+  assert.equal(withDigest.statusCode, 409);
+  assert.equal(withDigest.json().currentDigest, null);
+
+  // Discarded and staged again, it waits again; approved by its version: applied.
+  assert.equal((await call('DELETE', '/api/plugins/ux/update')).statusCode, 200);
+  assert.equal((await lib.hookStatus(await lib.findPlugin('ux'))).pendingUpdate, null);
+  assert.ok((await stageUpdate('ux', '1.1.0')).pendingUpdate);
+  const approved = await call('POST', '/api/plugins/ux/hooks/approve', {
+    digest: null,
+    version: '1.1.0',
+  });
+  assert.equal(approved.statusCode, 202, approved.body);
+  await finished('ux', approved.json().operation);
+  const updated = await lib.findPlugin('ux');
+  assert.equal(updated.version, '1.1.0');
+  assert.equal((await lib.hookStatus(updated)).pendingUpdate, null);
+  const approvals = await updateApprovals('ux');
+  assert.equal(approvals.length, 1);
+  assert.deepEqual(approvals[0].details, {
+    digest: null,
+    version: '1.1.0',
+    for: 'update',
+    codes: ['settings.secret-to-plain'],
+    certSerial: null,
+  });
+  const updates = await auditOf('plugin.updated', 'ux');
+  assert.equal(updates.at(-1).details.approvedBy, 'admin');
+
+  // Approving by version with no update waiting is refused.
+  const none = await call('POST', '/api/plugins/ux/hooks/approve', { version: '1.1.0' });
+  assert.equal(none.statusCode, 409);
+  assert.match(none.json().error, /has no update waiting for approval/);
+  await lib.setAutoApprove('ux', false, { actor: 'admin', certSerial: null });
+});
+
+test('a pending update stored without its reasons waited for its digest', () => {
+  const view = lib.pendingUpdateView({
+    version: '2.0.0',
+    digest: 'b'.repeat(64),
+    stagedAt: '2026-10-16T08:00:00.000Z',
+    preview: { digest: 'c'.repeat(64) },
+    agentHalf: null,
+    settings: null,
+  });
+  assert.deepEqual(view.approvalRequired, [
+    { code: 'digest.unapproved', reason: 'its relay hooks are not what was approved' },
+  ]);
+  assert.equal(view.autoApproveWithheld, null);
+  assert.deepEqual(lib.settingsApprovalRequired(null), []);
+  assert.deepEqual(lib.settingsApprovalRequired({ secretToPlain: [] }), []);
 });
 
 // ---------------------------------------------------------------------------

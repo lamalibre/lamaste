@@ -27,8 +27,9 @@
  *   hooks <name>         The plugin's lifecycle hooks and what needs approval: the relay
  *                        hook set (stages, routes, fail-open hooks, effects), the agent
  *                        half Lamaste installs, the approval digest; agent hooks
- *   approve-hooks <name> --digest <sha256>
- *                        Approve with the approval digest `hooks` shows (or a pending update's)
+ *   approve-hooks <name> --digest <sha256> [--version <v>]
+ *                        Approve with the approval digest `hooks` shows; a pending update with
+ *                        its version too (`--version` alone when it has no digest)
  *   auto-approve <name> on|off
  *                        Approve what this plugin's later versions bring automatically (audited)
  *   update <name> [--version <v>]
@@ -69,6 +70,12 @@ import { panelRequest } from '../panel-api.js';
 import { emit, emitStep, emitError, emitComplete, emitLog } from '../ndjson.js';
 import { configureCmd, settingsCmd } from './plugin-settings.js';
 import { settingsDiffLines, terminalText } from '../plugin-settings.js';
+import {
+  APPROVE_HOOKS_USAGE,
+  approveHooksCommand,
+  parseApproveArgs,
+  pendingUpdateReasons,
+} from '../plugin-approval.js';
 
 /** npm runs inside the panel for install and uninstall (its own limit is 120 s). */
 const NPM_CALL_TIMEOUT_MS = 180_000;
@@ -160,8 +167,9 @@ ${b('Subcommands:')}
   ${c('rotate-hosting-secret <name>')}
                        New installation secret (the agent fetches it on its next sync)
   ${c('hooks <name>')}         Lifecycle hooks and what needs approval: relay hooks, agent half
-  ${c('approve-hooks <name> --digest <sha256>')}
-                       Approve with the approval digest "hooks" showed (or a pending update's)
+  ${c('approve-hooks <name> --digest <sha256> [--version <v>]')}
+                       Approve with the approval digest "hooks" showed; a pending update
+                       with its version too (--version alone when it has no digest)
   ${c('auto-approve <name> on|off')}
                        Approve what this plugin's later versions bring automatically
   ${c('update <name> [--version <v>]')}
@@ -751,11 +759,14 @@ function printAgentHalf(agentHalf, title) {
 
 /**
  * Print what a version brings that needs approval — the approval digest
- * (the one value `approve-hooks` takes), its relay hook set and the agent
- * half Lamaste installs.
+ * (what `approve-hooks` takes; none for an update that brings neither
+ * relay hooks nor an agent half Lamaste installs), its relay hook set and
+ * the agent half Lamaste installs.
  */
 function printApprovalContents({ digest, relay, agentHalf }) {
-  console.log(`    approval digest: ${chalk.cyan(digest)}`);
+  console.log(
+    `    approval digest: ${digest ? chalk.cyan(digest) : chalk.dim('none — no relay hooks, no agent half Lamaste installs')}`,
+  );
   if (relay) {
     console.log('');
     printRelayHookSet(relay, 'Relay hooks — run in a sandbox on the relay');
@@ -767,13 +778,23 @@ function printApprovalContents({ digest, relay, agentHalf }) {
 }
 
 /**
- * Print what a pending update changes beyond what it asks to approve: how
- * it changes the settings schema (outside the digest) — fields added and
- * removed with their types, retyped ones, newly required ones, and a
- * warning for secrets that become plain values — and why auto-approve did
- * not cover it.
+ * Print an update that waits for approval under `title`: why it waits
+ * (`approvalRequired` — a secret turned plain in red), what it brings
+ * (its digest, relay hook set and agent half), how it changes the settings
+ * schema (outside the digest) — fields added and removed with their types,
+ * retyped ones, newly required ones, and a warning for secrets that become
+ * plain values — what auto-approve could not cover beyond the reasons, and
+ * the command that approves it.
  */
-function printPendingUpdateNotes(update) {
+function printPendingUpdate(name, update, title) {
+  console.log('');
+  console.log(chalk.bold(`  ${title}`));
+  const { required, notCovered } = pendingUpdateReasons(update);
+  for (const line of required) {
+    console.log(line.warning ? chalk.red(`    - ${line.text}`) : `    - ${line.text}`);
+  }
+  console.log('');
+  printApprovalContents(update);
   const lines = settingsDiffLines(update.settings);
   if (lines.length > 0) {
     console.log('');
@@ -782,17 +803,17 @@ function printPendingUpdateNotes(update) {
       console.log(`    ${line.warning ? chalk.red(line.text) : line.text}`);
     }
   }
-  const withheld = Array.isArray(update.autoApproveWithheld) ? update.autoApproveWithheld : [];
-  if (withheld.length > 0) {
+  if (notCovered.length > 0) {
     console.log('');
     console.log(chalk.bold('  Auto-approve does not cover it'));
-    for (const reason of withheld) console.log(chalk.yellow(`    ${terminalText(reason)}`));
+    for (const reason of notCovered) console.log(chalk.yellow(`    ${reason}`));
   }
+  console.log(`\n    Approve and update with: ${approveCommand(name, update)}`);
 }
 
-/** The command that approves `digest` for plugin `name`. */
-function approveCommand(name, digest) {
-  return chalk.cyan(`lamaste-server plugins approve-hooks ${name} --digest ${digest}`);
+/** The command that approves the installed version (`{ digest }`) or a pending update (`{ digest, version }`). */
+function approveCommand(name, target) {
+  return chalk.cyan(approveHooksCommand(name, target));
 }
 
 /**
@@ -837,7 +858,7 @@ async function hooksCmd(name, { json }) {
       `\n    auto-approve for later versions: ${hooks.autoApprove ? chalk.yellow('on') : 'off'}`,
     );
     if (approval.state !== 'approved') {
-      console.log(`\n    Approve with: ${approveCommand(name, approval.digest)}`);
+      console.log(`\n    Approve with: ${approveCommand(name, { digest: approval.digest })}`);
     }
   }
   if (hooks.agent) {
@@ -848,11 +869,11 @@ async function hooksCmd(name, { json }) {
   }
   if (hooks.pendingUpdate) {
     const update = hooks.pendingUpdate;
-    console.log('');
-    console.log(chalk.bold(`  Update to ${update.version} — waits for approval`));
-    printApprovalContents(update);
-    printPendingUpdateNotes(update);
-    console.log(`\n    Approve and update with: ${approveCommand(name, update.digest)}`);
+    printPendingUpdate(
+      name,
+      update,
+      `Update to ${terminalText(update.version)} — waits for your approval:`,
+    );
   }
   console.log('');
 }
@@ -863,18 +884,16 @@ async function hooksCmd(name, { json }) {
  * @param {{ json: boolean }} options
  */
 async function approveHooksCmd(name, rest, { json }) {
-  const idx = rest.indexOf('--digest');
-  const digest = idx !== -1 ? rest[idx + 1] : undefined;
-  if (!name || !digest || !/^[a-f0-9]{64}$/.test(digest)) {
-    fail(
-      'Usage: lamaste-server plugins approve-hooks <name> --digest <sha256> (the approval digest `hooks <name>` shows)',
-      json,
-    );
-  }
+  if (!name) fail(APPROVE_HOOKS_USAGE, json);
+  const args = parseApproveArgs(rest);
+  if (args.error) fail(args.error, json);
+  const { digest, version } = args;
   let result;
   try {
+    // A version names the pending update; its digest, when it has one, goes with it.
     result = await panelRequest('POST', `/api/plugins/${encodeURIComponent(name)}/hooks/approve`, {
       digest,
+      ...(version ? { version } : {}),
     });
   } catch (err) {
     // Approving a pending update starts it: its agent half is a push.
@@ -943,11 +962,12 @@ async function updateCmd(name, rest, { json }) {
       return;
     }
     const update = result.pendingUpdate;
+    printPendingUpdate(
+      name,
+      update,
+      `${name} ${terminalText(update.version)} waits for your approval:`,
+    );
     console.log('');
-    console.log(chalk.bold(`  ${name} ${update.version} waits for approval`));
-    printApprovalContents(update);
-    printPendingUpdateNotes(update);
-    console.log(`\n    Approve and update with: ${approveCommand(name, update.digest)}\n`);
     return;
   }
   if (!json) console.log(`\n  Updating ${chalk.cyan(name)}`);
@@ -1156,7 +1176,9 @@ async function installPluginCmd(packageName, { json }) {
       agentHalf: result.hooks.agentHalf,
     });
     if (approval.state === 'pending') {
-      console.log(`\n    Approve with: ${approveCommand(plugin.name, approval.digest)}`);
+      console.log(
+        `\n    Approve with: ${approveCommand(plugin.name, { digest: approval.digest })}`,
+      );
     }
     console.log('');
   }

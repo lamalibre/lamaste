@@ -311,15 +311,62 @@ function approvalGate({ relay, agentHalf }) {
   return 'Lamaste runs its relay hooks and hosts the plugin only once they are approved.';
 }
 
-/** The approval digest — the one value an approval names. */
-function ApprovalDigest({ digest }) {
+/** The reason a pending update turns secret settings into plain ones. */
+const SECRET_TO_PLAIN = 'settings.secret-to-plain';
+/** The reason a pending update's digest is not the approved one. */
+const DIGEST_UNAPPROVED = 'digest.unapproved';
+
+/**
+ * The question before approving a pending update: what approving it lets
+ * Lamaste do — run and install what it brings, when that is not what was
+ * approved, and keep what is typed into secrets turned plain in clear.
+ */
+function updateApprovalQuestion(update) {
+  const codes = new Set((update.approvalRequired ?? []).map((reason) => reason.code));
+  const keys = update.settings?.secretToPlain ?? [];
+  const fields = `${keys.join(', ')} into ${keys.length === 1 ? 'a plain setting' : 'plain settings'}`;
+  if (codes.has(DIGEST_UNAPPROVED) && codes.has(SECRET_TO_PLAIN)) {
+    // "Install this agent half on the hosting agent, and turn token into a plain setting?"
+    return `${approvalQuestion(update).replace(/\?$/, '')}, and turn ${fields}?`;
+  }
+  if (codes.has(SECRET_TO_PLAIN)) return `Turn ${fields} and update?`;
+  return approvalQuestion(update);
+}
+
+/**
+ * The approval digest — what an approval names. `approved`: it is the one
+ * already approved (an update whose code did not change).
+ */
+function ApprovalDigest({ digest, approved = false }) {
   return (
     <div>
       <span className="text-zinc-500">approval digest </span>
       <span className="font-mono text-zinc-300" title={digest}>
         {short(digest)}
       </span>
+      {approved && <span className="text-zinc-500"> — unchanged, already approved</span>}
     </div>
+  );
+}
+
+/**
+ * Why a pending update waits for an administrator (`approvalRequired`):
+ * what it brings is not what was approved, and — whatever its digest and
+ * auto-approve — secrets it turns into plain values.
+ */
+function ApprovalReasons({ reasons }) {
+  if (reasons.length === 0) return null;
+  return (
+    <ul className="list-disc space-y-0.5 pl-5">
+      {reasons.map((reason) => (
+        <li
+          key={reason.code}
+          className={reason.code === SECRET_TO_PLAIN ? 'text-red-400' : 'text-yellow-400/90'}
+        >
+          {reason.reason}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -353,12 +400,13 @@ function ApprovalContents({ relay, agentHalf }) {
 
 /**
  * What an update changes in the plugin's settings schema
- * (`pendingUpdate.settings`) — outside the approval, which covers code:
- * fields added and removed with their types, fields whose type changed
- * (`from → to`; their stored values are dropped on both sides, never
- * converted), fields it newly requires without a default (the plugin needs
- * configuring after the update) and — as a warning — secrets that become
- * plain values, whose next values the relay keeps and shows in clear.
+ * (`pendingUpdate.settings`) — outside the approval digest, which covers
+ * code: fields added and removed with their types, fields whose type
+ * changed (`from → to`; their stored values are dropped on both sides,
+ * never converted), fields it newly requires without a default (the plugin
+ * needs configuring after the update) and — as a warning — secrets that
+ * become plain values, whose next values the relay keeps and shows in
+ * clear (which the update waits for an administrator to approve).
  */
 function SettingsSchemaChanges({ diff }) {
   const shown = settingsDiffRows(diff);
@@ -390,7 +438,11 @@ function SettingsSchemaChanges({ diff }) {
   );
 }
 
-/** Why auto-approve did not cover a pending update (`pendingUpdate.autoApproveWithheld`). */
+/**
+ * Why auto-approve did not cover a pending update
+ * (`pendingUpdate.autoApproveWithheld`) beyond the reasons it waits for,
+ * which are listed already.
+ */
 function AutoApproveWithheld({ reasons }) {
   if (!Array.isArray(reasons) || reasons.length === 0) return null;
   return (
@@ -428,8 +480,9 @@ export function PluginHooks({ plugin, isActing }) {
 
   const refresh = () => invalidatePluginLifecycle(queryClient, plugin.name);
 
+  // `{ digest }`: the installed version; `{ digest, version }`: the pending update.
   const approve = useMutation({
-    mutationFn: (digest) => client.approvePluginHooks(plugin.name, digest),
+    mutationFn: ({ digest, version }) => client.approvePluginHooks(plugin.name, digest, version),
     onSuccess: (data) => {
       refresh();
       addToast(data.operation ? `Approved — updating ${plugin.name}` : `${plugin.name}: approved`);
@@ -458,12 +511,21 @@ export function PluginHooks({ plugin, isActing }) {
     return null;
   }
   const busy = isActing || approve.isPending || autoApprove.isPending || discard.isPending;
-  const { approval } = hooks;
+  const { approval, pendingUpdate } = hooks;
   const pending = approval.state === 'pending';
   const { subject, plural } = approvalSubject(hooks);
+  // Why the pending update waits, and what auto-approve withheld beyond that.
+  const updateReasons = Array.isArray(pendingUpdate?.approvalRequired)
+    ? pendingUpdate.approvalRequired
+    : [];
+  const notCovered = (pendingUpdate?.autoApproveWithheld ?? []).filter(
+    (sentence) => !updateReasons.some((reason) => reason.reason === sentence),
+  );
 
-  const approveButton = (digest, label, question) =>
-    confirming === digest ? (
+  // `target` is what the button approves: 'installed' or 'update'; `body`
+  // what the approval names (`{ digest }`, or `{ digest, version }`).
+  const approveButton = (target, label, question, body) =>
+    confirming === target ? (
       <span className="flex items-center gap-1.5">
         <span className="text-zinc-400">{question}</span>
         <button
@@ -471,7 +533,7 @@ export function PluginHooks({ plugin, isActing }) {
           disabled={busy}
           onClick={() => {
             setConfirming(null);
-            approve.mutate(digest);
+            approve.mutate(body);
           }}
           className="rounded bg-cyan-600 px-2 py-1 text-white hover:bg-cyan-500 disabled:opacity-50"
         >
@@ -491,7 +553,7 @@ export function PluginHooks({ plugin, isActing }) {
         disabled={busy}
         onClick={() => {
           setOpen(true);
-          setConfirming(digest);
+          setConfirming(target);
         }}
         className="flex items-center gap-1.5 rounded bg-cyan-600 px-2.5 py-1 text-white hover:bg-cyan-500 disabled:opacity-50"
       >
@@ -521,8 +583,8 @@ export function PluginHooks({ plugin, isActing }) {
         {hooks.relay?.failOpenCount > 0 && (
           <span className="text-yellow-400">{hooks.relay.failOpenCount} fail-open</span>
         )}
-        {hooks.pendingUpdate && (
-          <span className="text-yellow-400">update {hooks.pendingUpdate.version} waiting</span>
+        {pendingUpdate && (
+          <span className="text-yellow-400">update {pendingUpdate.version} waiting</span>
         )}
       </button>
 
@@ -538,7 +600,10 @@ export function PluginHooks({ plugin, isActing }) {
               <ApprovalDigest digest={approval.digest} />
               <ApprovalContents relay={hooks.relay} agentHalf={hooks.agentHalf} />
               <div className="flex flex-wrap items-center gap-3">
-                {pending && approveButton(approval.digest, 'Approve', approvalQuestion(hooks))}
+                {pending &&
+                  approveButton('installed', 'Approve', approvalQuestion(hooks), {
+                    digest: approval.digest,
+                  })}
                 <label className="flex items-center gap-1.5 text-zinc-400">
                   <input
                     type="checkbox"
@@ -563,24 +628,28 @@ export function PluginHooks({ plugin, isActing }) {
             </div>
           )}
 
-          {hooks.pendingUpdate && (
+          {pendingUpdate && (
             <div className="space-y-2 rounded border border-yellow-500/30 p-2">
               <p className="text-yellow-400">
-                Version {hooks.pendingUpdate.version} waits for approval of what it brings (below).
-                The installed version stays live until then.
+                Version {pendingUpdate.version} waits for your approval — the installed version
+                stays live until then:
               </p>
-              <ApprovalDigest digest={hooks.pendingUpdate.digest} />
-              <ApprovalContents
-                relay={hooks.pendingUpdate.relay}
-                agentHalf={hooks.pendingUpdate.agentHalf}
-              />
-              <SettingsSchemaChanges diff={hooks.pendingUpdate.settings} />
-              <AutoApproveWithheld reasons={hooks.pendingUpdate.autoApproveWithheld} />
+              <ApprovalReasons reasons={updateReasons} />
+              {pendingUpdate.digest && (
+                <ApprovalDigest
+                  digest={pendingUpdate.digest}
+                  approved={pendingUpdate.digest === approval.approvedDigest}
+                />
+              )}
+              <ApprovalContents relay={pendingUpdate.relay} agentHalf={pendingUpdate.agentHalf} />
+              <SettingsSchemaChanges diff={pendingUpdate.settings} />
+              <AutoApproveWithheld reasons={notCovered} />
               <div className="flex items-center gap-2">
                 {approveButton(
-                  hooks.pendingUpdate.digest,
+                  'update',
                   'Approve and update',
-                  approvalQuestion(hooks.pendingUpdate),
+                  updateApprovalQuestion(pendingUpdate),
+                  { digest: pendingUpdate.digest, version: pendingUpdate.version },
                 )}
                 <button
                   type="button"
@@ -612,7 +681,7 @@ export function PluginUpdate({ plugin, isActing }) {
       if (data.upToDate) addToast(`${plugin.name} is already at ${data.version}`);
       else if (data.pendingUpdate) {
         addToast(
-          `${plugin.name} ${data.pendingUpdate.version} waits for approval — review what it brings under Lifecycle hooks`,
+          `${plugin.name} ${data.pendingUpdate.version} waits for your approval — see why under Lifecycle hooks`,
         );
       } else addToast(`Updating ${plugin.name}`);
       setVersion('');
@@ -634,7 +703,7 @@ export function PluginUpdate({ plugin, isActing }) {
         disabled={isActing || update.isPending}
         onClick={() => update.mutate()}
         className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
-        title="Fetch the version and read it before installing it; relay hooks that changed or a new agent half wait for approval"
+        title="Fetch the version and read it before installing it; relay hooks that changed, a new agent half and secret settings turned plain wait for approval"
       >
         {update.isPending ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
         Update

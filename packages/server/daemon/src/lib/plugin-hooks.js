@@ -10,7 +10,9 @@
  * tarball integrity, service and system packages. Approval is needed when
  * either exists. Lamaste runs relay hooks, hosts the plugin and installs its
  * agent half only while the installed version's digest is the approved
- * one.
+ * one. Settings are outside the digest, but an update that turns a secret
+ * setting into a plain one waits for an administrator's approval all the
+ * same (`plugin-lifecycle.js`): the same pending update, approved here.
  *
  * The runner is about the relay part alone: it holds a root-owned copy of
  * the approved module that lamaste-priv installed after checking its
@@ -281,27 +283,67 @@ export async function hookStatus(plugin) {
   };
 }
 
+/** Why an update waits: its approval digest is not the approved one. */
+export const DIGEST_UNAPPROVED = 'digest.unapproved';
+/** Why an update waits: it turns secret settings into plain ones. */
+export const SETTINGS_SECRET_TO_PLAIN = 'settings.secret-to-plain';
+
+/**
+ * The reason a staged version waits because what it brings — its relay
+ * hooks (`relay`), the agent half Lamaste installs (`agentHalf`); either
+ * truthy when it brings one — is not what was approved.
+ *
+ * @returns {{ code: string, reason: string }}
+ */
+export function digestUnapprovedReason({ relay, agentHalf }) {
+  const what =
+    relay && agentHalf
+      ? 'its relay hooks and agent half are'
+      : agentHalf
+        ? 'its agent half is'
+        : 'its relay hooks are';
+  return { code: DIGEST_UNAPPROVED, reason: `${what} not what was approved` };
+}
+
+/**
+ * Why a stored pending update waits for an administrator. A record staged
+ * before the reasons were stored waited for one reason only: its digest.
+ *
+ * @returns {Array<{ code: string, reason: string }>}
+ */
+function pendingApprovalRequired(pending) {
+  return (
+    pending.approvalRequired ?? [
+      digestUnapprovedReason({ relay: pending.preview, agentHalf: pending.agentHalf }),
+    ]
+  );
+}
+
 /**
  * A staged update waiting for approval as clients see it — in the hook
  * status and in the update response alike: its version, the digest to
- * approve it with, what it brings (its relay hook set and the agent half
- * Lamaste installs, each null when it brings none), how it changes the
- * settings schema (`settings`: `{ added: [{ key, type }], removed:
- * [{ key, type }], retyped: [{ key, from, to }], newRequired: [key],
- * secretToPlain: [key] }`, null when neither version declares settings —
- * not part of the digest), and — when the plugin has auto-approve on — why
- * auto-approve did not cover it (`autoApproveWithheld`, sentences; null
- * otherwise). The stored record names the relay hook set's preview
- * `preview`.
+ * approve it with (null when it brings neither relay hooks nor an agent
+ * half Lamaste installs: it is approved by its version), what it brings
+ * (its relay hook set and the agent half Lamaste installs, each null when
+ * it brings none), how it changes the settings schema (`settings`:
+ * `{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key,
+ * from, to }], newRequired: [key], secretToPlain: [key] }`, null when
+ * neither version declares settings — not part of the digest), why it
+ * waits for an administrator (`approvalRequired`: `[{ code, reason }]`,
+ * `digest.unapproved` and `settings.secret-to-plain`; never empty), and —
+ * when the plugin has auto-approve on — why auto-approve did not cover it
+ * (`autoApproveWithheld`, sentences; null otherwise). The stored record
+ * names the relay hook set's preview `preview`.
  */
 export function pendingUpdateView(pending) {
   return {
     version: pending.version,
-    digest: pending.digest,
+    digest: pending.digest ?? null,
     stagedAt: pending.stagedAt,
     relay: pending.preview ?? null,
     agentHalf: pending.agentHalf ?? null,
     settings: pending.settings ?? null,
+    approvalRequired: pendingApprovalRequired(pending),
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };
 }
@@ -421,28 +463,71 @@ export async function restartRelayHookRunner(plugin, logger) {
 /**
  * An administrator approves what a plugin version brings — its relay hook
  * set and the agent half Lamaste installs — with the digest they were
- * shown. The digest must be the installed version's — or the pending
- * update's, in which case the caller applies the update. Recorded in the
- * audit log.
+ * shown: the installed version's, or a pending update's. A pending update
+ * is also approved by naming its `version`, with its digest when it has
+ * one — the only way to approve one that brings neither relay hooks nor an
+ * agent half (its digest is null), and what binds the approval of a
+ * settings change to the release that was shown.
  *
- * @returns {Promise<{ target: 'installed' | 'update', digest: string }>}
+ * The installed version's approval is recorded here, in the hook state and
+ * the audit log. A pending update's is checked against the update that is
+ * waiting and handed back for the caller to apply (`updatePlugin` with
+ * `approvedUpdate`): its version, its digest and the secret settings it
+ * turns plain as they were shown. It approves everything the update waits
+ * for (`approvalRequired`), its digest changed or not, and is audited when
+ * the update starts under it.
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {string | null} digest
+ * @param {{ actor: string, certSerial: string | null, logger?: object, version?: string | null }} options
+ * @returns {Promise<{ target: 'installed', digest: string } | { target: 'update', digest: string | null, version: string, secretToPlain: string[] }>}
  */
-export async function approveHookSet(plugin, digest, { actor, certSerial, logger }) {
+export async function approveHookSet(
+  plugin,
+  digest,
+  { actor, certSerial, logger, version = null },
+) {
   const approval = installedApproval(plugin);
   const { relay } = approval;
   const state = await readHookState(plugin.name);
   const pending = state?.pendingUpdate ?? null;
   const now = new Date().toISOString();
 
-  if (pending && pending.digest === digest) {
-    await recordAudit({
-      actor,
-      action: 'hooks.approved',
-      plugin: plugin.name,
-      details: { digest, version: pending.version, for: 'update', certSerial },
-    });
-    return { target: 'update', digest };
+  if (version !== null) {
+    if (!pending) {
+      throw httpError(`Plugin "${plugin.name}" has no update waiting for approval`, 409);
+    }
+    if (pending.version !== version) {
+      throw httpError(
+        `The update waiting for approval is version ${pending.version}, not ${version} — review it again`,
+        409,
+      );
+    }
+    const pendingDigest = pending.digest ?? null;
+    if (digest === null && pendingDigest !== null) {
+      throw httpError(
+        `Version ${version} brings relay hooks or an agent half — approve it with the approval digest it shows`,
+        400,
+      );
+    }
+    if (digest !== pendingDigest) {
+      throw httpError(
+        `What version ${version} brings changed since it was shown — review it again`,
+        409,
+        {
+          currentDigest: pendingDigest,
+        },
+      );
+    }
+    return pendingUpdateApproval(pending);
   }
+  if (digest === null) {
+    throw httpError(
+      "Approving names the approval digest that was shown, or a pending update's version",
+      400,
+    );
+  }
+  if (pending && pending.digest === digest) return pendingUpdateApproval(pending);
   if (!approval.required) {
     throw httpError(
       `Plugin "${plugin.name}" has no relay hooks and no agent half Lamaste installs — nothing to approve`,
@@ -469,6 +554,16 @@ export async function approveHookSet(plugin, digest, { actor, certSerial, logger
   });
   await ensureRelayHooksInstalled(plugin, logger);
   return { target: 'installed', digest };
+}
+
+/** What approving the pending update `pending` hands its caller to apply: the update as it was shown. */
+function pendingUpdateApproval(pending) {
+  return {
+    target: 'update',
+    digest: pending.digest ?? null,
+    version: pending.version,
+    secretToPlain: pending.settings?.secretToPlain ?? [],
+  };
 }
 
 /**

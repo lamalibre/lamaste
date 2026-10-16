@@ -228,12 +228,17 @@ test('an update whose agent half changed waits for approval and is pinned again 
   assert.deepEqual(staged.pendingUpdate, shown.pendingUpdate);
   assert.deepEqual(Object.keys(shown.pendingUpdate).sort(), [
     'agentHalf',
+    'approvalRequired',
     'autoApproveWithheld',
     'digest',
     'relay',
     'settings',
     'stagedAt',
     'version',
+  ]);
+  // It waits for one reason: its digest is not the approved one.
+  assert.deepEqual(shown.pendingUpdate.approvalRequired, [
+    { code: 'digest.unapproved', reason: 'its agent half is not what was approved' },
   ]);
   assert.equal(shown.pendingUpdate.autoApproveWithheld, null);
   // Neither version declares settings.
@@ -244,7 +249,10 @@ test('an update whose agent half changed waits for approval and is pinned again 
   // the digest no longer matches, nothing is applied.
   await npm.setIntegrity(`${AGENT_PKG}@1.1.0`, integrity('fx-agent-1.1.0-republished'));
   await assert.rejects(
-    lib.updatePlugin('fx', '1.1.0', { ...actor, approvedDigest: staged.pendingUpdate.digest }),
+    lib.updatePlugin('fx', '1.1.0', {
+      ...actor,
+      approvedUpdate: { version: '1.1.0', digest: staged.pendingUpdate.digest, secretToPlain: [] },
+    }),
     (err) => err.statusCode === 409 && /no longer brings what was approved/.test(err.message),
   );
   assert.equal((await lib.findPlugin('fx')).version, '1.0.0');
@@ -253,10 +261,29 @@ test('an update whose agent half changed waits for approval and is pinned again 
   const again = await lib.updatePlugin('fx', '1.1.0', actor);
   const plugin = await lib.findPlugin('fx');
   const approved = await lib.approveHookSet(plugin, again.pendingUpdate.digest, actor);
-  assert.equal(approved.target, 'update');
+  assert.deepEqual(approved, {
+    target: 'update',
+    digest: again.pendingUpdate.digest,
+    version: '1.1.0',
+    secretToPlain: [],
+  });
+  // The approval takes effect, and is audited, when the update starts under it.
+  assert.equal(
+    (await lib.listAudit({ plugin: 'fx', action: 'hooks.approved' }))[0].details.for,
+    'installed',
+  );
   const { operation } = await lib.updatePlugin('fx', '1.1.0', {
     ...actor,
-    approvedDigest: again.pendingUpdate.digest,
+    approvedUpdate: approved,
+  });
+  const [approvedAudit] = await lib.listAudit({ plugin: 'fx', action: 'hooks.approved' });
+  assert.equal(approvedAudit.actor, 'admin');
+  assert.deepEqual(approvedAudit.details, {
+    digest: again.pendingUpdate.digest,
+    version: '1.1.0',
+    for: 'update',
+    codes: ['digest.unapproved'],
+    certSerial: '0A1B',
   });
   const done = await lib.waitForPluginOperation('fx');
   assert.equal(done.id, operation.id);
@@ -476,6 +503,10 @@ test('auto-approve covers a new version of the same agent half, not new system p
   const staged = await lib.updatePlugin('fx', '1.2.0', actor);
   assert.ok(staged.pendingUpdate, 'waits for an administrator despite auto-approve');
   assert.deepEqual(staged.pendingUpdate.autoApproveWithheld, ['it adds system packages (curl)']);
+  assert.deepEqual(
+    staged.pendingUpdate.approvalRequired.map((reason) => reason.code),
+    ['digest.unapproved'],
+  );
   const [withheld] = await lib.listAudit({ plugin: 'fx', action: 'hooks.auto-approve.withheld' });
   assert.equal(withheld.actor, 'auto-approve');
   assert.equal(withheld.details.version, '1.2.0');

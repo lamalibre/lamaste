@@ -145,9 +145,28 @@ const OperationParamSchema = z.object({
   id: z.string().uuid(),
 });
 
+/**
+ * `digest`: the approval digest that was shown — the installed version's or
+ * a pending update's. `version`: a pending update's version, which approves
+ * that update (with its digest, null when it brings neither relay hooks nor
+ * an agent half).
+ */
 const ApproveHooksBodySchema = z
-  .object({ digest: z.string().regex(/^[a-f0-9]{64}$/, 'digest is a SHA-256 hex string') })
-  .strict();
+  .object({
+    digest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/, 'digest is a SHA-256 hex string')
+      .nullable()
+      .optional(),
+    version: z
+      .string()
+      .regex(/^[0-9A-Za-z.+-]{1,64}$/, 'version is a plugin version')
+      .optional(),
+  })
+  .strict()
+  .refine((body) => (body.digest ?? null) !== null || body.version !== undefined, {
+    message: 'digest or version is required',
+  });
 
 const AutoApproveBodySchema = z.object({ enabled: z.boolean() }).strict();
 
@@ -658,7 +677,8 @@ export default async function pluginRoutes(fastify, _opts) {
   // fail-open flags, effects, digest), the agent hooks, the agent half
   // Lamaste installs (package, version, integrity, service, system
   // packages), the approval (`approval.digest` is what to approve) and a
-  // pending update's relay hook set and agent half
+  // pending update — its relay hook set and agent half, its settings
+  // schema diff, why it waits (`approvalRequired`)
   // ------------------------------------------------------------------
   fastify.get(
     '/plugins/:name/hooks',
@@ -674,10 +694,12 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ------------------------------------------------------------------
-  // POST /plugins/:name/hooks/approve — approve what the plugin brings
-  // (relay hooks, an agent half Lamaste installs) with the digest that was
-  // shown. Approving a pending update's digest applies the update (202
-  // with its operation).
+  // POST /plugins/:name/hooks/approve { digest?, version? } — approve what
+  // the plugin brings (relay hooks, an agent half Lamaste installs) with
+  // the digest that was shown. Approving a pending update — by its digest,
+  // or by its version (and digest, when it has one) — approves everything
+  // it waits for (`approvalRequired`) and applies it (202 with its
+  // operation).
   // ------------------------------------------------------------------
   fastify.post(
     '/plugins/:name/hooks/approve',
@@ -693,18 +715,23 @@ export default async function pluginRoutes(fastify, _opts) {
       const actor = actorFromRequest(request);
       const certSerial = certSerialFromRequest(request);
       try {
-        const approved = await approveHookSet(plugin, body.digest, {
+        const approved = await approveHookSet(plugin, body.digest ?? null, {
           actor,
           certSerial,
           logger: request.log,
+          version: body.version ?? null,
         });
         if (approved.target === 'update') {
-          const state = await readHookState(plugin.name);
-          const result = await updatePlugin(plugin.name, state.pendingUpdate.version, {
+          // The update as it was approved: fetched again, it must still be that.
+          const result = await updatePlugin(plugin.name, approved.version, {
             actor,
             certSerial,
             logger: request.log,
-            approvedDigest: body.digest,
+            approvedUpdate: {
+              version: approved.version,
+              digest: approved.digest,
+              secretToPlain: approved.secretToPlain,
+            },
             sourceIp: request.ip,
           });
           return reply.code(202).send({ ok: true, ...result });
@@ -714,7 +741,8 @@ export default async function pluginRoutes(fastify, _opts) {
         const statusCode = err.statusCode || 500;
         return reply.code(statusCode).send({
           ...operationErrorBody(err, 'Failed to approve the hook set'),
-          ...(err.currentDigest ? { currentDigest: err.currentDigest } : {}),
+          // The digest to review now: null when what waits brings nothing to approve by one.
+          ...(err.currentDigest !== undefined ? { currentDigest: err.currentDigest } : {}),
         });
       }
     },
@@ -749,9 +777,11 @@ export default async function pluginRoutes(fastify, _opts) {
   // ------------------------------------------------------------------
   // POST /plugins/:name/update { version? } — fetch the version (default
   // latest) and read it without installing it; pin its agent half. A
-  // changed relay hook set or agent half waits for approval
-  // (202 { pendingUpdate }); otherwise the update runs as an operation
-  // (202 { operation }). 200 { upToDate } when there is nothing to do.
+  // changed relay hook set or agent half (unless auto-approved), and a
+  // secret setting turned plain (always), wait for approval
+  // (202 { pendingUpdate }, its `approvalRequired` says why); otherwise the
+  // update runs as an operation (202 { operation }). 200 { upToDate } when
+  // there is nothing to do.
   // ------------------------------------------------------------------
   fastify.post(
     '/plugins/:name/update',

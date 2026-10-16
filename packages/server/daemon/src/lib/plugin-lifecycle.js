@@ -12,11 +12,13 @@
  *   and the installed version stays live; then the install pipeline runs
  *   with `phase: "upgrade"` around installing it — the new agent half
  *   first, then the relay package — and a failure restores the previous
- *   version on both sides. Settings are outside the approval: the preview
- *   lists how the settings schema changes (`pendingUpdate.settings`),
- *   auto-approve does not cover a version that turns a secret setting into
- *   a plain one, and the relay re-reads the agent half's settings after
- *   the update.
+ *   version on both sides. Settings are outside the approval digest: the
+ *   preview lists how the settings schema changes (`pendingUpdate.settings`)
+ *   and the relay re-reads the agent half's settings after the update — but
+ *   a version that turns a secret setting into a plain one always waits for
+ *   an administrator's approval, its digest approved or not, and whatever
+ *   auto-approve says (`pendingUpdate.approvalRequired` says why an update
+ *   waits).
  */
 
 import {
@@ -44,6 +46,9 @@ import {
 } from './plugins.js';
 import { pinAgentHalf, readRegistryPackage } from './plugin-packages.js';
 import {
+  DIGEST_UNAPPROVED,
+  SETTINGS_SECRET_TO_PLAIN,
+  digestUnapprovedReason,
   installRunnerModule,
   installedAgentHalf,
   installedApproval,
@@ -233,26 +238,76 @@ function agentHalfWithheld(before, after) {
 }
 
 /**
- * Why auto-approve does not cover a version because of how it changes the
+ * Why a version waits for an administrator because of how it changes the
  * settings schema: fields that are secrets now and plain values after it
  * (`settings.secret-to-plain`). Their secrets are dropped on both sides,
  * never moved — but whatever an administrator types into them next is kept
  * on the relay and shown in clear, which a plugin release must not decide
- * on its own. Settings are outside the approval digest; this only keeps
- * auto-approve from covering such an update.
+ * on its own. Settings are outside the approval digest, so this is a gate
+ * of its own: such an update waits whether or not its digest is approved,
+ * and auto-approve never covers it.
  *
  * @param {import('@lamalibre/lamaste').SettingsSchemaDiff | null} diff
- * @returns {Array<{ code: string, message: string }>}
+ * @returns {Array<{ code: string, reason: string }>}
  */
-export function settingsWithheld(diff) {
+export function settingsApprovalRequired(diff) {
   const keys = diff?.secretToPlain ?? [];
   if (keys.length === 0) return [];
   return [
     {
-      code: 'settings.secret-to-plain',
-      message: `it turns secret settings into plain ones (${keys.join(', ')}) — what is typed into them next is kept on the relay and shown in clear`,
+      code: SETTINGS_SECRET_TO_PLAIN,
+      reason: `it turns secret settings into plain ones (${keys.join(', ')}) — what is typed into them next is kept on the relay and shown in clear`,
     },
   ];
+}
+
+/**
+ * Why a staged version waits for an administrator's approval (`[{ code,
+ * reason }]`; empty: it needs none and runs at once) — what the approval of
+ * the pending update covers. Independent of auto-approve, which may stand
+ * in for an administrator on the first reason alone:
+ *
+ * - `digest.unapproved` — what it brings (relay hooks, the agent half
+ *   Lamaste installs) is not what was approved;
+ * - `settings.secret-to-plain` — {@link settingsApprovalRequired}.
+ *
+ * @param {{ approvalRequired: boolean, digest: string | null, relaySet: object | null, agentHalf: object | null }} staged
+ * @param {{ approvedDigest: string | null } | null} state
+ * @param {import('@lamalibre/lamaste').SettingsSchemaDiff | null} settings
+ * @returns {Array<{ code: string, reason: string }>}
+ */
+function approvalRequiredFor(staged, state, settings) {
+  const digestApproved = !staged.approvalRequired || state?.approvedDigest === staged.digest;
+  return [
+    ...(digestApproved
+      ? []
+      : [digestUnapprovedReason({ relay: staged.relaySet, agentHalf: staged.agentHalf })]),
+    ...settingsApprovalRequired(settings),
+  ];
+}
+
+/**
+ * Check that what an administrator approved (`approvedUpdate`: the pending
+ * update as it was shown — its version, its digest, the secret settings it
+ * turns plain) covers the version as it was fetched again: the same
+ * version and digest, and no secret turned plain that was not approved.
+ */
+function assertApprovalCovers(staged, settings, approvedUpdate) {
+  if (approvedUpdate.version !== staged.version || approvedUpdate.digest !== staged.digest) {
+    throw httpError(
+      `Version ${staged.version} no longer brings what was approved — review it again`,
+      409,
+    );
+  }
+  const unapproved = (settings?.secretToPlain ?? []).filter(
+    (key) => !approvedUpdate.secretToPlain.includes(key),
+  );
+  if (unapproved.length > 0) {
+    throw httpError(
+      `Version ${staged.version} now turns secret settings into plain ones that were not approved (${unapproved.join(', ')}) — review it again`,
+      409,
+    );
+  }
 }
 
 /**
@@ -371,7 +426,8 @@ async function stageVersion(plugin, requestedVersion, record) {
  * with their types, retyped ones `from` → `to` (a retyped field's value is
  * dropped on both sides, never converted), the fields the plugin will need
  * filled, and the secrets that become plain values (`secretToPlain`, which
- * withholds auto-approve) — null when neither version declares settings.
+ * makes the update wait for an administrator) — null when neither version
+ * declares settings.
  *
  * @param {object} plugin the installed registry entry
  * @param {object} manifest the staged version's manifest
@@ -386,11 +442,15 @@ function settingsPreview(plugin, manifest) {
 /**
  * Update plugin `name` to `requestedVersion` (an exact version or a
  * dist-tag; default `latest`). Returns `{ upToDate }`, `{ pendingUpdate }`
- * (what it brings awaits approval — shaped as the hook status's
+ * (it waits for an administrator's approval — shaped as the hook status's
  * `pendingUpdate`) or `{ operation }`.
  *
- * `approvedDigest` is set when an administrator approves the pending
- * update: the version is fetched again and must still bring exactly that.
+ * An update waits when what it brings is not what was approved — unless
+ * auto-approve covers it — and whenever it turns a secret setting into a
+ * plain one (see {@link approvalRequiredFor}). `approvedUpdate` is set when
+ * an administrator approves the pending update (`{ version, digest,
+ * secretToPlain }`, as it was shown): the version is fetched again and must
+ * still bring exactly that digest, and turn no other secret plain.
  * A hosted plugin whose agent half Lamaste installs is updated on its agent
  * too: the agent must be able to host the new version and the push-install
  * gates must allow `update` (`sourceIp`: the admin's) — checked when the
@@ -399,7 +459,7 @@ function settingsPreview(plugin, manifest) {
 export async function updatePlugin(
   name,
   requestedVersion,
-  { actor, certSerial, logger, approvedDigest = null, sourceIp },
+  { actor, certSerial, logger, approvedUpdate = null, sourceIp },
 ) {
   const plugin = await findPlugin(name);
   if (!plugin) throw httpError(`Plugin "${name}" not found`, 404);
@@ -428,85 +488,43 @@ export async function updatePlugin(
   }
 
   const state = await readHookState(name);
+  const settings = settingsPreview(plugin, staged.manifest);
+  const approvalRequired = approvalRequiredFor(staged, state, settings);
   let approvedBy = null;
   let autoApproved = false;
-  if (staged.approvalRequired) {
-    if (state?.approvedDigest === staged.digest) {
-      approvedBy = state.approvedBy ?? 'unchanged';
-    } else if (approvedDigest !== null) {
-      if (approvedDigest !== staged.digest) {
-        throw httpError(
-          `Version ${staged.version} no longer brings what was approved — review it again`,
-          409,
-        );
-      }
-      approvedBy = actor;
-    } else {
-      // Auto-approve covers a new version of the same agent half, never one
-      // that changes what runs as root on the agent, nor one that turns a
-      // secret setting into a plain one.
-      const settings = settingsPreview(plugin, staged.manifest);
-      const withheldReasons = state?.autoApprove
-        ? [
-            ...agentHalfWithheld(installedAgentHalf(plugin), staged.agentHalf),
-            ...settingsWithheld(settings),
-          ]
-        : [];
-      const withheld = withheldReasons.map((reason) => reason.message);
-      if (state?.autoApprove && withheld.length === 0) {
-        approvedBy = 'auto-approve';
-        autoApproved = true;
-      } else {
-        const pendingUpdate = {
-          version: staged.version,
-          digest: staged.digest,
-          stagedAt: new Date().toISOString(),
-          preview: staged.relaySet
-            ? relayHookSetPreview(staged.relaySet, staged.entrySha256)
-            : null,
-          agentHalf: staged.agentHalf
-            ? agentHalfPreview(derivePluginRoute(plugin.name), staged.agentHalf)
-            : null,
-          settings,
-          ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
-        };
-        await setPendingUpdate(name, pendingUpdate);
-        if (withheld.length > 0) {
-          await recordAudit({
-            actor: 'auto-approve',
-            action: 'hooks.auto-approve.withheld',
-            plugin: name,
-            details: {
-              digest: staged.digest,
-              version: staged.version,
-              reasons: withheld,
-              codes: withheldReasons.map((reason) => reason.code),
-              requestedBy: actor,
-            },
-          });
-        }
-        await recordAudit({
-          actor,
-          action: 'plugin.update.awaiting-approval',
-          plugin: name,
-          details: { from: plugin.version, to: staged.version, digest: staged.digest, certSerial },
-        });
-        await notifyAdminsBestEffort(
-          {
-            source: 'lamaste',
-            level: 'warning',
-            message:
-              withheld.length > 0
-                ? `${name} ${staged.version} waits for your approval — auto-approve does not cover it: ${withheld.join('; ')}.`
-                : staged.agentHalf
-                  ? `${name} ${staged.version} brings a new agent half${staged.relaySet ? ' and relay hooks' : ''} — it waits for your approval.`
-                  : `${name} ${staged.version} brings a changed relay hook set — it waits for your approval.`,
-          },
-          logger,
-        );
-        return { pendingUpdate: pendingUpdateView(pendingUpdate) };
-      }
+  if (approvedUpdate !== null) {
+    assertApprovalCovers(staged, settings, approvedUpdate);
+    approvedBy = actor;
+  } else if (approvalRequired.length > 0) {
+    // Auto-approve stands in for an administrator on a digest that changed,
+    // when the agent half changes nothing that runs as root on the agent —
+    // and on nothing else: every other reason (a secret setting turned
+    // plain) withholds it.
+    const digestChanged = approvalRequired.some((reason) => reason.code === DIGEST_UNAPPROVED);
+    const withheldReasons = state?.autoApprove
+      ? [
+          ...(digestChanged ? agentHalfWithheld(installedAgentHalf(plugin), staged.agentHalf) : []),
+          ...approvalRequired
+            .filter((reason) => reason.code !== DIGEST_UNAPPROVED)
+            .map(({ code, reason }) => ({ code, message: reason })),
+        ]
+      : [];
+    if (!state?.autoApprove || withheldReasons.length > 0) {
+      return awaitApproval({
+        plugin,
+        staged,
+        settings,
+        approvalRequired,
+        withheldReasons,
+        actor,
+        certSerial,
+        logger,
+      });
     }
+    approvedBy = 'auto-approve';
+    autoApproved = true;
+  } else if (staged.approvalRequired) {
+    approvedBy = state.approvedBy ?? 'unchanged';
   }
 
   // The agent half goes onto the hosting agent: a push the agent must be
@@ -533,16 +551,19 @@ export async function updatePlugin(
       staged.agentHalf.package,
     );
   }
-  if (autoApproved) {
+  // The approval takes effect now that the update starts under it: what it
+  // covered (`codes`), by an administrator or by auto-approve.
+  if (autoApproved || approvedUpdate !== null) {
     await recordAudit({
-      actor: 'auto-approve',
+      actor: autoApproved ? 'auto-approve' : actor,
       action: 'hooks.approved',
       plugin: name,
       details: {
         digest: staged.digest,
         version: staged.version,
         for: 'update',
-        requestedBy: actor,
+        codes: approvalRequired.map((reason) => reason.code),
+        ...(autoApproved ? { requestedBy: actor } : { certSerial }),
       },
     });
   }
@@ -557,6 +578,83 @@ export async function updatePlugin(
   });
   await logAgentHalfPush(push, operation.id, logger);
   return { operation };
+}
+
+/**
+ * Stage `staged` as the plugin's pending update, waiting for an
+ * administrator: stored with why it waits (`approvalRequired`) and why
+ * auto-approve, when on, did not cover it (`withheldReasons`), audited and
+ * notified. The installed version stays live.
+ *
+ * @returns {Promise<{ pendingUpdate: object }>}
+ */
+async function awaitApproval({
+  plugin,
+  staged,
+  settings,
+  approvalRequired,
+  withheldReasons,
+  actor,
+  certSerial,
+  logger,
+}) {
+  const name = plugin.name;
+  const withheld = withheldReasons.map((reason) => reason.message);
+  const pendingUpdate = {
+    version: staged.version,
+    digest: staged.digest,
+    stagedAt: new Date().toISOString(),
+    preview: staged.relaySet ? relayHookSetPreview(staged.relaySet, staged.entrySha256) : null,
+    agentHalf: staged.agentHalf
+      ? agentHalfPreview(derivePluginRoute(plugin.name), staged.agentHalf)
+      : null,
+    settings,
+    approvalRequired,
+    ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
+  };
+  await setPendingUpdate(name, pendingUpdate);
+  if (withheld.length > 0) {
+    await recordAudit({
+      actor: 'auto-approve',
+      action: 'hooks.auto-approve.withheld',
+      plugin: name,
+      details: {
+        digest: staged.digest,
+        version: staged.version,
+        reasons: withheld,
+        codes: withheldReasons.map((reason) => reason.code),
+        requestedBy: actor,
+      },
+    });
+  }
+  await recordAudit({
+    actor,
+    action: 'plugin.update.awaiting-approval',
+    plugin: name,
+    details: {
+      from: plugin.version,
+      to: staged.version,
+      digest: staged.digest,
+      codes: approvalRequired.map((reason) => reason.code),
+      certSerial,
+    },
+  });
+  // What auto-approve withheld beyond the reasons themselves (an agent half
+  // that runs more as root); a secret turned plain is one of the reasons.
+  const notCovered = withheldReasons
+    .filter((withheldReason) => !approvalRequired.some((r) => r.code === withheldReason.code))
+    .map((reason) => reason.message);
+  await notifyAdminsBestEffort(
+    {
+      source: 'lamaste',
+      level: 'warning',
+      message:
+        `${name} ${staged.version} waits for your approval: ${approvalRequired.map((r) => r.reason).join('; ')}.` +
+        (notCovered.length > 0 ? ` Auto-approve does not cover it: ${notCovered.join('; ')}.` : ''),
+    },
+    logger,
+  );
+  return { pendingUpdate: pendingUpdateView(pendingUpdate) };
 }
 
 async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {

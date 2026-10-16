@@ -70,7 +70,8 @@ Relay hooks are code Lamaste runs on the relay, and an [agent half Lamaste insta
 
 - Installing a plugin with relay hooks or an agent half Lamaste installs leaves them **pending**: the plugin can be enabled, but not hosted, and its forwarded API answers `503 { code: "hooks_not_approved" }` until the approval.
 - **Approving** names the digest the administrator saw; if what the version brings changed meanwhile the panel answers `409` with the current digest.
-- **Updating** a plugin whose new version brings another hook set or agent half waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log — except an agent half change that runs more as root (an agent half where there was none, another agent package, added system packages, another service entry or memory limit) and a version that turns a secret setting into a plain one, whose next value the relay would keep in clear ([withheld](agent-hosted-plugins.md#approval)).
+- **Updating** a plugin whose new version brings another hook set or agent half waits for approval; the installed version stays live. **Auto-approve**, off by default and per plugin, approves such changes automatically — each use is in the audit log — except an agent half change that runs more as root (an agent half where there was none, another agent package, added system packages, another service entry or memory limit; [withheld](agent-hosted-plugins.md#approval)).
+- A version that turns a secret setting into a plain one — whose next value the relay would keep in clear — **always waits for an administrator**: settings are outside the digest, so this is a gate of its own, held even when the digest is already approved, when the plugin brings neither relay hooks nor an agent half, and whatever auto-approve says. The pending update says why it waits (`approvalRequired`), and its approval covers both.
 - Agent hooks are the plugin's own code on its own agent and need no approval. Shared hooks are part of the approved set by name and settings; their rules ride Lamaste releases (see below).
 
 Every approval, auto-approve change and auto-approval is recorded in the [audit log](audit-and-notifications.md) with the administrator certificate's serial.
@@ -132,11 +133,27 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 }
 ```
 
-`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, autoApproveWithheld }` while an update waits — `settings` lists how the version changes the plugin's [settings schema](agent-hosted-plugins.md#in-the-plugin-list-and-the-update-preview) (`{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key, from, to }], newRequired: [key], secretToPlain: [key] }`, `null` when neither version declares settings; not part of the digest), and `autoApproveWithheld` why auto-approve did not cover it, in sentences (`null` otherwise).
+`failOpen` lists a hook's fail-open settings (`onError`, `onOversize`, `onUnscannable`); the panel highlights them. `relay.digest` is the relay hook set's own digest (what the runner holds); `approval.digest` is the one to approve, covering the relay hooks and `agentHalf` — the agent half Lamaste installs, `null` when there is none or it is installed by hand ([App Host](app-host.md)). `pendingUpdate` is `{ version, digest, stagedAt, relay, agentHalf, settings, approvalRequired, autoApproveWithheld }` while an update waits — `digest` is the one to approve it with (`null` when it brings neither relay hooks nor an agent half: it is approved by its version), `settings` lists how the version changes the plugin's [settings schema](agent-hosted-plugins.md#in-the-plugin-list-and-the-update-preview) (`{ added: [{ key, type }], removed: [{ key, type }], retyped: [{ key, from, to }], newRequired: [key], secretToPlain: [key] }`, `null` when neither version declares settings; not part of the digest), `approvalRequired` why it waits for an administrator, and `autoApproveWithheld` why auto-approve, when on, did not cover it, in sentences (`null` otherwise):
+
+```json
+"approvalRequired": [
+  { "code": "digest.unapproved", "reason": "its agent half is not what was approved" },
+  {
+    "code": "settings.secret-to-plain",
+    "reason": "it turns secret settings into plain ones (apiKey) — what is typed into them next is kept on the relay and shown in clear"
+  }
+]
+```
+
+`digest.unapproved`: what it brings — relay hooks, an agent half Lamaste installs — is not what was approved (auto-approve may stand in for an administrator on it). `settings.secret-to-plain`: it turns secret settings into plain ones — always an administrator's call, its digest approved or not.
 
 ### `POST /api/plugins/:name/hooks/approve`
 
-`{ "digest": "…" }` — the installed set's digest (`200 { ok, hooks }`) or a pending update's (the update is applied: `202 { ok, operation }`). `409` when the set changed since it was shown.
+`{ "digest": "…" }` — the installed set's digest (`200 { ok, hooks }`) or a pending update's (the update is applied: `202 { ok, operation }`). `409` with `currentDigest` when the set changed since it was shown.
+
+`{ "digest": "…" | null, "version": "1.2.3" }` — the pending update to that version, named by its version and its digest (`null`, or left out, when it has none: an update that brings neither relay hooks nor an agent half and waits only because it turns a secret setting into a plain one). `409` when another version waits, or its digest changed (`currentDigest`, possibly `null`); `400` when it has a digest and none is given. The panel and `lamaste-server plugins approve-hooks` always name the version of an update they approve.
+
+Approving a pending update approves everything it waits for (`approvalRequired`), whether its digest changed or is the one already approved. The version is fetched again and must still have the approved digest and turn no other secret setting plain than those shown — `409` otherwise, and nothing is applied. The approval is recorded once the update starts under it: `hooks.approved` with `for: "update"` and the `codes` it covered.
 
 ### `PUT /api/plugins/:name/hooks/auto-approve`
 
@@ -149,7 +166,7 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
 `{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
 
 - `200 { upToDate: true }` — nothing to do;
-- `202 { pendingUpdate }` — what it brings (relay hook set, agent half) differs from what was approved and auto-approve is off or withheld; approve it with the digest shown;
+- `202 { pendingUpdate }` — what it brings (relay hook set, agent half) differs from what was approved and auto-approve is off or withheld, or it turns a secret setting into a plain one (always); `approvalRequired` says which, and the administrators are notified. Approve it with the digest shown, or by its version;
 - `202 { operation }` — the update runs: the new hook module goes into the runner, the install pipeline runs with `phase: "upgrade"` around installing the package (agent stages through the tunnel), and a failure restores the previous package, row and module.
 
 The agent half of a hosted plugin whose agent half Lamaste installs is pinned when the version is staged and installed on the agent **first**, after the agent's pre stage; a failure after that activates the version that ran before ([Hosting with an agent half](agent-hosted-plugins.md#the-pipelines)). That is a push: the hosting agent must be eligible for the new version and push install must allow `update` — checked when the update starts, not while it waits for approval.
@@ -312,7 +329,9 @@ Matching runs on the raw text: a JSON-escaped PEM key is found, and nothing but 
 
 ```
 lamaste-server plugins hooks <name>                         # the relay hook set, its digest and approval
-lamaste-server plugins approve-hooks <name> --digest <sha>  # approve (or approve a pending update)
+lamaste-server plugins approve-hooks <name> --digest <sha> [--version <v>]
+                                                            # approve; a pending update by its version too
+                                                            # (--version alone when it has no digest)
 lamaste-server plugins auto-approve <name> on|off
 lamaste-server plugins update <name> [--version <v>]
 lamaste-server plugins discard-update <name>

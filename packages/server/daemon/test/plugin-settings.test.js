@@ -888,6 +888,10 @@ test('update: the agent half is re-read afterwards; the preview lists the settin
     secretToPlain: [],
   };
   assert.deepEqual(staged.pendingUpdate.settings, expected);
+  // Retyped and removed fields, but no secret turned plain: it waits for its digest alone.
+  assert.deepEqual(staged.pendingUpdate.approvalRequired, [
+    { code: 'digest.unapproved', reason: 'its agent half is not what was approved' },
+  ]);
   const hooks = await call('GET', '/api/plugins/px/hooks');
   assert.deepEqual(hooks.json().hooks.pendingUpdate.settings, expected);
   // The digest does not cover settings: the same agent half with other settings has the same one.

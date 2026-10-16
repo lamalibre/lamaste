@@ -210,8 +210,13 @@ export const webAdminClient = {
   getPluginOperation: (name, id) =>
     apiFetch(`/api/plugins/${encodeURIComponent(name)}/operations/${encodeURIComponent(id)}`),
   getPluginHooks: (name) => apiFetch(`/api/plugins/${encodeURIComponent(name)}/hooks`),
-  approvePluginHooks: (name, digest) =>
-    jsonPost(`/api/plugins/${encodeURIComponent(name)}/hooks/approve`, { digest }),
+  // `digest`: the installed version's, or a pending update's; `version`: a
+  // pending update's — it approves that update (its digest null when it has none).
+  approvePluginHooks: (name, digest, version) =>
+    jsonPost(`/api/plugins/${encodeURIComponent(name)}/hooks/approve`, {
+      digest,
+      ...(version ? { version } : {}),
+    }),
   setPluginHooksAutoApprove: (name, enabled) =>
     jsonPut(`/api/plugins/${encodeURIComponent(name)}/hooks/auto-approve`, { enabled }),
   updatePlugin: (name, version) =>
