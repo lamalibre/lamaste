@@ -2816,30 +2816,8 @@
           }
         },
         {
-          "id": "step-168",
-          "label": "Sandbox: it has a /dev/shm…",
-          "target": "local",
-          "continueOnError": true,
-          "op": {
-            "type": "assert",
-            "check": {
-              "kind": "json_field",
-              "source": {
-                "kind": "var",
-                "name": "SANDBOX"
-              },
-              "path": ".writes.privateShm",
-              "expected": {
-                "kind": "literal",
-                "value": "ALLOWED"
-              },
-              "message": "Sandbox: it has a /dev/shm…"
-            }
-          }
-        },
-        {
           "id": "step-169",
-          "label": "…of its own: nothing appears in the machine's /dev/shm",
+          "label": "…and nothing appears in the machine's /dev/shm",
           "target": "local",
           "continueOnError": true,
           "op": {
@@ -2855,7 +2833,7 @@
                 "kind": "literal",
                 "value": "false"
               },
-              "message": "…of its own: nothing appears in the machine's /dev/shm"
+              "message": "…and nothing appears in the machine's /dev/shm"
             }
           }
         },
@@ -2882,7 +2860,7 @@
           }
         }
       ],
-      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateShm' 'ALLOWED' \"Sandbox: it has a /dev/shm…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…of its own: nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
+      "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.writes.privateShm')\" \"Sandbox: its /dev/shm is an empty one it cannot write (TemporaryFileSystem)…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…and nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
     },
     {
       "id": "feria-s-record-the-agent-pulled-the-package-itself",

@@ -1710,8 +1710,9 @@ function renderUnit(route, spec) {
     'ProtectHome=yes',
     'PrivateTmp=yes',
     'PrivateDevices=yes',
-    // PrivateDevices binds the machine's /dev/shm (1777) into its /dev: a
-    // private one instead, so nothing it writes there is seen outside.
+    // PrivateDevices binds the machine's /dev/shm (1777) into its /dev: an
+    // empty root-owned one instead. A bundled Node agent half has no use for
+    // POSIX shared memory (Node has no API for it, native modules are refused).
     'TemporaryFileSystem=/dev/shm:nosuid,nodev,noexec',
     'PrivateIPC=yes',
     'RemoveIPC=yes',

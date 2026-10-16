@@ -366,8 +366,8 @@ assert_json_field "$SANDBOX" '.writes.privateTmp' 'ALLOWED' "Sandbox: it has a /
 assert_json_field "$FACTS" '.privateTmpLeak' 'false' "…of its own (PrivateTmp): nothing appears in the machine's /tmp" || true
 assert_json_field "$SANDBOX" '.writes.privateVarTmp' 'ALLOWED' "Sandbox: it has a /var/tmp…" || true
 assert_json_field "$FACTS" '.privateVarTmpLeak' 'false' "…of its own: nothing appears in the machine's /var/tmp" || true
-assert_json_field "$SANDBOX" '.writes.privateShm' 'ALLOWED' "Sandbox: it has a /dev/shm…" || true
-assert_json_field "$FACTS" '.privateShmLeak' 'false' "…of its own: nothing appears in the machine's /dev/shm" || true
+assert_refused "$(json_get "$SANDBOX" '.writes.privateShm')" "Sandbox: its /dev/shm is an empty one it cannot write (TemporaryFileSystem)…" || true
+assert_json_field "$FACTS" '.privateShmLeak' 'false' "…and nothing appears in the machine's /dev/shm" || true
 assert_json_field "$SANDBOX" '"\(.noNewPrivs) \(.capBnd) \(.capEff)"' '1 0000000000000000 0000000000000000' "Sandbox: no new privileges, no capabilities" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.agentState')" "Sandbox: the agent's own state (its keys) is out of reach" || true
 assert_refused "$(json_get "$SANDBOX" '.reads.shadow')" "Sandbox: /etc/shadow is out of reach" || true
