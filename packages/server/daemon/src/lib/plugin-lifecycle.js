@@ -12,7 +12,9 @@
  *   and the installed version stays live; then the install pipeline runs
  *   with `phase: "upgrade"` around installing it — the new agent half
  *   first, then the relay package — and a failure restores the previous
- *   version on both sides.
+ *   version on both sides. Settings are outside the approval: the preview
+ *   lists how the settings schema changes (`pendingUpdate.settings`), and
+ *   the relay re-reads the agent half's settings after the update.
  */
 
 import {
@@ -24,6 +26,7 @@ import {
   relayHookSetNeedsEntry,
   relayHookSetOf,
   relayHookSetPreview,
+  settingsSchemaDiff,
   validateManifest,
 } from '@lamalibre/lamaste';
 import { pluginHostingPhase } from '@lamalibre/lamaste/server';
@@ -71,6 +74,7 @@ import { pipelineContext, runUpgradePipeline } from './hook-pipelines.js';
 import { getConfig } from './config.js';
 import { recordAudit, recordAuditBestEffort } from './audit.js';
 import { notifyAdminsBestEffort } from './notifications.js';
+import { refreshPluginSettingsBestEffort, settingsBlockOf } from './plugin-settings.js';
 
 /** Replaces the OIDC client sync (tests: there is no Authelia to write to). */
 let oidcSyncOverride = null;
@@ -290,6 +294,7 @@ async function stageVersion(plugin, requestedVersion, record) {
     hooksEntrySha256: entrySha256,
     agent: manifest.agent,
     agentHalfPin,
+    settings: manifest.settings,
   };
   const approval = installedApproval(entry);
   return {
@@ -307,6 +312,22 @@ async function stageVersion(plugin, requestedVersion, record) {
     // The approval digest (relay hooks and agent half), or null when nothing needs approving.
     digest: approval.digest,
   };
+}
+
+/**
+ * How a staged version changes the settings schema, for the update's
+ * preview: fields added, removed and retyped (a retyped field's value is
+ * dropped on both sides, never converted) and the fields the plugin will
+ * need filled — null when neither version declares settings.
+ *
+ * @param {object} plugin the installed registry entry
+ * @param {object} manifest the staged version's manifest
+ */
+function settingsPreview(plugin, manifest) {
+  const installed = settingsBlockOf(plugin);
+  const staged = settingsBlockOf(manifest);
+  if (!installed && !staged) return null;
+  return settingsSchemaDiff(installed, staged);
 }
 
 /**
@@ -387,6 +408,7 @@ export async function updatePlugin(
           agentHalf: staged.agentHalf
             ? agentHalfPreview(derivePluginRoute(plugin.name), staged.agentHalf)
             : null,
+          settings: settingsPreview(plugin, staged.manifest),
           ...(withheld.length > 0 ? { autoApproveWithheld: withheld } : {}),
         };
         await setPendingUpdate(name, pendingUpdate);
@@ -576,6 +598,10 @@ async function applyUpdate(op, { plugin, staged, approvedBy, actor, logger }) {
   });
 
   if (result.status === 'succeeded') op.revealOidcClientSecrets(createdSecrets);
+
+  // The agent half may have dropped values the new version retyped or no
+  // longer knows (and keeps that after a revert): the relay re-reads them.
+  if (hosted) await refreshPluginSettingsBestEffort(name, logger);
 
   // Hooks the new version no longer has: the old runner goes once the new
   // version is in place.

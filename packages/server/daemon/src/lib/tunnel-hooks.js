@@ -9,6 +9,11 @@
  * up, or after a restart of the panel. The agent side of the pipeline runs
  * on the agent (its sync follows the relay's view of the tunnel).
  *
+ * Whenever the plugin comes up — after a `down`, or first seen up — the
+ * relay also re-reads its settings from the agent half: they may have
+ * changed while the relay could not see it (a restore, a retyped field
+ * dropped by a new version).
+ *
  * Calls for one plugin are serialised and run beside the monitor, which
  * does not wait for them.
  */
@@ -21,6 +26,7 @@ import {
 } from './plugin-hooks.js';
 import { runRelayHook } from './relay-hooks.js';
 import { rememberTunnelFallback } from './request-hooks.js';
+import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
 
 const chains = new Map();
 
@@ -34,6 +40,11 @@ export function onHealthTransition(plugin, before, after, logger) {
     .then(() => runTunnelHook(plugin, before, after, logger))
     .catch((err) => {
       logger?.error({ plugin, err: err?.message }, 'Tunnel-state hook pipeline failed');
+    })
+    .then(async () => {
+      if (after.state === 'up' && before?.state !== 'up') {
+        await refreshPluginSettingsBestEffort(plugin, logger);
+      }
     });
   chains.set(plugin, next);
   next.finally(() => {

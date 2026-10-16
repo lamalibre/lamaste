@@ -285,10 +285,12 @@ export async function hookStatus(plugin) {
  * A staged update waiting for approval as clients see it — in the hook
  * status and in the update response alike: its version, the digest to
  * approve it with, what it brings (its relay hook set and the agent half
- * Lamaste installs, each null when it brings none), and — when the plugin
- * has auto-approve on — why auto-approve did not cover it
- * (`autoApproveWithheld`, null otherwise). The stored record names the
- * relay hook set's preview `preview`.
+ * Lamaste installs, each null when it brings none), how it changes the
+ * settings schema (`settings`: `{ added, removed, retyped, newRequired }`,
+ * null when neither version declares settings — not part of the digest),
+ * and — when the plugin has auto-approve on — why auto-approve did not
+ * cover it (`autoApproveWithheld`, null otherwise). The stored record names
+ * the relay hook set's preview `preview`.
  */
 export function pendingUpdateView(pending) {
   return {
@@ -297,6 +299,7 @@ export function pendingUpdateView(pending) {
     stagedAt: pending.stagedAt,
     relay: pending.preview ?? null,
     agentHalf: pending.agentHalf ?? null,
+    settings: pending.settings ?? null,
     autoApproveWithheld: pending.autoApproveWithheld ?? null,
   };
 }

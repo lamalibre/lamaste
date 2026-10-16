@@ -69,10 +69,13 @@ async function getStmts() {
       INSERT INTO plugins
         (name, route, display_name, package_name, version, description, capabilities,
          packages, panel, config, modes, hosting, agent, hooks, hooks_entry_sha256,
-         agent_half_pin, status, installed_at, enabled_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         agent_half_pin, settings, status, installed_at, enabled_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     deleteByName: db.prepare('DELETE FROM plugins WHERE name = ?'),
+    // The relay's cache of the plugin's settings (lib/plugin-settings.js)
+    // goes with its row.
+    deleteSettingsByName: db.prepare('DELETE FROM plugin_settings WHERE plugin = ?'),
     deleteAll: db.prepare('DELETE FROM plugins'),
     updateStatusEnable: db.prepare(`
       UPDATE plugins SET status = 'enabled', enabled_at = ? WHERE name = ?
@@ -125,6 +128,7 @@ function rowToPlugin(row) {
   if (row.hooks != null) entry.hooks = JSON.parse(row.hooks);
   if (row.hooks_entry_sha256 != null) entry.hooksEntrySha256 = row.hooks_entry_sha256;
   if (row.agent_half_pin != null) entry.agentHalfPin = JSON.parse(row.agent_half_pin);
+  if (row.settings != null) entry.settings = JSON.parse(row.settings);
   if (row.enabled_at != null) entry.enabledAt = row.enabled_at;
   return entry;
 }
@@ -183,6 +187,7 @@ export async function writePlugins(data) {
         nullableJson(p.hooks),
         nullableString(p.hooksEntrySha256),
         nullableJson(p.agentHalfPin),
+        nullableJson(p.settings),
         p.status,
         p.installedAt,
         nullableString(p.enabledAt),
@@ -448,6 +453,7 @@ export function installPlugin(packageName, logger) {
       hooks: manifest.hooks,
       hooksEntrySha256,
       agentHalfPin,
+      settings: manifest.settings,
       status: 'disabled',
       installedAt: new Date().toISOString(),
     };
@@ -471,6 +477,7 @@ export function installPlugin(packageName, logger) {
         nullableJson(entry.hooks),
         nullableString(entry.hooksEntrySha256),
         nullableJson(entry.agentHalfPin),
+        nullableJson(entry.settings),
         entry.status,
         entry.installedAt,
         null,
@@ -543,10 +550,13 @@ export function uninstallPlugin(name, logger) {
       logger.warn({ err: err.message }, 'Failed to remove plugin state directory');
     });
 
-    // Remove from registry
+    // Remove from registry, with the cache of its settings (the agent half
+    // holds the settings themselves; a purge removed them, or they stay with
+    // the data an agent keeps of it)
     s.begin.run();
     try {
       s.deleteByName.run(name);
+      s.deleteSettingsByName.run(name);
       s.commit.run();
     } catch (err) {
       s.rollback.run();
@@ -593,7 +603,7 @@ const updateRowSql = `
   UPDATE plugins SET
     display_name = ?, version = ?, description = ?, capabilities = ?, packages = ?, panel = ?,
     config = ?, modes = ?, hosting = ?, agent = ?, hooks = ?, hooks_entry_sha256 = ?,
-    agent_half_pin = ?
+    agent_half_pin = ?, settings = ?
   WHERE name = ?`;
 
 /**
@@ -619,6 +629,7 @@ export async function writePluginRow(name, manifest, hooksEntrySha256, agentHalf
       nullableJson(manifest.hooks),
       nullableString(hooksEntrySha256),
       nullableJson(agentHalfPin),
+      nullableJson(manifest.settings),
       name,
     );
 }

@@ -29,6 +29,7 @@ import { getChiselCredentialIssuedAt } from '../../lib/chisel-users.js';
 import { buildChiselArgs } from '../../lib/chisel-args.js';
 import { listAgentPluginAssignments } from '../../lib/plugin-hosting.js';
 import { pendingAgentJobs } from '../../lib/agent-jobs.js';
+import { recordAgentContact } from '../../lib/agent-presence.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -236,6 +237,17 @@ export default async function tunnelRoutes(fastify, _opts) {
       // Parsed outside the try so a malformed ?agent= is a 400 from the
       // shared Zod error handler, not a 500 from the catch below.
       const { agent } = AgentConfigQuerySchema.parse(request.query);
+      // An agent's own call (its sync, every 30 s) is its contact with the
+      // relay — what the panel shows as when a hosting agent last synced.
+      // An admin naming an agent with ?agent= is not that agent's contact.
+      const caller = confinedLabel(request);
+      if (caller !== null && AGENT_LABEL_REGEX.test(caller)) {
+        try {
+          await recordAgentContact(caller);
+        } catch (err) {
+          request.log.warn({ err: err.message, agent: caller }, 'Failed to record agent contact');
+        }
+      }
       try {
         const config = getConfig();
         const tunnels = await readTunnels();

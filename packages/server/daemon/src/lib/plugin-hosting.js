@@ -62,6 +62,8 @@ import { relaySigner } from './relay-signing.js';
 import { findRetainedData, forgetRetainedData, listRetainedData } from './retained-data.js';
 import { recordAudit } from './audit.js';
 import { onHealthTransition } from './tunnel-hooks.js';
+import { agentLastSeenAt, agentPresenceMap } from './agent-presence.js';
+import { refreshPluginSettingsBestEffort } from './plugin-settings.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -336,7 +338,13 @@ export async function hostPlugin(name, agentLabel, { actor, logger, sourceIp }) 
     actor,
     params: { agentLabel },
     logger,
-    run: (op) => runInstallPipeline(op, ctx),
+    run: async (op) => {
+      const result = await runInstallPipeline(op, ctx);
+      // The agent half starts without settings — or with those it kept on
+      // this agent from an earlier hosting: the relay's cache follows it.
+      if (result.status === 'succeeded') await refreshPluginSettingsBestEffort(plugin.name, logger);
+      return result;
+    },
   });
   await logAgentHalfPush(push, operation.id, logger);
   return operation;
@@ -398,28 +406,42 @@ export async function isPluginHosted(name) {
 }
 
 /**
+ * The plugin's hosting as the panel shows it, with when its agent last
+ * synced (`agentLastSeenAt`, null when it never did since the panel knew).
+ *
  * @param {string} name
- * @returns {Promise<import('@lamalibre/lamaste/server').PluginHostingView | null>}
+ * @returns {Promise<(import('@lamalibre/lamaste/server').PluginHostingView & { agentLastSeenAt: string | null }) | null>}
  */
 export async function getHostingView(name) {
   const record = await ownHostingOf(name);
-  return record ? withLiveHealth(pluginHostingView(record)) : null;
+  if (!record) return null;
+  return {
+    ...withLiveHealth(pluginHostingView(record)),
+    agentLastSeenAt: await agentLastSeenAt(record.agentLabel),
+  };
 }
 
 /**
  * `agentHosting` for every plugin of a list — null for plugins that are not
- * hosted — and `retainedData`: what agents keep of the plugin's agent half
- * after it was removed without purge.
+ * hosted; with `agentLastSeenAt` as in {@link getHostingView} — and
+ * `retainedData`: what agents keep of the plugin's agent half after it was
+ * removed without purge.
  */
 export async function attachHostings(plugins) {
   const store = await readPluginHostings(STATE_DIR);
   const retained = await listRetainedData();
+  const lastSeen = await agentPresenceMap();
   return plugins.map((p) => {
     const record = p.route ? store[p.route] : undefined;
     const own = record && pluginHostingOwner(record) === p.name ? record : null;
     return {
       ...p,
-      agentHosting: own ? withLiveHealth(pluginHostingView(own)) : null,
+      agentHosting: own
+        ? {
+            ...withLiveHealth(pluginHostingView(own)),
+            agentLastSeenAt: lastSeen.get(own.agentLabel) ?? null,
+          }
+        : null,
       retainedData: retained.filter((r) => r.plugin === p.name),
     };
   });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
+import { AGENT_HALF_SETTINGS_MAX_BYTES, AGENT_LABEL_REGEX } from '@lamalibre/lamaste';
 import {
   readPlugins,
   installPlugin,
@@ -34,6 +34,11 @@ import {
   listPluginOperations,
   takeOperationReveal,
 } from '../../lib/plugin-operations.js';
+import {
+  attachSettingsSummaries,
+  getPluginSettingsView,
+  updatePluginSettings,
+} from '../../lib/plugin-settings.js';
 import { actorFromRequest, certSerialFromRequest } from '../../lib/actor.js';
 import { recordAudit } from '../../lib/audit.js';
 import {
@@ -108,6 +113,31 @@ function operationErrorBody(err, fallback) {
     ...(err.retained ? { retained: err.retained } : {}),
     ...(err.owner ? { route: err.route, owner: err.owner } : {}),
     ...(err.operationId ? { operationId: err.operationId } : {}),
+  };
+}
+
+/**
+ * The error body of a refused settings read or change: the message and what
+ * a client acts on — `code` (`no_settings`, `operation_running` with the
+ * operation's id, `hosting_offline` with the `hosting`, `revision_mismatch`
+ * with the current `revision`, `schema_mismatch`, `settings_unsupported`,
+ * `refused`, `timeout`, …) and `errors` per field (400: the panel's check,
+ * 422: the agent half's). Built from what the settings library put on the
+ * error — never from the request body.
+ */
+function settingsErrorBody(err, fallback) {
+  // Only the settings library's own refusals carry a status; anything else
+  // is answered without its message.
+  if (!err.statusCode) return { error: fallback };
+  return {
+    error: err.message,
+    ...(err.code ? { code: err.code } : {}),
+    ...(err.errors ? { errors: err.errors } : {}),
+    ...(Number.isInteger(err.revision) ? { revision: err.revision } : {}),
+    ...(err.operationId ? { operationId: err.operationId } : {}),
+    ...(err.hosting !== undefined ? { hosting: err.hosting } : {}),
+    // The agent half's own status, when it refused with an unexpected one.
+    ...(Number.isInteger(err.status) ? { status: err.status } : {}),
   };
 }
 
@@ -280,7 +310,10 @@ export default async function pluginRoutes(fastify, _opts) {
       // `retainedData`: what agents keep of its agent half after it was
       // removed without purge. `hooks`: its lifecycle hooks and their
       // approval (see GET /plugins/:name/hooks).
-      const plugins = await attachHostings(registry.plugins);
+      // `settings`: for a plugin that declares settings, whether it still
+      // needs configuration — { configured, missing, syncedAt }, no values
+      // (see GET /plugins/:name/settings).
+      const plugins = await attachSettingsSummaries(await attachHostings(registry.plugins));
       return {
         plugins: await Promise.all(plugins.map(withHooks)),
         // Every agent's retained data — of uninstalled plugins too, which
@@ -307,7 +340,7 @@ export default async function pluginRoutes(fastify, _opts) {
         return reply.code(404).send({ error: `Plugin "${params.name}" not found` });
       }
 
-      const [withHosting] = await attachHostings([plugin]);
+      const [withHosting] = await attachSettingsSummaries(await attachHostings([plugin]));
       return { plugin: await withHooks(withHosting) };
     },
   );
@@ -534,6 +567,86 @@ export default async function pluginRoutes(fastify, _opts) {
   );
 
   // ===========================================================================
+  // Settings of an agent-hosted plugin (kept by its agent half)
+  // ===========================================================================
+
+  // ------------------------------------------------------------------
+  // GET /plugins/:name/settings — { schemaVersion, fields, values, configured,
+  // missing, revision, source, syncedAt, hosting }: each non-secret field's
+  // effective value, each secret as { set: true, setAt } or { set: false }
+  // (never a value). Read from the agent half when its hosting is active
+  // and not down (`source: live`), else from the relay's cache (`cache`;
+  // `none` when never read). 404 `no_settings` for a plugin without them.
+  // ------------------------------------------------------------------
+  fastify.get(
+    '/plugins/:name/settings',
+    {
+      preHandler: fastify.requireRole(['admin']),
+    },
+    async (request, reply) => {
+      const params = PluginNameParamSchema.parse(request.params);
+      try {
+        return await getPluginSettingsView(params.name, { logger: request.log });
+      } catch (err) {
+        if (!err.statusCode) {
+          request.log.error(
+            { plugin: params.name, err: err.message },
+            'Failed to read the plugin settings',
+          );
+        }
+        return reply
+          .code(err.statusCode || 500)
+          .send(settingsErrorBody(err, 'Failed to read the plugin settings'));
+      }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // PUT /plugins/:name/settings { revision, values?, secrets? } — a partial
+  // change (`null` clears an optional field), sent through the tunnel to
+  // the agent half, which stores it: 200 with the settings as above. 400
+  // `errors` (checked here), 409 (`operation_running`, the agent half's
+  // `revision_mismatch` with `revision`, `schema_mismatch`), 422 `errors`
+  // (the agent half's check), 503 `hosting_offline` with `hosting`, 502
+  // `settings_unsupported` / `refused`, 504 `timeout`.
+  //
+  // The body may carry secrets. It is handed to the settings library once
+  // and dropped from the request; nothing here logs or repeats it.
+  // ------------------------------------------------------------------
+  fastify.put(
+    '/plugins/:name/settings',
+    {
+      preHandler: fastify.requireRole(['admin']),
+      bodyLimit: AGENT_HALF_SETTINGS_MAX_BYTES,
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    },
+    async (request, reply) => {
+      const body = request.body;
+      request.body = undefined;
+      const params = PluginNameParamSchema.parse(request.params);
+      try {
+        return await updatePluginSettings(params.name, body, {
+          actor: actorFromRequest(request),
+          certSerial: certSerialFromRequest(request),
+          logger: request.log,
+        });
+      } catch (err) {
+        if (!err.statusCode) {
+          // A failure of Lamaste's own (state.db, a malformed hosting record):
+          // its message names no value of the change.
+          request.log.error(
+            { plugin: params.name, err: err.message },
+            'Failed to change the plugin settings',
+          );
+        }
+        return reply
+          .code(err.statusCode || 500)
+          .send(settingsErrorBody(err, 'Failed to change the plugin settings'));
+      }
+    },
+  );
+
+  // ===========================================================================
   // Lifecycle hooks: review, approval, auto-approve
   // ===========================================================================
 
@@ -711,7 +824,8 @@ export default async function pluginRoutes(fastify, _opts) {
           details: { packageName: plugin.packageName, version: plugin.version },
         });
         // `hooks`: the relay hook set to review (and approve) before hosting.
-        return { ok: true, plugin, oidcClients, hooks: await hookStatus(plugin) };
+        const [listed] = await attachSettingsSummaries([plugin]);
+        return { ok: true, plugin: listed, oidcClients, hooks: await hookStatus(plugin) };
       } catch (err) {
         const statusCode = err.statusCode || 500;
         // `route_taken`: another installed plugin holds the route (`route`, `owner`).

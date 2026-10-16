@@ -27,6 +27,7 @@ import {
   rotateChiselCredential as rotateChiselCredentialLib,
 } from './chisel-users.js';
 import { getStateDb } from './state-db.js';
+import { agentPresenceMap, forgetAgentPresence } from './agent-presence.js';
 import { randomCertSerial, signAgentCsr } from './pki-sign.js';
 
 const PKI_DIR = process.env.LAMALIBRE_LAMASTE_PKI_DIR || '/etc/lamalibre/lamaste/pki';
@@ -577,14 +578,17 @@ export async function generateAgentCert(label, logger, capabilities, allowedSite
 }
 
 /**
- * List all agent certificates with expiry status and the host facts each
- * agent last reported. `status` sums a certificate up for the panel:
- * `revoked`, `expired`, `expiring-soon` (within 30 days) or `active`.
+ * List all agent certificates with expiry status, the host facts each
+ * agent last reported and when it last contacted the relay (`lastSeenAt`:
+ * its sync's agent-config call; null when it never did since it enrolled).
+ * `status` sums a certificate up for the panel: `revoked`, `expired`,
+ * `expiring-soon` (within 30 days) or `active`.
  *
- * @returns {Promise<Array<{ label: string, serial: string, createdAt: string, expiresAt: string, revoked: boolean, expiringSoon: boolean, status: 'active' | 'expiring-soon' | 'expired' | 'revoked', hostFacts: object | null, hostFactsAt: string | null }>>}
+ * @returns {Promise<Array<{ label: string, serial: string, createdAt: string, expiresAt: string, revoked: boolean, expiringSoon: boolean, status: 'active' | 'expiring-soon' | 'expired' | 'revoked', hostFacts: object | null, hostFactsAt: string | null, lastSeenAt: string | null }>>}
  */
 export async function listAgentCerts() {
   const registry = await loadAgentRegistry();
+  const lastSeen = await agentPresenceMap();
   const now = Date.now();
 
   return registry.agents.map((agent) => {
@@ -612,6 +616,7 @@ export async function listAgentCerts() {
       // What the agent last reported about its host (null until it has).
       hostFacts: agent.hostFacts ?? null,
       hostFactsAt: agent.hostFactsAt ?? null,
+      lastSeenAt: agent.revoked ? null : (lastSeen.get(agent.label) ?? null),
     };
     if (isPluginAgent) {
       entry.certType = 'plugin-agent';
@@ -792,6 +797,12 @@ export async function revokeAgentCert(label, logger) {
 
     // 4. Save registry atomically (includes both the agent and cascade-revoked plugin-agents)
     await saveAgentRegistry(registry);
+
+    // When the agent last synced: a later enrollment reusing the label
+    // starts without it.
+    await forgetAgentPresence(label).catch((err) => {
+      logger.warn({ err: err.message, label }, 'Failed to forget the agent presence');
+    });
 
     // 5. Remove agent's key/cert/p12 files (lamaste owns the agents directory)
     await execa('rm', ['-rf', `${AGENTS_DIR}/${label}/`]).catch((err) => {

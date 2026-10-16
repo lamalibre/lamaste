@@ -231,10 +231,13 @@ test('an update whose agent half changed waits for approval and is pinned again 
     'autoApproveWithheld',
     'digest',
     'relay',
+    'settings',
     'stagedAt',
     'version',
   ]);
   assert.equal(shown.pendingUpdate.autoApproveWithheld, null);
+  // Neither version declares settings.
+  assert.equal(shown.pendingUpdate.settings, null);
   assert.equal(shown.approval.state, 'approved', 'the installed version stays approved and live');
 
   // The registry's tarball is republished between review and approval:

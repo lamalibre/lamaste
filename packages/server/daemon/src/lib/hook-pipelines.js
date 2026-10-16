@@ -40,6 +40,9 @@
  * plugin that owns it; a teardown acts only on the plugin's own.
  *
  * Hook outputs are passed forward in `outputs` (`relay:install:pre-tunnel`, …).
+ * Relay stages see the plugin's effective non-secret settings (the relay's
+ * cache, `plugin-settings.js`); agent stages see none — the agent half holds
+ * them. The cache goes once the hosting it describes is removed.
  */
 
 import {
@@ -79,6 +82,7 @@ import { installedAgentHalf, installedRelayHooks } from './plugin-hooks.js';
 import { forgetRetainedData, recordRetainedData } from './retained-data.js';
 import { runRelayHook } from './relay-hooks.js';
 import { recordAuditBestEffort } from './audit.js';
+import { deleteSettingsCache, relayHookSettings } from './plugin-settings.js';
 import {
   tunnelNginxDeps,
   tunnelCertbotDeps,
@@ -97,15 +101,19 @@ const TUNNEL_READY_POLL_MS = 3_000;
 // Stages
 // ---------------------------------------------------------------------------
 
-/** The pipeline-wide context: who, what, and the outputs so far. */
-function lifecycleInput(ctx, phase) {
+/**
+ * The pipeline-wide context: who, what, and the outputs so far. `settings`
+ * is the plugin's effective non-secret settings for a relay stage, `{}` for
+ * an agent stage.
+ */
+function lifecycleInput(ctx, phase, settings = {}) {
   return {
     plugin: ctx.plugin.name,
     version: ctx.version ?? ctx.plugin.version,
     ...(ctx.previousVersion ? { previousVersion: ctx.previousVersion } : {}),
     phase,
     agent: { label: ctx.agentLabel },
-    settings: {},
+    settings,
     outputs: { ...ctx.outputs },
     ...(ctx.port ? { port: ctx.port } : {}),
   };
@@ -132,7 +140,7 @@ async function relayStage(op, ctx, stage, phase) {
       plugin: ctx.plugin.name,
       stage,
       call: { kind: 'app' },
-      input: lifecycleInput(ctx, phase),
+      input: lifecycleInput(ctx, phase, await relayHookSettings(ctx.plugin)),
       timeoutMs: decl.timeoutMs,
       effects: ctx.relay.set.effects,
       logger: ctx.logger,
@@ -821,6 +829,14 @@ export async function runUninstallPipeline(op, ctx, { force = false } = {}) {
       : null;
   await runTeardown(op, ctx, { phase: 'uninstall', force });
   await cancelAgentJobs(ctx.route).catch(() => undefined);
+  // The relay's cache of the settings describes the hosting's agent half:
+  // with the hosting gone it describes nothing (a later hosting reads them
+  // afresh — from data the agent kept, or none).
+  if (!(await getPluginHosting(STATE_DIR, ctx.route))) {
+    await deleteSettingsCache(ctx.plugin.name).catch((err) =>
+      op.warn(`Could not drop the cached settings: ${err.message}`),
+    );
+  }
   await recordAuditBestEffort(
     {
       actor: op.actor ?? 'admin',
