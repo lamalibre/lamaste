@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useOnboardingStatus } from './hooks/useOnboardingStatus.js';
 import {
   AdminClientProvider,
+  OidcSecretRevealProvider,
   ToastProvider,
   TwoFaProvider,
   DashboardPage,
@@ -75,11 +76,13 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <AdminClientProvider client={webAdminClient}>
         <ToastProvider>
-          <TwoFaProvider>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
-          </TwoFaProvider>
+          <OidcSecretRevealProvider>
+            <TwoFaProvider>
+              <BrowserRouter>
+                <AppRoutes />
+              </BrowserRouter>
+            </TwoFaProvider>
+          </OidcSecretRevealProvider>
         </ToastProvider>
       </AdminClientProvider>
     </QueryClientProvider>

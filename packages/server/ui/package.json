@@ -16,7 +16,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",

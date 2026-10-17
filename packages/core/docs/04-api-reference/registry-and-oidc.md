@@ -53,7 +53,9 @@ What the panel writes for a public client: `public: true`, `token_endpoint_auth_
 
 ### Secrets of confidential clients
 
-The panel mints a 32-byte secret when a confidential client first appears (at install — the secret belongs to an installed plugin, enabled or not), stores the plaintext in `/etc/lamalibre/lamaste/oidc-clients.json` (0600) and writes only the digest into Authelia. The plaintext is shown exactly once: in the response of the `POST /api/plugins/install` (or `enable`) call that created it, as `oidcClients: [{ id, secret }]`, and again by `rotate-secret`. Uninstalling the plugin deletes the secret; disabling keeps it.
+The panel mints a 32-byte secret when a confidential client first appears (at install — the secret belongs to an installed plugin, enabled or not), stores the plaintext in `/etc/lamalibre/lamaste/oidc-clients.json` (0600) and writes only the digest into Authelia. The plaintext is shown exactly once: in the response of the `POST /api/plugins/install` (or `enable`) call that created it, as `oidcClients: [{ id, secret }]` — or, when an update of an agent-hosted plugin adds the client, on the first read of the finished update operation ([Operations](lifecycle-hooks.md#operations)) — and again by `rotate-secret`. Uninstalling the plugin deletes the secret; disabling keeps it.
+
+The panel's Plugins page — and the desktop app, which reuses it — shows the secrets an install, enable or update created in a dialog the administrator must acknowledge: each client id with its secret and a copy button, and the warning that it is shown once. The secrets go from the response to that dialog only: not into the page's query cache, the browser's storage or a log, and they are gone once acknowledged. An update started from the page is read as it ends. One started elsewhere — another panel, `lamaste-server`, or the page before a reload — is offered on the plugin's card (**Show the secrets**) instead of read unasked, so the CLI following its own update still prints them.
 
 ### Where the clients are served
 
