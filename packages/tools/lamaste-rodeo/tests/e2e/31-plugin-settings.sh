@@ -663,7 +663,9 @@ assert_eq "$(secret_lines "${PRIV}/state.sql")" "0" "state.db, dumped ($(wc -l <
 assert_eq "$(grep -q 'plugin_settings' "${PRIV}/state.sql" 2>/dev/null && echo "yes" || echo "no")" "yes" "…the dump holds plugin_settings" || true
 journalctl --since "@${SPEC_START}" --no-pager -o cat > "${PRIV}/journal.txt" 2>/dev/null || true
 assert_eq "$(secret_lines "${PRIV}/journal.txt")" "0" "The journal since the spec started ($(wc -l < "${PRIV}/journal.txt" | tr -d ' ') lines) holds none" || true
-FILES=$(grep -rlaF --devices=skip -f "${PRIV}/patterns" /etc/lamalibre /var/lib/lamalibre /opt/lamalibre 2>/dev/null | wc -l | tr -d ' ')
+# grep exits 1 when nothing matches — the outcome asserted — which pipefail
+# would turn into the end of the spec; count the files instead.
+FILES=$({ grep -rlaF --devices=skip -f "${PRIV}/patterns" /etc/lamalibre /var/lib/lamalibre /opt/lamalibre 2>/dev/null || true; } | wc -l | tr -d ' ')
 assert_eq "$FILES" "0" "No file under /etc/lamalibre, /var/lib/lamalibre or /opt/lamalibre holds it" || true
 assert_eq "$(secret_lines "${PRIV}/responses.log")" "0" "No answer read holds it ($(grep -c '^### ' "${PRIV}/responses.log") answers, the audit log among them)" || true
 # Keys and counts only: a secret the relay wrongly cached is not printed here.
