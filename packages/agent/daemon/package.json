@@ -15,6 +15,7 @@
     "panel-dist"
   ],
   "scripts": {
+    "prepack": "node scripts/bundle-panel.js",
     "lint": "eslint .",
     "test": "node --test test/*.test.js"
   },

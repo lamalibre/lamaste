@@ -12,7 +12,8 @@
     "./lib/*": "./src/lib/*"
   },
   "scripts": {
-    "build:web": "vite build"
+    "prepack": "node ../../../scripts/assert-production-bundle.js dist-web lamaste-agent-ui/dist-web",
+    "build": "vite build"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",

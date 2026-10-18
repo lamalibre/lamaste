@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **create-lamaste up to 4.2 vendored a development build of the panel**: built in a shell that exported `NODE_ENV=development`, Vite emitted React's development build — slower, and carrying the absolute path of every source file on the machine that built it. (4.3.0 was published from production builds.) `vite build` is now a production build whatever `NODE_ENV` the shell exports (the panel, the agent panel, the desktop app), and packing refuses a development bundle: create-lamaste's vendoring, lamaste-agent-ui, and lamaste-agentd — whose `panel-dist/` its prepack now rebuilds from lamaste-agent-ui's `npm run build` output, emptied first, where a hand-run copy used to leave stale assets (the root `build:agent-panel-web` script is gone). create-lamaste's vendoring also refuses to pack without Gatekeeper's build instead of skipping it.
+- The panel's sidebar showed `v0.1.0` whatever version was installed, and the agent panel's and desktop app's Settings page said "Lamaste Desktop v0.1.0" — in the agent panel too. Both now show the installed version, read from their package at build time; the agent panel names itself.
 - **The agent's programs swept every curl config file in its directory when they started**, including one another process had just written and not yet handed to curl — another `lamaste-agent`, the agent daemon (each time it created a panel client, so also its own requests in flight) or the desktop app, which now writes one for every panel call. A request whose config vanished failed. Only files older than five minutes are removed now (`sweepStaleCurlConfigs` in `@lamalibre/lamaste/agent`).
 
 ### Security

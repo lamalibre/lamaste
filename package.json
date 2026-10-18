@@ -11,7 +11,6 @@
     "dev:client": "npm run dev -w packages/server/ui",
     "docs:dev": "npm --prefix website run dev",
     "docs:build": "npm --prefix website run build",
-    "build:agent-panel-web": "npm run build:web -w packages/agent/ui && cp -r packages/agent/ui/dist-web/. packages/agent/daemon/panel-dist/",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

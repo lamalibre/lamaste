@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import SidebarLink from './SidebarLink.jsx';
 import { useAdminClient } from '../../admin/index.js';
+import { version } from '../../../package.json';
 
 const iconMap = {
   activity: Activity,
@@ -158,7 +159,7 @@ function SidebarContent({ onLinkClick }) {
       </nav>
 
       <div className="border-t border-zinc-800 px-4 py-3">
-        <span className="font-mono text-xs text-zinc-600">v0.1.0</span>
+        <span className="font-mono text-xs text-zinc-600">v{version}</span>
       </div>
     </>
   );

@@ -16,6 +16,7 @@ import {
 import { useAgentClient } from '../context/AgentClientContext.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
+import { version } from '../../package.json';
 
 export default function SettingsPage({ agentLabel, onUninstalled }) {
   const client = useAgentClient();
@@ -276,8 +277,16 @@ export default function SettingsPage({ agentLabel, onUninstalled }) {
       {/* About */}
       <div className="mt-4 bg-zinc-900 border border-zinc-800 rounded-lg p-5">
         <h2 className="text-xs font-medium uppercase text-zinc-400 mb-3">About</h2>
-        <p className="text-sm text-zinc-300">Lamaste Desktop v0.1.0</p>
-        <p className="text-xs text-zinc-500 mt-1">Cross-platform tunnel agent with system tray</p>
+        {window.__TAURI_INTERNALS__ ? (
+          <>
+            <p className="text-sm text-zinc-300">Lamaste Desktop v{version}</p>
+            <p className="text-xs text-zinc-500 mt-1">
+              Cross-platform tunnel agent with system tray
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-zinc-300">Lamaste agent panel v{version}</p>
+        )}
       </div>
 
       {/* Danger Zone */}
