@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-10-18
+
+All lockstep packages, the desktop crate and its Tauri config move to 4.4.0; internal `@lamalibre/*` ranges become `^4.4.0`.
+
 ### Upgrade notes
 
-- **On every agent that hosts app plugins' agent halves, run `sudo lamaste-agent apphost enable` again after upgrading lamaste-agent.** The helper it installs root-owned (`/usr/local/sbin/lamaste-apphost`) is not replaced by an upgrade of the package, and the 4.4 helper speaks app host protocol 2: it holds each agent half's port in a socket unit (see Security). Until it is installed, the agent refuses to install agent halves (`the app host helper speaks protocol 1; this agent needs 2`) and the relay does not offer that agent for hosting; agent halves already installed keep running under their 4.3 units until their next update.
-- **Agent halves built against 4.3 must be rebuilt** against this version of `@lamalibre/lamaste` (agent halves bundle it): the relay now believes an agent half's answers only when they carry its responder signature, and sends settings secrets sealed (see Security). An agent half that does not sign its answers is down (`app`) to the health monitor, its pages and API answer `502`, and its settings and hook calls fail as `unauthenticated`. Core's handlers now return the answer serialized — send `status`, `headers` and `bodyText` (byte for byte), and pass the request body as received. An agent half Lamaste installs must also listen via `agentHalfListenTarget()` — systemd holds its port; one that binds the port itself fails with `EADDRINUSE`. No production agent half exists yet; the rodeo fixtures are rebuilt.
+**Upgrade the relay first, then the agents, then rebuild the agent halves.** A 4.4 relay believes an agent half's answers only when they carry its responder signature, and offers an agent for hosting only once its app host helper speaks protocol 2.
+
+1. **The relay**: the panel's Update action (`create-lamaste@4.4.0 --yes` in a transient unit) or a `create-lamaste@4.4.0 --yes` redeploy. On its first start the panel applies migration `0012` (the settings cache and agent presence); the redeploy rewrites its secret holders' units so they dump no core (see Security).
+2. **Every agent**: `sudo npm install -g @lamalibre/lamaste-agent@4.4.0`, then `lamaste-agent update` as the agent's user.
+3. **On every agent that hosts app plugins' agent halves, run `sudo lamaste-agent apphost enable` again after upgrading lamaste-agent.** The helper it installs root-owned (`/usr/local/sbin/lamaste-apphost`) is not replaced by an upgrade of the package, and the 4.4 helper speaks app host protocol 2: it holds each agent half's port in a socket unit (see Security). Until it is installed, the agent refuses to install agent halves (`the app host helper speaks protocol 1; this agent needs 2`) and the relay does not offer that agent for hosting; agent halves already installed keep running under their 4.3 units until their next update.
+4. **Agent halves built against 4.3 must be rebuilt** against this version of `@lamalibre/lamaste` (agent halves bundle it): the relay now believes an agent half's answers only when they carry its responder signature, and sends settings secrets sealed (see Security). An agent half that does not sign its answers is down (`app`) to the health monitor, its pages and API answer `502`, and its settings and hook calls fail as `unauthenticated`. Core's handlers now return the answer serialized — send `status`, `headers` and `bodyText` (byte for byte), and pass the request body as received. An agent half Lamaste installs must also listen via `agentHalfListenTarget()` — systemd holds its port; one that binds the port itself fails with `EADDRINUSE`. No production agent half exists yet; the rodeo fixtures are rebuilt.
 
 ### Added
 

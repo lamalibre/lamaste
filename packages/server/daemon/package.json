@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-serverd",
-  "version": "4.3.1",
+  "version": "4.4.0",
   "description": "Lamaste server daemon — REST API and plugin host",
   "license": "SEE LICENSE IN LICENSE.md",
   "publishConfig": {
@@ -29,7 +29,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^9.1.1",
     "@fastify/websocket": "^11.0.0",
-    "@lamalibre/lamaste": "^4.3.1",
+    "@lamalibre/lamaste": "^4.4.0",
     "bcryptjs": "^3.0.3",
     "execa": "^9.6.1",
     "fastify": "^5.8.4",

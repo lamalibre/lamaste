@@ -33,7 +33,7 @@ lamaste-agent update
 
 `update` applies the panel's configuration, restarts the tunnel client, and installs the sync timer (which applies later tunnel changes within 30 seconds). An agent originally set up with `npx` must be installed globally first — the sync timer runs the installed program. On Linux it also rewrites the agent panel's user unit so the panel starts at boot. An agent from before 4.0 rotates its Chisel credential once on its first sync, because older versions exposed it in process arguments and 0644 unit files. The Desktop App updates the agents it manages.
 
-A machine that hosts app plugins' agent halves needs the root-owned install shown above and its app host helper enabled once with `sudo lamaste-agent apphost enable` (see [App host](../04-api-reference/app-host.md)); after replacing the server's relay signing key, run `sudo lamaste-agent apphost pin` there.
+A machine that hosts app plugins' agent halves needs the root-owned install shown above and its app host helper enabled once with `sudo lamaste-agent apphost enable` (see [App host](../04-api-reference/app-host.md)); after replacing the server's relay signing key, run `sudo lamaste-agent apphost pin` there. An upgrade of `lamaste-agent` does not replace that helper: when a release raises the app host protocol (4.4 speaks 2), run `sudo lamaste-agent apphost enable` again there — until then the agent refuses to install agent halves and the server does not offer it for hosting (`lamaste-agent apphost status` shows the helper as out of date).
 
 ### Updating Lamaste (Panel Server and Client)
 
