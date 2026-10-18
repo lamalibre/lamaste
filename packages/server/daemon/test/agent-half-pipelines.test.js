@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  APPHOST_PROTOCOL_VERSION,
   CALLER_ASSERTION_HEADER,
   NonceStore,
   RESPONDER_HEADER,
@@ -52,7 +53,7 @@ const LINUX = {
   distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
   node: '22.13.1',
   systemd: true,
-  apphost: { version: 1, node: '22.13.1', relayKid: null },
+  apphost: { version: APPHOST_PROTOCOL_VERSION, node: '22.13.1', relayKid: null },
 };
 /** The relay's signing key (its public half, as agents verify with it). */
 let relayKey;

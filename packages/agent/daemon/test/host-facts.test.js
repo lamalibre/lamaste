@@ -93,7 +93,11 @@ const KID = 'ab'.repeat(16);
 test('gather: a Linux agent with systemd and the helper; validated against the schema', async () => {
   const facts = await agent.gatherHostFacts(LABEL, {
     ...linux(),
-    appHost: async () => ({ version: 1, node: '22.11.0', relayKid: KID }),
+    appHost: async () => ({
+      version: core.APPHOST_PROTOCOL_VERSION,
+      node: '22.11.0',
+      relayKid: KID,
+    }),
   });
   assert.deepEqual(facts, {
     os: 'linux',
@@ -101,7 +105,7 @@ test('gather: a Linux agent with systemd and the helper; validated against the s
     distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
     node: '22.13.1',
     systemd: true,
-    apphost: { version: 1, node: '22.11.0', relayKid: KID },
+    apphost: { version: core.APPHOST_PROTOCOL_VERSION, node: '22.11.0', relayKid: KID },
   });
   assert.ok(core.HostFactsSchema.safeParse(facts).success);
   const eligible = core.hostEligibility(

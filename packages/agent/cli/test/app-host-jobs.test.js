@@ -101,7 +101,7 @@ const signatureLine = (j) => `${JSON.stringify(j.signature)}\n`;
 
 const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', timedOut: false });
 const failed = (stderr, exitCode = 1) => ({ exitCode, stdout: '', stderr, timedOut: false });
-const READY = { state: 'ready', status: { protocol: 1, node: '22.13.1', apps: {} } };
+const READY = { state: 'ready', status: { protocol: 2, node: '22.13.1', apps: {} } };
 
 /** A fake helper that records its calls and answers from `answers[command]`. */
 function fakeHelper(answers = {}) {
@@ -246,11 +246,14 @@ test('install: without the helper it fails at once with the remedy; an unusable 
     deps: {
       appHostStatus: async () => ({
         state: 'ready',
-        status: { protocol: 0, node: '22.13.1', apps: {} },
+        status: { protocol: 1, node: '22.13.1', apps: {} },
       }),
     },
   });
-  assert.match((await old.h.install(job('app-install', { spec: spec() }))).error, /protocol 0/);
+  assert.match(
+    (await old.h.install(job('app-install', { spec: spec() }))).error,
+    /protocol 1; this agent needs 2/,
+  );
 });
 
 test('install: waits for the plugin config; the public registry when the panel brokers none', async () => {
@@ -448,7 +451,7 @@ test('deliverer: config on stdin; not installed is not an error; a failure throw
 
 const readyWith = (apps) => async () => ({
   state: 'ready',
-  status: { protocol: 1, node: '22.13.1', apps },
+  status: { protocol: 2, node: '22.13.1', apps },
 });
 
 test('install: a route the helper says another agent owns is refused before anything is fetched', async () => {

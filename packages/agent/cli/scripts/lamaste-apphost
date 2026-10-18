@@ -1,7 +1,7 @@
 #!/usr/bin/node
 /**
  * lamaste-apphost — the root half of a Lamaste agent that hosts the agent
- * halves of agent-hosted plugins (protocol 1).
+ * halves of agent-hosted plugins (protocol 2).
  *
  * The agent runs as an unprivileged user. Installing an agent half needs
  * root — a system account, a system unit, directories under /opt, /var/lib
@@ -102,7 +102,7 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
 
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Names, paths and patterns (identical to @lamalibre/lamaste)

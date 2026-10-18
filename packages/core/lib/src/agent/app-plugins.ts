@@ -359,7 +359,7 @@ export async function syncAppPluginConfigs(
 // ---------------------------------------------------------------------------
 
 export interface CallerAssertionVerifierOptions {
-  /** The config file the agent wrote for this plugin (`LAMALIBRE_LAMASTE_APP_PLUGIN_CONFIG`). */
+  /** The config file the agent wrote for this plugin (`LAMASTE_APP_CONFIG` in the unit of an agent half Lamaste installs). */
   readonly configPath: string;
   /** The plugin's route; assertions for another plugin are refused. */
   readonly plugin: string;

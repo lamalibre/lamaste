@@ -233,8 +233,13 @@ function agentLabel(label: string): string {
   return label;
 }
 
-/** The protocol of `lamaste-apphost` this Lamaste speaks; an agent's helper must be at least this. */
-export const APPHOST_PROTOCOL_VERSION = 1;
+/**
+ * The protocol of `lamaste-apphost` this Lamaste speaks; an agent's helper must be at least this.
+ * 2 (4.4): a socket unit holds each agent half's port and hands it to the agent half; the unit
+ * restarts always and dumps no core. An agent with a protocol 1 helper (4.3) refuses to install
+ * agent halves until `sudo lamaste-agent apphost enable` installs the current one.
+ */
+export const APPHOST_PROTOCOL_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Approval preview

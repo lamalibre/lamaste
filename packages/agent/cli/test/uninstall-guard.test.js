@@ -34,7 +34,7 @@ after(async () => {
 const ready = (routes) => async () => ({
   state: 'ready',
   status: {
-    protocol: 1,
+    protocol: 2,
     node: '22.13.1',
     apps: Object.fromEntries(
       routes.map((entry) => {

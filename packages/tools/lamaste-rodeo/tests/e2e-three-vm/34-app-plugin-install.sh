@@ -192,7 +192,7 @@ if [ "$(app_host_helper_was_enabled)" != "true" ]; then
   ENABLE_OUT=$(agent_exec "lamaste-agent apphost enable --user root --json 2>&1" 2>/dev/null || echo "")
   ENABLE_JSON=$(echo "$ENABLE_OUT" | grep -E '^\{' | tail -n 1 || echo '{}')
   assert_json_field "$ENABLE_JSON" '.ok' 'true' "apphost enable --user root ($(echo "$ENABLE_OUT" | tail -c 200))" || true
-  assert_json_field "$ENABLE_JSON" '.protocol' '1' "…installed the helper, protocol 1" || true
+  assert_json_field "$ENABLE_JSON" '.protocol' '2' "…installed the helper, protocol 2" || true
   assert_json_field "$ENABLE_JSON" '.sudoers' 'null' "…and no sudoers rule: the agent runs as root" || true
   assert_json_field "$ENABLE_JSON" "[.relays[]? | select(.label == \"${AGENT_LABEL}\")] | first | \"\(.kid) \(.agent)\"" "${RELAY_KID} ${HOST_AGENT_LABEL}" "…and pinned the relay's key for ${AGENT_LABEL}, with the name the relay knows it by" || true
 else
@@ -220,7 +220,7 @@ else
 fi
 HOST_FACTS=$(agent_host_facts)
 assert_json_field "$HOST_FACTS" '"\(.os) \(.systemd)"' 'linux true' "Host facts: Linux, systemd" || true
-assert_json_field "$HOST_FACTS" '.apphost.version' '1' "Host facts: helper protocol 1" || true
+assert_json_field "$HOST_FACTS" '.apphost.version' '2' "Host facts: helper protocol 2" || true
 assert_json_field "$HOST_FACTS" '.apphost.node' "${NODE_ON_AGENT}" "Host facts: the helper's Node.js" || true
 assert_json_field "$HOST_FACTS" '.apphost.relayKid' "${RELAY_KID}" "Host facts: the relay key the helper verifies jobs with" || true
 assert_json_field "$HOST_FACTS" '.distro.id == "ubuntu" or ((.distro.idLike // []) | index("debian") != null)' 'true' "Host facts: a Debian-family distribution ($(json_get "$HOST_FACTS" '.distro.id') $(json_get "$HOST_FACTS" '.distro.versionId'))" || true

@@ -228,7 +228,7 @@ test('names and paths: unit, helper and per-route directories', () => {
   assert.throws(() => APPHOST_PATHS.dataDir('../etc'), /Invalid plugin route/);
   assert.throws(() => appUnitName('fx.service'), /Invalid plugin route/);
   assert.ok(Object.isFrozen(APPHOST_PATHS));
-  assert.equal(APPHOST_PROTOCOL_VERSION, 1);
+  assert.equal(APPHOST_PROTOCOL_VERSION, 2);
 });
 
 test('spec: integrity is a sha512 SRI; the spec is checked strictly', () => {
@@ -354,7 +354,7 @@ const ubuntu = {
   distro: { id: 'ubuntu', idLike: ['debian'], versionId: '24.04' },
   node: '22.13.1',
   systemd: true,
-  apphost: { version: 1, node: '22.13.1', relayKid: RELAY_KID },
+  apphost: { version: APPHOST_PROTOCOL_VERSION, node: '22.13.1', relayKid: RELAY_KID },
 };
 
 const mac = {
@@ -456,7 +456,7 @@ test('hostEligibility: each reason', () => {
       ...ubuntu,
       apphost: { version: APPHOST_PROTOCOL_VERSION - 1, node: '22.13.1', relayKid: RELAY_KID },
     }).join(),
-    /speaks protocol 0; this relay needs 1/,
+    /speaks protocol 1; this relay needs 2 \(update lamaste-agent, then sudo lamaste-agent apphost enable\)/,
   );
   // The helper runs only what this relay signed: it must trust the key the relay signs with.
   assert.deepEqual(
@@ -527,7 +527,7 @@ test('hostEligibility: requires.node is checked against the Node.js the agent ha
   const split = {
     ...ubuntu,
     node: '20.11.0',
-    apphost: { version: 1, node: '24.1.0', relayKid: RELAY_KID },
+    apphost: { version: APPHOST_PROTOCOL_VERSION, node: '24.1.0', relayKid: RELAY_KID },
   };
 
   // Lamaste installs the agent half: it runs on the helper's Node.js.
