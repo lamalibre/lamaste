@@ -172,9 +172,12 @@ export function parseInput(field, input, { badInput = false } = {}) {
  * Whether a non-secret field's input differs from its initial input —
  * numerically for numbers (`3` and `3.0` are the same value), and always
  * for a number input the browser could not parse. Tests no pattern, so it
- * is cheap enough to run on every render.
+ * is cheap enough to run on every render. A field the form holds no input
+ * for (`undefined` — added to the schema while the form was open) is no
+ * change: the administrator never saw it, so it is neither sent nor checked.
  */
 export function inputChanged(field, initial, input, { badInput = false } = {}) {
+  if (input === undefined) return false;
   if (field.type === 'integer' || field.type === 'number') {
     if (badInput) return true;
     const before = typeof initial === 'string' ? initial.trim() : '';
@@ -185,6 +188,20 @@ export function inputChanged(field, initial, input, { badInput = false } = {}) {
     return Number.isNaN(a) || Number.isNaN(b) ? before !== after : a !== b;
   }
   return initial !== input;
+}
+
+/**
+ * A key that changes whenever the settings schema does — any field added,
+ * removed, retyped or redefined: the fields' JSON (fifty at most). The
+ * agent half keeps its revision when it adopts a new schema, so the form is
+ * keyed by this as well as by the revision: a form opened on the old schema
+ * starts over on the new one.
+ *
+ * @param {Array<object> | undefined} fields
+ * @returns {string}
+ */
+export function settingsSchemaKey(fields) {
+  return JSON.stringify(fields ?? []);
 }
 
 /**

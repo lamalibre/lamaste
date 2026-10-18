@@ -33,6 +33,7 @@ import {
   secretState,
   secretStatusText,
   settingsErrorsOf,
+  settingsSchemaKey,
   settingsSourceText,
 } from '../lib/pluginSettings.js';
 
@@ -560,7 +561,7 @@ function SettingsPanel({ pluginName }) {
         </p>
       )}
       <SettingsForm
-        key={`${view.revision}:${resets}`}
+        key={`${view.revision}:${settingsSchemaKey(view.fields)}:${resets}`}
         pluginName={pluginName}
         view={view}
         readOnly={readOnlyReason !== null}
