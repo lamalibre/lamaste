@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  KeyRound,
   Loader2,
   Minus,
   ShieldAlert,
@@ -18,8 +19,10 @@ import {
 } from 'lucide-react';
 import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { useToast } from './Toast.jsx';
+import { useOidcSecretReveal } from './OidcSecretReveal.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { refusalText } from '../lib/pluginRefusal.js';
+import { markSecretsRead, operationSecretsAction, withoutSecrets } from '../lib/oidcSecrets.js';
 import { settingsDiffRows } from '../lib/pluginSettings.js';
 
 /** `0123…cdef` — enough of a digest to compare by eye. */
@@ -60,6 +63,7 @@ const KIND_LABEL = {
  * purging the data an agent kept of its agent half) and
  * its steps, followed while it runs. Shown until it is older than ten
  * minutes, so an outcome — a rollback, a failed stage — stays visible.
+ * Below it, the client secrets its operations created, shown once.
  */
 export function PluginOperation({ plugin }) {
   const client = useAdminClient();
@@ -69,7 +73,8 @@ export function PluginOperation({ plugin }) {
     queryFn: () => client.getPluginOperations(plugin),
     refetchInterval: (q) => (q.state.data?.operations?.[0]?.status === 'running' ? 2000 : 15000),
   });
-  const op = query.data?.operations?.[0];
+  const operations = query.data?.operations;
+  const op = operations?.[0];
   const status = op?.status;
   const previousStatus = useRef(status);
   useEffect(() => {
@@ -81,11 +86,20 @@ export function PluginOperation({ plugin }) {
     }
     previousStatus.current = status;
   }, [status, plugin, queryClient]);
-  if (!op) return null;
-  const finished = op.finishedAt ? Date.parse(op.finishedAt) : null;
+  const finished = op?.finishedAt ? Date.parse(op.finishedAt) : null;
   // Measured against when the list was fetched, which the query refreshes.
-  if (finished && query.dataUpdatedAt - finished > 10 * 60_000) return null;
+  const recent = op != null && !(finished && query.dataUpdatedAt - finished > 10 * 60_000);
 
+  return (
+    <>
+      {recent && <OperationSteps op={op} />}
+      <OperationSecrets plugin={plugin} operations={operations} />
+    </>
+  );
+}
+
+/** An operation's outcome, steps and warnings. */
+function OperationSteps({ op }) {
   return (
     <div className="rounded border border-zinc-800 bg-zinc-950/60 p-3 mb-4 text-xs">
       <div className="flex items-center gap-2 mb-2">
@@ -125,6 +139,96 @@ export function PluginOperation({ plugin }) {
       {op.error && op.status !== 'running' && <p className="mt-2 text-red-400">{op.error}</p>}
     </div>
   );
+}
+
+/**
+ * The secrets of confidential OIDC clients a finished operation created (an
+ * update adding one), which the panel hands out on one read of the
+ * operation. Read at once for an operation started from this panel; offered
+ * for one started elsewhere — another panel, the CLI, this page before a
+ * reload — and read only when the administrator asks, so the CLI following
+ * its own operation still gets them.
+ */
+function OperationSecrets({ plugin, operations }) {
+  const client = useAdminClient();
+  const queryClient = useQueryClient();
+  const addToast = useToast();
+  const { reveal, followState, claimOperation, releaseOperation } = useOidcSecretReveal();
+
+  const pending = useMemo(
+    () =>
+      (operations ?? [])
+        .map((op) => ({ op, action: operationSecretsAction(op, followState(op.id)) }))
+        .filter(({ action }) => action !== null),
+    [operations, followState],
+  );
+
+  const read = useCallback(
+    async (op, { asked }) => {
+      if (!claimOperation(op.id)) return;
+      try {
+        // Straight from the response to the dialog: not through the query cache.
+        const { operation } = await client.getPluginOperation(plugin, op.id);
+        const { secrets } = withoutSecrets(operation);
+        queryClient.setQueryData(['plugin-operations', plugin], (data) =>
+          markSecretsRead(data, op.id),
+        );
+        if (secrets.length > 0) reveal({ plugin, cause: op.kind, secrets });
+        else if (asked) {
+          addToast(
+            'Nothing to show — the secrets were shown elsewhere, or waited more than an hour',
+            'error',
+          );
+        }
+      } catch (err) {
+        addToast(`Could not read the client secrets: ${errorMessage(err)}`, 'error');
+      } finally {
+        releaseOperation(op.id);
+        // A list fetched before this read still says the secrets wait.
+        queryClient.invalidateQueries({ queryKey: ['plugin-operations', plugin] });
+      }
+    },
+    [plugin, client, queryClient, addToast, reveal, claimOperation, releaseOperation],
+  );
+
+  useEffect(() => {
+    for (const { op, action } of pending) {
+      if (action === 'read') read(op, { asked: false });
+      else if (action === 'forget') releaseOperation(op.id);
+    }
+  }, [pending, read, releaseOperation]);
+
+  const notices = pending.filter(({ action }) => action !== 'forget');
+  if (notices.length === 0) return null;
+  return notices.map(({ op, action }) => (
+    <div
+      key={op.id}
+      className="flex flex-wrap items-center gap-2 rounded border border-amber-500/30 bg-amber-500/5 p-3 mb-4 text-xs"
+    >
+      <KeyRound size={12} className="shrink-0 text-amber-400" />
+      {action === 'offer' ? (
+        <>
+          <span className="flex-1 text-amber-400">
+            {KIND_LABEL[op.kind] ?? op.kind}
+            {op.finishedAt ? ` (${new Date(op.finishedAt).toLocaleString()})` : ''} created
+            confidential OIDC client secrets that were not shown yet. They are shown once.
+          </span>
+          <button
+            type="button"
+            onClick={() => read(op, { asked: true })}
+            className="rounded bg-amber-600 px-2.5 py-1 text-white hover:bg-amber-500"
+          >
+            Show the secrets
+          </button>
+        </>
+      ) : (
+        <span className="flex items-center gap-1.5 text-zinc-400">
+          <Loader2 size={12} className="animate-spin" />
+          Reading the new client secrets…
+        </span>
+      )}
+    </div>
+  ));
 }
 
 /** The relay hook set an approval covers, fail-open hooks marked. */
@@ -468,6 +572,7 @@ export function PluginHooks({ plugin, isActing }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const addToast = useToast();
+  const { followOperation } = useOidcSecretReveal();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(null);
 
@@ -484,6 +589,9 @@ export function PluginHooks({ plugin, isActing }) {
   const approve = useMutation({
     mutationFn: ({ digest, version }) => client.approvePluginHooks(plugin.name, digest, version),
     onSuccess: (data) => {
+      // Approving a pending update starts it: the client secrets it
+      // creates are shown when it ends.
+      if (data.operation) followOperation(data.operation.id);
       refresh();
       addToast(data.operation ? `Approved — updating ${plugin.name}` : `${plugin.name}: approved`);
     },
@@ -673,10 +781,13 @@ export function PluginUpdate({ plugin, isActing }) {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const addToast = useToast();
+  const { followOperation } = useOidcSecretReveal();
   const [version, setVersion] = useState('');
   const update = useMutation({
     mutationFn: () => client.updatePlugin(plugin.name, version.trim() || undefined),
     onSuccess: (data) => {
+      // The client secrets the update creates are shown when it ends.
+      if (data.operation) followOperation(data.operation.id);
       invalidatePluginLifecycle(queryClient, plugin.name);
       if (data.upToDate) addToast(`${plugin.name} is already at ${data.version}`);
       else if (data.pendingUpdate) {

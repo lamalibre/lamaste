@@ -31,6 +31,7 @@ import {
 import { uninstallPluginWithHosting, updatePlugin } from '../../lib/plugin-lifecycle.js';
 import {
   getPluginOperation,
+  hasOperationReveal,
   listPluginOperations,
   takeOperationReveal,
 } from '../../lib/plugin-operations.js';
@@ -554,7 +555,8 @@ export default async function pluginRoutes(fastify, _opts) {
 
   // ------------------------------------------------------------------
   // GET /plugins/:name/operations — the plugin's recent operations
-  // (hosting, unhosting, update, uninstall), newest first
+  // (hosting, unhosting, update, uninstall), newest first; `revealPending`
+  // marks one whose secrets wait for that first read below
   // GET /plugins/:name/operations/:id — one of them. Once it finished, the
   // first read also carries `oidcClients`: the secrets of confidential OIDC
   // clients it created (an update adding one), shown this once — as
@@ -567,7 +569,10 @@ export default async function pluginRoutes(fastify, _opts) {
     },
     async (request) => {
       const params = PluginNameParamSchema.parse(request.params);
-      return { operations: await listPluginOperations(params.name) };
+      const operations = await listPluginOperations(params.name);
+      return {
+        operations: operations.map((op) => ({ ...op, revealPending: hasOperationReveal(op.id) })),
+      };
     },
   );
 

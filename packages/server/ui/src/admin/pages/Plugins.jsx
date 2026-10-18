@@ -18,6 +18,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useToast } from '../components/Toast.jsx';
+import { useOidcSecretReveal } from '../components/OidcSecretReveal.jsx';
 import { PluginHooks, PluginOperation, PluginUpdate } from '../components/PluginLifecycle.jsx';
 import PluginHostDialog from '../components/PluginHostDialog.jsx';
 import PluginSettings, { NeedsConfigurationBadge } from '../components/PluginSettings.jsx';
@@ -27,6 +28,7 @@ import { useAdminClient } from '../context/AdminClientContext.jsx';
 import { errorMessage } from '../lib/errorMessage.js';
 import { hostingOutage, outageMessage } from '../lib/hostingState.js';
 import { refusalText } from '../lib/pluginRefusal.js';
+import { withoutSecrets } from '../lib/oidcSecrets.js';
 
 function StatusBadge({ status }) {
   const styles =
@@ -761,6 +763,7 @@ export default function Plugins() {
   const client = useAdminClient();
   const queryClient = useQueryClient();
   const addToast = useToast();
+  const { reveal } = useOidcSecretReveal();
 
   const pluginsQuery = useQuery({
     queryKey: ['plugins'],
@@ -768,8 +771,15 @@ export default function Plugins() {
     refetchInterval: 10000,
   });
 
+  // Installing and enabling answer with the secrets of the confidential OIDC
+  // clients they created, once: they go straight to the dialog that shows
+  // them — the mutation keeps the rest of the response only.
   const installMutation = useMutation({
-    mutationFn: (packageName) => client.installPlugin(packageName),
+    mutationFn: async (packageName) => {
+      const { result, secrets } = withoutSecrets(await client.installPlugin(packageName));
+      reveal({ plugin: result.plugin?.name ?? packageName, cause: 'install', secrets });
+      return result;
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['plugins'] });
       addToast(`Plugin "${data.plugin?.name || 'unknown'}" installed`);
@@ -778,7 +788,11 @@ export default function Plugins() {
   });
 
   const enableMutation = useMutation({
-    mutationFn: (name) => client.enablePlugin(name),
+    mutationFn: async (name) => {
+      const { result, secrets } = withoutSecrets(await client.enablePlugin(name));
+      reveal({ plugin: name, cause: 'enable', secrets });
+      return result;
+    },
     onSuccess: (data) => {
       const plugin = pluginsQuery.data?.plugins?.find((p) => p.name === data.name);
       queryClient.invalidateQueries({ queryKey: ['plugins'] });

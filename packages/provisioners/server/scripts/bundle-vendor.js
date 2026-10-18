@@ -12,6 +12,7 @@ import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertProductionBundle } from '../../../../scripts/assert-production-bundle.js';
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(thisDir, '..');
@@ -61,6 +62,8 @@ async function main() {
     );
   }
 
+  await assertProductionBundle(clientDist, { label: 'lamaste-server-ui/dist', monorepoRoot });
+
   const clientDest = join(vendorDir, 'server-ui');
   await mkdir(join(clientDest, 'dist'), { recursive: true });
   await cp(clientDist, join(clientDest, 'dist'), { recursive: true });
@@ -70,15 +73,17 @@ async function main() {
   // --- gatekeeper: package.json + dist/ (compiled TypeScript) ---
   const gatekeeperSrc = join(monorepoRoot, 'packages', 'sdks', 'gatekeeper');
   const gatekeeperDist = join(gatekeeperSrc, 'dist');
-  if (existsSync(gatekeeperDist)) {
-    const gatekeeperDest = join(vendorDir, 'gatekeeper');
-    await mkdir(gatekeeperDest, { recursive: true });
-    await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
-    await cp(gatekeeperDist, join(gatekeeperDest, 'dist'), { recursive: true });
-    console.error('Bundled vendor/gatekeeper (package.json + dist/)');
-  } else {
-    console.error('Skipped vendor/gatekeeper (dist/ not found — run "npm run build" first)');
+  // An installer without Gatekeeper cannot deploy it: refuse, never skip.
+  if (!existsSync(gatekeeperDist)) {
+    throw new Error(
+      `lamaste-gatekeeper/dist/ not found at ${gatekeeperDist}. Run "npm run build" first.`,
+    );
   }
+  const gatekeeperDest = join(vendorDir, 'gatekeeper');
+  await mkdir(gatekeeperDest, { recursive: true });
+  await cp(join(gatekeeperSrc, 'package.json'), join(gatekeeperDest, 'package.json'));
+  await cp(gatekeeperDist, join(gatekeeperDest, 'dist'), { recursive: true });
+  console.error('Bundled vendor/gatekeeper (package.json + dist/)');
 
   // --- docs: version-stamped markdown ---
   const docsStampScript = join(

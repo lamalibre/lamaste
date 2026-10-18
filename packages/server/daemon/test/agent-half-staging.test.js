@@ -578,9 +578,16 @@ test('an update that adds a confidential OIDC client shows its secret once, on t
     await app.register(pluginRoutes, { prefix: '/api' });
     await app.ready();
     try {
-      const list = await app.inject({ method: 'GET', url: '/api/plugins/ox/operations' });
-      assert.equal(list.statusCode, 200);
-      assert.equal(list.body.includes(created[0].secret), false, 'never in the list');
+      const listed = async () => {
+        const list = await app.inject({ method: 'GET', url: '/api/plugins/ox/operations' });
+        assert.equal(list.statusCode, 200);
+        assert.equal(list.body.includes(created[0].secret), false, 'never in the list');
+        return list.json().operations.find((op) => op.id === operation.id);
+      };
+      // The list says a secret waits — so a panel that did not follow the
+      // operation can offer it — without handing it out.
+      assert.equal((await listed()).revealPending, true);
+      assert.equal((await listed()).revealPending, true, 'listing does not consume it');
       const url = `/api/plugins/ox/operations/${operation.id}`;
       const first = await app.inject({ method: 'GET', url });
       assert.equal(first.statusCode, 200);
@@ -590,6 +597,7 @@ test('an update that adds a confidential OIDC client shows its secret once, on t
       const second = await app.inject({ method: 'GET', url });
       assert.equal(second.json().operation.oidcClients, undefined, 'shown once');
       assert.equal(second.json().operation.status, 'succeeded');
+      assert.equal((await listed()).revealPending, false, 'nothing waits once it was shown');
     } finally {
       await app.close();
     }

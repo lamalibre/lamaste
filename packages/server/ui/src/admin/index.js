@@ -4,6 +4,7 @@ export { TwoFaProvider, useTwoFa, TWO_FA_REQUIRED_EVENT } from './context/TwoFaC
 
 // Components
 export { ToastProvider, useToast } from './components/Toast.jsx';
+export { OidcSecretRevealProvider, useOidcSecretReveal } from './components/OidcSecretReveal.jsx';
 export { default as TwoFaVerifyModal } from './components/TwoFaVerifyModal.jsx';
 export { default as FileBrowser } from './components/FileBrowser.jsx';
 export { default as PluginLoader } from './components/PluginLoader.jsx';

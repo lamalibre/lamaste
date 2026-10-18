@@ -85,8 +85,8 @@ const AdminClientContext = createContext(null);
  *
  * Plugins:
  * @property {() => Promise<{plugins: Array, retainedData: Array}>} getPlugins — each plugin with the data agents keep of its agent half (`retainedData`), its hosting (`agentHosting`, with `health` and the hosting agent's last sync `agentLastSeenAt`) and, when its manifest declares settings, `settings: {configured, missing, syncedAt}` (no values); the top-level `retainedData` covers uninstalled plugins too
- * @property {(packageName: string) => Promise<any>} installPlugin
- * @property {(name: string) => Promise<{ok}>} enablePlugin
+ * @property {(packageName: string) => Promise<{ok, plugin, oidcClients, hooks}>} installPlugin — `oidcClients: [{id, secret}]`: the secrets of the confidential OIDC clients it created, in this response only
+ * @property {(name: string) => Promise<{ok, name, status, oidcClients?}>} enablePlugin — `oidcClients` as for installPlugin
  * @property {(name: string) => Promise<{ok}>} disablePlugin
  * @property {(name: string, options?: {force?: boolean, purge?: boolean}) => Promise<{ok, operation?}>} uninstallPlugin — a hosted plugin's hosting goes first (an operation); `purge` deletes the data of an agent half Lamaste installed
  * @property {(name: string) => Promise<string>} fetchPluginBundle — returns JS source text
@@ -100,8 +100,8 @@ const AdminClientContext = createContext(null);
  * @property {(name: string, agentLabel: string) => Promise<{ok, forgotten}>} forgetPluginRetainedData — drops the relay's record only; the data stays on the agent
  * @property {(name: string) => Promise<{fields, values, configured, missing, revision, source, syncedAt, hosting}>} getPluginSettings — the settings of a plugin whose manifest declares them: field definitions, the effective non-secret values and, for a secret, only `{set, setAt?}` (never a value); `source` live (read from the agent half while its hosting is up) | cache | none; `hosting: {agentLabel, state, reason, since, agentLastSeenAt}` or null; refused with `code` no_settings for a plugin without settings
  * @property {(name: string, body: {revision: number, values?: Object, secrets?: Object}) => Promise<Object>} updatePluginSettings — a partial update (`null` clears an optional field), answered with the new settings view. The body carries secrets: a host sends it only as the request body — never in a URL, a process argument, a log line or any store. Refused with `code` revision_mismatch, schema_mismatch, hosting_offline, settings_unsupported, and with `errors` (field key, or `_`, to message) for invalid values
- * @property {(name: string) => Promise<{operations: Array}>} getPluginOperations
- * @property {(name: string, id: string) => Promise<{operation}>} getPluginOperation
+ * @property {(name: string) => Promise<{operations: Array}>} getPluginOperations — newest first; `revealPending` marks a finished one whose client secrets wait for their one read
+ * @property {(name: string, id: string) => Promise<{operation}>} getPluginOperation — the first read of a finished operation that created confidential OIDC clients carries their secrets (`operation.oidcClients: [{id, secret}]`), later reads do not
  * @property {(name: string) => Promise<{hooks}>} getPluginHooks — relay hook set, agent hooks, agent half, approval (`approval.digest` is what to approve), pending update
  * @property {(name: string, digest: string | null, version?: string) => Promise<{ok, hooks?, operation?}>} approvePluginHooks — the installed version by its digest, or the pending update by its version (and digest, null when it has none): `operation` when that update starts
  * @property {(name: string, enabled: boolean) => Promise<{ok, autoApprove}>} setPluginHooksAutoApprove
