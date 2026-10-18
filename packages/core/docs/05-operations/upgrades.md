@@ -18,18 +18,22 @@ Always follow these steps before upgrading any component:
 2. **Note what is currently working** — check the dashboard, verify services are active
 3. **Plan for a brief outage** — most upgrades require a service restart (seconds, not minutes)
 
-### Upgrade Order: Agents First
+### Upgrade Order: Server First
 
-When a release changes both sides, upgrade every **agent before the server**. Agents from before this version reject the new shape of the relay's Chisel arguments; a current agent works against an older server and keeps its Chisel credential until the server offers rotation.
+Upgrade the **server before the agents**. Since 4.3 an agent's daemon (`lamaste-agentd`) accepts a request from the relay only with a signed relay assertion, which a 4.3 server sends and an older one does not: a 4.3 agent behind an older server refuses its agent-panel and plugin-tunnel requests (401) until the server is upgraded. An older agent keeps working behind a 4.3 server, which still sends the headers older daemons read.
 
-On each agent machine:
+Coming from 3.x, upgrade the **agents first**, as 4.0 required: agents from before 4.0 reject the 4.0 server's Chisel arguments and lose their tunnels, while a 4.3 agent behind a 3.x server keeps its tunnels and only its agent panel answers 401 until the server is upgraded.
+
+On each agent machine, after the server:
 
 ```bash
-npm install -g @lamalibre/lamaste-agent
+sudo npm install -g @lamalibre/lamaste-agent
 lamaste-agent update
 ```
 
-`update` applies the panel's configuration, restarts the tunnel client, and installs the sync timer (which applies later tunnel changes within 30 seconds). An agent originally set up with `npx` must be installed globally first — the sync timer runs the installed program. On its first sync after the upgrade an agent from before this version rotates its Chisel credential once, because older versions exposed it in process arguments and 0644 unit files. The Desktop App updates the agents it manages.
+`update` applies the panel's configuration, restarts the tunnel client, and installs the sync timer (which applies later tunnel changes within 30 seconds). An agent originally set up with `npx` must be installed globally first — the sync timer runs the installed program. On Linux it also rewrites the agent panel's user unit so the panel starts at boot. An agent from before 4.0 rotates its Chisel credential once on its first sync, because older versions exposed it in process arguments and 0644 unit files. The Desktop App updates the agents it manages.
+
+A machine that hosts app plugins' agent halves needs the root-owned install shown above and its app host helper enabled once with `sudo lamaste-agent apphost enable` (see [App host](../04-api-reference/app-host.md)); after replacing the server's relay signing key, run `sudo lamaste-agent apphost pin` there.
 
 ### Updating Lamaste (Panel Server and Client)
 
@@ -58,8 +62,9 @@ The `@latest` tag ensures you get the newest published version. The `--yes` flag
 - It rewrites `panel.json` (merged, as a fresh file renamed into place — root never writes through a path the `lamaste` user controls)
 - It installs the pinned Chisel and Authelia releases if they are not already installed (a newer Authelia is kept), writes their systemd units, creates the `lamaste-chisel` group and the `lamaste-authelia` account, and sets the ownership described in [Configuration Files](../06-reference/config-files.md#file-permissions-table): `/var/www/lamaste` becomes `lamaste:www-data`, `/etc/authelia` `lamaste:lamaste-authelia`, the Chisel key `lamaste:lamaste-chisel 0640`, and the PKI directory `lamaste`'s. A running Authelia is stopped while its files change hands and started again afterwards
 - It generates the OpenID Connect issuer key `/etc/authelia/oidc-issuer.pem` (0600, `lamaste-authelia`) if it is missing, and the Authelia unit it writes enables the `template` configuration filter. A 4.0 server updating to 4.1 therefore has the key before the new panel starts; plugin OIDC clients and the `--oidc` registry credential need it
+- It upgrades Node.js from NodeSource when the installed version is older than 22.13 — the plugin hook runner's sandbox uses Node's stable permission model — and writes the hook runner's units (`lamalibre-lamaste-hooks@.socket`, `lamalibre-lamaste-hooks@.service`; see [Lifecycle hooks](../04-api-reference/lifecycle-hooks.md))
 - It rewrites the panel's systemd unit and the sudoers rules (checked with `visudo -c` before they replace the old file), installs the root-owned programs in `/usr/local/sbin/` (`lamaste-priv`, `lamaste-certbot`, `lamaste-cert-info`) and removes the retired `lamaste-sign-csr` and `lamaste-pki-rename`, and installs the port-80 redirect site
-- It restarts Chisel if its binary or unit changed, starts the gatekeeper if it was running, and restarts `lamalibre-lamaste-serverd`, whose startup reconciliation rewrites Chisel's authfile
+- It restarts Chisel if its binary or unit changed, starts the gatekeeper if it was running, and restarts `lamalibre-lamaste-serverd`, whose startup reconciliation rewrites Chisel's authfile. The first start of a 4.3 panel also creates the relay signing key (`/etc/lamalibre/lamaste/relay-signing-key.json`, 0600) and rewrites existing tunnel, static site and auth portal vhosts; check its log for `Left tunnel vhosts as they are`, `Left site vhosts as they are` and `Failed to rewrite … vhost` (see the [4.3.0 upgrade notes](https://github.com/lamalibre/lamaste/blob/main/CHANGELOG.md))
 
 The panel's **Update** action (`POST /api/system/update`) runs the same redeploy: it asks `sudo lamaste-priv self-update <version>` to start `create-lamaste@<version> --yes` in a transient systemd unit (see [System API](../04-api-reference/system.md)).
 
@@ -249,17 +254,17 @@ sudo dpkg-reconfigure -plow unattended-upgrades
 
 ## Quick Reference
 
-| Component    | Location                                    | Update Method                                          |
-| ------------ | ------------------------------------------- | ------------------------------------------------------ |
-| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`   | Re-run `npx @lamalibre/create-lamaste@latest`          |
-| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/` | Re-run `npx @lamalibre/create-lamaste@latest`          |
-| Chisel       | `/usr/local/bin/chisel`                     | Pinned; installed by `create-lamaste`                  |
-| Agents       | `npm install -g @lamalibre/lamaste-agent`   | Upgrade before the server, then `lamaste-agent update` |
-| Authelia     | `/usr/local/bin/authelia`                   | Pinned; installed by `create-lamaste` (newer is kept)  |
-| nginx        | System package                              | `sudo apt-get update && sudo apt-get upgrade`          |
-| certbot      | System package                              | `sudo apt-get update && sudo apt-get upgrade`          |
-| Node.js      | System package                              | Managed by installer (NodeSource repo)                 |
-| Ubuntu       | System packages                             | `sudo apt-get update && sudo apt-get upgrade`          |
+| Component    | Location                                       | Update Method                                         |
+| ------------ | ---------------------------------------------- | ----------------------------------------------------- |
+| Panel server | `/opt/lamalibre/lamaste/lamaste-serverd/`      | Re-run `npx @lamalibre/create-lamaste@latest`         |
+| Panel client | `/opt/lamalibre/lamaste/lamaste-server-ui/`    | Re-run `npx @lamalibre/create-lamaste@latest`         |
+| Chisel       | `/usr/local/bin/chisel`                        | Pinned; installed by `create-lamaste`                 |
+| Agents       | `sudo npm install -g @lamalibre/lamaste-agent` | Upgrade after the server, then `lamaste-agent update` |
+| Authelia     | `/usr/local/bin/authelia`                      | Pinned; installed by `create-lamaste` (newer is kept) |
+| nginx        | System package                                 | `sudo apt-get update && sudo apt-get upgrade`         |
+| certbot      | System package                                 | `sudo apt-get update && sudo apt-get upgrade`         |
+| Node.js      | System package                                 | Managed by installer (NodeSource repo)                |
+| Ubuntu       | System packages                                | `sudo apt-get update && sudo apt-get upgrade`         |
 
 | Post-Upgrade Check   | Command                                                                 |
 | -------------------- | ----------------------------------------------------------------------- |

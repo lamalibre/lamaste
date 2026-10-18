@@ -185,6 +185,8 @@ Hosting, removing a hosting, an update and the uninstall of a hosted plugin wait
 
 `GET /api/plugins/:name/operations` (newest first) and `GET /api/plugins/:name/operations/:id`. An operation the panel was restarted under is `interrupted`.
 
+An update that added a confidential OIDC client created its secret ([Secrets of confidential clients](registry-and-oidc.md#secrets-of-confidential-clients)): once the update succeeded, the first `GET /api/plugins/:name/operations/:id` carries `oidcClients: [{ id, secret }]` and later reads do not. The panel holds the secret in memory only, for up to an hour; it is never written to `state.db`. Until that read, the operation is listed with `revealPending: true` (`false` otherwise) — the list itself never carries a secret.
+
 ## The pipelines
 
 ### Install (hosting) and uninstall

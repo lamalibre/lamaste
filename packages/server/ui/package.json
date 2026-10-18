@@ -1,6 +1,6 @@
 {
   "name": "@lamalibre/lamaste-server-ui",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "Lamaste server management panel frontend",
   "private": true,
   "type": "module",
@@ -16,7 +16,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",

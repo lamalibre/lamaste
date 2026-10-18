@@ -54,6 +54,18 @@ export function takeOperationReveal(id) {
   return { oidcClients: entry.oidcClients };
 }
 
+/**
+ * Whether finished operation `id` still has something to show once — what
+ * {@link takeOperationReveal} would hand out — without handing it out.
+ *
+ * @param {string} id
+ * @returns {boolean}
+ */
+export function hasOperationReveal(id) {
+  pruneReveals();
+  return reveals.has(id);
+}
+
 function rowToOperation(row) {
   if (!row) return null;
   const params = JSON.parse(row.params || '{}');
