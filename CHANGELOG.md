@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-10-18
+
+All lockstep packages, the desktop crate and its Tauri config move to 4.3.1; internal `@lamalibre/*` ranges become `^4.3.1` — lamaste-agent and lamaste-agentd call `sweepStaleCurlConfigs`, new in `@lamalibre/lamaste` 4.3.1, and a redeploy that keeps an older lockfile must not pair them with core 4.3.0.
+
 ### Upgrade notes
 
-- **Desktop app: a server added before this version has its panel's TLS key pinned on its first connection** (see Security). Compare the pin its card on the Servers page shows with `sudo lamaste-server panel-pin` on the relay. After reinstalling a relay or replacing its IP certificate, use **Re-pin** on the card (and `lamaste-agent panel reset-pin` on its agents).
+The relay and the agents can be upgraded in either order: nothing in 4.3.1 changes what they say to each other.
+
+1. **The relay**: the panel's Update action (`create-lamaste@4.3.1 --yes` in a transient unit) or a `create-lamaste@4.3.1 --yes` redeploy. It brings the server CLI's panel verification (see Security) and a production build of the panel (see Fixed). `lamaste-server`'s panel-backed commands now refuse while panel 2FA is on, saying why — they never worked then.
+2. **Every agent**: `sudo npm install -g @lamalibre/lamaste-agent@4.3.1`, then `lamaste-agent update` as the agent's user.
+3. **Desktop app: a server added before this version has its panel's TLS key pinned on its first connection** (see Security). Compare the pin its card on the Servers page shows with `sudo lamaste-server panel-pin` on the relay. After reinstalling a relay or replacing its IP certificate, use **Re-pin** on the card (and `lamaste-agent panel reset-pin` on its agents).
 
 ### Fixed
 
