@@ -45,7 +45,7 @@ There is no port in the manifest: Lamaste assigns it when the plugin is hosted.
 
 **Routes are unique.** A plugin's route — its name without a trailing `-server` or `-agent` — belongs to one installed plugin: installing another plugin with the same route is refused (`409`, `code: "route_taken"`, with `route` and `owner`). Plugins installed before the rule that share a route keep it for the one installed first; the others hold no route and can be uninstalled but not hosted (`409`, `code: "route_conflict"`) until they are reinstalled under a route of their own.
 
-**Pinned at install.** Installing (or staging an update of) a plugin with `agent.package` reads the agent package's integrity from the registry the panel installs from (`npm view <package>@<version> dist.integrity`) and pins `{ package, version, integrity }` with the plugin: the approval covers it and the agent installs only a tarball that matches. A version that is not semver without build metadata, an agent package not published at the plugin's version (`400`) or a registry without a SHA-512 integrity for it is refused.
+**Pinned at install.** Installing (or staging an update of) a plugin with `agent.package` reads the agent package's integrity from the registry the panel installs from (`npm view <package>@<version> dist.integrity`, authenticated with the panel's [registry credential](registry-and-oidc.md) when one is configured) and pins `{ package, version, integrity }` with the plugin: the approval covers it and the agent installs only a tarball that matches. A version that is not semver without build metadata, an agent package not published at the plugin's version (`400`) or a registry without a SHA-512 integrity for it is refused.
 
 ## Hosting endpoints
 

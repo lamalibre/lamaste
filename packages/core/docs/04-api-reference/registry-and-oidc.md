@@ -6,6 +6,8 @@ Two generic mechanisms a plugin can build on, first used by Feria (the Lamalibre
 
 Agents install plugins with `npm install` from the Lamalibre registry. A networked registry accepts nothing anonymously, and an agent must never hold a long-lived registry credential. So the panel holds one credential for the registry and, each time an agent is about to install a plugin, asks the registry for a one-hour read-only token owned by that agent. The agent writes it to a throw-away npm configuration file for that one install and deletes it afterwards.
 
+The panel's own npm calls use the same credential: installing a plugin, fetching a version to stage an update, and reading an agent package's integrity to pin it all run with npm routed to the credential's registry for its scope and authenticated with the panel's service token — through a throw-away userconfig of the same kind (0600 in a private temporary directory, named to npm as `npm_config_userconfig`, removed once npm has run), never the service account's `~/.npmrc`. A registry that answers `401` has the token obtained again once; a token still refused, or `403`, fails the operation naming the registry and the status. Without a credential the panel's npm runs as the machine configures it (the public registry by default).
+
 The panel itself can authenticate to the registry in two ways: with a long-lived token an administrator pasted in, or — the recommended way — as its own **service principal**: an OpenID Connect client on the relay's Authelia named `lamaste-server`. In that mode nothing long-lived is pasted anywhere; the panel proves its identity to Authelia with a secret it generated itself, Authelia issues a short-lived JWT, and the registry exchanges that JWT for a registry token.
 
 Plugins use the same Authelia to let people and programs log in. A plugin's manifest declares its OIDC clients — a CLI that logs in with the device-code flow, a service that authenticates with client credentials — and the panel writes them into Authelia's configuration when the plugin is enabled.
@@ -156,7 +158,7 @@ Admin only. What is configured — never a token.
 
 ### `PUT /api/registry-credential`
 
-Admin only, 10 per minute. Verifies the whole chain against the registry, then stores the credential at `/etc/lamalibre/lamaste/registry-credential.json` (0600).
+Admin only, 10 per minute. Verifies the whole chain against the registry, then stores the credential at `/etc/lamalibre/lamaste/registry-credential.json` (0600). From then on the panel's own installs, update staging and agent-half pinning authenticate to `registryUrl` for `scope` with the service token (see In Plain English); a package published only there installs from the panel.
 
 ```json
 { "registryUrl": "https://feria.example.com", "auth": { "kind": "oidc" } }

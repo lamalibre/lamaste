@@ -733,7 +733,7 @@ The RSA-4096 private key (PKCS#8) Authelia signs ID and JWT access tokens with. 
 
 ## `/etc/lamalibre/lamaste/registry-credential.json`
 
-The panel's service credential on the Lamalibre npm registry (Feria), used to broker one-hour install tokens for agents (`GET /api/agents/me/registry-credential`) and to revoke a user's tokens when a `feria-*` group is lost.
+The panel's service credential on the Lamalibre npm registry (Feria), used for the panel's own npm calls (plugin installs, update staging, agent-half pinning — through a throw-away userconfig, never a `.npmrc` here), to broker one-hour install tokens for agents (`GET /api/agents/me/registry-credential`) and to revoke a user's tokens when a `feria-*` group is lost.
 
 ```json
 {

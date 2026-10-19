@@ -29,6 +29,7 @@ import {
 } from '@lamalibre/lamaste';
 import { readTarballFiles } from '@lamalibre/lamaste/server';
 import { httpError } from './app-error.js';
+import { withRegistryUserconfig } from './registry-credential.js';
 
 const STATE_DIR = process.env.LAMALIBRE_LAMASTE_STATE_DIR || '/etc/lamalibre/lamaste';
 
@@ -88,9 +89,11 @@ export async function installedHookEntrySha256(packageName, manifest) {
 }
 
 /**
- * Fetch `<package>@<version>` from the registry STATE_DIR is configured
- * for (`npm pack`, as the panel's user) and read its manifest and, when
- * the manifest names one, its relay hook module — in memory only.
+ * Fetch `<package>@<version>` from the registry the panel installs from
+ * (`npm pack` through {@link withRegistryUserconfig}: the configured
+ * registry credential, else the machine's npm configuration) and read its
+ * manifest and, when the manifest names one, its relay hook module — in
+ * memory only.
  *
  * @param {string} packageName bare `@lamalibre/<name>`
  * @param {string} version an exact version or a dist-tag (`latest`)
@@ -103,22 +106,24 @@ export async function readRegistryPackage(packageName, version) {
   try {
     let packed;
     try {
-      const { stdout } = await execa(
-        'npm',
-        [
-          'pack',
-          `${packageName}@${version}`,
-          '--json',
-          '--ignore-scripts',
-          '--pack-destination',
-          dir,
-        ],
-        { cwd: STATE_DIR, timeout: 120000 },
+      const { stdout } = await withRegistryUserconfig((env) =>
+        execa(
+          'npm',
+          [
+            'pack',
+            `${packageName}@${version}`,
+            '--json',
+            '--ignore-scripts',
+            '--pack-destination',
+            dir,
+          ],
+          { cwd: STATE_DIR, timeout: 120000, env },
+        ),
       );
       packed = JSON.parse(stdout);
     } catch (err) {
       throw httpError(
-        `Could not fetch ${packageName}@${version} from the registry: ${(err.stderr || err.message || '').split('\n')[0]}`,
+        `Could not fetch ${packageName}@${version} from the registry: ${npmFailureLine(err)}`,
         502,
       );
     }
@@ -171,9 +176,9 @@ function npmFailureLine(err) {
 
 /**
  * The npm Subresource Integrity of `<package>@<version>`'s tarball, as the
- * registry STATE_DIR is configured for publishes it — `npm view … dist.integrity`
- * as the panel's user, so the registry and credential are the ones plugin
- * installs use. Only a sha512 SRI is accepted: it is what the approval
+ * registry the panel installs from publishes it — `npm view … dist.integrity`
+ * through {@link withRegistryUserconfig}, so the registry and credential
+ * are the ones plugin installs use. Only a sha512 SRI is accepted: it is what the approval
  * binds and what the agent checks the tarball it fetches against.
  *
  * @param {string} packageName bare `@lamalibre/<name>`
@@ -186,10 +191,13 @@ export async function readRegistryIntegrity(packageName, version) {
   const spec = `${packageName}@${version}`;
   let stdout;
   try {
-    ({ stdout } = await execa('npm', ['view', spec, 'dist.integrity', '--json'], {
-      cwd: STATE_DIR,
-      timeout: 60000,
-    }));
+    ({ stdout } = await withRegistryUserconfig((env) =>
+      execa('npm', ['view', spec, 'dist.integrity', '--json'], {
+        cwd: STATE_DIR,
+        timeout: 60000,
+        env,
+      }),
+    ));
   } catch (err) {
     if (/\bE404\b/.test(`${err.stderr ?? ''}\n${err.stdout ?? ''}`)) {
       throw httpError(

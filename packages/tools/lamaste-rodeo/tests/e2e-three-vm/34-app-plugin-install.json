@@ -3301,16 +3301,50 @@
       "bash": "log_section \"Through the tunnel: the installed version answers\"\n\nPING=$(host_api_get \"${PLUGIN}/ping\")\nassert_json_field \"$PING\" '.pong' 'true' \"GET /api/${PLUGIN}/ping reaches the service on the agent VM\" || true\nassert_json_field \"$PING\" '.version' '1.0.0' \"…the installed version, 1.0.0\" || true\nassert_json_field \"$PING\" '.user' \"${SERVICE_USER}\" \"…running as ${SERVICE_USER}\" || true\nassert_json_field \"$PING\" '.caller.type' 'admin' \"…which sees the admin as its caller\" || true\nassert_json_field \"$PING\" '.listen | \"\\(.mode) \\(.fd) \\(.listenFdsCleared)\"' 'systemd-socket 3 true' \"…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment\" || true\nBUNDLE=$(host_api_get \"${PLUGIN}/panel.js\")\nassert_contains \"$BUNDLE\" \"__lamalibrePlugins\" \"The admin page's bundle comes from the agent half\" || true\n\nSANDBOX=$(host_api_get \"${PLUGIN}/sandbox\")\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\")\nassert_json_field \"$SANDBOX\" '\"\\(.user) \\(.uid > 0)\"' \"${SERVICE_USER} true\" \"Sandbox: the service is ${SERVICE_USER}, not root\" || true\nassert_json_field \"$SANDBOX\" '.writes.dataDir' 'ALLOWED' \"Sandbox: it writes its data directory\" || true\nfor target in etc code appsDir configDir usrLocal root home runLock run varCrash; do\n  assert_refused \"$(json_get \"$SANDBOX\" \".writes.${target}\")\" \"Sandbox: no write to ${target}\" || true\ndone\nif [ \"$(json_get \"$FACTS\" '.runLockMode')\" = \"1777\" ]; then\n  assert_json_field \"$SANDBOX\" '.writes.runLock' 'EROFS' \"Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)\" || true\nelse\n  log_skip \"/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out\"\nfi\nassert_json_field \"$SANDBOX\" '.writes.privateTmp' 'ALLOWED' \"Sandbox: it has a /tmp…\" || true\nassert_json_field \"$FACTS\" '.privateTmpLeak' 'false' \"…of its own (PrivateTmp): nothing appears in the machine's /tmp\" || true\nassert_json_field \"$SANDBOX\" '.writes.privateVarTmp' 'ALLOWED' \"Sandbox: it has a /var/tmp…\" || true\nassert_json_field \"$FACTS\" '.privateVarTmpLeak' 'false' \"…of its own: nothing appears in the machine's /var/tmp\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.writes.privateShm')\" \"Sandbox: its /dev/shm is an empty one it cannot write (TemporaryFileSystem)…\" || true\nassert_json_field \"$FACTS\" '.privateShmLeak' 'false' \"…and nothing appears in the machine's /dev/shm\" || true\nassert_json_field \"$SANDBOX\" '\"\\(.noNewPrivs) \\(.capBnd) \\(.capEff)\"' '1 0000000000000000 0000000000000000' \"Sandbox: no new privileges, no capabilities\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.agentState')\" \"Sandbox: the agent's own state (its keys) is out of reach\" || true\nassert_refused \"$(json_get \"$SANDBOX\" '.reads.shadow')\" \"Sandbox: /etc/shadow is out of reach\" || true\nassert_json_field \"$SANDBOX\" '.network.udpSend' 'ALLOWED' \"Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it\" || true\n\n# ===========================================================================\n# 9. The stand-in Feria's record\n# ==========================================================================="
     },
     {
-      "id": "feria-s-record-the-agent-pulled-the-package-itself",
-      "label": "Feria's record: the agent pulled the package itself",
+      "id": "feria-s-record-the-panel-installed-as-itself-the-agent-pulled-the-package-itself",
+      "label": "Feria's record: the panel installed as itself, the agent pulled the package itself",
       "steps": [
         {
-          "id": "step-198",
+          "id": "step-199",
+          "label": "Set ALL_REQUESTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "stub_get \"-/e2e/requests\" | jq -c '[.requests[]? | select(.method == \"GET\")]' 2>/dev/null || echo '[]'"
+          },
+          "capture": [
+            {
+              "variable": "ALL_REQUESTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-200",
+          "label": "Set SERVER_REQUESTS",
+          "target": "local",
+          "op": {
+            "type": "exec",
+            "command": "echo \"$ALL_REQUESTS\" | jq -c \"[.[] | select(.path | startswith(\\\"/${SERVER_PACKAGE}\\\"))]\" 2>/dev/null || echo '[]'"
+          },
+          "capture": [
+            {
+              "variable": "SERVER_REQUESTS",
+              "from": {
+                "kind": "body"
+              }
+            }
+          ]
+        },
+        {
+          "id": "step-205",
           "label": "Set REQUESTS",
           "target": "local",
           "op": {
             "type": "exec",
-            "command": "stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | startswith(\\\"/${AGENT_PACKAGE}\\\")))]\" 2>/dev/null || echo '[]'"
+            "command": "echo \"$ALL_REQUESTS\" | jq -c \"[.[] | select(.path | startswith(\\\"/${AGENT_PACKAGE}\\\"))]\" 2>/dev/null || echo '[]'"
           },
           "capture": [
             {
@@ -3322,7 +3356,7 @@
           ]
         },
         {
-          "id": "step-201",
+          "id": "step-210",
           "label": "Set TOKENS",
           "target": "local",
           "op": {
@@ -3339,7 +3373,7 @@
           ]
         },
         {
-          "id": "step-202",
+          "id": "step-211",
           "label": "Its token: an agent token, read scope",
           "target": "local",
           "continueOnError": true,
@@ -3361,7 +3395,7 @@
           }
         },
         {
-          "id": "step-203",
+          "id": "step-212",
           "label": "…brokered by the panel's OIDC identity",
           "target": "local",
           "continueOnError": true,
@@ -3383,14 +3417,14 @@
           }
         }
       ],
-      "bash": "log_section \"Feria's record: the agent pulled the package itself\"\n\nREQUESTS=$(stub_get \"-/e2e/requests\" | jq -c \"[.requests[]? | select(.method == \\\"GET\\\" and (.path | startswith(\\\"/${AGENT_PACKAGE}\\\")))]\" 2>/dev/null || echo '[]')\nassert_json_field \"$REQUESTS\" \"[.[] | select((.path | endswith(\\\"/e2e-apphost-agent-1.0.0.tgz\\\")) and .owner == \\\"agent:${HOST_AGENT_LABEL}\\\" and .status == 200)] | length > 0\" 'true' \"agent:${HOST_AGENT_LABEL} downloaded ${AGENT_PACKAGE}-1.0.0.tgz\" || true\nassert_json_field \"$REQUESTS\" \"[.[] | select(.path | endswith(\\\".tgz\\\")) | .owner] | unique | join(\\\",\\\")\" \"agent:${HOST_AGENT_LABEL}\" \"…and nobody else did: the relay pinned it from the packument alone\" || true\nTOKENS=$(stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\")\nassert_json_field \"$TOKENS\" '[.tokens[]? | select(.kind == \"agent\" and (.scopes | join(\",\")) == \"read\")] | length > 0' 'true' \"Its token: an agent token, read scope\" || true\nassert_json_field \"$TOKENS\" '[.tokens[]? | .createdBy] | unique | join(\",\")' \"ci:auth.${DOMAIN}/lamaste-server\" \"…brokered by the panel's OIDC identity\" || true\n\n# ===========================================================================\n# 10. Uninstall with purge: nothing is left\n# ==========================================================================="
+      "bash": "log_section \"Feria's record: the panel installed as itself, the agent pulled the package itself\"\n\nPANEL_OWNER=\"ci:auth.${DOMAIN}/lamaste-server\"\nALL_REQUESTS=$(stub_get \"-/e2e/requests\" | jq -c '[.requests[]? | select(.method == \"GET\")]' 2>/dev/null || echo '[]')\n# The panel's npm install of the server package: its packument and its\n# tarball, authenticated with the panel's registry credential (its own OIDC\n# identity on Feria) — no .npmrc in the state directory and no token of\n# anyone else.\nSERVER_REQUESTS=$(echo \"$ALL_REQUESTS\" | jq -c \"[.[] | select(.path | startswith(\\\"/${SERVER_PACKAGE}\\\"))]\" 2>/dev/null || echo '[]')\nassert_json_field \"$SERVER_REQUESTS\" \"[.[] | select(.path == \\\"/${SERVER_PACKAGE}\\\" and .status == 200)] | length > 0\" 'true' \"The packument of ${SERVER_PACKAGE} was read\" || true\nassert_json_field \"$SERVER_REQUESTS\" \"[.[] | select(.path == \\\"/${SERVER_PACKAGE}\\\" and .status == 200) | .owner] | unique | join(\\\",\\\")\" \"${PANEL_OWNER}\" \"…by the panel's own identity, ${PANEL_OWNER}\" || true\nassert_json_field \"$SERVER_REQUESTS\" \"[.[] | select((.path | endswith(\\\"/e2e-apphost-server-1.0.0.tgz\\\")) and .status == 200) | .owner] | unique | join(\\\",\\\")\" \"${PANEL_OWNER}\" \"…which also pulled ${SERVER_PACKAGE}-1.0.0.tgz, and nobody else did\" || true\nassert_json_field \"$ALL_REQUESTS\" \"[.[] | select((.path | startswith(\\\"/@\\\")) and .status == 200 and .owner == null)] | length\" '0' \"No package was served to a request the stand-in Feria could not attribute\" || true\n# The agent half: the relay read its packument (npm view, for the pin) as\n# itself — the agent reads it too, for its npm pack — and the tarball was\n# pulled by the agent alone.\nREQUESTS=$(echo \"$ALL_REQUESTS\" | jq -c \"[.[] | select(.path | startswith(\\\"/${AGENT_PACKAGE}\\\"))]\" 2>/dev/null || echo '[]')\nassert_json_field \"$REQUESTS\" \"[.[] | select(.path == \\\"/${AGENT_PACKAGE}\\\" and .status == 200 and .owner == \\\"${PANEL_OWNER}\\\")] | length > 0\" 'true' \"The packument of ${AGENT_PACKAGE} was read by the panel as itself: the pin came from the panel's own credential\" || true\nassert_json_field \"$REQUESTS\" \"[.[] | select(.path == \\\"/${AGENT_PACKAGE}\\\" and .status == 200) | .owner] | unique - [\\\"${PANEL_OWNER}\\\", \\\"agent:${HOST_AGENT_LABEL}\\\"] | length\" '0' \"…and by nobody but the panel and the hosting agent\" || true\nassert_json_field \"$REQUESTS\" \"[.[] | select((.path | endswith(\\\"/e2e-apphost-agent-1.0.0.tgz\\\")) and .owner == \\\"agent:${HOST_AGENT_LABEL}\\\" and .status == 200)] | length > 0\" 'true' \"agent:${HOST_AGENT_LABEL} downloaded ${AGENT_PACKAGE}-1.0.0.tgz\" || true\nassert_json_field \"$REQUESTS\" \"[.[] | select(.path | endswith(\\\".tgz\\\")) | .owner] | unique | join(\\\",\\\")\" \"agent:${HOST_AGENT_LABEL}\" \"…and nobody else did: the relay pinned it from the packument alone\" || true\nTOKENS=$(stub_get \"-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}\")\nassert_json_field \"$TOKENS\" '[.tokens[]? | select(.kind == \"agent\" and (.scopes | join(\",\")) == \"read\")] | length > 0' 'true' \"Its token: an agent token, read scope\" || true\nassert_json_field \"$TOKENS\" '[.tokens[]? | .createdBy] | unique | join(\",\")' \"ci:auth.${DOMAIN}/lamaste-server\" \"…brokered by the panel's OIDC identity\" || true\n\n# ===========================================================================\n# 10. Uninstall with purge: nothing is left\n# ==========================================================================="
     },
     {
       "id": "uninstall-with-purge-leaves-nothing",
       "label": "Uninstall with purge leaves nothing",
       "steps": [
         {
-          "id": "step-204",
+          "id": "step-213",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -3401,7 +3435,7 @@
           }
         },
         {
-          "id": "step-205",
+          "id": "step-214",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -3419,7 +3453,7 @@
           ]
         },
         {
-          "id": "step-206",
+          "id": "step-215",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -3436,7 +3470,7 @@
           ]
         },
         {
-          "id": "step-207",
+          "id": "step-216",
           "label": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -3458,7 +3492,7 @@
           }
         },
         {
-          "id": "step-209",
+          "id": "step-218",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -3479,7 +3513,7 @@
           }
         },
         {
-          "id": "step-211",
+          "id": "step-220",
           "label": "The agent half went before the secret it runs with",
           "target": "local",
           "continueOnError": true,
@@ -3500,7 +3534,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-221",
           "label": "The plugin is gone from the relay",
           "target": "local",
           "continueOnError": true,
@@ -3521,7 +3555,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-223",
           "label": "Audit: plugin.agent-half.removed, purge",
           "target": "local",
           "continueOnError": true,
@@ -3542,7 +3576,7 @@
           }
         },
         {
-          "id": "step-215",
+          "id": "step-224",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3559,7 +3593,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-225",
           "label": "No unit on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -3581,7 +3615,7 @@
           }
         },
         {
-          "id": "step-217",
+          "id": "step-226",
           "label": "No socket unit",
           "target": "local",
           "continueOnError": true,
@@ -3603,7 +3637,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-227",
           "label": "No drop-in directory",
           "target": "local",
           "continueOnError": true,
@@ -3625,7 +3659,7 @@
           }
         },
         {
-          "id": "step-219",
+          "id": "step-228",
           "label": "Nothing listens on port ${PORT} any more: the socket let go of it",
           "target": "local",
           "continueOnError": true,
@@ -3647,7 +3681,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-229",
           "label": "No code, config or data directory",
           "target": "local",
           "continueOnError": true,
@@ -3669,7 +3703,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-230",
           "label": "No ${SERVICE_USER} account or group",
           "target": "local",
           "continueOnError": true,
@@ -3691,7 +3725,7 @@
           }
         },
         {
-          "id": "step-222",
+          "id": "step-231",
           "label": "The agent's record no longer lists it",
           "target": "local",
           "continueOnError": true,
@@ -3713,7 +3747,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-232",
           "label": "The agent's own copy of the plugin config is gone",
           "target": "local",
           "op": {
@@ -3723,7 +3757,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-233",
           "label": "The agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {
@@ -3737,7 +3771,7 @@
     }
   ],
   "apiHelpers": [],
-  "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel installs\n#    from it and holds its registry credential (OIDC), which brokers the\n#    agent's read tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only, and send UDP.\n# 5. Systemd holds the agent half's port: beside the unit, the socket unit\n#    lamalibre-app-e2e-apphost.socket (root 0644, ListenStream on the\n#    hosting's port, no secret), active and enabled, which the unit requires\n#    (Restart=always, no core dumps, no drop-in); ss shows the one listening\n#    socket shared by systemd (pid 1) and the agent half, whose descriptor 3\n#    it is.\n# 6. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows agent:<label> pulling the tarball.\n# 7. Uninstalling with purge leaves no unit, socket unit, listener on the\n#    port, code, config, data, account, tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
+  "headerRaw": "# ============================================================================\n# 34 — App plugin installed onto an agent from the panel (Three-VM)\n# ============================================================================\n# Slice 3's proof. An app plugin whose agent half Lamaste installs — fixture\n# @lamalibre/e2e-apphost-server with its bundled agent package\n# @lamalibre/e2e-apphost-agent (helpers.sh, write_app_install_fixture) — is\n# hosted on the agent VM from the panel; on the VM only the operator's\n# one-time step is done by hand:\n#\n# 1. A stand-in Feria on the host VM serves the fixture; the panel holds its\n#    registry credential (OIDC) and installs from it with that credential —\n#    no .npmrc in its state directory — which also brokers the agent's read\n#    tokens. Installing pins the agent half (package, version,\n#    tarball integrity); the approval preview shows it with its service\n#    account, unit and the system package it brings (sqlite3).\n# 2. Hosting is refused before approval and while the agent cannot host it\n#    (no app host helper); the operator enables the helper\n#    (`lamaste-agent apphost enable --user root`: the rodeo agent runs as\n#    root, so no sudoers rule) and the agent's sync reports it to the relay\n#    in its host facts.\n# 3. Hosting is refused with push-install off and with the agent's window\n#    closed; with the window open, under a policy naming only the agent\n#    package, it runs on the agent's sync timer alone: the agent fetches\n#    exactly the pinned tarball with its brokered token, checks the\n#    integrity and has the helper install it; the pipeline's hooks run in\n#    the installed service.\n# 4. On the agent VM: the unit runs as lamaste-app-e2e-apphost, with the\n#    paths, owners and modes of the installer contract, sqlite3 installed by\n#    apt, the hardening applied, its config 0600 holding the agent's secret\n#    (compared on the VM, never printed); its sandbox lets it write its data\n#    directory only, and send UDP.\n# 5. Systemd holds the agent half's port: beside the unit, the socket unit\n#    lamalibre-app-e2e-apphost.socket (root 0644, ListenStream on the\n#    hosting's port, no secret), active and enabled, which the unit requires\n#    (Restart=always, no core dumps, no drop-in); ss shows the one listening\n#    socket shared by systemd (pid 1) and the agent half, whose descriptor 3\n#    it is.\n# 6. Through the tunnel the admin pages answer from the installed version;\n#    the stand-in Feria's record shows the panel's own identity\n#    (ci:<issuer host>/lamaste-server) reading both packuments and pulling\n#    the server package, and agent:<label> alone pulling the agent tarball.\n# 7. Uninstalling with purge leaves no unit, socket unit, listener on the\n#    port, code, config, data, account, tunnel, secret or capability.\n#\n# Rotation, reboot and updates are spec 35; unhosting, a wrong integrity, a\n# package with dependencies and a closed window are spec 36 — rodeo gives a\n# spec ten minutes.\n# ============================================================================",
   "preambleRaw": "\nset -euo pipefail\n\nSCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\nsource \"${SCRIPT_DIR}/../e2e/helpers.sh\"\n# shellcheck source-path=SCRIPTDIR source=app-plugin-harness.sh\nsource \"${SCRIPT_DIR}/app-plugin-harness.sh\"\n\nrequire_commands multipass curl jq node npm tar perl\n\n# ---------------------------------------------------------------------------\n# Constants\n# ---------------------------------------------------------------------------\n\nPLUGIN=\"e2e-apphost\"\nSERVER_PACKAGE=\"@lamalibre/e2e-apphost-server\"\nAGENT_PACKAGE=\"@lamalibre/e2e-apphost-agent\"\nSERVICE_USER=\"lamaste-app-e2e-apphost\"\nUNIT=\"lamalibre-app-e2e-apphost.service\"\nSOCKET_UNIT=\"lamalibre-app-e2e-apphost.socket\"\nCODE_DIR=\"/opt/lamalibre/apps/e2e-apphost\"\nDATA_DIR=\"/var/lib/lamalibre/apps/e2e-apphost\"\nCONFIG_FILE=\"/etc/lamalibre/apps/e2e-apphost/plugin-config.json\"\nSYSTEM_PACKAGE=\"sqlite3\"\nPOLICY_ID=\"e2e-apphost-34\"\nREMOTE_DIR=\"/var/tmp/e2e-34-app-plugin\"\nLOCAL_TMP=\"\"\nCLEAN_PLUGINS=\"${PLUGIN}\"\nCLEAN_ROUTES=\"${PLUGIN}\"\nPURGE_PACKAGES=\"\"\n\nbegin_test \"34 — App plugin installed onto an agent from the panel (Three-VM)\"\n\ncleanup() {\n  log_info \"Cleaning up test resources...\"\n  app_plugin_cleanup\n}\ntrap cleanup EXIT\n",
   "cleanupRaw": "",
   "trailerRaw": "\nend_test\n"

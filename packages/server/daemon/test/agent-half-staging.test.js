@@ -128,11 +128,13 @@ test('install pins the agent half: the registry integrity, asked the way plugin 
   const plugin = await lib.findPlugin('fx');
   assert.deepEqual(plugin.agentHalfPin, entry.agentHalfPin);
 
-  // npm view, in the state directory (its .npmrc is the panel's registry
-  // configuration), with nothing but the spec and the field in its arguments.
+  // npm view, in the state directory (its .npmrc, if any, is the panel's
+  // registry configuration; no registry credential is set here, so no
+  // userconfig), with nothing but the spec and the field in its arguments.
   const view = npm.calls().find((c) => c.args[0] === 'view');
   assert.deepEqual(view.args, ['view', `${AGENT_PKG}@1.0.0`, 'dist.integrity', '--json']);
   assert.equal(view.cwd, await realpath(stateDir));
+  assert.equal(view.userconfig, null);
 
   // The approval covers it: required, pending, the digest over the spec.
   const status = await lib.hookStatus(plugin);

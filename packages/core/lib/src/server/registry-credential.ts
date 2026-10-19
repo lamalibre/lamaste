@@ -32,11 +32,13 @@
  * `POST /-/feria/broker/agent-token` and `DELETE /-/feria/tokens?owner=…`.
  */
 
-import { readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
 import { atomicWriteJSON } from '../file-helpers.js';
+import { NPM_USERCONFIG_ENV, npmRegistryStatus, renderInstallNpmrc } from '../npm-userconfig.js';
 import type { AutheliaOidcClient, OidcScopeDefinitions } from './authelia.js';
 
 export const REGISTRY_CREDENTIAL_FILENAME = 'registry-credential.json';
@@ -675,6 +677,93 @@ export async function revokeRegistryTokensForOwner(
     ),
   );
   return result.revoked.length;
+}
+
+// ---------------------------------------------------------------------------
+// The panel's own npm calls
+// ---------------------------------------------------------------------------
+
+/** The least a logger must offer {@link withRegistryUserconfig}. */
+export interface RegistryUserconfigLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
+export interface RegistryUserconfigOptions {
+  /** Where the throw-away userconfig's private directory is made. Default `os.tmpdir()`. */
+  tmpDir?: string | undefined;
+  /** Told about a refused token and the retry; the token itself is never logged. */
+  log?: RegistryUserconfigLogger | undefined;
+}
+
+/** The two statuses that mean the registry did not accept the panel's token. */
+const REFUSED_STATUSES = new Set([401, 403]);
+
+/**
+ * Run `fn(env)` — an npm call of the panel's own: a plugin install, the
+ * `npm pack` that stages an update, the `npm view` that pins an agent half
+ * — with npm routed to the credential's registry for its scope and
+ * authenticated with the panel's service token. The token goes into an
+ * isolated userconfig (0600, in a private 0700 directory made with
+ * `mkdtemp`) that `env` names as `npm_config_userconfig` and that is
+ * removed once `fn` settles, success or failure; it never enters the
+ * process environment, a command line or the service account's `~/.npmrc`.
+ *
+ * `resolveToken({ refresh: false })` gives the token to use (the daemon's
+ * cache); when the registry answers `401`, the token is obtained again
+ * with `refresh: true` and `fn` runs once more under the new one — unless
+ * it is the same token (a pasted credential), which the registry has
+ * already refused. A token still refused, or refused with `403`, fails
+ * with a `RegistryCredentialError` (502) naming the registry and the
+ * status, so the caller's message says what to fix. Any other failure of
+ * `fn` propagates as it is.
+ */
+export async function withRegistryUserconfig<T>(
+  config: RegistryCredentialConfig,
+  resolveToken: (opts: { refresh: boolean }) => Promise<string>,
+  fn: (env: Record<string, string>) => Promise<T>,
+  options: RegistryUserconfigOptions = {},
+): Promise<T> {
+  const registryUrl = registryBase(config.registryUrl).href;
+  const registry = new URL(registryUrl).host;
+  const dir = await mkdtemp(path.join(options.tmpDir ?? tmpdir(), 'lamaste-npmrc-'));
+  const file = path.join(dir, 'npmrc');
+  try {
+    let token = await resolveToken({ refresh: false });
+    let attempt = 0;
+    for (;;) {
+      attempt += 1;
+      await writeFile(file, renderInstallNpmrc({ registryUrl, token, scope: config.scope }), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      try {
+        return await fn({ [NPM_USERCONFIG_ENV]: file });
+      } catch (err: unknown) {
+        const status = npmRegistryStatus(err);
+        if (status === null || !REFUSED_STATUSES.has(status)) throw err;
+        if (status === 401 && attempt === 1) {
+          const fresh = await resolveToken({ refresh: true });
+          if (fresh !== token) {
+            options.log?.warn(
+              { registry, status },
+              "The registry refused the panel's token; obtained a new one and retrying",
+            );
+            token = fresh;
+            continue;
+          }
+        }
+        throw new RegistryCredentialError(
+          `registry ${registry} refused the panel's token (HTTP ${status}) — ` +
+            (status === 401
+              ? 'set the registry credential again'
+              : 'the credential lacks the read scope on this registry'),
+          502,
+        );
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------

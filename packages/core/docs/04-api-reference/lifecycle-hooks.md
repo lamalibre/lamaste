@@ -163,7 +163,7 @@ Approving a pending update approves everything it waits for (`approvalRequired`)
 
 ### `POST /api/plugins/:name/update`
 
-`{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
+`{ "version"?: "1.2.3" | "latest" }` (default `latest`). For agent-hosted plugins. The panel fetches the version with `npm pack` (from the registry its [registry credential](registry-and-oidc.md) names, authenticated as the panel, when one is configured) and reads its manifest and relay module **in memory** — nothing of it is installed yet. Then:
 
 - `200 { upToDate: true }` — nothing to do;
 - `202 { pendingUpdate }` — what it brings (relay hook set, agent half) differs from what was approved and auto-approve is off or withheld, or it turns a secret setting into a plain one (always); `approvalRequired` says which, and the administrators are notified. Approve it with the digest shown, or by its version;

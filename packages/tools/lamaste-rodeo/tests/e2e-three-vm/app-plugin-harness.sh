@@ -52,7 +52,6 @@ AGENT_CONFIG="${AGENT_DIR}/config.json"
 SYNC_TIMER="lamalibre-lamaste-sync-${AGENT_LABEL}.timer"
 SYNC_SERVICE="lamalibre-lamaste-sync-${AGENT_LABEL}.service"
 APPHOST_HELPER="/usr/local/sbin/lamaste-apphost"
-STATE_NPMRC="/etc/lamalibre/lamaste/.npmrc"
 STUB_PORT=4874
 # The agent VM reaches the stand-in Feria on the host's static address.
 STUB_URL="http://${HOST_IP}:${STUB_PORT}"
@@ -74,7 +73,6 @@ PUSH_GLOBAL_BEFORE=""
 PUSH_POLICY=""
 PUSH_WINDOW=""
 CREDENTIAL_SET=""
-NPMRC_WRITTEN=""
 STUB_STARTED=""
 # The host VM's private directory for test secrets (settings helpers; the
 # spec sets it under REMOTE_DIR, which the cleanup removes)
@@ -345,9 +343,11 @@ ensure_app_host_helper() {
 # fixtures written there) and the stand-in Feria to the host VM's REMOTE_DIR
 # and start it on 0.0.0.0:STUB_PORT serving each <package dir> (relative to
 # REMOTE_DIR); the agent VM reaches it at STUB_URL (a firewall rule for its
-# address). The panel then installs from it (STATE_NPMRC with the stand-in's
-# admin token; a file already there is kept aside and put back by the
-# cleanup) and holds its registry credential through its own OIDC client.
+# address). The panel then holds its registry credential through its own
+# OIDC client — and installs from the stand-in with that credential alone:
+# nothing is written to the state directory's .npmrc, so the panel's own
+# installs, update staging and agent-half pinning prove they authenticate
+# with the service token (the stand-in records each request's owner).
 start_stand_in_feria() {
   local packages="" dir up="no" set_out set_json reach
   for dir in "$@"; do packages="${packages} --package ${REMOTE_DIR}/${dir}"; done
@@ -373,9 +373,6 @@ start_stand_in_feria() {
   assert_eq "$up" "yes" "Stand-in Feria is up on the host VM ($(host_exec "tail -n 2 ${REMOTE_DIR}/stub.log 2>/dev/null" 2>/dev/null | tr '\n' ' '))" || true
   reach=$(agent_exec "curl -s -o /dev/null -w '%{http_code}' --max-time 10 ${STUB_URL}/-/ping 2>/dev/null" 2>/dev/null || echo "000")
   assert_eq "$reach" "200" "The agent VM reaches it at ${STUB_URL}" || true
-
-  NPMRC_WRITTEN=1
-  host_exec "if [ -f ${STATE_NPMRC} ] && [ ! -f ${STATE_NPMRC}.e2e-before ]; then cp -p ${STATE_NPMRC} ${STATE_NPMRC}.e2e-before; fi; printf '@lamalibre:registry=%s/\n//%s:%s/:_authToken=%s\n' '${STUB_URL}' '${HOST_IP}' '${STUB_PORT}' '${STUB_ADMIN_TOKEN}' > ${REMOTE_DIR}/npmrc && install -o lamaste -g lamaste -m 0600 ${REMOTE_DIR}/npmrc ${STATE_NPMRC} && rm -f ${REMOTE_DIR}/npmrc"
 
   CREDENTIAL_SET=1
   set_out=$(timed_exec 120 multipass exec "${HOST_VM}" -- sudo bash -c "lamaste-server registry-credential set --url ${STUB_URL} --oidc --json 2>&1")
@@ -1247,7 +1244,7 @@ iso_epoch() {
 # it; an operation still running is waited for, up to three minutes). What
 # may be left of the routes in CLEAN_ROUTES on the agent VM is purged with
 # the helper directly. Then what the spec changed goes back: the push-install
-# window, policy and switch, the panel's registry credential and .npmrc, the
+# window, policy and switch, the panel's registry credential, the
 # stand-in Feria and its firewall rule, the app host helper (only if this
 # spec enabled it) and the system packages in PURGE_PACKAGES (those the spec
 # saw missing before Lamaste installed them).
@@ -1287,9 +1284,6 @@ app_plugin_cleanup() {
   fi
   if [ -n "${CREDENTIAL_SET}" ]; then
     timed_exec 90 multipass exec "${HOST_VM}" -- sudo bash -c "lamaste-server registry-credential clear > /dev/null 2>&1; true" > /dev/null 2>&1
-  fi
-  if [ -n "${NPMRC_WRITTEN}" ]; then
-    timed_exec 30 multipass exec "${HOST_VM}" -- sudo bash -c "if [ -f ${STATE_NPMRC}.e2e-before ]; then mv -f ${STATE_NPMRC}.e2e-before ${STATE_NPMRC}; else rm -f ${STATE_NPMRC}; fi" > /dev/null 2>&1
   fi
   if [ -n "${STUB_STARTED}" ]; then
     timed_exec 60 multipass exec "${HOST_VM}" -- sudo bash -c "pkill -f '[s]tub-registry.mjs' 2>/dev/null; ufw delete allow from ${AGENT_IP} to any port ${STUB_PORT} proto tcp > /dev/null 2>&1; true" > /dev/null 2>&1

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The panel installed plugins without its registry credential.** `POST /api/plugins/install`, the `npm pack` that stages an update, the install that applies an approved one and the `npm view` that pins an agent half ran npm as the machine configures it, so a package published only on a closed-scope registry — the first agent-hosted app plugin, `@lamalibre/market-indicators-server`, on Feria — failed with `Failed to install` while the panel held a credential for that very registry (it used it only to broker agents' tokens). Every npm call of the panel's own now runs with npm routed to the credential's registry for its scope and authenticated with the panel's service token, through a throw-away userconfig (0600 in a private temporary directory, `npm_config_userconfig`, removed once npm has run; the token is in no argument, environment variable or `.npmrc`). A `401` obtains the token again once and retries; a token still refused, or a `403`, fails naming the registry and the status, never the token. Without a credential nothing changes. `@lamalibre/lamaste/server`: `withRegistryUserconfig`, `npmRegistryStatus`, `NPM_USERCONFIG_ENV`, `npmNerfDart`; the agent's `withInstallNpmrc`, `renderInstallNpmrc` and `npmNerfDart` now live in core's shared `npm-userconfig` module (still exported from `@lamalibre/lamaste/agent`). The three-VM app-plugin harness no longer writes a `.npmrc` with the stand-in Feria's admin token into the panel's state directory, and spec 34 checks in the stand-in's record that the panel read both packuments and pulled the server package as `ci:<issuer host>/lamaste-server`. Reference: `packages/core/docs/04-api-reference/registry-and-oidc.md`.
+
 ## [4.4.0] - 2026-10-18
 
 All lockstep packages, the desktop crate and its Tauri config move to 4.4.0; internal `@lamalibre/*` ranges become `^4.4.0`.

@@ -8,9 +8,10 @@
 # hosted on the agent VM from the panel; on the VM only the operator's
 # one-time step is done by hand:
 #
-# 1. A stand-in Feria on the host VM serves the fixture; the panel installs
-#    from it and holds its registry credential (OIDC), which brokers the
-#    agent's read tokens. Installing pins the agent half (package, version,
+# 1. A stand-in Feria on the host VM serves the fixture; the panel holds its
+#    registry credential (OIDC) and installs from it with that credential —
+#    no .npmrc in its state directory — which also brokers the agent's read
+#    tokens. Installing pins the agent half (package, version,
 #    tarball integrity); the approval preview shows it with its service
 #    account, unit and the system package it brings (sqlite3).
 # 2. Hosting is refused before approval and while the agent cannot host it
@@ -36,7 +37,9 @@
 #    socket shared by systemd (pid 1) and the agent half, whose descriptor 3
 #    it is.
 # 6. Through the tunnel the admin pages answer from the installed version;
-#    the stand-in Feria's record shows agent:<label> pulling the tarball.
+#    the stand-in Feria's record shows the panel's own identity
+#    (ci:<issuer host>/lamaste-server) reading both packuments and pulling
+#    the server package, and agent:<label> alone pulling the agent tarball.
 # 7. Uninstalling with purge leaves no unit, socket unit, listener on the
 #    port, code, config, data, account, tunnel, secret or capability.
 #
@@ -416,9 +419,25 @@ assert_json_field "$SANDBOX" '.network.udpSend' 'ALLOWED' "Sandbox: it sends UDP
 # 9. The stand-in Feria's record
 # ===========================================================================
 
-log_section "Feria's record: the agent pulled the package itself"
+log_section "Feria's record: the panel installed as itself, the agent pulled the package itself"
 
-REQUESTS=$(stub_get "-/e2e/requests" | jq -c "[.requests[]? | select(.method == \"GET\" and (.path | startswith(\"/${AGENT_PACKAGE}\")))]" 2>/dev/null || echo '[]')
+PANEL_OWNER="ci:auth.${DOMAIN}/lamaste-server"
+ALL_REQUESTS=$(stub_get "-/e2e/requests" | jq -c '[.requests[]? | select(.method == "GET")]' 2>/dev/null || echo '[]')
+# The panel's npm install of the server package: its packument and its
+# tarball, authenticated with the panel's registry credential (its own OIDC
+# identity on Feria) — no .npmrc in the state directory and no token of
+# anyone else.
+SERVER_REQUESTS=$(echo "$ALL_REQUESTS" | jq -c "[.[] | select(.path | startswith(\"/${SERVER_PACKAGE}\"))]" 2>/dev/null || echo '[]')
+assert_json_field "$SERVER_REQUESTS" "[.[] | select(.path == \"/${SERVER_PACKAGE}\" and .status == 200)] | length > 0" 'true' "The packument of ${SERVER_PACKAGE} was read" || true
+assert_json_field "$SERVER_REQUESTS" "[.[] | select(.path == \"/${SERVER_PACKAGE}\" and .status == 200) | .owner] | unique | join(\",\")" "${PANEL_OWNER}" "…by the panel's own identity, ${PANEL_OWNER}" || true
+assert_json_field "$SERVER_REQUESTS" "[.[] | select((.path | endswith(\"/e2e-apphost-server-1.0.0.tgz\")) and .status == 200) | .owner] | unique | join(\",\")" "${PANEL_OWNER}" "…which also pulled ${SERVER_PACKAGE}-1.0.0.tgz, and nobody else did" || true
+assert_json_field "$ALL_REQUESTS" "[.[] | select((.path | startswith(\"/@\")) and .status == 200 and .owner == null)] | length" '0' "No package was served to a request the stand-in Feria could not attribute" || true
+# The agent half: the relay read its packument (npm view, for the pin) as
+# itself — the agent reads it too, for its npm pack — and the tarball was
+# pulled by the agent alone.
+REQUESTS=$(echo "$ALL_REQUESTS" | jq -c "[.[] | select(.path | startswith(\"/${AGENT_PACKAGE}\"))]" 2>/dev/null || echo '[]')
+assert_json_field "$REQUESTS" "[.[] | select(.path == \"/${AGENT_PACKAGE}\" and .status == 200 and .owner == \"${PANEL_OWNER}\")] | length > 0" 'true' "The packument of ${AGENT_PACKAGE} was read by the panel as itself: the pin came from the panel's own credential" || true
+assert_json_field "$REQUESTS" "[.[] | select(.path == \"/${AGENT_PACKAGE}\" and .status == 200) | .owner] | unique - [\"${PANEL_OWNER}\", \"agent:${HOST_AGENT_LABEL}\"] | length" '0' "…and by nobody but the panel and the hosting agent" || true
 assert_json_field "$REQUESTS" "[.[] | select((.path | endswith(\"/e2e-apphost-agent-1.0.0.tgz\")) and .owner == \"agent:${HOST_AGENT_LABEL}\" and .status == 200)] | length > 0" 'true' "agent:${HOST_AGENT_LABEL} downloaded ${AGENT_PACKAGE}-1.0.0.tgz" || true
 assert_json_field "$REQUESTS" "[.[] | select(.path | endswith(\".tgz\")) | .owner] | unique | join(\",\")" "agent:${HOST_AGENT_LABEL}" "…and nobody else did: the relay pinned it from the packument alone" || true
 TOKENS=$(stub_get "-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}")

@@ -10,7 +10,6 @@
  * to prevent concurrent modifications from racing.
  */
 
-import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -24,6 +23,8 @@ import {
 import type { PluginHosting, PluginMode } from '../constants.js';
 import { KeyedPromiseChainMutex, atomicWriteJSON } from '../file-helpers.js';
 import { invalidatePluginHostCache } from '../plugin-host.js';
+import { withInstallNpmrc } from '../npm-userconfig.js';
+import type { InstallNpmrc } from '../npm-userconfig.js';
 import {
   agentDataDir,
   agentPluginsFile,
@@ -85,62 +86,19 @@ export interface PluginLifecycleConfig {
 }
 
 /**
- * Registry credential for one npm invocation. Written to a throw-away
- * userconfig (`npm_config_userconfig`) so the token never enters the
- * service account's `~/.npmrc` — on a developer machine that file may hold
- * the developer's own, far more powerful token.
+ * The isolated install userconfig lives in `../npm-userconfig.ts`, shared
+ * with the panel; re-exported here for the agent daemon and CLI.
  */
-export interface InstallNpmrc {
-  /** Registry base URL, e.g. `https://feria.samplepark.tr/`. */
-  registryUrl: string;
-  /** Bearer token for that registry. */
-  token: string;
-  /** npm scope routed to the registry (default `@lamalibre`). */
-  scope?: string | undefined;
-}
+export {
+  npmNerfDart,
+  renderInstallNpmrc,
+  withInstallNpmrc,
+  type InstallNpmrc,
+} from '../npm-userconfig.js';
 
 export interface PluginInstallOptions {
   /** When set, `npm install` runs with an isolated userconfig carrying this credential. */
   npmrc?: InstallNpmrc | undefined;
-}
-
-/**
- * npm's "nerf dart" — the key it uses to look up `_authToken` for a
- * registry: protocol stripped, path cut at the last slash.
- */
-export function npmNerfDart(registryUrl: string): string {
-  const url = new URL(registryUrl);
-  const dir = new URL('.', `${url.protocol}//${url.host}${url.pathname}`);
-  return `//${dir.host}${dir.pathname}`;
-}
-
-/** The two lines an isolated install userconfig holds. */
-export function renderInstallNpmrc(npmrc: InstallNpmrc): string {
-  const registryUrl = new URL(npmrc.registryUrl).href;
-  const scope = npmrc.scope ?? '@lamalibre';
-  if (!/^@[a-z0-9][a-z0-9-]*$/.test(scope)) throw new Error(`Invalid npm scope: ${scope}`);
-  if (/\s/.test(npmrc.token)) throw new Error('registry token must not contain whitespace');
-  return `${scope}:registry=${registryUrl}\n${npmNerfDart(registryUrl)}:_authToken=${npmrc.token}\n`;
-}
-
-/**
- * Run `fn` with the environment npm needs to use an isolated userconfig
- * holding `npmrc`, and delete that file afterwards — success or failure.
- * Without `npmrc`, `fn` runs with an empty environment addition.
- */
-export async function withInstallNpmrc<T>(
-  dataDir: string,
-  npmrc: InstallNpmrc | undefined,
-  fn: (env: Record<string, string>) => Promise<T>,
-): Promise<T> {
-  if (!npmrc) return fn({});
-  const file = path.join(dataDir, `.npmrc-install-${randomBytes(8).toString('hex')}`);
-  await writeFile(file, renderInstallNpmrc(npmrc), { encoding: 'utf-8', mode: 0o600 });
-  try {
-    return await fn({ npm_config_userconfig: file });
-  } finally {
-    await rm(file, { force: true }).catch(() => undefined);
-  }
 }
 
 // ---------------------------------------------------------------------------

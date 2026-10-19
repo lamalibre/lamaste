@@ -25,6 +25,8 @@ import {
 import { listRegisteredSubScopeNames } from './tickets.js';
 import { getStateDb } from './state-db.js';
 import { revokePluginCapabilitiesFromAgents } from './mtls.js';
+import { withRegistryUserconfig } from './registry-credential.js';
+import { RegistryCredentialError } from '@lamalibre/lamaste/server';
 import {
   bareLamalibrePackageName,
   installedHookEntrySha256,
@@ -326,6 +328,17 @@ export async function manifestPolicyError(manifest) {
   return null;
 }
 
+/**
+ * What a failed install of `spec` is reported as. A registry that refused
+ * the panel's credential says so (the registry host and the status, from
+ * {@link withRegistryUserconfig}); anything else is npm's failure, whose
+ * output is in the log.
+ */
+function installFailure(spec, err) {
+  const detail = err instanceof RegistryCredentialError ? `: ${err.message}` : '';
+  return `Failed to install "${spec}"${detail}`;
+}
+
 export function installPlugin(packageName, logger) {
   return withPluginLock(async () => {
     // Validate package scope
@@ -358,19 +371,25 @@ export function installPlugin(packageName, logger) {
       }
     }
 
-    // Install the npm package
+    // Install the npm package — from the configured registry, as the
+    // panel's own identity, when a registry credential is set.
     logger.info({ packageName: installSpec }, 'Installing plugin package');
     try {
-      await execa('npm', ['install', '--ignore-scripts', installSpec], {
-        cwd: STATE_DIR,
-        timeout: 120000,
-      });
+      await withRegistryUserconfig(
+        (env) =>
+          execa('npm', ['install', '--ignore-scripts', installSpec], {
+            cwd: STATE_DIR,
+            timeout: 120000,
+            env,
+          }),
+        { log: logger },
+      );
     } catch (err) {
       logger.error(
         { packageName: installSpec, stderr: err.stderr, err: err.message },
         'npm install failed',
       );
-      throw Object.assign(new Error(`Failed to install "${installSpec}"`), { statusCode: 500 });
+      throw Object.assign(new Error(installFailure(installSpec, err)), { statusCode: 500 });
     }
 
     // Read the plugin manifest from the installed package
@@ -688,13 +707,18 @@ export function replacePluginPackage(name, packageName, version, logger) {
     assertSafeLamalibrePackage(spec);
     logger?.info({ name, spec }, 'Installing plugin package version');
     try {
-      await execa('npm', ['install', '--ignore-scripts', spec], {
-        cwd: STATE_DIR,
-        timeout: 120000,
-      });
+      await withRegistryUserconfig(
+        (env) =>
+          execa('npm', ['install', '--ignore-scripts', spec], {
+            cwd: STATE_DIR,
+            timeout: 120000,
+            env,
+          }),
+        { log: logger },
+      );
     } catch (err) {
       logger?.error({ spec, stderr: err.stderr, err: err.message }, 'npm install failed');
-      throw Object.assign(new Error(`Failed to install "${spec}"`), { statusCode: 502 });
+      throw Object.assign(new Error(installFailure(spec, err)), { statusCode: 502 });
     }
     const require = createRequire(`${STATE_DIR}/`);
     const manifestPath = require.resolve(`${bare}/lamaste-plugin.json`);

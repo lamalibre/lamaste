@@ -475,6 +475,9 @@ export type {
   ProvisionServerOptions,
 } from './provisioning.js';
 
+// The isolated npm userconfig the panel's own npm calls use — see npm-userconfig.ts
+export { NPM_USERCONFIG_ENV, npmNerfDart, npmRegistryStatus } from '../npm-userconfig.js';
+
 // Registry credential brokering (Feria) — see registry-credential.ts
 export {
   REGISTRY_CREDENTIAL_FILENAME,
@@ -506,8 +509,11 @@ export {
   brokerAgentRegistryToken,
   revokeRegistryTokensForOwner,
   lostFeriaGroups,
+  withRegistryUserconfig,
 } from './registry-credential.js';
 export type {
+  RegistryUserconfigLogger,
+  RegistryUserconfigOptions,
   RegistryAuth,
   RegistryCredentialConfig,
   RegistryCredentialSummary,

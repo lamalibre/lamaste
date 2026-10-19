@@ -12,6 +12,13 @@
  *   install within the hour and limited to ten new tokens per agent per
  *   hour.
  *
+ * The panel's own npm calls — installing a plugin, staging an update with
+ * `npm pack`, pinning an agent half with `npm view` — go through
+ * {@link withRegistryUserconfig}: with a credential configured, npm is
+ * routed to its registry for its scope and authenticated with the service
+ * token through a throw-away userconfig; without one, npm runs as it is
+ * configured on the machine (the public registry by default).
+ *
  * Also the one piece of policy that belongs here: when a user loses a
  * `feria-*` group or is deleted, their registry tokens are revoked (best
  * effort, never blocks the user operation).
@@ -26,6 +33,7 @@ import {
   revokeRegistryTokensForOwner,
   lostFeriaGroups,
   readOidcClientSecret,
+  withRegistryUserconfig as withRegistryUserconfigCore,
   RegistryServiceTokenCache,
   AgentTokenBroker,
   RegistryCredentialError,
@@ -100,6 +108,35 @@ export async function verifyRegistryCredential(candidate) {
 /** The panel's registry token for the stored credential (cached per process). */
 async function serviceToken(config) {
   return (await serviceTokens.resolve(config, await oidcDeps(config))).token;
+}
+
+/**
+ * Run `fn(env)` — one npm call of the panel's own — against the configured
+ * registry: with a credential, `env` names an isolated userconfig (0600,
+ * removed afterwards) routing the credential's scope to its registry with
+ * the panel's service token; a `401` refreshes the token once and retries.
+ * Without a credential `fn({})` runs npm as the machine configures it.
+ * A credential file that cannot be read fails the call rather than
+ * silently installing from the public registry.
+ *
+ * @template T
+ * @param {(env: Record<string, string>) => Promise<T>} fn
+ * @param {{ log?: import('pino').Logger | undefined }} [options]
+ * @returns {Promise<T>}
+ */
+export async function withRegistryUserconfig(fn, options = {}) {
+  const config = await readRegistryCredentialConfig();
+  if (!config) return fn({});
+  const deps = await oidcDeps(config);
+  return withRegistryUserconfigCore(
+    config,
+    async ({ refresh }) => {
+      if (refresh) serviceTokens.invalidate();
+      return (await serviceTokens.resolve(config, deps)).token;
+    },
+    fn,
+    { log: options.log },
+  );
 }
 
 /**

@@ -1,8 +1,9 @@
 /**
  * A stand-in `npm` for tests of the panel's package handling: it answers
  * `view <pkg>@<v> dist.integrity --json`, `install`, `uninstall` and `pack`
- * from a registry the test describes, and logs every call (arguments and
- * working directory) so a test can check exactly what the panel ran.
+ * from a registry the test describes, and logs every call (arguments,
+ * working directory, and the userconfig it was pointed at with its text
+ * and mode) so a test can check exactly what the panel ran.
  *
  * `installFakeNpm(dir)` writes the script, puts it first on PATH for this
  * test process (each test file runs in its own), and returns the controls.
@@ -21,9 +22,23 @@ const zlib = require('node:zlib');
 const root = process.env.LAMASTE_TEST_FAKE_NPM;
 const reg = JSON.parse(fs.readFileSync(path.join(root, 'registry.json'), 'utf8'));
 const args = process.argv.slice(2);
+// The userconfig npm would read (npm_config_userconfig), as it is at call
+// time: its text and mode, so a test can check what the panel handed npm
+// and that nothing of it outlives the call.
+const userconfig = process.env.npm_config_userconfig ?? null;
+let userconfigText = null;
+let userconfigMode = null;
+if (userconfig) {
+  try {
+    userconfigText = fs.readFileSync(userconfig, 'utf8');
+    userconfigMode = fs.statSync(userconfig).mode & 0o777;
+  } catch {
+    // Recorded as null: the file npm was pointed at is not there.
+  }
+}
 fs.appendFileSync(
   path.join(root, 'calls.log'),
-  JSON.stringify({ args, cwd: process.cwd() }) + '\n',
+  JSON.stringify({ args, cwd: process.cwd(), userconfig, userconfigText, userconfigMode }) + '\n',
 );
 const cmd = args[0];
 const valueFlags = new Set(['--pack-destination']);
@@ -140,6 +155,11 @@ export async function installFakeNpm(dir) {
   await chmod(script, 0o755);
   process.env.LAMASTE_TEST_FAKE_NPM = dir;
   process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH}`;
+  // Under `npm test`, npm hands its scripts its own userconfig in
+  // npm_config_userconfig; the fake npm records the one the panel sets,
+  // so the inherited one must not reach it (the daemon itself never runs
+  // under npm).
+  delete process.env.npm_config_userconfig;
 
   const registry = { packages: {}, integrity: {}, distTags: {}, failInstall: [] };
   const registryPath = path.join(dir, 'registry.json');
@@ -168,7 +188,7 @@ export async function installFakeNpm(dir) {
       if (fail) registry.failInstall.push(spec);
       await save();
     },
-    /** Every call so far: `{ args, cwd }`. */
+    /** Every call so far: `{ args, cwd, userconfig, userconfigText, userconfigMode }`. */
     calls() {
       return readFileSync(logPath, 'utf-8')
         .split('\n')
