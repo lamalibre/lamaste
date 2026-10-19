@@ -1437,7 +1437,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-95",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1454,7 +1454,16 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-97",
+          "label": "Sleep 1s",
+          "target": "local",
+          "op": {
+            "type": "sleep",
+            "seconds": 1
+          }
+        },
+        {
+          "id": "step-99",
           "label": "sync.log records exactly one credential rotation",
           "target": "local",
           "continueOnError": true,
@@ -1475,7 +1484,7 @@
           }
         },
         {
-          "id": "step-95",
+          "id": "step-100",
           "label": "GET /api/tunnels/agent-config?agent=${TUNNEL_AGENT}",
           "target": "host",
           "op": {
@@ -1494,7 +1503,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-101",
           "label": "The panel issued a new credential (chiselCredentialIssuedAt changed)",
           "target": "local",
           "continueOnError": true,
@@ -1515,7 +1524,7 @@
           }
         },
         {
-          "id": "step-97",
+          "id": "step-102",
           "label": "Set ENV_AFTER",
           "target": "local",
           "op": {
@@ -1532,7 +1541,7 @@
           ]
         },
         {
-          "id": "step-98",
+          "id": "step-103",
           "label": "chisel.env now holds the rotated credential",
           "target": "local",
           "continueOnError": true,
@@ -1553,7 +1562,7 @@
           }
         },
         {
-          "id": "step-99",
+          "id": "step-104",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1570,7 +1579,7 @@
           ]
         },
         {
-          "id": "step-100",
+          "id": "step-105",
           "label": "chisel.env is still mode 600",
           "target": "local",
           "continueOnError": true,
@@ -1591,7 +1600,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-106",
           "label": "Tunnel serves with the rotated credential",
           "target": "local",
           "op": {
@@ -1601,7 +1610,7 @@
           }
         },
         {
-          "id": "step-102",
+          "id": "step-107",
           "label": "Tunnel did not serve within 60 seconds of the credential rotation",
           "target": "local",
           "op": {
@@ -1611,7 +1620,7 @@
           }
         },
         {
-          "id": "step-103",
+          "id": "step-108",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1628,7 +1637,7 @@
           ]
         },
         {
-          "id": "step-106",
+          "id": "step-111",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1645,7 +1654,7 @@
           ]
         },
         {
-          "id": "step-109",
+          "id": "step-114",
           "label": "Sleep 2s",
           "target": "local",
           "op": {
@@ -1654,7 +1663,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-116",
           "label": "The sync timer ran again after the rotation (lastRunAt advanced)",
           "target": "local",
           "op": {
@@ -1669,7 +1678,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-117",
           "label": "The sync timer did not run again within 60 seconds of the rotation",
           "target": "local",
           "op": {
@@ -1684,7 +1693,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-118",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1701,7 +1710,7 @@
           ]
         },
         {
-          "id": "step-114",
+          "id": "step-119",
           "label": "No further rotation after the credential was sealed",
           "target": "local",
           "continueOnError": true,
@@ -1722,7 +1731,7 @@
           }
         }
       ],
-      "bash": "# ---------------------------------------------------------------------------\nlog_section \"An upgraded agent rotates its chisel credential once\"\n# ---------------------------------------------------------------------------\n\n# Make the agent look set up by an older version: no chiselCredentialSealedAt.\n# The panel only lets an agent rotate a credential older than 10 minutes, so\n# the current one is backdated in the panel's store (in place, keeping owner\n# and mode; the temp copy is private).\nENV_BEFORE=$(chisel_env_digest)\nISSUED_BEFORE=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nhost_exec \"umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\\$(date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${TUNNEL_AGENT}' --arg t \\\"\\$t\\\" '.[\\$l].createdAt = \\$t' \\\"\\$f\\\" > /tmp/e2e-30-creds.json && cat /tmp/e2e-30-creds.json > \\\"\\$f\\\"; rm -f /tmp/e2e-30-creds.json\"\nagent_exec \"node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));delete c.chiselCredentialSealedAt;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});\\\"\"\nUNSEALED=$(agent_config_field \"chiselCredentialSealedAt\")\nassert_eq \"$UNSEALED\" \"\" \"Agent config no longer marks the credential sealed (simulated upgrade)\" || true\n\nRESEALED=\"\"\nfor _ in $(seq 1 30); do\n  RESEALED=$(agent_config_field \"chiselCredentialSealedAt\")\n  if [ -n \"$RESEALED\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_not_eq \"$RESEALED\" \"\" \"The next sync rotated the credential and sealed it (within 60 seconds)\" || true\n\nROTATED_LOG=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))\" \"1\" \"sync.log records exactly one credential rotation\" || true\nISSUED_AFTER=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nassert_not_eq \"$ISSUED_AFTER\" \"$ISSUED_BEFORE\" \"The panel issued a new credential (chiselCredentialIssuedAt changed)\" || true\nENV_AFTER=$(chisel_env_digest)\nassert_not_eq \"$ENV_AFTER\" \"$ENV_BEFORE\" \"chisel.env now holds the rotated credential\" || true\nENV_MODE=$(agent_exec \"stat -c '%a' '${CHISEL_ENV}' 2>/dev/null\" || echo \"missing\")\nassert_eq \"$ENV_MODE\" \"600\" \"chisel.env is still mode 600\" || true\n\nif port_opens_within 60; then\n  log_pass \"Tunnel serves with the rotated credential\"\nelse\n  log_fail \"Tunnel did not serve within 60 seconds of the credential rotation\"\nfi\n\n# Sealed again: the next timer run rotates nothing more. Wait for sync-state's\n# lastRunAt to move past the run that rotated (bounded poll).\nLAST_RUN=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\nNEXT_RUN_SEEN=false\nfor _ in $(seq 1 30); do\n  RUN_NOW=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\n  if [ -n \"$RUN_NOW\" ] && [ \"$RUN_NOW\" != \"$LAST_RUN\" ]; then\n    NEXT_RUN_SEEN=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$NEXT_RUN_SEEN\" = \"true\" ]; then\n  log_pass \"The sync timer ran again after the rotation (lastRunAt advanced)\"\nelse\n  log_fail \"The sync timer did not run again within 60 seconds of the rotation\"\nfi\nROTATED_LATER=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"${ROTATED_LATER:-0}\" \"1\" \"No further rotation after the credential was sealed\" || true"
+      "bash": "# ---------------------------------------------------------------------------\nlog_section \"An upgraded agent rotates its chisel credential once\"\n# ---------------------------------------------------------------------------\n\n# Make the agent look set up by an older version: no chiselCredentialSealedAt.\n# The panel only lets an agent rotate a credential older than 10 minutes, so\n# the current one is backdated in the panel's store (in place, keeping owner\n# and mode; the temp copy is private).\nENV_BEFORE=$(chisel_env_digest)\nISSUED_BEFORE=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nhost_exec \"umask 077; f=/etc/lamalibre/lamaste/chisel-credentials.json; t=\\$(date -u -d '11 minutes ago' +%Y-%m-%dT%H:%M:%S.000Z); jq --arg l '${TUNNEL_AGENT}' --arg t \\\"\\$t\\\" '.[\\$l].createdAt = \\$t' \\\"\\$f\\\" > /tmp/e2e-30-creds.json && cat /tmp/e2e-30-creds.json > \\\"\\$f\\\"; rm -f /tmp/e2e-30-creds.json\"\nagent_exec \"node -e \\\"const fs=require('fs');const f='${AGENT_CONFIG}';const c=JSON.parse(fs.readFileSync(f,'utf8'));delete c.chiselCredentialSealedAt;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\\\\\\\n',{mode:0o600});\\\"\"\nUNSEALED=$(agent_config_field \"chiselCredentialSealedAt\")\nassert_eq \"$UNSEALED\" \"\" \"Agent config no longer marks the credential sealed (simulated upgrade)\" || true\n\nRESEALED=\"\"\nfor _ in $(seq 1 30); do\n  RESEALED=$(agent_config_field \"chiselCredentialSealedAt\")\n  if [ -n \"$RESEALED\" ]; then\n    break\n  fi\n  sleep 2\ndone\nassert_not_eq \"$RESEALED\" \"\" \"The next sync rotated the credential and sealed it (within 60 seconds)\" || true\n\n# The sync seals the credential in the agent config before it restarts the\n# service and writes its log line, so the line can land a moment after the\n# sealed state was seen: wait for it (up to 20 seconds) before counting.\nROTATED_LOG=\"${ROTATED_BEFORE:-0}\"\nfor _ in $(seq 1 20); do\n  ROTATED_LOG=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\n  [ \"$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))\" -ge 1 ] && break\n  sleep 1\ndone\nassert_eq \"$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))\" \"1\" \"sync.log records exactly one credential rotation\" || true\nISSUED_AFTER=$(host_api_get \"tunnels/agent-config?agent=${TUNNEL_AGENT}\" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo \"\")\nassert_not_eq \"$ISSUED_AFTER\" \"$ISSUED_BEFORE\" \"The panel issued a new credential (chiselCredentialIssuedAt changed)\" || true\nENV_AFTER=$(chisel_env_digest)\nassert_not_eq \"$ENV_AFTER\" \"$ENV_BEFORE\" \"chisel.env now holds the rotated credential\" || true\nENV_MODE=$(agent_exec \"stat -c '%a' '${CHISEL_ENV}' 2>/dev/null\" || echo \"missing\")\nassert_eq \"$ENV_MODE\" \"600\" \"chisel.env is still mode 600\" || true\n\nif port_opens_within 60; then\n  log_pass \"Tunnel serves with the rotated credential\"\nelse\n  log_fail \"Tunnel did not serve within 60 seconds of the credential rotation\"\nfi\n\n# Sealed again: the next timer run rotates nothing more. Wait for sync-state's\n# lastRunAt to move past the run that rotated (bounded poll).\nLAST_RUN=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\nNEXT_RUN_SEEN=false\nfor _ in $(seq 1 30); do\n  RUN_NOW=$(agent_exec \"cat '${SYNC_STATE}' 2>/dev/null\" 2>/dev/null | jq -r '.lastRunAt // empty' 2>/dev/null || echo \"\")\n  if [ -n \"$RUN_NOW\" ] && [ \"$RUN_NOW\" != \"$LAST_RUN\" ]; then\n    NEXT_RUN_SEEN=true\n    break\n  fi\n  sleep 2\ndone\nif [ \"$NEXT_RUN_SEEN\" = \"true\" ]; then\n  log_pass \"The sync timer ran again after the rotation (lastRunAt advanced)\"\nelse\n  log_fail \"The sync timer did not run again within 60 seconds of the rotation\"\nfi\nROTATED_LATER=$(agent_exec \"grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true\" 2>/dev/null || echo \"0\")\nassert_eq \"${ROTATED_LATER:-0}\" \"1\" \"No further rotation after the credential was sealed\" || true"
     }
   ],
   "apiHelpers": ["host_api_get", "host_api_post", "host_api_delete"],

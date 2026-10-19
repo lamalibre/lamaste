@@ -309,7 +309,15 @@ for _ in $(seq 1 30); do
 done
 assert_not_eq "$RESEALED" "" "The next sync rotated the credential and sealed it (within 60 seconds)" || true
 
-ROTATED_LOG=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
+# The sync seals the credential in the agent config before it restarts the
+# service and writes its log line, so the line can land a moment after the
+# sealed state was seen: wait for it (up to 20 seconds) before counting.
+ROTATED_LOG="${ROTATED_BEFORE:-0}"
+for _ in $(seq 1 20); do
+  ROTATED_LOG=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
+  [ "$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))" -ge 1 ] && break
+  sleep 1
+done
 assert_eq "$(( ${ROTATED_LOG:-0} - ${ROTATED_BEFORE:-0} ))" "1" "sync.log records exactly one credential rotation" || true
 ISSUED_AFTER=$(host_api_get "tunnels/agent-config?agent=${TUNNEL_AGENT}" 2>/dev/null | jq -r '.chiselCredentialIssuedAt // empty' 2>/dev/null || echo "")
 assert_not_eq "$ISSUED_AFTER" "$ISSUED_BEFORE" "The panel issued a new credential (chiselCredentialIssuedAt changed)" || true

@@ -437,7 +437,9 @@ assert_json_field "$ALL_REQUESTS" "[.[] | select((.path | startswith(\"/@\")) an
 # pulled by the agent alone.
 REQUESTS=$(echo "$ALL_REQUESTS" | jq -c "[.[] | select(.path | startswith(\"/${AGENT_PACKAGE}\"))]" 2>/dev/null || echo '[]')
 assert_json_field "$REQUESTS" "[.[] | select(.path == \"/${AGENT_PACKAGE}\" and .status == 200 and .owner == \"${PANEL_OWNER}\")] | length > 0" 'true' "The packument of ${AGENT_PACKAGE} was read by the panel as itself: the pin came from the panel's own credential" || true
-assert_json_field "$REQUESTS" "[.[] | select(.path == \"/${AGENT_PACKAGE}\" and .status == 200) | .owner] | unique - [\"${PANEL_OWNER}\", \"agent:${HOST_AGENT_LABEL}\"] | length" '0' "…and by nobody but the panel and the hosting agent" || true
+# This spec reads the packument too (feria_integrity, with the stand-in's
+# admin token, owner machine:e2e-admin) to learn the pinned integrity.
+assert_json_field "$REQUESTS" "[.[] | select(.path == \"/${AGENT_PACKAGE}\" and .status == 200) | .owner] | unique - [\"${PANEL_OWNER}\", \"agent:${HOST_AGENT_LABEL}\", \"machine:e2e-admin\"] | length" '0' "…and by nobody but the panel, the hosting agent and this spec's own read" || true
 assert_json_field "$REQUESTS" "[.[] | select((.path | endswith(\"/e2e-apphost-agent-1.0.0.tgz\")) and .owner == \"agent:${HOST_AGENT_LABEL}\" and .status == 200)] | length > 0" 'true' "agent:${HOST_AGENT_LABEL} downloaded ${AGENT_PACKAGE}-1.0.0.tgz" || true
 assert_json_field "$REQUESTS" "[.[] | select(.path | endswith(\".tgz\")) | .owner] | unique | join(\",\")" "agent:${HOST_AGENT_LABEL}" "…and nobody else did: the relay pinned it from the packument alone" || true
 TOKENS=$(stub_get "-/feria/tokens?owner=agent:${HOST_AGENT_LABEL}")
