@@ -126,6 +126,10 @@ if [ "$PACKAGE_BEFORE" != "install ok installed" ]; then
 fi
 log_info "${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}"
 
+# The panel's npm cache (npm_config_cache of the serverd unit) would answer a
+# tarball it holds under the pinned integrity without a registry request; the
+# record this spec reads from the stand-in Feria needs a cache-cold panel.
+host_exec "rm -rf /etc/lamalibre/lamaste/.npm/_cacache" > /dev/null 2>&1 || true
 INSTALL=$(host_api_post "plugins/install" "{\"packageName\":\"${SERVER_PACKAGE}@1.0.0\"}")
 assert_json_field "$INSTALL" '.plugin.version' '1.0.0' "Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria" || true
 assert_json_field "$INSTALL" '.plugin.hosting' 'agent' "…an agent-hosted plugin" || true

@@ -3,7 +3,7 @@
   "meta": {
     "number": 34,
     "name": "App plugin installed onto an agent from the panel",
-    "suite": "e2e",
+    "suite": "e2e-three-vm",
     "description": "34 — App plugin installed onto an agent from the panel (Three-VM)",
     "deps": [],
     "requires": ["multipass", "curl", "jq", "node", "npm", "tar", "perl"]
@@ -222,7 +222,7 @@
           }
         },
         {
-          "id": "step-14",
+          "id": "step-15",
           "label": "POST /api/plugins/install",
           "target": "host",
           "op": {
@@ -241,7 +241,7 @@
           ]
         },
         {
-          "id": "step-15",
+          "id": "step-16",
           "label": "Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria",
           "target": "local",
           "continueOnError": true,
@@ -263,7 +263,7 @@
           }
         },
         {
-          "id": "step-16",
+          "id": "step-17",
           "label": "…an agent-hosted plugin",
           "target": "local",
           "continueOnError": true,
@@ -285,7 +285,7 @@
           }
         },
         {
-          "id": "step-17",
+          "id": "step-18",
           "label": "Set PREVIEW",
           "target": "local",
           "op": {
@@ -302,7 +302,7 @@
           ]
         },
         {
-          "id": "step-18",
+          "id": "step-19",
           "label": "Preview: the agent package Lamaste installs",
           "target": "local",
           "continueOnError": true,
@@ -324,7 +324,7 @@
           }
         },
         {
-          "id": "step-19",
+          "id": "step-20",
           "label": "Preview: at the plugin's version",
           "target": "local",
           "continueOnError": true,
@@ -346,7 +346,7 @@
           }
         },
         {
-          "id": "step-20",
+          "id": "step-21",
           "label": "Preview: the tarball integrity, pinned from the registry at install",
           "target": "local",
           "continueOnError": true,
@@ -368,7 +368,7 @@
           }
         },
         {
-          "id": "step-21",
+          "id": "step-22",
           "label": "Preview: the system package it brings",
           "target": "local",
           "continueOnError": true,
@@ -390,7 +390,7 @@
           }
         },
         {
-          "id": "step-22",
+          "id": "step-23",
           "label": "Preview: the service account",
           "target": "local",
           "continueOnError": true,
@@ -412,7 +412,7 @@
           }
         },
         {
-          "id": "step-23",
+          "id": "step-24",
           "label": "Preview: the unit",
           "target": "local",
           "continueOnError": true,
@@ -434,7 +434,7 @@
           }
         },
         {
-          "id": "step-24",
+          "id": "step-25",
           "label": "Preview: the service entry and its memory limit",
           "target": "local",
           "continueOnError": true,
@@ -456,7 +456,7 @@
           }
         },
         {
-          "id": "step-25",
+          "id": "step-26",
           "label": "Its approval is pending",
           "target": "local",
           "continueOnError": true,
@@ -478,7 +478,7 @@
           }
         },
         {
-          "id": "step-26",
+          "id": "step-27",
           "label": "Set DIGEST",
           "target": "local",
           "op": {
@@ -495,7 +495,7 @@
           ]
         },
         {
-          "id": "step-27",
+          "id": "step-28",
           "label": "GET /api/plugins/${PLUGIN}/hooks",
           "target": "host",
           "op": {
@@ -513,7 +513,7 @@
           ]
         },
         {
-          "id": "step-28",
+          "id": "step-29",
           "label": "GET /plugins/${PLUGIN}/hooks shows the same agent half",
           "target": "local",
           "continueOnError": true,
@@ -535,7 +535,7 @@
           }
         },
         {
-          "id": "step-29",
+          "id": "step-30",
           "label": "POST /api/plugins/${PLUGIN}/enable",
           "target": "host",
           "op": {
@@ -546,14 +546,14 @@
           }
         }
       ],
-      "bash": "log_section \"Install: the agent half is pinned and shown for approval\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\")\nPACKAGE_BEFORE=$(json_get \"$FACTS\" \".packages[\\\"${SYSTEM_PACKAGE}\\\"]\")\nAPT_RUNS_BEFORE=$(json_get \"$FACTS\" \".aptRuns[\\\"${SYSTEM_PACKAGE}\\\"] // 0\")\nif [ \"$PACKAGE_BEFORE\" != \"install ok installed\" ]; then\n  # Lamaste installs it; the cleanup puts the VM back as it was.\n  PURGE_PACKAGES=\"${SYSTEM_PACKAGE}\"\nfi\nlog_info \"${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}\"\n\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria\" || true\nassert_json_field \"$INSTALL\" '.plugin.hosting' 'agent' \"…an agent-hosted plugin\" || true\nPREVIEW=$(echo \"$INSTALL\" | jq -c '.hooks.agentHalf' 2>/dev/null || echo 'null')\nassert_json_field \"$PREVIEW\" '.package' \"${AGENT_PACKAGE}\" \"Preview: the agent package Lamaste installs\" || true\nassert_json_field \"$PREVIEW\" '.version' '1.0.0' \"Preview: at the plugin's version\" || true\nassert_json_field \"$PREVIEW\" '.integrity' \"${PINNED}\" \"Preview: the tarball integrity, pinned from the registry at install\" || true\nassert_json_field \"$PREVIEW\" '.systemPackages | join(\",\")' \"${SYSTEM_PACKAGE}\" \"Preview: the system package it brings\" || true\nassert_json_field \"$PREVIEW\" '.serviceUser' \"${SERVICE_USER}\" \"Preview: the service account\" || true\nassert_json_field \"$PREVIEW\" '.unitName' \"${UNIT}\" \"Preview: the unit\" || true\nassert_json_field \"$PREVIEW\" '\"\\(.entry) \\(.memoryMax)\"' 'dist/agentd.mjs 256M' \"Preview: the service entry and its memory limit\" || true\nassert_json_field \"$INSTALL\" '.hooks.approval.state' 'pending' \"Its approval is pending\" || true\nDIGEST=$(json_get \"$INSTALL\" '.hooks.approval.digest // empty')\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '.hooks.agentHalf.integrity' \"${PINNED}\" \"GET /plugins/${PLUGIN}/hooks shows the same agent half\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\n\n# ===========================================================================\n# 3. Refused: not approved; an agent without the app host helper\n# ==========================================================================="
+      "bash": "log_section \"Install: the agent half is pinned and shown for approval\"\n\nFACTS=$(agent_facts \"${PLUGIN}\" \"${SERVICE_USER}\" \"${SYSTEM_PACKAGE}\")\nPACKAGE_BEFORE=$(json_get \"$FACTS\" \".packages[\\\"${SYSTEM_PACKAGE}\\\"]\")\nAPT_RUNS_BEFORE=$(json_get \"$FACTS\" \".aptRuns[\\\"${SYSTEM_PACKAGE}\\\"] // 0\")\nif [ \"$PACKAGE_BEFORE\" != \"install ok installed\" ]; then\n  # Lamaste installs it; the cleanup puts the VM back as it was.\n  PURGE_PACKAGES=\"${SYSTEM_PACKAGE}\"\nfi\nlog_info \"${SYSTEM_PACKAGE} on the agent VM before: ${PACKAGE_BEFORE:-absent}\"\n\n# The panel's npm cache (npm_config_cache of the serverd unit) would answer a\n# tarball it holds under the pinned integrity without a registry request; the\n# record this spec reads from the stand-in Feria needs a cache-cold panel.\nhost_exec \"rm -rf /etc/lamalibre/lamaste/.npm/_cacache\" > /dev/null 2>&1 || true\nINSTALL=$(host_api_post \"plugins/install\" \"{\\\"packageName\\\":\\\"${SERVER_PACKAGE}@1.0.0\\\"}\")\nassert_json_field \"$INSTALL\" '.plugin.version' '1.0.0' \"Installed ${SERVER_PACKAGE}@1.0.0 from the stand-in Feria\" || true\nassert_json_field \"$INSTALL\" '.plugin.hosting' 'agent' \"…an agent-hosted plugin\" || true\nPREVIEW=$(echo \"$INSTALL\" | jq -c '.hooks.agentHalf' 2>/dev/null || echo 'null')\nassert_json_field \"$PREVIEW\" '.package' \"${AGENT_PACKAGE}\" \"Preview: the agent package Lamaste installs\" || true\nassert_json_field \"$PREVIEW\" '.version' '1.0.0' \"Preview: at the plugin's version\" || true\nassert_json_field \"$PREVIEW\" '.integrity' \"${PINNED}\" \"Preview: the tarball integrity, pinned from the registry at install\" || true\nassert_json_field \"$PREVIEW\" '.systemPackages | join(\",\")' \"${SYSTEM_PACKAGE}\" \"Preview: the system package it brings\" || true\nassert_json_field \"$PREVIEW\" '.serviceUser' \"${SERVICE_USER}\" \"Preview: the service account\" || true\nassert_json_field \"$PREVIEW\" '.unitName' \"${UNIT}\" \"Preview: the unit\" || true\nassert_json_field \"$PREVIEW\" '\"\\(.entry) \\(.memoryMax)\"' 'dist/agentd.mjs 256M' \"Preview: the service entry and its memory limit\" || true\nassert_json_field \"$INSTALL\" '.hooks.approval.state' 'pending' \"Its approval is pending\" || true\nDIGEST=$(json_get \"$INSTALL\" '.hooks.approval.digest // empty')\nHOOKS=$(host_api_get \"plugins/${PLUGIN}/hooks\")\nassert_json_field \"$HOOKS\" '.hooks.agentHalf.integrity' \"${PINNED}\" \"GET /plugins/${PLUGIN}/hooks shows the same agent half\" || true\nhost_api_post \"plugins/${PLUGIN}/enable\" '{}' > /dev/null\n\n# ===========================================================================\n# 3. Refused: not approved; an agent without the app host helper\n# ==========================================================================="
     },
     {
       "id": "refused-before-approval-and-on-an-agent-that-cannot-host-it",
       "label": "Refused before approval and on an agent that cannot host it",
       "steps": [
         {
-          "id": "step-30",
+          "id": "step-31",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -570,7 +570,7 @@
           ]
         },
         {
-          "id": "step-31",
+          "id": "step-32",
           "label": "Hosting an unapproved agent half is refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -591,7 +591,7 @@
           }
         },
         {
-          "id": "step-32",
+          "id": "step-33",
           "label": "…hooks_not_approved",
           "target": "local",
           "continueOnError": true,
@@ -613,7 +613,7 @@
           }
         },
         {
-          "id": "step-33",
+          "id": "step-34",
           "label": "POST /api/plugins/${PLUGIN}/hooks/approve",
           "target": "host",
           "op": {
@@ -632,7 +632,7 @@
           ]
         },
         {
-          "id": "step-34",
+          "id": "step-35",
           "label": "Approved with the digest the preview showed",
           "target": "local",
           "continueOnError": true,
@@ -654,7 +654,7 @@
           }
         },
         {
-          "id": "step-41",
+          "id": "step-42",
           "label": "The relay holds the agent's current host facts",
           "target": "local",
           "op": {
@@ -664,7 +664,7 @@
           }
         },
         {
-          "id": "step-42",
+          "id": "step-43",
           "label": "The relay's host facts of ${HOST_AGENT_LABEL} are missing or stale: $(agent_host_facts)",
           "target": "local",
           "op": {
@@ -674,7 +674,7 @@
           }
         },
         {
-          "id": "step-43",
+          "id": "step-44",
           "label": "The app host helper was enabled before this spec: an agent without it is not shown",
           "target": "local",
           "op": {
@@ -684,7 +684,7 @@
           }
         },
         {
-          "id": "step-44",
+          "id": "step-45",
           "label": "GET /api/plugins/${PLUGIN}/hosting/eligibility",
           "target": "host",
           "op": {
@@ -702,7 +702,7 @@
           ]
         },
         {
-          "id": "step-45",
+          "id": "step-46",
           "label": "Eligibility: ${HOST_AGENT_LABEL} cannot host it yet",
           "target": "local",
           "continueOnError": true,
@@ -724,7 +724,7 @@
           }
         },
         {
-          "id": "step-46",
+          "id": "step-47",
           "label": "…the app host helper is not enabled",
           "target": "local",
           "continueOnError": true,
@@ -745,7 +745,7 @@
           }
         },
         {
-          "id": "step-47",
+          "id": "step-48",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -762,7 +762,7 @@
           ]
         },
         {
-          "id": "step-48",
+          "id": "step-49",
           "label": "Hosting on it is refused (409)",
           "target": "local",
           "continueOnError": true,
@@ -783,7 +783,7 @@
           }
         },
         {
-          "id": "step-49",
+          "id": "step-50",
           "label": "…agent_not_eligible, with the reasons",
           "target": "local",
           "continueOnError": true,
@@ -812,7 +812,7 @@
       "label": "The operator's step: lamaste-agent apphost enable",
       "steps": [
         {
-          "id": "step-50",
+          "id": "step-51",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -829,7 +829,7 @@
           ]
         },
         {
-          "id": "step-51",
+          "id": "step-52",
           "label": "Set RELAY_KID",
           "target": "local",
           "op": {
@@ -846,7 +846,7 @@
           ]
         },
         {
-          "id": "step-52",
+          "id": "step-53",
           "label": "The relay signs with key ${RELAY_KID}",
           "target": "local",
           "continueOnError": true,
@@ -867,7 +867,7 @@
           }
         },
         {
-          "id": "step-54",
+          "id": "step-55",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -884,7 +884,7 @@
           ]
         },
         {
-          "id": "step-55",
+          "id": "step-56",
           "label": "Set ENABLE_JSON",
           "target": "local",
           "op": {
@@ -901,7 +901,7 @@
           ]
         },
         {
-          "id": "step-56",
+          "id": "step-57",
           "label": "apphost enable --user root ($(echo \"$ENABLE_OUT\" | tail -c 200))",
           "target": "local",
           "continueOnError": true,
@@ -923,7 +923,7 @@
           }
         },
         {
-          "id": "step-57",
+          "id": "step-58",
           "label": "…installed the helper, protocol 2",
           "target": "local",
           "continueOnError": true,
@@ -945,7 +945,7 @@
           }
         },
         {
-          "id": "step-58",
+          "id": "step-59",
           "label": "…and no sudoers rule: the agent runs as root",
           "target": "local",
           "continueOnError": true,
@@ -967,7 +967,7 @@
           }
         },
         {
-          "id": "step-60",
+          "id": "step-61",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -984,7 +984,7 @@
           ]
         },
         {
-          "id": "step-61",
+          "id": "step-62",
           "label": "apphost pin: the relay's key pinned again",
           "target": "local",
           "continueOnError": true,
@@ -1006,7 +1006,7 @@
           }
         },
         {
-          "id": "step-62",
+          "id": "step-63",
           "label": "GET /api/agents/me/relay-keys, from the agent: the key the relay signs with",
           "target": "local",
           "continueOnError": true,
@@ -1027,7 +1027,7 @@
           }
         },
         {
-          "id": "step-63",
+          "id": "step-64",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -1044,7 +1044,7 @@
           ]
         },
         {
-          "id": "step-65",
+          "id": "step-66",
           "label": "…in /etc/lamalibre/apphost/relays/${AGENT_LABEL}.json, root:root 0644",
           "target": "local",
           "continueOnError": true,
@@ -1065,7 +1065,7 @@
           }
         },
         {
-          "id": "step-66",
+          "id": "step-67",
           "label": "apphost status: the helper is installed",
           "target": "local",
           "continueOnError": true,
@@ -1087,7 +1087,7 @@
           }
         },
         {
-          "id": "step-67",
+          "id": "step-68",
           "label": "…the one this lamaste-agent ships",
           "target": "local",
           "continueOnError": true,
@@ -1109,7 +1109,7 @@
           }
         },
         {
-          "id": "step-68",
+          "id": "step-69",
           "label": "…on /usr/bin/node ${NODE_ON_AGENT}, what the agent halves run on",
           "target": "local",
           "continueOnError": true,
@@ -1131,7 +1131,7 @@
           }
         },
         {
-          "id": "step-69",
+          "id": "step-70",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -1148,7 +1148,7 @@
           ]
         },
         {
-          "id": "step-70",
+          "id": "step-71",
           "label": "${APPHOST_HELPER} is root:root 0755",
           "target": "local",
           "continueOnError": true,
@@ -1170,7 +1170,7 @@
           }
         },
         {
-          "id": "step-71",
+          "id": "step-72",
           "label": "No /etc/sudoers.d/lamaste-apphost for a root agent",
           "target": "local",
           "continueOnError": true,
@@ -1192,7 +1192,7 @@
           }
         },
         {
-          "id": "step-72",
+          "id": "step-73",
           "label": "The agent's sync reported the helper to the relay",
           "target": "local",
           "op": {
@@ -1202,7 +1202,7 @@
           }
         },
         {
-          "id": "step-73",
+          "id": "step-74",
           "label": "The relay's host facts name no app host helper: $(agent_host_facts)",
           "target": "local",
           "op": {
@@ -1212,7 +1212,7 @@
           }
         },
         {
-          "id": "step-74",
+          "id": "step-75",
           "label": "Set HOST_FACTS",
           "target": "local",
           "op": {
@@ -1229,7 +1229,7 @@
           ]
         },
         {
-          "id": "step-75",
+          "id": "step-76",
           "label": "Host facts: Linux, systemd",
           "target": "local",
           "continueOnError": true,
@@ -1251,7 +1251,7 @@
           }
         },
         {
-          "id": "step-76",
+          "id": "step-77",
           "label": "Host facts: helper protocol 2",
           "target": "local",
           "continueOnError": true,
@@ -1273,7 +1273,7 @@
           }
         },
         {
-          "id": "step-77",
+          "id": "step-78",
           "label": "Host facts: the helper's Node.js",
           "target": "local",
           "continueOnError": true,
@@ -1295,7 +1295,7 @@
           }
         },
         {
-          "id": "step-78",
+          "id": "step-79",
           "label": "Host facts: the relay key the helper verifies jobs with",
           "target": "local",
           "continueOnError": true,
@@ -1317,7 +1317,7 @@
           }
         },
         {
-          "id": "step-79",
+          "id": "step-80",
           "label": "Host facts: a Debian-family distribution ($(json_get \"$HOST_FACTS\" '.distro.id') $(json_get \"$HOST_FACTS\" '.distro.versionId'))",
           "target": "local",
           "continueOnError": true,
@@ -1339,7 +1339,7 @@
           }
         },
         {
-          "id": "step-80",
+          "id": "step-81",
           "label": "GET /api/plugins/${PLUGIN}/hosting/eligibility",
           "target": "host",
           "op": {
@@ -1357,7 +1357,7 @@
           ]
         },
         {
-          "id": "step-81",
+          "id": "step-82",
           "label": "Eligibility: ${HOST_AGENT_LABEL} can host it now",
           "target": "local",
           "continueOnError": true,
@@ -1386,7 +1386,7 @@
       "label": "Refused by the push-install gates; the window opened",
       "steps": [
         {
-          "id": "step-83",
+          "id": "step-84",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -1399,7 +1399,7 @@
           }
         },
         {
-          "id": "step-84",
+          "id": "step-85",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1416,7 +1416,7 @@
           ]
         },
         {
-          "id": "step-85",
+          "id": "step-86",
           "label": "Push-install off: hosting is refused",
           "target": "local",
           "continueOnError": true,
@@ -1437,7 +1437,7 @@
           }
         },
         {
-          "id": "step-86",
+          "id": "step-87",
           "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
           "target": "local",
           "continueOnError": true,
@@ -1459,7 +1459,7 @@
           }
         },
         {
-          "id": "step-87",
+          "id": "step-88",
           "label": "PATCH /api/plugins/push-install/config",
           "target": "host",
           "op": {
@@ -1472,7 +1472,7 @@
           }
         },
         {
-          "id": "step-89",
+          "id": "step-90",
           "label": "DELETE /api/plugins/push-install/enable/${HOST_AGENT_LABEL}",
           "target": "host",
           "op": {
@@ -1483,7 +1483,7 @@
           "continueOnError": true
         },
         {
-          "id": "step-90",
+          "id": "step-91",
           "label": "Set REFUSED",
           "target": "local",
           "op": {
@@ -1500,7 +1500,7 @@
           ]
         },
         {
-          "id": "step-91",
+          "id": "step-92",
           "label": "Push-install on, the agent's window closed: hosting is refused",
           "target": "local",
           "continueOnError": true,
@@ -1521,7 +1521,7 @@
           }
         },
         {
-          "id": "step-92",
+          "id": "step-93",
           "label": "…push_install_refused ($(json_get \"$(body_of \"$REFUSED\")\" '.error'))",
           "target": "local",
           "continueOnError": true,
@@ -1543,7 +1543,7 @@
           }
         },
         {
-          "id": "step-93",
+          "id": "step-94",
           "label": "Set WINDOW",
           "target": "local",
           "op": {
@@ -1560,7 +1560,7 @@
           ]
         },
         {
-          "id": "step-94",
+          "id": "step-95",
           "label": "The agent's window is open, under a policy naming only ${AGENT_PACKAGE}",
           "target": "local",
           "continueOnError": true,
@@ -1589,7 +1589,7 @@
       "label": "Hosting: nothing more is done on the agent VM",
       "steps": [
         {
-          "id": "step-95",
+          "id": "step-96",
           "label": "Set SYNC_MARK",
           "target": "local",
           "op": {
@@ -1606,7 +1606,7 @@
           ]
         },
         {
-          "id": "step-96",
+          "id": "step-97",
           "label": "Set HOST_EPOCH",
           "target": "local",
           "op": {
@@ -1623,7 +1623,7 @@
           ]
         },
         {
-          "id": "step-97",
+          "id": "step-98",
           "label": "POST /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -1642,7 +1642,7 @@
           ]
         },
         {
-          "id": "step-98",
+          "id": "step-99",
           "label": "Set OP_ID",
           "target": "local",
           "op": {
@@ -1659,7 +1659,7 @@
           ]
         },
         {
-          "id": "step-99",
+          "id": "step-100",
           "label": "Hosting did not start: ${HOSTED}",
           "target": "local",
           "op": {
@@ -1676,7 +1676,7 @@
           }
         },
         {
-          "id": "step-100",
+          "id": "step-101",
           "label": "Hosting on ${HOST_AGENT_LABEL} started (operation ${OP_ID})",
           "target": "local",
           "op": {
@@ -1686,7 +1686,7 @@
           }
         },
         {
-          "id": "step-101",
+          "id": "step-102",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -1703,7 +1703,7 @@
           ]
         },
         {
-          "id": "step-102",
+          "id": "step-103",
           "label": "The hosting operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -1725,7 +1725,7 @@
           }
         },
         {
-          "id": "step-104",
+          "id": "step-105",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -1746,7 +1746,7 @@
           }
         },
         {
-          "id": "step-106",
+          "id": "step-107",
           "label": "The agent half was installed before its first hook ran",
           "target": "local",
           "continueOnError": true,
@@ -1767,7 +1767,7 @@
           }
         },
         {
-          "id": "step-107",
+          "id": "step-108",
           "label": "GET /api/plugins/${PLUGIN}/hosting",
           "target": "host",
           "op": {
@@ -1785,7 +1785,7 @@
           ]
         },
         {
-          "id": "step-108",
+          "id": "step-109",
           "label": "Set PORT",
           "target": "local",
           "op": {
@@ -1802,7 +1802,7 @@
           ]
         },
         {
-          "id": "step-110",
+          "id": "step-111",
           "label": "The hosting is active",
           "target": "local",
           "continueOnError": true,
@@ -1824,7 +1824,7 @@
           }
         },
         {
-          "id": "step-111",
+          "id": "step-112",
           "label": "The relay records agent half 1.0.0 on ${HOST_AGENT_LABEL}",
           "target": "local",
           "continueOnError": true,
@@ -1846,7 +1846,7 @@
           }
         },
         {
-          "id": "step-112",
+          "id": "step-113",
           "label": "Port ${PORT} assigned from the internal range",
           "target": "local",
           "op": {
@@ -1861,7 +1861,7 @@
           }
         },
         {
-          "id": "step-113",
+          "id": "step-114",
           "label": "Port ${PORT} is not in 21000–21999",
           "target": "local",
           "op": {
@@ -1876,7 +1876,7 @@
           }
         },
         {
-          "id": "step-114",
+          "id": "step-115",
           "label": "GET /api/plugins/push-install/sessions",
           "target": "host",
           "op": {
@@ -1894,7 +1894,7 @@
           ]
         },
         {
-          "id": "step-115",
+          "id": "step-116",
           "label": "The push is in the push-install session log",
           "target": "local",
           "continueOnError": true,
@@ -1916,7 +1916,7 @@
           }
         },
         {
-          "id": "step-116",
+          "id": "step-117",
           "label": "Audit: plugin.agent-half.installed, with the pinned integrity",
           "target": "local",
           "continueOnError": true,
@@ -1937,7 +1937,7 @@
           }
         },
         {
-          "id": "step-117",
+          "id": "step-118",
           "label": "Set SYNC_EVENTS",
           "target": "local",
           "op": {
@@ -1954,7 +1954,7 @@
           ]
         },
         {
-          "id": "step-118",
+          "id": "step-119",
           "label": "The agent's sync ran the app-install job (sync.log)",
           "target": "local",
           "continueOnError": true,
@@ -1975,7 +1975,7 @@
           }
         },
         {
-          "id": "step-119",
+          "id": "step-120",
           "label": "…then the pre-tunnel hook job",
           "target": "local",
           "continueOnError": true,
@@ -1996,7 +1996,7 @@
           }
         },
         {
-          "id": "step-120",
+          "id": "step-121",
           "label": "Set JOURNAL",
           "target": "local",
           "op": {
@@ -2013,7 +2013,7 @@
           ]
         },
         {
-          "id": "step-121",
+          "id": "step-122",
           "label": "The installed service answered install:pre-tunnel (its journal)",
           "target": "local",
           "continueOnError": true,
@@ -2034,7 +2034,7 @@
           }
         },
         {
-          "id": "step-122",
+          "id": "step-123",
           "label": "…and install:post-tunnel through the tunnel",
           "target": "local",
           "continueOnError": true,
@@ -2062,7 +2062,7 @@
       "label": "On the agent VM: account, files, unit, system package",
       "steps": [
         {
-          "id": "step-123",
+          "id": "step-124",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -2079,7 +2079,7 @@
           ]
         },
         {
-          "id": "step-124",
+          "id": "step-125",
           "label": "${UNIT} is active and enabled (it starts at boot)",
           "target": "local",
           "continueOnError": true,
@@ -2101,7 +2101,7 @@
           }
         },
         {
-          "id": "step-125",
+          "id": "step-126",
           "label": "It runs as User=${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2123,7 +2123,7 @@
           }
         },
         {
-          "id": "step-126",
+          "id": "step-127",
           "label": "…and its process is owned by ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2145,7 +2145,7 @@
           }
         },
         {
-          "id": "step-127",
+          "id": "step-128",
           "label": "The account is not root",
           "target": "local",
           "continueOnError": true,
@@ -2167,7 +2167,7 @@
           }
         },
         {
-          "id": "step-128",
+          "id": "step-129",
           "label": "…a system account without login shell or home",
           "target": "local",
           "continueOnError": true,
@@ -2189,7 +2189,7 @@
           }
         },
         {
-          "id": "step-129",
+          "id": "step-130",
           "label": "${CODE_DIR}: root's, 0755",
           "target": "local",
           "continueOnError": true,
@@ -2211,7 +2211,7 @@
           }
         },
         {
-          "id": "step-130",
+          "id": "step-131",
           "label": "current → 1.0.0, the version installed",
           "target": "local",
           "continueOnError": true,
@@ -2233,7 +2233,7 @@
           }
         },
         {
-          "id": "step-131",
+          "id": "step-132",
           "label": "Every file of the code is root's and writable by root only",
           "target": "local",
           "continueOnError": true,
@@ -2255,7 +2255,7 @@
           }
         },
         {
-          "id": "step-132",
+          "id": "step-133",
           "label": "${DATA_DIR}: 0700, the account's",
           "target": "local",
           "continueOnError": true,
@@ -2277,7 +2277,7 @@
           }
         },
         {
-          "id": "step-133",
+          "id": "step-134",
           "label": "…where the agent half keeps its state",
           "target": "local",
           "continueOnError": true,
@@ -2299,7 +2299,7 @@
           }
         },
         {
-          "id": "step-134",
+          "id": "step-135",
           "label": "$(dirname \"${CONFIG_FILE}\"): 0750 root:${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2321,7 +2321,7 @@
           }
         },
         {
-          "id": "step-135",
+          "id": "step-136",
           "label": "${CONFIG_FILE}: 0600, the account's",
           "target": "local",
           "continueOnError": true,
@@ -2343,7 +2343,7 @@
           }
         },
         {
-          "id": "step-136",
+          "id": "step-137",
           "label": "…for this plugin and its port",
           "target": "local",
           "continueOnError": true,
@@ -2365,7 +2365,7 @@
           }
         },
         {
-          "id": "step-137",
+          "id": "step-138",
           "label": "…holding the secret the agent holds (compared on the VM, never printed)",
           "target": "local",
           "continueOnError": true,
@@ -2387,7 +2387,7 @@
           }
         },
         {
-          "id": "step-138",
+          "id": "step-139",
           "label": "The agent records the agent half it had installed",
           "target": "local",
           "continueOnError": true,
@@ -2409,7 +2409,7 @@
           }
         },
         {
-          "id": "step-141",
+          "id": "step-142",
           "label": "${SYSTEM_PACKAGE} was installed before this spec: its installation by Lamaste is not shown",
           "target": "local",
           "op": {
@@ -2426,7 +2426,7 @@
       "label": "The unit: as written, and as systemd applies it",
       "steps": [
         {
-          "id": "step-143",
+          "id": "step-144",
           "label": "Unit: ${line}",
           "target": "local",
           "continueOnError": true,
@@ -2447,7 +2447,7 @@
           }
         },
         {
-          "id": "step-147",
+          "id": "step-148",
           "label": "systemctl show: ${prop}",
           "target": "local",
           "continueOnError": true,
@@ -2468,7 +2468,7 @@
           }
         },
         {
-          "id": "step-150",
+          "id": "step-151",
           "label": "true",
           "target": "local",
           "continueOnError": true,
@@ -2489,7 +2489,7 @@
           }
         },
         {
-          "id": "step-152",
+          "id": "step-153",
           "label": "No ${UNIT}.d drop-in directory: the unit is all there is",
           "target": "local",
           "continueOnError": true,
@@ -2518,7 +2518,7 @@
       "label": "The socket unit: systemd holds the port",
       "steps": [
         {
-          "id": "step-153",
+          "id": "step-154",
           "label": "/etc/systemd/system/${SOCKET_UNIT}: root:root 0644",
           "target": "local",
           "continueOnError": true,
@@ -2540,7 +2540,7 @@
           }
         },
         {
-          "id": "step-154",
+          "id": "step-155",
           "label": "…its sections: [Unit], [Socket], [Install]",
           "target": "local",
           "continueOnError": true,
@@ -2562,7 +2562,7 @@
           }
         },
         {
-          "id": "step-155",
+          "id": "step-156",
           "label": "…its directives: Description, ListenStream, Accept, NoDelay, Service, WantedBy — nothing else",
           "target": "local",
           "continueOnError": true,
@@ -2584,7 +2584,7 @@
           }
         },
         {
-          "id": "step-157",
+          "id": "step-158",
           "label": "Socket unit: ${line}",
           "target": "local",
           "continueOnError": true,
@@ -2605,7 +2605,7 @@
           }
         },
         {
-          "id": "step-159",
+          "id": "step-160",
           "label": "…and no secret in it",
           "target": "local",
           "continueOnError": true,
@@ -2627,7 +2627,7 @@
           }
         },
         {
-          "id": "step-160",
+          "id": "step-161",
           "label": "${SOCKET_UNIT} is active (running: its service has it) and enabled",
           "target": "local",
           "continueOnError": true,
@@ -2649,7 +2649,7 @@
           }
         },
         {
-          "id": "step-161",
+          "id": "step-162",
           "label": "systemctl show: Listen=127.0.0.1:${PORT} (Stream)",
           "target": "local",
           "continueOnError": true,
@@ -2671,7 +2671,7 @@
           }
         },
         {
-          "id": "step-162",
+          "id": "step-163",
           "label": "systemctl show: Accept=no, NoDelay=yes, Triggers=${UNIT}",
           "target": "local",
           "continueOnError": true,
@@ -2693,7 +2693,7 @@
           }
         },
         {
-          "id": "step-163",
+          "id": "step-164",
           "label": "Set MAIN_PID",
           "target": "local",
           "op": {
@@ -2710,7 +2710,7 @@
           ]
         },
         {
-          "id": "step-164",
+          "id": "step-165",
           "label": "ss: one listening socket on port ${PORT}",
           "target": "local",
           "continueOnError": true,
@@ -2732,7 +2732,7 @@
           }
         },
         {
-          "id": "step-165",
+          "id": "step-166",
           "label": "…on 127.0.0.1:${PORT}",
           "target": "local",
           "continueOnError": true,
@@ -2754,7 +2754,7 @@
           }
         },
         {
-          "id": "step-166",
+          "id": "step-167",
           "label": "…held by systemd (pid 1)…",
           "target": "local",
           "continueOnError": true,
@@ -2776,7 +2776,7 @@
           }
         },
         {
-          "id": "step-167",
+          "id": "step-168",
           "label": "…and by the agent half (MainPID ${MAIN_PID}), the same socket",
           "target": "local",
           "continueOnError": true,
@@ -2798,7 +2798,7 @@
           }
         },
         {
-          "id": "step-168",
+          "id": "step-169",
           "label": "The agent half's descriptor 3 is that listening socket (inode $(json_get \"$FACTS\" '.listen.fd3Inode'))",
           "target": "local",
           "continueOnError": true,
@@ -2820,7 +2820,7 @@
           }
         },
         {
-          "id": "step-169",
+          "id": "step-170",
           "label": "Exec on agent",
           "target": "agent",
           "op": {
@@ -2837,7 +2837,7 @@
           ]
         },
         {
-          "id": "step-170",
+          "id": "step-171",
           "label": "lamaste-agent apphost status: unit active, socket active",
           "target": "local",
           "continueOnError": true,
@@ -2866,7 +2866,7 @@
       "label": "Through the tunnel: the installed version answers",
       "steps": [
         {
-          "id": "step-171",
+          "id": "step-172",
           "label": "GET /api/${PLUGIN}/ping",
           "target": "host",
           "op": {
@@ -2884,7 +2884,7 @@
           ]
         },
         {
-          "id": "step-172",
+          "id": "step-173",
           "label": "GET /api/${PLUGIN}/ping reaches the service on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -2906,7 +2906,7 @@
           }
         },
         {
-          "id": "step-173",
+          "id": "step-174",
           "label": "…the installed version, 1.0.0",
           "target": "local",
           "continueOnError": true,
@@ -2928,7 +2928,7 @@
           }
         },
         {
-          "id": "step-174",
+          "id": "step-175",
           "label": "…running as ${SERVICE_USER}",
           "target": "local",
           "continueOnError": true,
@@ -2950,7 +2950,7 @@
           }
         },
         {
-          "id": "step-175",
+          "id": "step-176",
           "label": "…which sees the admin as its caller",
           "target": "local",
           "continueOnError": true,
@@ -2972,7 +2972,7 @@
           }
         },
         {
-          "id": "step-176",
+          "id": "step-177",
           "label": "…listening on systemd's socket, descriptor 3, with LISTEN_* cleared from its environment",
           "target": "local",
           "continueOnError": true,
@@ -2994,7 +2994,7 @@
           }
         },
         {
-          "id": "step-177",
+          "id": "step-178",
           "label": "GET /api/${PLUGIN}/panel.js",
           "target": "host",
           "op": {
@@ -3012,7 +3012,7 @@
           ]
         },
         {
-          "id": "step-178",
+          "id": "step-179",
           "label": "The admin page's bundle comes from the agent half",
           "target": "local",
           "continueOnError": true,
@@ -3033,7 +3033,7 @@
           }
         },
         {
-          "id": "step-179",
+          "id": "step-180",
           "label": "GET /api/${PLUGIN}/sandbox",
           "target": "host",
           "op": {
@@ -3051,7 +3051,7 @@
           ]
         },
         {
-          "id": "step-180",
+          "id": "step-181",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3068,7 +3068,7 @@
           ]
         },
         {
-          "id": "step-181",
+          "id": "step-182",
           "label": "Sandbox: the service is ${SERVICE_USER}, not root",
           "target": "local",
           "continueOnError": true,
@@ -3090,7 +3090,7 @@
           }
         },
         {
-          "id": "step-182",
+          "id": "step-183",
           "label": "Sandbox: it writes its data directory",
           "target": "local",
           "continueOnError": true,
@@ -3112,7 +3112,7 @@
           }
         },
         {
-          "id": "step-186",
+          "id": "step-187",
           "label": "Sandbox: /run/lock, writable by every user, is read-only to it (ReadOnlyPaths=/run)",
           "target": "local",
           "continueOnError": true,
@@ -3134,7 +3134,7 @@
           }
         },
         {
-          "id": "step-187",
+          "id": "step-188",
           "label": "/run/lock is not world-writable on this VM: ProtectSystem=strict is not singled out",
           "target": "local",
           "op": {
@@ -3144,7 +3144,7 @@
           }
         },
         {
-          "id": "step-188",
+          "id": "step-189",
           "label": "Sandbox: it has a /tmp…",
           "target": "local",
           "continueOnError": true,
@@ -3166,7 +3166,7 @@
           }
         },
         {
-          "id": "step-189",
+          "id": "step-190",
           "label": "…of its own (PrivateTmp): nothing appears in the machine's /tmp",
           "target": "local",
           "continueOnError": true,
@@ -3188,7 +3188,7 @@
           }
         },
         {
-          "id": "step-190",
+          "id": "step-191",
           "label": "Sandbox: it has a /var/tmp…",
           "target": "local",
           "continueOnError": true,
@@ -3210,7 +3210,7 @@
           }
         },
         {
-          "id": "step-191",
+          "id": "step-192",
           "label": "…of its own: nothing appears in the machine's /var/tmp",
           "target": "local",
           "continueOnError": true,
@@ -3232,7 +3232,7 @@
           }
         },
         {
-          "id": "step-193",
+          "id": "step-194",
           "label": "…and nothing appears in the machine's /dev/shm",
           "target": "local",
           "continueOnError": true,
@@ -3254,7 +3254,7 @@
           }
         },
         {
-          "id": "step-194",
+          "id": "step-195",
           "label": "Sandbox: no new privileges, no capabilities",
           "target": "local",
           "continueOnError": true,
@@ -3276,7 +3276,7 @@
           }
         },
         {
-          "id": "step-197",
+          "id": "step-198",
           "label": "Sandbox: it sends UDP (dgram binds a port of its own): holding its TCP port took nothing else from it",
           "target": "local",
           "continueOnError": true,
@@ -3305,7 +3305,7 @@
       "label": "Feria's record: the panel installed as itself, the agent pulled the package itself",
       "steps": [
         {
-          "id": "step-199",
+          "id": "step-200",
           "label": "Set ALL_REQUESTS",
           "target": "local",
           "op": {
@@ -3322,7 +3322,7 @@
           ]
         },
         {
-          "id": "step-200",
+          "id": "step-201",
           "label": "Set SERVER_REQUESTS",
           "target": "local",
           "op": {
@@ -3339,7 +3339,7 @@
           ]
         },
         {
-          "id": "step-205",
+          "id": "step-206",
           "label": "Set REQUESTS",
           "target": "local",
           "op": {
@@ -3356,7 +3356,7 @@
           ]
         },
         {
-          "id": "step-210",
+          "id": "step-211",
           "label": "Set TOKENS",
           "target": "local",
           "op": {
@@ -3373,7 +3373,7 @@
           ]
         },
         {
-          "id": "step-211",
+          "id": "step-212",
           "label": "Its token: an agent token, read scope",
           "target": "local",
           "continueOnError": true,
@@ -3395,7 +3395,7 @@
           }
         },
         {
-          "id": "step-212",
+          "id": "step-213",
           "label": "…brokered by the panel's OIDC identity",
           "target": "local",
           "continueOnError": true,
@@ -3424,7 +3424,7 @@
       "label": "Uninstall with purge leaves nothing",
       "steps": [
         {
-          "id": "step-213",
+          "id": "step-214",
           "label": "POST /api/plugins/${PLUGIN}/disable",
           "target": "host",
           "op": {
@@ -3435,7 +3435,7 @@
           }
         },
         {
-          "id": "step-214",
+          "id": "step-215",
           "label": "DELETE /api/plugins/${PLUGIN}?purge=true",
           "target": "host",
           "op": {
@@ -3453,7 +3453,7 @@
           ]
         },
         {
-          "id": "step-215",
+          "id": "step-216",
           "label": "Set OP",
           "target": "local",
           "op": {
@@ -3470,7 +3470,7 @@
           ]
         },
         {
-          "id": "step-216",
+          "id": "step-217",
           "label": "The uninstall operation succeeded ($(json_get \"$OP\" '.error // \"\"'))",
           "target": "local",
           "continueOnError": true,
@@ -3492,7 +3492,7 @@
           }
         },
         {
-          "id": "step-218",
+          "id": "step-219",
           "label": "Step: ${step}",
           "target": "local",
           "continueOnError": true,
@@ -3513,7 +3513,7 @@
           }
         },
         {
-          "id": "step-220",
+          "id": "step-221",
           "label": "The agent half went before the secret it runs with",
           "target": "local",
           "continueOnError": true,
@@ -3534,7 +3534,7 @@
           }
         },
         {
-          "id": "step-221",
+          "id": "step-222",
           "label": "The plugin is gone from the relay",
           "target": "local",
           "continueOnError": true,
@@ -3555,7 +3555,7 @@
           }
         },
         {
-          "id": "step-223",
+          "id": "step-224",
           "label": "Audit: plugin.agent-half.removed, purge",
           "target": "local",
           "continueOnError": true,
@@ -3576,7 +3576,7 @@
           }
         },
         {
-          "id": "step-224",
+          "id": "step-225",
           "label": "Set FACTS",
           "target": "local",
           "op": {
@@ -3593,7 +3593,7 @@
           ]
         },
         {
-          "id": "step-225",
+          "id": "step-226",
           "label": "No unit on the agent VM",
           "target": "local",
           "continueOnError": true,
@@ -3615,7 +3615,7 @@
           }
         },
         {
-          "id": "step-226",
+          "id": "step-227",
           "label": "No socket unit",
           "target": "local",
           "continueOnError": true,
@@ -3637,7 +3637,7 @@
           }
         },
         {
-          "id": "step-227",
+          "id": "step-228",
           "label": "No drop-in directory",
           "target": "local",
           "continueOnError": true,
@@ -3659,7 +3659,7 @@
           }
         },
         {
-          "id": "step-228",
+          "id": "step-229",
           "label": "Nothing listens on port ${PORT} any more: the socket let go of it",
           "target": "local",
           "continueOnError": true,
@@ -3681,7 +3681,7 @@
           }
         },
         {
-          "id": "step-229",
+          "id": "step-230",
           "label": "No code, config or data directory",
           "target": "local",
           "continueOnError": true,
@@ -3703,7 +3703,7 @@
           }
         },
         {
-          "id": "step-230",
+          "id": "step-231",
           "label": "No ${SERVICE_USER} account or group",
           "target": "local",
           "continueOnError": true,
@@ -3725,7 +3725,7 @@
           }
         },
         {
-          "id": "step-231",
+          "id": "step-232",
           "label": "The agent's record no longer lists it",
           "target": "local",
           "continueOnError": true,
@@ -3747,7 +3747,7 @@
           }
         },
         {
-          "id": "step-232",
+          "id": "step-233",
           "label": "The agent's own copy of the plugin config is gone",
           "target": "local",
           "op": {
@@ -3757,7 +3757,7 @@
           }
         },
         {
-          "id": "step-233",
+          "id": "step-234",
           "label": "The agent still holds a plugin config for ${PLUGIN}",
           "target": "local",
           "op": {

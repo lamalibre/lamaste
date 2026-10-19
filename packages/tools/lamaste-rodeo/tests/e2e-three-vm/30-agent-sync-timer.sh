@@ -350,6 +350,8 @@ else
   log_fail "The sync timer did not run again within 60 seconds of the rotation"
 fi
 ROTATED_LATER=$(agent_exec "grep -c 'chisel credential rotated' '${SYNC_LOG}' 2>/dev/null || true" 2>/dev/null || echo "0")
-assert_eq "${ROTATED_LATER:-0}" "1" "No further rotation after the credential was sealed" || true
+# Relative to the count before this spec's rotation: the log keeps the
+# rotations of earlier runs on the same agent.
+assert_eq "$(( ${ROTATED_LATER:-0} - ${ROTATED_BEFORE:-0} ))" "1" "No further rotation after the credential was sealed" || true
 
 end_test
