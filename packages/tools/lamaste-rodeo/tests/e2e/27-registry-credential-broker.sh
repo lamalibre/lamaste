@@ -8,7 +8,8 @@
 # - `registry-credential set --oidc`: the panel registers its own
 #   lamaste-server client in Authelia, obtains a client-credentials JWT,
 #   logs in at the registry and stores the credential only after whoami
-#   reports the admin scope
+#   reports the read and admin scopes; a workload rule granting admin alone
+#   is refused when the credential is set, not at the first install
 # - GET /api/agents/me/registry-credential hands the agent a read token owned
 #   by agent:<label> that expires within an hour, created by the panel's
 #   OIDC identity; a second call reuses it
@@ -134,6 +135,18 @@ assert_eq "$NO_CREDENTIAL_STATUS" "404" "Without a credential the agent is told 
 # ===========================================================================
 
 log_section "registry-credential set --oidc"
+
+# A workload rule that grants admin but not read let the panel broker agent
+# tokens while its own installs failed with 403; the panel refuses it now.
+stub_post "-/e2e/config" '{"workloadScopes":["admin"]}' > /dev/null
+REFUSED_OUTPUT=$(timed_exec 120 lamaste-server registry-credential set --url "${STUB_URL}" --oidc --json 2>&1 || true)
+assert_contains "$REFUSED_OUTPUT" "missing: read" "A registry identity without the read scope is refused ($(echo "$REFUSED_OUTPUT" | tail -c 300))" || true
+REFUSED_SHOW=$(lamaste-server registry-credential show --json 2>/dev/null | grep -E '^\{' | tail -1 || echo "{}")
+assert_json_field "$REFUSED_SHOW" '.configured' 'false' "...and nothing is stored" || true
+REFUSED_CLIENT=$(grep -c 'client_id: lamaste-server' /etc/authelia/configuration.yml || true)
+assert_eq "$REFUSED_CLIENT" "0" "...and the lamaste-server client is removed from Authelia again" || true
+WORKLOAD_RESET=$(stub_post "-/e2e/config" '{"workloadScopes":["read","admin"]}' | jq -c '.workloadScopes' 2>/dev/null || echo "")
+assert_eq "$WORKLOAD_RESET" '["read","admin"]' "The stand-in grants the documented workload scopes again" || true
 
 SET_OUTPUT=$(timed_exec 120 lamaste-server registry-credential set --url "${STUB_URL}" --oidc --json 2>&1 || true)
 SET_JSON=$(echo "$SET_OUTPUT" | grep -E '^\{' | tail -1 || echo "{}")

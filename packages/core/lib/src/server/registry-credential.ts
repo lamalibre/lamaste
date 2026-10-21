@@ -76,7 +76,10 @@ const FeriaTokenSchema = z
 export const RegistryAuthSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('token'),
-    /** The panel's service token on the registry. Needs the `admin` scope to broker. */
+    /**
+     * The panel's service token on the registry. Needs `read` (the panel's own
+     * installs) and `admin` (brokering agent tokens) — see {@link REQUIRED_SERVICE_SCOPES}.
+     */
     token: FeriaTokenSchema,
   }),
   z.object({
@@ -495,12 +498,19 @@ export async function loginToRegistry(
   };
 }
 
+/**
+ * The scopes the panel's service identity needs on the registry: `read` for
+ * the panel's own installs, update staging and agent-half pinning, `admin`
+ * for brokering agent tokens.
+ */
+const REQUIRED_SERVICE_SCOPES = ['read', 'admin'] as const;
+
 /** Appended to every failure of the OIDC login: what the operator must configure on Feria. */
 function feriaRulesHint(registryUrl: string): string {
   return (
     ' — Feria (0.3.2 or later) accepts the panel only through a "workloads" rule on the relay Authelia\'s ' +
     `"groups" issuer in its auth.json (issuer https://auth.<domain>, audience ${registryAudience(registryUrl)}) ` +
-    `that grants the admin scope when the claim client_id — or sub, which carries the same value — is "${LAMASTE_SERVER_OIDC_CLIENT_ID}"`
+    `that grants the scopes ${REQUIRED_SERVICE_SCOPES.join(' and ')} when the claim client_id — or sub, which carries the same value — is "${LAMASTE_SERVER_OIDC_CLIENT_ID}"`
   );
 }
 
@@ -588,8 +598,8 @@ export class RegistryServiceTokenCache {
 /**
  * Check a credential against the registry before storing it: the whole
  * chain must work (for `oidc`: Authelia token endpoint → Feria login) and
- * the resulting identity must carry the `admin` scope, which the broker
- * route requires.
+ * the resulting identity must carry every scope of
+ * {@link REQUIRED_SERVICE_SCOPES}.
  */
 export async function verifyRegistryCredential(
   config: Pick<RegistryCredentialConfig, 'registryUrl' | 'auth'>,
@@ -610,9 +620,11 @@ export async function verifyRegistryCredential(
       fetchImpl,
     ),
   );
-  if (!who.scopes.includes('admin')) {
+  const missing = REQUIRED_SERVICE_SCOPES.filter((scope) => !who.scopes.includes(scope));
+  if (missing.length > 0) {
     throw new RegistryCredentialError(
-      `the credential identifies ${who.owner} with scopes [${who.scopes.join(', ')}] — brokering agent tokens needs the admin scope` +
+      `the credential identifies ${who.owner} with scopes [${who.scopes.join(', ')}] — the panel needs ` +
+        `read (its own installs) and admin (brokering agent tokens); missing: ${missing.join(', ')}` +
         (config.auth.kind === 'oidc' ? feriaRulesHint(config.registryUrl) : ''),
       400,
     );

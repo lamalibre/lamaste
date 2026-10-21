@@ -628,6 +628,10 @@ const ISSUER_HOST = new URL(opts.issuer).host;
 const tokens = new Map(); // secret → record
 const requests = [];
 let agentTokenTtlSeconds = 3600;
+// The workload rule a real Feria carries in auth.json for the panel's
+// client: read (the panel's own installs) and admin (brokering). A spec
+// narrows it through /-/e2e/config to prove the panel refuses the result.
+let workloadScopes = ['read', 'admin'];
 
 const json = (res, status, payload) => {
   res.writeHead(status, { 'content-type': 'application/json' });
@@ -813,14 +817,15 @@ const server = createServer(async (req, res) => {
     }
     return true;
   };
-  const requireAdmin = () => {
+  const requireScope = (scope) => {
     if (!requireAuth()) return false;
-    if (!principal.scopes.includes('admin')) {
-      json(res, 403, { error: 'requires the admin scope' });
+    if (!principal.scopes.includes(scope)) {
+      json(res, 403, { error: `requires the ${scope} scope` });
       return false;
     }
     return true;
   };
+  const requireAdmin = () => requireScope('admin');
 
   try {
     if (req.method === 'GET' && url.pathname === '/-/ping') return json(res, 200, {});
@@ -835,12 +840,12 @@ const server = createServer(async (req, res) => {
       } catch (err) {
         return json(res, 401, { error: `login refused: ${err.message}` });
       }
-      // The rule a real Feria carries in auth.json: client_id lamaste-server → admin.
+      // The rule a real Feria carries in auth.json: client_id lamaste-server → workloadScopes.
       const clientId = claims.client_id ?? claims.sub;
       if (clientId !== 'lamaste-server') {
         return json(res, 403, { error: 'login refused: this identity is granted no Feria access by the issuer policy' });
       }
-      return json(res, 201, issue({ owner: `ci:${ISSUER_HOST}/${claims.sub}`, kind: 'ci', scopes: ['read', 'publish', 'admin'], label: 'lamaste-server', ttlSeconds: 3600, createdBy: 'login' }));
+      return json(res, 201, issue({ owner: `ci:${ISSUER_HOST}/${claims.sub}`, kind: 'ci', scopes: [...workloadScopes], label: 'lamaste-server', ttlSeconds: 3600, createdBy: 'login' }));
     }
     if (req.method === 'POST' && url.pathname === '/-/feria/broker/agent-token') {
       if (!requireAdmin()) return;
@@ -866,7 +871,10 @@ const server = createServer(async (req, res) => {
       if (!requireAdmin()) return;
       const cfg = JSON.parse(body || '{}');
       if (Number.isInteger(cfg.agentTokenTtlSeconds) && cfg.agentTokenTtlSeconds > 0) agentTokenTtlSeconds = cfg.agentTokenTtlSeconds;
-      return json(res, 200, { agentTokenTtlSeconds });
+      if (Array.isArray(cfg.workloadScopes) && cfg.workloadScopes.every((s) => ['read', 'publish', 'admin'].includes(s))) {
+        workloadScopes = [...cfg.workloadScopes];
+      }
+      return json(res, 200, { agentTokenTtlSeconds, workloadScopes });
     }
     if (req.method === 'PUT' && url.pathname === '/-/e2e/packages') {
       if (!requireAdmin()) return;
@@ -889,7 +897,7 @@ const server = createServer(async (req, res) => {
     const pathname = decodeURIComponent(url.pathname);
     const tarball = /^\/(@[^/]+\/[^/]+)\/-\/([^/]+\.tgz)$/.exec(pathname);
     if (req.method === 'GET' && tarball) {
-      if (!requireAuth()) return;
+      if (!requireScope('read')) return;
       const data = packages.get(tarball[1])?.tarballs.get(tarball[2]);
       if (!data) return json(res, 404, { error: 'not found' });
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': data.length });
@@ -897,7 +905,7 @@ const server = createServer(async (req, res) => {
     }
     const packument = /^\/(@[^/]+\/[^/]+)$/.exec(pathname);
     if (req.method === 'GET' && packument) {
-      if (!requireAuth()) return;
+      if (!requireScope('read')) return;
       const doc = packumentOf(packument[1]);
       if (!doc) return json(res, 404, { error: 'not found' });
       res.setHeader('cache-control', 'no-cache');

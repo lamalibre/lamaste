@@ -96,7 +96,7 @@ async function oidcDeps(config) {
 
 /**
  * Verify a candidate credential end to end (for `oidc`: Authelia token
- * endpoint → Feria login → whoami with the admin scope). The
+ * endpoint → Feria login → whoami with the read and admin scopes). The
  * `lamaste-server` client must already be in Authelia — the route syncs it
  * first.
  * @param {{ registryUrl: string, auth: { kind: 'token', token: string } | { kind: 'oidc', clientId: string } }} candidate

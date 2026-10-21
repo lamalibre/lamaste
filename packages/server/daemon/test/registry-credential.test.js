@@ -45,8 +45,17 @@ let server;
 let registryUrl;
 let requests;
 let stateDir;
-/** What the stand-in Feria does with a login: `admin` grants the admin scope, `readonly` only read. */
-let loginPolicy = 'admin';
+/**
+ * The scopes the stand-in Feria's workload rule grants a `lamaste-server`
+ * login: `workload` is the documented rule (read + admin), `adminonly` the
+ * rule that broke panel installs with a 403, `readonly` read alone.
+ */
+const LOGIN_POLICIES = {
+  workload: ['read', 'admin'],
+  adminonly: ['admin'],
+  readonly: ['read'],
+};
+let loginPolicy = 'workload';
 /** What the stand-in Authelia answers; set by tests. */
 let autheliaMode = 'ok';
 
@@ -127,7 +136,7 @@ before(async () => {
         if (claims.iss !== 'https://auth.samplepark.tr')
           return json(401, { error: 'assertion issuer is not trusted' });
         if (claims.client_id !== 'lamaste-server') return json(403, { error: 'login refused' });
-        const scopes = loginPolicy === 'admin' ? ['read', 'publish', 'admin'] : ['read'];
+        const scopes = LOGIN_POLICIES[loginPolicy];
         return json(201, {
           id: 'ci-1',
           owner: 'ci:auth.samplepark.tr/lamaste-server',
@@ -137,14 +146,15 @@ before(async () => {
           createdAt: new Date().toISOString(),
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
           createdBy: 'login',
-          token: `feria_ci_${scopes.length}`,
+          token: `feria_ci_${loginPolicy}`,
         });
       }
-      const ciToken = /^feria_ci_(\d)$/.exec(token);
+      const ciToken = /^feria_ci_([a-z]+)$/.exec(token);
       const known = token === ADMIN_TOKEN || token === READ_TOKEN || ciToken;
       if (!known) return json(401, { error: 'authentication required' });
-      const scopes =
-        token === ADMIN_TOKEN || (ciToken && ciToken[1] === '3')
+      const scopes = ciToken
+        ? LOGIN_POLICIES[ciToken[1]]
+        : token === ADMIN_TOKEN
           ? ['read', 'publish', 'admin']
           : ['read'];
       const owner = ciToken
@@ -272,7 +282,7 @@ test("the first release's on-disk shape (top-level token) is read as auth.kind t
   await clearRegistryCredentialConfig(stateDir);
 });
 
-test('verifyRegistryCredential (token) requires a valid token with the admin scope', async () => {
+test('verifyRegistryCredential (token) requires a valid token with the read and admin scopes', async () => {
   const ok = await verifyRegistryCredential({
     registryUrl,
     auth: { kind: 'token', token: ADMIN_TOKEN },
@@ -283,7 +293,7 @@ test('verifyRegistryCredential (token) requires a valid token with the admin sco
     (err) => {
       assert.ok(err instanceof RegistryCredentialError);
       assert.equal(err.statusCode, 400);
-      assert.match(err.message, /admin scope/);
+      assert.match(err.message, /missing: admin$/);
       return true;
     },
   );
@@ -362,11 +372,11 @@ test('requestClientCredentialsToken: client_secret_basic, forwarded headers make
 });
 
 test('verifyRegistryCredential (oidc) runs the whole chain and explains what Feria must trust', async () => {
-  loginPolicy = 'admin';
+  loginPolicy = 'workload';
   const ok = await verifyRegistryCredential(oidcConfig(), oidcDeps());
   assert.deepEqual(ok, {
     owner: 'ci:auth.samplepark.tr/lamaste-server',
-    scopes: ['read', 'publish', 'admin'],
+    scopes: ['read', 'admin'],
   });
   const login = requests.find((r) => r.url === '/-/feria/login');
   assert.deepEqual(Object.keys(JSON.parse(login.body)).sort(), ['assertion', 'label']);
@@ -379,18 +389,28 @@ test('verifyRegistryCredential (oidc) runs the whole chain and explains what Fer
     return true;
   });
 
+  // Feria grants admin but not read (the panel could broker but never
+  // install) → refused when the credential is set, not at the first install.
+  loginPolicy = 'adminonly';
+  await assert.rejects(verifyRegistryCredential(oidcConfig(), oidcDeps()), (err) => {
+    assert.equal(err.statusCode, 400);
+    assert.match(err.message, /missing: read —/);
+    assert.match(err.message, /grants the scopes read and admin/);
+    return true;
+  });
+
   // Feria grants no admin → the rules hint names issuer, audience and claim.
   loginPolicy = 'readonly';
   await assert.rejects(verifyRegistryCredential(oidcConfig(), oidcDeps()), (err) => {
     assert.equal(err.statusCode, 400);
-    assert.match(err.message, /admin scope/);
+    assert.match(err.message, /missing: admin —/);
     assert.match(err.message, /"workloads" rule/);
     assert.match(err.message, /https:\/\/auth\.<domain>/);
     assert.match(err.message, new RegExp(`audience ${registryUrl}`));
     assert.match(err.message, /client_id — or sub/);
     return true;
   });
-  loginPolicy = 'admin';
+  loginPolicy = 'workload';
 
   // Feria refuses the login (issuer unknown) → same hint.
   await assert.rejects(
@@ -416,7 +436,7 @@ test('RegistryServiceTokenCache reuses an oidc token until five minutes before e
   const cache = new RegistryServiceTokenCache(() => now);
   const before = requests.length;
   const first = await cache.resolve(oidcConfig(), oidcDeps());
-  assert.equal(first.token, 'feria_ci_3');
+  assert.equal(first.token, 'feria_ci_workload');
   const chainCalls = requests.length - before;
   assert.equal(chainCalls, 2); // token endpoint + login
 
@@ -458,7 +478,7 @@ test('brokerAgentRegistryToken returns a one-hour read token owned by the agent'
 
   // With the panel's oidc identity (a Feria ci token carrying admin).
   const viaOidc = await brokerAgentRegistryToken(oidcConfig(), 'r730-app-2', {
-    serviceToken: 'feria_ci_3',
+    serviceToken: 'feria_ci_workload',
   });
   assert.equal(viaOidc.token, 'feria_agent_r730-app-2_1h');
 

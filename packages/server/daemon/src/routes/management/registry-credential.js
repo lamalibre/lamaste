@@ -4,7 +4,7 @@
  *   GET    /api/registry-credential   what is configured — never a token
  *   PUT    /api/registry-credential   store a credential after verifying the
  *                                     whole chain against the registry
- *                                     (admin scope required)
+ *                                     (read + admin scopes required)
  *   DELETE /api/registry-credential   remove it
  *
  * `auth.kind` is `token` (a pasted long-lived Feria token) or `oidc` (the
