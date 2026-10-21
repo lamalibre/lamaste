@@ -19,6 +19,10 @@ export {
   pluginCapabilityRegexFor,
   derivePluginRoute,
   AGENT_LABEL_REGEX,
+  USERNAME_REGEX,
+  USERNAME_MIN_LENGTH,
+  USERNAME_MAX_LENGTH,
+  isLamasteUsername,
   RESERVED_TUNNEL_PORTS,
   isTunnelPortAllowed,
   INTERNAL_PLUGIN_PORT_RANGE,
@@ -161,6 +165,78 @@ export type {
   AgentHalfSettingsUpdate,
 } from './plugin-settings.js';
 
+// Identity (agent-hosted plugins): the manifest's identity block, its
+// approval diff, and the feed contract between the panel and the agent half,
+// which keeps the projection (`createIdentityProjection` in /agent)
+export {
+  IDENTITY_PROTOCOL_VERSION,
+  AGENT_HALF_IDENTITY_PREFIX,
+  AGENT_HALF_IDENTITY_NOTIFY_PATH,
+  AGENT_HALF_IDENTITY_CHANGES_PATH,
+  IDENTITY_BATCH_MAX_CHANGES,
+  IDENTITY_BATCH_MAX_BYTES,
+  IDENTITY_ANSWER_MAX_BYTES,
+  IDENTITY_ROLE_ID_REGEX,
+  IDENTITY_ROLES_MAX,
+  IDENTITY_UUID_REGEX,
+  IDENTITY_ATTRIBUTES,
+  DEFAULT_IDENTITY_ATTRIBUTES,
+  AUDIENCE_REMOVE_REASONS,
+  IDENTITY_DISPLAY_NAME_MAX_LENGTH,
+  IDENTITY_EMAIL_MAX_LENGTH,
+  IDENTITY_CURSOR_MISMATCH,
+  isIdentityUuid,
+  isIdentityRoleList,
+  IdentityRoleSchema,
+  IdentityBlockSchema,
+  normalizeIdentityBlock,
+  identityDiff,
+  identityChangeNeedsApproval,
+  AudienceMemberSchema,
+  AudienceLastKnownSchema,
+  AudienceChangeSchema,
+  IdentityNotifyRequestSchema,
+  IdentityNotifyAnswerSchema,
+  IdentityChangesRequestSchema,
+  IdentityChangesAnswerSchema,
+  IdentityCursorConflictSchema,
+  parseIdentityNotifyRequest,
+  parseIdentityNotifyAnswer,
+  parseIdentityChangesRequest,
+  parseIdentityChangesAnswer,
+  parseIdentityCursorConflict,
+} from './identity.js';
+
+export type {
+  IdentityAttribute,
+  AudienceRemoveReason,
+  IdentityBlockInput,
+  IdentityBlock,
+  IdentityRole,
+  NormalizedIdentityBlock,
+  IdentityDiff,
+  AudienceMember,
+  AudienceLastKnown,
+  AudienceChange,
+  IdentityNotifyRequest,
+  IdentityNotifyAnswer,
+  IdentityChangesRequest,
+  IdentityChangesAnswer,
+  IdentityCursorConflict,
+} from './identity.js';
+
+// The user surface: /api/<route>/app/* on the relay, /app/* on the agent
+// half — the path rules every check of it shares
+export {
+  AGENT_HALF_APP_PREFIX,
+  USER_SURFACE_API_PREFIX,
+  hasUnsafePathSegments,
+  isAgentHalfAppPath,
+  isUnderAgentHalfApp,
+  isUserSurfaceUrl,
+  userSurfaceApiPath,
+} from './user-surface.js';
+
 // Settings secrets on the wire: sealed by the relay to the one request that
 // carries them, opened by the agent half with the verified request
 export {
@@ -300,6 +376,7 @@ export {
   generateCallerAssertionNonce,
   assertHostingSecret,
   bodySha256Hex,
+  parseCallerIdentity,
   signCallerAssertion,
   verifyCallerAssertion,
   signResponder,
@@ -309,6 +386,7 @@ export {
 
 export type {
   CallerIdentity,
+  UserCallerIdentity,
   CallerAssertionInput,
   CallerAssertionPayload,
   CallerAssertionRejection,
@@ -336,13 +414,15 @@ export type {
   AgentHalfCallResult,
 } from './agent-half-call.js';
 
-// Relay assertions (relay vhosts → lamaste-agentd on the agent's loopback)
+// Relay assertions (relay vhosts → lamaste-agentd on the agent's loopback;
+// Gatekeeper → the panel for a plugin's user surface)
 export {
   RELAY_ASSERTION_HEADER,
   RELAY_ASSERTION_MAX_AGE_MS,
   RELAY_ASSERTION_CLOCK_SKEW_MS,
   RELAY_ASSERTION_VERSION,
   RELAY_SIGNING_KEY_FILE,
+  RELAY_PANEL_AUDIENCE,
   relayKeyId,
   relayVerifyKeyOf,
   parseRelayVerifyKey,
@@ -356,6 +436,8 @@ export {
 
 export type {
   RelayCaller,
+  RelaySessionUser,
+  RelayPanelUser,
   RelayTarget,
   RelayAssertionPayload,
   RelaySigningKey,

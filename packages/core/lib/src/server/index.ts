@@ -404,13 +404,15 @@ export type {
   CreatePluginHostingInput,
 } from './plugin-hosting.js';
 
-// --- Agent forwarder (the panel's /api/<route>/* for hosted plugins) ---
+// --- Agent forwarder (the panel's /api/<route>/* for hosted plugins, and
+// /api/<route>/app/* — the user surface of a plugin that declares identity) ---
 export {
   AGENT_HALF_ADMIN_PREFIX,
   AGENT_FORWARD_DEFAULTS,
   agentForwarderPlugin,
   createHookedForwarder,
   forwardToAgentHalf,
+  buildRequestHookPlan,
   forwardedRequestHeaders,
   forwardedResponseHeaders,
   agentHalfPath,
@@ -418,16 +420,27 @@ export {
   isAgentHalfReservedPath,
   isServiceWorkerRequest,
   callerLabel,
+  userSurfaceHalfPath,
+  userSurfacePlugin,
 } from './agent-forwarder.js';
 export type {
   AgentForwardTarget,
   AgentForwardRefusal,
   AgentForwardResolution,
+  AgentForwardTimeouts,
   AgentForwarderOptions,
   AgentForwarderLogger,
+  AdminSurfaceCaller,
+  ForwardedCaller,
+  ForwardOutcome,
   HookedForwarderOptions,
+  MatchedRequestHook,
+  RequestHookPlan,
   RequestHookRuntime,
   RequestHookRun,
+  UserCallerResolution,
+  UserSurfaceOptions,
+  UserSurfaceRelayVerification,
 } from './agent-forwarder.js';
 
 // --- Health monitor for hosted plugins ---

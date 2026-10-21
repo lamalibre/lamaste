@@ -11,18 +11,24 @@
  *   the SHA-256 of the relay entry file (code Lamaste runs on the relay);
  * - its *agent half* when Lamaste installs it — the package, its version
  *   and tarball integrity, the service spec and the system packages (code
- *   and packages Lamaste installs on the hosting agent, as root).
+ *   and packages Lamaste installs on the hosting agent, as root);
+ * - its *identity* block when it declares one — the roles its users hold
+ *   and the attributes Lamaste gives it about them (`identity.ts`).
  *
  * A new plugin version that differs in any of them by one byte has another
- * digest and waits for approval again (or the plugin's auto-approve). Agent
- * hooks are calls into the agent half, which the agent half's own part of
- * the approval already covers (or which the operator installed by hand).
+ * digest and waits for approval again (or the plugin's auto-approve — which
+ * never covers an identity change that adds or removes a role or widens the
+ * attributes, `identityChangeNeedsApproval`). Agent hooks are calls into
+ * the agent half, which the agent half's own part of the approval already
+ * covers (or which the operator installed by hand).
  */
 
 import crypto from 'node:crypto';
 
 import { AgentHalfSpecSchema } from './agent-half.js';
 import type { AgentHalfSpec } from './agent-half.js';
+import { normalizeIdentityBlock } from './identity.js';
+import type { IdentityBlockInput } from './identity.js';
 
 import {
   HOOK_TIMEOUTS,
@@ -187,7 +193,7 @@ function canonical(value: unknown): unknown {
 /** The version of the approval digest's canonical form (2: relay hooks and the agent half). */
 export const HOOK_SET_DIGEST_VERSION = 2;
 
-/** What one approval covers; an approval is needed when either part is non-null. */
+/** What one approval covers; an approval is needed when any part is non-null. */
 export interface ApprovalSubject {
   /**
    * The relay hook set and the SHA-256 (hex) of its entry file — null when
@@ -197,16 +203,21 @@ export interface ApprovalSubject {
   readonly relay: { readonly set: RelayHookSet; readonly entrySha256: string | null } | null;
   /** The agent half Lamaste installs, or null when it installs none. */
   readonly agentHalf: AgentHalfSpec | null;
+  /** The plugin's identity block; null or omitted when it declares none. */
+  readonly identity?: IdentityBlockInput | null | undefined;
 }
 
 /**
  * The digest an approval names: SHA-256 (hex) of the canonical JSON (keys
  * sorted at every level) of
- * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null }`,
- * with the agent half's system packages sorted and without repeats.
- * Throws on an entry digest that is not SHA-256 hex or an agent half that
- * is not a valid {@link AgentHalfSpec} (`AgentHalfSpecSchema`, which refuses
- * unknown keys) — neither can be approved.
+ * `{ v: 2, relay: { set, entrySha256 } | null, agentHalf: { package, version, integrity, service: { entry, memoryMax }, systemPackages } | null, identity?: { roles, attributes } }`,
+ * with the agent half's system packages sorted and without repeats, and
+ * `identity` — the block as {@link normalizeIdentityBlock} returns it —
+ * only when the plugin declares one: a digest without it is the digest of
+ * the same subject before identity existed, byte for byte. Throws on an
+ * entry digest that is not SHA-256 hex, an agent half that is not a valid
+ * {@link AgentHalfSpec} (`AgentHalfSpecSchema`, which refuses unknown keys)
+ * or an identity block that is not valid — none can be approved.
  */
 export function approvalDigest(subject: ApprovalSubject): string {
   const { relay } = subject;
@@ -232,16 +243,22 @@ export function approvalDigest(subject: ApprovalSubject): string {
       systemPackages: [...new Set(spec.systemPackages)].sort(),
     };
   }
+  const identity =
+    subject.identity === null || subject.identity === undefined
+      ? null
+      : normalizeIdentityBlock(subject.identity);
   const doc = canonical({
     v: HOOK_SET_DIGEST_VERSION,
     relay: relay ? { set: relay.set, entrySha256: relay.entrySha256 } : null,
     agentHalf,
+    ...(identity ? { identity } : {}),
   });
   return crypto.createHash('sha256').update(JSON.stringify(doc)).digest('hex');
 }
 
 /**
- * The approval digest of a plugin whose agent half Lamaste does not install:
+ * The approval digest of a plugin whose agent half Lamaste does not install
+ * and that declares no identity:
  * `approvalDigest({ relay: { set, entrySha256 }, agentHalf: null })`.
  */
 export function relayHookSetDigest(set: RelayHookSet, entrySha256: string | null): string {
@@ -255,7 +272,10 @@ export function hookEntrySha256(bytes: Uint8Array): string {
 
 /** What the approval preview shows about a relay hook set. */
 export interface RelayHookSetPreview {
-  /** {@link relayHookSetDigest} — the approval digest when Lamaste installs no agent half. */
+  /**
+   * {@link relayHookSetDigest} — the approval digest when Lamaste installs no
+   * agent half and the plugin declares no identity.
+   */
   readonly digest: string;
   readonly entry: string | null;
   readonly entrySha256: string | null;
@@ -263,8 +283,11 @@ export interface RelayHookSetPreview {
   readonly request: readonly (RequestHook & {
     /** This hook lets traffic through when it fails, times out, or the body is too large. */
     readonly failOpen: readonly ('onError' | 'onOversize' | 'onUnscannable')[];
-    /** Routes under `/app`: not active until the plugin gateway (user surface) exists. */
-    readonly inactiveRoutes: readonly string[];
+    /**
+     * Routes under `/app`: they run for requests on the plugin's user
+     * surface, which only a plugin that declares `identity` has.
+     */
+    readonly userSurfaceRoutes: readonly string[];
   })[];
   /** Every effect type the set may produce: the plugin's declared ones and the shared hooks'. */
   readonly effects: readonly HookEffectType[];
@@ -298,7 +321,7 @@ export function relayHookSetPreview(
     return {
       ...hook,
       failOpen,
-      inactiveRoutes: hook.routes.filter((r) => /(?:^| )\/app(?:\/|$)/.test(r)),
+      userSurfaceRoutes: hook.routes.filter((r) => /(?:^| )\/app(?:\/|$)/.test(r)),
     };
   });
   return {

@@ -29,8 +29,18 @@
  * pinned mTLS channel, so nothing an agent machine stores lets anyone mint an
  * assertion — for that agent or any other.
  *
+ * Gatekeeper also vouches to the panel itself, for a plugin's user surface
+ * (`/api/<route>/app/*` on the host bound to it): the audience is
+ * {@link RELAY_PANEL_AUDIENCE}, which no agent label can be, the caller the
+ * session's username alone (the panel takes the user's id, attributes and
+ * roles from its own directory), and the target both the route and the raw
+ * request path, which must lie on that route's user surface
+ * (`user-surface.ts`). Such an assertion is valid nowhere else: an agent
+ * daemon's audience is its label, and a verifier built before the panel
+ * audience existed refuses it as `malformed`.
+ *
  * Shared between the server side (signing) and the agent side (verifying);
- * depends on nothing but `node:crypto` and `node:fs`.
+ * depends on nothing but `node:crypto`, `node:fs` and the shared path rules.
  */
 
 import crypto from 'node:crypto';
@@ -38,6 +48,7 @@ import { link, open, stat, unlink } from 'node:fs/promises';
 
 import { NonceStore } from './caller-assertion.js';
 import { AGENT_LABEL_REGEX } from './constants.js';
+import { isUserSurfaceUrl } from './user-surface.js';
 
 /** The request header that carries the assertion (lower case, as Node reports headers). */
 export const RELAY_ASSERTION_HEADER = 'x-lamalibre-relay-assertion';
@@ -52,6 +63,13 @@ export const RELAY_ASSERTION_VERSION = 1 as const;
 
 /** File name of the relay's signing key in its state directory. */
 export const RELAY_SIGNING_KEY_FILE = 'relay-signing-key.json';
+
+/**
+ * The audience of an assertion for the panel itself — a request on a
+ * plugin's user surface. `@` is no character of an agent label
+ * (`AGENT_LABEL_REGEX`), so no agent daemon ever accepts one.
+ */
+export const RELAY_PANEL_AUDIENCE = '@panel';
 
 const MAX_HEADER_LENGTH = 8192;
 const MAX_PATH_LENGTH = 4096;
@@ -71,34 +89,62 @@ const GROUP_RE = /^[^,\u0000-\u001f\u007f]{1,128}$/;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
 const ED25519_SIGNATURE_BYTES = 64;
 
-/** Who made the request the relay vouches for. */
+/**
+ * An Authelia user on a plugin tunnel, as Gatekeeper read the session —
+ * what lamaste-agentd passes on as `Remote-*`.
+ */
+export interface RelaySessionUser {
+  readonly type: 'user';
+  readonly username: string;
+  readonly groups: readonly string[];
+  readonly name: string;
+  readonly email: string;
+}
+
+/**
+ * An Authelia user on a plugin's user surface, vouched for to the panel
+ * ({@link RELAY_PANEL_AUDIENCE}): the username alone — the panel takes
+ * everything else about the user from its directory, never from the
+ * session.
+ */
+export interface RelayPanelUser {
+  readonly type: 'user';
+  readonly username: string;
+}
+
+/**
+ * Who made the request the relay vouches for. For an agent: a certificate
+ * holder (`admin`, `agent`) or a {@link RelaySessionUser}; for the panel:
+ * a {@link RelayPanelUser}, and nothing else.
+ */
 export type RelayCaller =
   | { readonly type: 'admin' }
   | { readonly type: 'agent'; readonly label: string }
-  | {
-      readonly type: 'user';
-      readonly username: string;
-      readonly groups: readonly string[];
-      readonly name: string;
-      readonly email: string;
-    };
+  | RelaySessionUser
+  | RelayPanelUser;
 
 /**
- * What the request may do on the agent. A certificate caller on the
- * agent-panel vhost gets the exact request target nginx received (`path`,
- * with the query string). An Authelia user on a plugin tunnel gets the
- * plugin route: nginx rewrites that request under `/<route>/`, so the
- * target the daemon sees is normalized and cannot be compared byte for byte.
+ * What the request may do. A certificate caller on the agent-panel vhost
+ * gets the exact request target nginx received (`path`, with the query
+ * string). An Authelia user on a plugin tunnel gets the plugin route: nginx
+ * rewrites that request under `/<route>/`, so the target the daemon sees is
+ * normalized and cannot be compared byte for byte. A user on a plugin's
+ * user surface gets both — the route, and the raw request target (`path`,
+ * with the query string), which must lie on that route's user surface and
+ * equal the target the panel received.
  */
-export type RelayTarget = { readonly path: string } | { readonly route: string };
+export type RelayTarget =
+  | { readonly path: string }
+  | { readonly route: string }
+  | { readonly route: string; readonly path: string };
 
 export interface RelayAssertionPayload {
   readonly v: typeof RELAY_ASSERTION_VERSION;
   /** Id of the signing key ({@link relayKeyId}). */
   readonly kid: string;
-  /** The agent label the request is for. */
+  /** The agent label the request is for, or {@link RELAY_PANEL_AUDIENCE}. */
   readonly aud: string;
-  /** The tunnel port the request travels on — the port the daemon listens on. */
+  /** The port the request travels on — the port the verifying daemon listens on. */
   readonly port: number;
   readonly caller: RelayCaller;
   /** Upper-case HTTP method. */
@@ -385,13 +431,21 @@ function hasControl(value: string): boolean {
   return CONTROL_RE.test(value);
 }
 
-function assertCaller(caller: RelayCaller): void {
+function isTargetPath(path: unknown): path is string {
+  return str(path, MAX_PATH_LENGTH) && path.startsWith('/') && !path.includes(' ');
+}
+
+/** A caller for an agent: a certificate holder or a session user. */
+function assertAgentCaller(caller: RelayCaller): void {
   if (caller.type === 'admin') return;
   if (caller.type === 'agent') {
     if (!AGENT_LABEL_REGEX.test(caller.label)) throw new Error('Invalid agent label in caller');
     return;
   }
   if (!USERNAME_RE.test(caller.username)) throw new Error('Invalid username in caller');
+  if (!('groups' in caller)) {
+    throw new Error("A user caller for an agent carries the session's groups, name and email");
+  }
   if (caller.groups.length > MAX_GROUPS || !caller.groups.every((g) => GROUP_RE.test(g))) {
     throw new Error('Invalid groups in caller');
   }
@@ -402,17 +456,14 @@ function assertCaller(caller: RelayCaller): void {
   }
 }
 
-function assertTarget(caller: RelayCaller, target: RelayTarget): void {
+/** A target for an agent: a path for a certificate caller, a route for a session user. */
+function assertAgentTarget(caller: RelayCaller, target: RelayTarget): void {
+  if ('route' in target && 'path' in target) {
+    throw new Error('A user-surface target (route and path) is only for the panel audience');
+  }
   if ('path' in target) {
     if (caller.type === 'user') throw new Error('A user caller is bound to a route, not a path');
-    if (
-      !target.path.startsWith('/') ||
-      target.path.length > MAX_PATH_LENGTH ||
-      hasControl(target.path) ||
-      target.path.includes(' ')
-    ) {
-      throw new Error('Invalid target path');
-    }
+    if (!isTargetPath(target.path)) throw new Error('Invalid target path');
     return;
   }
   if (caller.type !== 'user') throw new Error('A certificate caller is bound to a path');
@@ -420,30 +471,63 @@ function assertTarget(caller: RelayCaller, target: RelayTarget): void {
 }
 
 /**
+ * The caller and target of an assertion for the panel, in the only form it
+ * takes: a username, and a route with the raw request target on its user
+ * surface. Throws on anything else.
+ */
+function panelCallerAndTarget(
+  caller: RelayCaller,
+  target: RelayTarget,
+): { caller: RelayPanelUser; target: { route: string; path: string } } {
+  if (caller.type !== 'user') throw new Error('The panel audience vouches for a user only');
+  if (!USERNAME_RE.test(caller.username)) throw new Error('Invalid username in caller');
+  if (!('route' in target) || !('path' in target)) {
+    throw new Error('A user on the user surface is bound to a route and a path');
+  }
+  if (!ROUTE_RE.test(target.route)) throw new Error('Invalid target route');
+  if (!isTargetPath(target.path) || !isUserSurfaceUrl(target.path, target.route)) {
+    throw new Error("The target path is not on the route's user surface");
+  }
+  return {
+    caller: { type: 'user', username: caller.username },
+    target: { route: target.route, path: target.path },
+  };
+}
+
+/**
  * Sign an assertion for one request. `iat` and `nonce` are filled in when
- * omitted; passing them is for tests.
+ * omitted; passing them is for tests. For {@link RELAY_PANEL_AUDIENCE} the
+ * caller is signed as its username alone and the target must be the route
+ * and the raw request target on its user surface.
  */
 export function signRelayAssertion(
   input: Omit<RelayAssertionPayload, 'v' | 'kid' | 'iat' | 'nonce'> &
     Partial<Pick<RelayAssertionPayload, 'iat' | 'nonce'>>,
   key: RelaySigningKey,
 ): string {
-  if (!AGENT_LABEL_REGEX.test(input.aud)) throw new Error('Invalid audience label');
+  const panel = input.aud === RELAY_PANEL_AUDIENCE;
+  if (!panel && !AGENT_LABEL_REGEX.test(input.aud)) throw new Error('Invalid audience label');
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
     throw new Error('Invalid port');
   }
   const method = input.method.toUpperCase();
   if (!METHOD_RE.test(method)) throw new Error('Invalid method');
-  assertCaller(input.caller);
-  assertTarget(input.caller, input.target);
+  let caller: RelayCaller = input.caller;
+  let target: RelayTarget = input.target;
+  if (panel) {
+    ({ caller, target } = panelCallerAndTarget(input.caller, input.target));
+  } else {
+    assertAgentCaller(input.caller);
+    assertAgentTarget(input.caller, input.target);
+  }
   const payload: RelayAssertionPayload = {
     v: RELAY_ASSERTION_VERSION,
     kid: key.kid,
     aud: input.aud,
     port: input.port,
-    caller: input.caller,
+    caller,
     method,
-    target: input.target,
+    target,
     iat: input.iat ?? Date.now(),
     nonce: input.nonce ?? crypto.randomBytes(NONCE_BYTES).toString('hex'),
   };
@@ -471,7 +555,7 @@ export type VerifyRelayAssertionResult =
 export interface VerifyRelayAssertionOptions {
   /** Verification keys by key id. */
   readonly keys: ReadonlyMap<string, crypto.KeyObject>;
-  /** This agent's label. */
+  /** This agent's label — or, in the panel, {@link RELAY_PANEL_AUDIENCE}. */
   readonly aud: string;
   /** The port this daemon listens on. */
   readonly port: number;
@@ -524,13 +608,33 @@ function parseTarget(raw: unknown, caller: RelayCaller): RelayTarget | null {
       ? { route }
       : null;
   }
-  return route === undefined &&
-    typeof path === 'string' &&
-    path.startsWith('/') &&
-    str(path, MAX_PATH_LENGTH) &&
-    !path.includes(' ')
-    ? { path }
-    : null;
+  return route === undefined && isTargetPath(path) ? { path } : null;
+}
+
+/** The caller and target of an assertion for the panel: a username, a route and a path. */
+function parsePanelCallerAndTarget(
+  rawCaller: unknown,
+  rawTarget: unknown,
+): { caller: RelayPanelUser; target: { route: string; path: string } } | null {
+  if (!rawCaller || typeof rawCaller !== 'object' || !rawTarget || typeof rawTarget !== 'object') {
+    return null;
+  }
+  const c = rawCaller as Record<string, unknown>;
+  const t = rawTarget as Record<string, unknown>;
+  const username = c['username'];
+  const route = t['route'];
+  const path = t['path'];
+  if (
+    c['type'] !== 'user' ||
+    typeof username !== 'string' ||
+    !USERNAME_RE.test(username) ||
+    typeof route !== 'string' ||
+    !ROUTE_RE.test(route) ||
+    !isTargetPath(path)
+  ) {
+    return null;
+  }
+  return { caller: { type: 'user', username }, target: { route, path } };
 }
 
 function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | null {
@@ -540,7 +644,7 @@ function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | nul
     typeof kid !== 'string' ||
     !KID_RE.test(kid) ||
     typeof aud !== 'string' ||
-    !AGENT_LABEL_REGEX.test(aud) ||
+    (aud !== RELAY_PANEL_AUDIENCE && !AGENT_LABEL_REGEX.test(aud)) ||
     typeof port !== 'number' ||
     !Number.isInteger(port) ||
     port < 1 ||
@@ -554,11 +658,23 @@ function parsePayload(raw: Record<string, unknown>): RelayAssertionPayload | nul
   ) {
     return null;
   }
+  if (aud === RELAY_PANEL_AUDIENCE) {
+    const panel = parsePanelCallerAndTarget(raw['caller'], raw['target']);
+    if (!panel) return null;
+    return { v, kid, aud, port, caller: panel.caller, method, target: panel.target, iat, nonce };
+  }
   const caller = parseCaller(raw['caller']);
   if (!caller) return null;
   const target = parseTarget(raw['target'], caller);
   if (!target) return null;
   return { v, kid, aud, port, caller, method, target, iat, nonce };
+}
+
+/** Whether a verified target admits the request target `url`. */
+function targetAdmits(target: RelayTarget, url: string): boolean {
+  if (!('route' in target)) return target.path === url;
+  if (!('path' in target)) return urlIsUnderRoute(url, target.route);
+  return target.path === url && isUserSurfaceUrl(target.path, target.route);
 }
 
 /** True when `url` (path and query string) lies under the plugin route. */
@@ -571,7 +687,9 @@ export function urlIsUnderRoute(url: string, route: string): boolean {
  * Verify the assertion header of a request the daemon received. Checks, in
  * order: shape, key, signature, payload, audience, port, method and target,
  * age, and replay. The nonce is recorded only when everything else passed,
- * so a forged assertion cannot poison the store.
+ * so a forged assertion cannot poison the store. A user-surface target
+ * (route and path, the panel's) admits only its own path, and only while
+ * that path lies on the route's user surface (`isUserSurfaceUrl`).
  *
  * `unknown_key` carries the key id so the caller can fetch the relay's keys
  * again (the relay may have rotated) — the id is unauthenticated input, so
@@ -619,10 +737,7 @@ export function verifyRelayAssertion(
   if (payload.aud !== opts.aud) return { ok: false, reason: 'wrong_audience' };
   if (payload.port !== opts.port) return { ok: false, reason: 'wrong_port' };
   if (payload.method !== opts.method.toUpperCase()) return { ok: false, reason: 'wrong_request' };
-  const target = payload.target;
-  const targetMatches =
-    'path' in target ? target.path === opts.url : urlIsUnderRoute(opts.url, target.route);
-  if (!targetMatches) return { ok: false, reason: 'wrong_request' };
+  if (!targetAdmits(payload.target, opts.url)) return { ok: false, reason: 'wrong_request' };
 
   const now = opts.now ?? Date.now();
   if (payload.iat > now + RELAY_ASSERTION_CLOCK_SKEW_MS) return { ok: false, reason: 'future' };

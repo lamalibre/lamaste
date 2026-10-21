@@ -41,6 +41,7 @@ import {
   SHARED_HOOKS,
   parseRoutePattern,
 } from './hooks/index.js';
+import { IdentityBlockSchema } from './identity.js';
 import { SettingsBlockSchema } from './plugin-settings.js';
 
 // ---------------------------------------------------------------------------
@@ -729,6 +730,12 @@ export const ManifestSchema = z
      * agent half: the agent half stores the values, the relay a cache.
      */
     settings: SettingsBlockSchema.optional(),
+    /**
+     * The plugin's roles and the user attributes it may receive (see
+     * `IdentityBlockSchema`). Only with an agent half: its users reach the
+     * agent half's `/app/*`, and the agent half keeps their projection.
+     */
+    identity: IdentityBlockSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (manifest.agent !== undefined && manifest.hosting !== 'agent') {
@@ -753,6 +760,15 @@ export const ManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ['settings'],
         message: 'settings needs an agent block',
+      });
+    }
+
+    if (manifest.identity !== undefined && (manifest.hosting !== 'agent' || !manifest.agent)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['identity'],
+        message:
+          'identity needs an agent-hosted plugin with an agent half ("hosting": "agent" and an "agent" block) — its users reach the agent half',
       });
     }
 

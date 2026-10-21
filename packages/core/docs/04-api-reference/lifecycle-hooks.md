@@ -60,7 +60,7 @@ Only a plugin with `"hosting": "agent"` and an `agent` block may declare hooks. 
 
 ### Route patterns
 
-`"<METHOD> <path>"` or `"<path>"` (any method). The method is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `*`; `GET` also matches `HEAD`. The path starts with `/admin` (the forwarded admin API) or `/app` (the user surface — accepted, not active until the plugin gateway exists). A segment is a literal or `*`: one segment, except as the last, where it matches one or more.
+`"<METHOD> <path>"` or `"<path>"` (any method). The method is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `*`; `GET` also matches `HEAD`. The path starts with `/admin` (the forwarded admin API) or `/app` (the user surface — requests of the plugin's users, which only a plugin that declares `identity` receives; listed as `userSurfaceRoutes` in the preview). A segment is a literal or `*`: one segment, except as the last, where it matches one or more.
 
 Matching errs towards running the hook: literal segments match case-insensitively, segments are compared percent-decoded (`/admin/%69mport` is `/admin/import`), and empty segments are ignored. The forwarder refuses a path with an encoded `/` or `\`.
 
@@ -98,7 +98,7 @@ Every approval, auto-approve change and auto-approval is recorded in the [audit 
           "use": null,
           "settings": null,
           "failOpen": [],
-          "inactiveRoutes": []
+          "userSurfaceRoutes": []
         }
       ],
       "effects": ["audit", "notify-admins"],

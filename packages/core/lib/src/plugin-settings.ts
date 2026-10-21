@@ -131,8 +131,12 @@ function hasControlCharacters(text: string): boolean {
   return false;
 }
 
-/** A manifest string an administrator reads: no control or bidirectional-override characters. */
-const displayText = (schema: z.ZodString) =>
+/**
+ * A manifest string an administrator reads: no control or
+ * bidirectional-override characters. Shared with the manifest's `identity`
+ * block.
+ */
+export const displayText = (schema: z.ZodString) =>
   schema.refine((text) => !hasControlCharacters(text), CONTROL_CHARACTERS_MESSAGE);
 
 // ---------------------------------------------------------------------------

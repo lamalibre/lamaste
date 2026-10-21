@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
 import { readInvitations, writeInvitations } from '../../lib/state.js';
 import { readUsersRaw } from '../../lib/authelia.js';
 import { getConfig } from '../../lib/config.js';
@@ -7,14 +8,14 @@ import { getConfig } from '../../lib/config.js';
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
 const CreateInvitationSchema = z.object({
+  // Same rule as the users API (core's USERNAME_REGEX). A leading "-" would
+  // read as a flag to Authelia's CLI when a TOTP secret is stored for the user.
   username: z
     .string()
-    .min(2)
-    .max(32)
+    .min(USERNAME_MIN_LENGTH)
+    .max(USERNAME_MAX_LENGTH)
     .regex(
-      // Same rule as the users API. A leading "-" would read as a flag to
-      // Authelia's CLI when a TOTP secret is stored for the user.
-      /^[a-z0-9][a-z0-9_-]*$/,
+      USERNAME_REGEX,
       'Username must start with a lowercase letter or digit and may contain underscores or hyphens',
     ),
   email: z.string().email(),

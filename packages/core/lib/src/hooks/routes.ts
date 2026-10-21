@@ -7,7 +7,8 @@
  *   or `*`; a pattern without one matches every method, and `GET` also
  *   matches `HEAD` (servers answer `HEAD` with their `GET` handler);
  * - the path starts with `/admin` (the forwarded admin API) or `/app` (the
- *   user surface, reached once the plugin gateway exists);
+ *   user surface: requests of the plugin's users, which only a plugin that
+ *   declares `identity` receives);
  * - a segment is a literal or `*`. `*` matches exactly one segment, except as
  *   the last segment, where it matches one or more.
  *

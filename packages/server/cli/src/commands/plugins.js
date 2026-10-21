@@ -725,9 +725,11 @@ function printRelayHookSet(relay, title) {
       `    request:  ${hook.stage} ${who} on ${hook.routes.join(', ')}${failOpen}` +
         d(` (body ${hook.bodyMaxBytes ?? 0} B, ${hook.timeoutMs} ms, onError ${hook.onError})`),
     );
-    if (hook.inactiveRoutes.length > 0) {
+    if (hook.userSurfaceRoutes.length > 0) {
       console.log(
-        d(`              not active until the user surface: ${hook.inactiveRoutes.join(', ')}`),
+        d(
+          `              runs on user-surface requests (plugins that declare identity): ${hook.userSurfaceRoutes.join(', ')}`,
+        ),
       );
     }
   }

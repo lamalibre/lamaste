@@ -20,10 +20,16 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
-/** Who the panel admitted for a forwarded request. */
+/**
+ * Who the panel admitted for a forwarded request: an admin or an agent on
+ * `/admin/*`, a user on the user surface (`/app/*`) — named by the
+ * directory's stable id and the user's roles in this plugin, never by
+ * username or any other attribute.
+ */
 export type HookCaller =
   | { readonly type: 'admin' }
-  | { readonly type: 'agent'; readonly label: string };
+  | { readonly type: 'agent'; readonly label: string }
+  | { readonly type: 'user'; readonly userId: string; readonly roles: readonly string[] };
 
 /** A request or response body a hook asked to see (`body.maxBytes`). */
 export interface HookBody {

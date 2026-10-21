@@ -171,6 +171,28 @@ export function derivePluginRoute(pluginNameOrPackage: string): string {
 export const AGENT_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
+ * Lamaste username format — the rule of the users and invitations APIs: a
+ * lowercase letter or digit, then lowercase letters, digits, `_` and `-`,
+ * {@link USERNAME_MIN_LENGTH}–{@link USERNAME_MAX_LENGTH} characters in
+ * all. A leading `-` would read as a flag to Authelia's CLI when a TOTP
+ * secret is stored for the user. The identity contract (`identity.ts`) and
+ * the `user` caller of caller assertions name users by it too.
+ */
+export const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]*$/;
+export const USERNAME_MIN_LENGTH = 2;
+export const USERNAME_MAX_LENGTH = 32;
+
+/** Whether `value` is a Lamaste username: {@link USERNAME_REGEX}, within its lengths. */
+export function isLamasteUsername(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length >= USERNAME_MIN_LENGTH &&
+    value.length <= USERNAME_MAX_LENGTH &&
+    USERNAME_REGEX.test(value)
+  );
+}
+
+/**
  * Loopback ports on the relay that belong to Lamaste's own services and can
  * never be a tunnel port: the panel server (3100), the chisel server (9090),
  * Authelia (9091), the IP-based panel listener (9292) and Gatekeeper (9294).

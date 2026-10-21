@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
 import {
   readUsers,
   readUsersRaw,
@@ -16,10 +17,10 @@ import { gatekeeperRequest } from '../../lib/gatekeeper-client.js';
 const CreateUserSchema = z.object({
   username: z
     .string()
-    .min(2)
-    .max(32)
+    .min(USERNAME_MIN_LENGTH)
+    .max(USERNAME_MAX_LENGTH)
     .regex(
-      /^[a-z0-9][a-z0-9_-]*$/,
+      USERNAME_REGEX,
       'Username must start with a lowercase letter or digit and may contain underscores or hyphens',
     ),
   displayname: z.string().min(1).max(100),
@@ -31,9 +32,9 @@ const CreateUserSchema = z.object({
 const UsernameParamSchema = z.object({
   username: z
     .string()
-    .min(2)
-    .max(32)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/, 'Invalid username format'),
+    .min(USERNAME_MIN_LENGTH)
+    .max(USERNAME_MAX_LENGTH)
+    .regex(USERNAME_REGEX, 'Invalid username format'),
 });
 
 const UpdateUserSchema = z

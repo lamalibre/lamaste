@@ -277,9 +277,10 @@ function RelayHookSetView({ relay }) {
             {h.settings &&
               ` · ${h.settings.action}, packs ${h.settings.packs.join(', ')}, unscannable ${h.settings.onUnscannable}`}
           </div>
-          {h.inactiveRoutes.length > 0 && (
+          {h.userSurfaceRoutes.length > 0 && (
             <div className="text-zinc-600">
-              not active until the user surface: {h.inactiveRoutes.join(', ')}
+              runs on user-surface requests (plugins that declare identity):{' '}
+              {h.userSurfaceRoutes.join(', ')}
             </div>
           )}
         </div>

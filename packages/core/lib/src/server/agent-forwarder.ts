@@ -8,12 +8,21 @@
  * (`caller-assertion.ts`) naming who the panel admitted. Only `/admin/*` of
  * the agent half is reachable this way; its `/app/*` (the user surface) is
  * not, because the forwarder prefixes `/admin` to whatever it is given.
- * Within `/admin`, two subtrees are Lamaste's own and answered 404 however
+ * Within `/admin`, three subtrees are Lamaste's own and answered 404 however
  * they are spelled ({@link isAgentHalfReservedPath}): `/admin/hooks*`, the
- * lifecycle hook calls, and `/admin/settings*`, where Lamaste writes the
+ * lifecycle hook calls, `/admin/settings*`, where Lamaste writes the
  * plugin's settings and secrets after validating them — no forwarded
  * caller reads or changes them behind the panel's back, so the relay's
- * cache cannot drift from the agent half.
+ * cache cannot drift from the agent half — and `/admin/identity*`, the
+ * identity feed only Lamaste sends.
+ *
+ * The user surface has its own entry, {@link userSurfacePlugin}:
+ * `/api/<route>/app/*` on the host bound to a plugin that declares
+ * `identity`, admitted by a relay assertion Gatekeeper signs for the panel
+ * (the session's username) and forwarded to `/app/*` with a `user` caller
+ * — the directory's user id, username and the plugin's roles. Both entries
+ * share one pipeline: the same header strips, body limit, signing,
+ * responder check, streaming and request hooks.
  *
  * Every answer must authenticate itself: the agent half signs it with
  * `X-Lamalibre-Responder` (the `-` form: the request's nonce and the
@@ -55,7 +64,8 @@
  * plugin UIs are isolated in sandboxed frames.
  *
  * Nothing of a body is ever logged — one metadata line per request:
- * plugin, caller, method, path (no query), status, duration.
+ * plugin, caller (a user as `user:<userId>`, never by name), method, path
+ * (no query), status, duration.
  */
 
 import http from 'node:http';
@@ -73,10 +83,11 @@ import {
   CALLER_ASSERTION_HEADER,
   RESPONDER_HEADER,
   generateCallerAssertionNonce,
+  parseCallerIdentity,
   signCallerAssertion,
   verifyResponder,
 } from '../caller-assertion.js';
-import type { CallerIdentity } from '../caller-assertion.js';
+import type { CallerIdentity, UserCallerIdentity } from '../caller-assertion.js';
 import { RESERVED_API_PREFIXES } from '../constants.js';
 import {
   AGENT_HALF_HOOKS_PREFIX,
@@ -84,9 +95,22 @@ import {
   requestPathSegments,
   routePattern,
 } from '../hooks/index.js';
-import type { PreForwardDecision, RoutePattern, TunnelFallback } from '../hooks/index.js';
+import type {
+  HookCaller,
+  PreForwardDecision,
+  RoutePattern,
+  TunnelFallback,
+} from '../hooks/index.js';
 import type { RequestHook } from '../hook-set.js';
+import { AGENT_HALF_IDENTITY_PREFIX } from '../identity.js';
 import { AGENT_HALF_SETTINGS_PATH } from '../plugin-settings.js';
+import {
+  AGENT_HALF_APP_PREFIX,
+  USER_SURFACE_API_PREFIX,
+  isUserSurfaceUrl,
+  routerSegment,
+  userSurfaceApiPath,
+} from '../user-surface.js';
 import { isHookEditableHeader } from './hook-decisions.js';
 import type { ValidatedDecision } from './hook-decisions.js';
 
@@ -124,7 +148,22 @@ export interface AgentForwarderLogger {
   warn(obj: Record<string, unknown>, msg?: string): void;
 }
 
-export interface AgentForwarderOptions {
+/** A caller the panel forwards: every caller but Lamaste itself. */
+export type ForwardedCaller = Exclude<CallerIdentity, { readonly type: 'lamaste' }>;
+
+/** A caller of the admin surface (`/admin/*`): an admin or an agent. */
+export type AdminSurfaceCaller = Extract<CallerIdentity, { readonly type: 'admin' | 'agent' }>;
+
+/** How long the forwarder waits, and where it connects. */
+export interface AgentForwardTimeouts {
+  readonly headersTimeoutMs?: number | undefined;
+  readonly bodyIdleTimeoutMs?: number | undefined;
+  readonly connectTimeoutMs?: number | undefined;
+  /** Where the agent half is reached. Default 127.0.0.1 — the relay loopback. */
+  readonly host?: string | undefined;
+}
+
+export interface AgentForwarderOptions extends AgentForwardTimeouts {
   /**
    * Resolve the route of a request to a target, or say why not. Called on
    * every request so a hosting created or rotated a moment ago takes effect
@@ -133,20 +172,15 @@ export interface AgentForwarderOptions {
   resolveTarget(route: string): Promise<AgentForwardResolution>;
   /**
    * Who the panel admits for this plugin's routes — after the panel's own
-   * authentication. Return `null` to refuse (403). Never called for a route
-   * that does not resolve to a target.
+   * authentication: an admin or an agent. Return `null` to refuse (403).
+   * Never called for a route that does not resolve to a target.
    */
-  authorize(request: FastifyRequest, plugin: string): Promise<CallerIdentity | null>;
+  authorize(request: FastifyRequest, plugin: string): Promise<AdminSurfaceCaller | null>;
   /**
    * Called before a target request is forwarded; a non-null reply status
    * is sent instead (the onboarding guard: 503 before the relay is set up).
    */
   guard?: ((request: FastifyRequest) => { status: number; body: unknown } | null) | undefined;
-  readonly headersTimeoutMs?: number | undefined;
-  readonly bodyIdleTimeoutMs?: number | undefined;
-  readonly connectTimeoutMs?: number | undefined;
-  /** Where the agent half is reached. Default 127.0.0.1 — the relay loopback. */
-  readonly host?: string | undefined;
   readonly logger?: AgentForwarderLogger | undefined;
   /**
    * The plugins' request hooks (`createHookedForwarder`). Without it every
@@ -327,52 +361,23 @@ export function agentHalfPath(rawUrl: string, apiPrefix: string, route: string):
 /** `hooks`, a segment after `/admin` that Lamaste keeps for itself. */
 const AGENT_HALF_HOOKS_SEGMENT = AGENT_HALF_HOOKS_PREFIX.split('/')[2] ?? 'hooks';
 
-/** `settings`, the other one. */
+/** `settings`, another one. */
 const AGENT_HALF_SETTINGS_SEGMENT = AGENT_HALF_SETTINGS_PATH.split('/')[2] ?? 'settings';
 
-/** How many times a segment is percent-decoded before it counts as undecodable. */
-const RESERVED_DECODE_ROUNDS = 3;
-
-/**
- * The segment after `/admin` of an agent-half path, reduced to what a
- * router could take it for: percent-decoded until it no longer changes (at
- * most {@link RESERVED_DECODE_ROUNDS} rounds), lower case, and stripped of
- * everything but `a-z` and `0-9`. Undefined when there is no such segment,
- * null when it does not decode — or still decodes further after the last
- * round — which the callers treat as reserved: a path no one can read is
- * no one's.
- */
-function reservableSegment(targetPath: string): string | null | undefined {
-  const query = targetPath.indexOf('?');
-  const pathOnly = query === -1 ? targetPath : targetPath.slice(0, query);
-  const segments = pathOnly.split('/').filter((s) => s.length > 0);
-  let segment = segments[1];
-  if (segment === undefined) return undefined;
-  for (let round = 0; ; round += 1) {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      return null;
-    }
-    if (decoded === segment) break;
-    if (round === RESERVED_DECODE_ROUNDS) return null;
-    segment = decoded;
-  }
-  return segment.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
+/** `identity`, the third: the identity feed. */
+const AGENT_HALF_IDENTITY_SEGMENT = AGENT_HALF_IDENTITY_PREFIX.split('/')[2] ?? 'identity';
 
 /**
  * Whether an agent-half path is under `/admin/hooks` — Lamaste's lifecycle
  * hook calls, which no forwarded caller may reach. The segment after
- * `/admin` is compared as {@link reservableSegment} reduces it, and
- * reserved when it *starts with* `hooks`: `/admin/Hooks`,
- * `/admin/%2568ooks`, `/admin/hooks.json` and `/admin/hooks-v2` alike,
- * whatever a framework's router would make of them. Pure; exported for
- * tests.
+ * `/admin` is compared as `routerSegment` reduces it (one that does not
+ * decode is reserved), and reserved when it *starts with* `hooks`:
+ * `/admin/Hooks`, `/admin/%2568ooks`, `/admin/hooks.json` and
+ * `/admin/hooks-v2` alike, whatever a framework's router would make of
+ * them. Pure; exported for tests.
  */
 export function isAgentHalfHooksPath(targetPath: string): boolean {
-  const segment = reservableSegment(targetPath);
+  const segment = routerSegment(targetPath, 1);
   return (
     segment === null || (segment !== undefined && segment.startsWith(AGENT_HALF_HOOKS_SEGMENT))
   );
@@ -380,27 +385,39 @@ export function isAgentHalfHooksPath(targetPath: string): boolean {
 
 /**
  * Whether an agent-half path is one the forwarder must never reach:
- * `/admin/hooks*` (lifecycle hook calls) or `/admin/settings*` (settings
- * and secrets, written only by Lamaste after its own validation) — the
- * segment after `/admin` reduced as {@link reservableSegment} does, then
- * compared by prefix, so `/admin/Settings`, `/admin/%73ettings/x`,
- * `/admin/settings.json` and `/admin/settings_v2` are reserved too. Pure;
- * exported for tests.
+ * `/admin/hooks*` (lifecycle hook calls), `/admin/settings*` (settings and
+ * secrets, written only by Lamaste after its own validation) or
+ * `/admin/identity*` (the identity feed, sent only by Lamaste) — the
+ * segment after `/admin` reduced as `routerSegment` does (one that does not
+ * decode is reserved), then compared by prefix, so `/admin/Settings`,
+ * `/admin/%73ettings/x`, `/admin/settings.json`, `/admin/settings_v2` and
+ * `/admin/IDENTITY` are reserved too. Pure; exported for tests.
  */
 export function isAgentHalfReservedPath(targetPath: string): boolean {
-  const segment = reservableSegment(targetPath);
+  const segment = routerSegment(targetPath, 1);
   return (
     segment === null ||
     (segment !== undefined &&
       (segment.startsWith(AGENT_HALF_HOOKS_SEGMENT) ||
-        segment.startsWith(AGENT_HALF_SETTINGS_SEGMENT)))
+        segment.startsWith(AGENT_HALF_SETTINGS_SEGMENT) ||
+        segment.startsWith(AGENT_HALF_IDENTITY_SEGMENT)))
   );
 }
 
-/** How a caller appears in logs and hook inputs. */
+/** How a caller appears in logs: a user by the directory's id, never by name. */
 export function callerLabel(caller: CallerIdentity): string {
   if (caller.type === 'agent') return `agent:${caller.label}`;
+  if (caller.type === 'user') return `user:${caller.userId}`;
   return caller.type;
+}
+
+/** How a caller appears in a request hook's input: a user by id and roles only. */
+function hookCallerOf(caller: ForwardedCaller): HookCaller {
+  if (caller.type === 'user') {
+    return { type: 'user', userId: caller.userId, roles: [...caller.roles] };
+  }
+  if (caller.type === 'agent') return { type: 'agent', label: caller.label };
+  return { type: 'admin' };
 }
 
 function isEventStream(headers: IncomingHttpHeaders): boolean {
@@ -438,7 +455,8 @@ class BodyLimit extends Transform {
   }
 }
 
-interface ForwardOutcome {
+/** How one forwarded request ended, for the log line. */
+export interface ForwardOutcome {
   readonly status: number;
   readonly error?: string | undefined;
   /**
@@ -447,11 +465,6 @@ interface ForwardOutcome {
    */
   readonly hook?: string | undefined;
 }
-
-type ForwardTimeouts = Pick<
-  AgentForwarderOptions,
-  'headersTimeoutMs' | 'bodyIdleTimeoutMs' | 'connectTimeoutMs' | 'host'
->;
 
 /** What the upstream request sends as its body. */
 type UpstreamBody =
@@ -489,7 +502,7 @@ function openUpstream(params: {
   readonly headers: OutgoingHttpHeaders;
   readonly body: UpstreamBody;
   readonly target: AgentForwardTarget;
-  readonly timeouts: ForwardTimeouts;
+  readonly timeouts: AgentForwardTimeouts;
   readonly clientRes: ServerResponse;
 }): Promise<UpstreamResult> {
   const { method, targetPath, headers, body, target, timeouts, clientRes } = params;
@@ -629,7 +642,7 @@ function answerFailure(
 function streamResponse(
   upstreamRes: IncomingMessage,
   res: ServerResponse,
-  timeouts: ForwardTimeouts,
+  timeouts: AgentForwardTimeouts,
   prefix: Buffer | null = null,
 ): Promise<ForwardOutcome> {
   const bodyIdleTimeoutMs = timeouts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
@@ -808,27 +821,54 @@ export async function forwardToAgentHalf(
   request: FastifyRequest,
   reply: FastifyReply,
   target: AgentForwardTarget,
-  caller: CallerIdentity,
+  caller: ForwardedCaller,
   targetPath: string,
-  opts: ForwardTimeouts = {},
+  opts: AgentForwardTimeouts = {},
 ): Promise<ForwardOutcome> {
   return forward(request, reply, target, caller, targetPath, opts, null);
 }
 
 /** A request hook that matched a request, and the route pattern it matched with. */
-interface MatchedHook {
+export interface MatchedRequestHook {
   readonly hook: RequestHook;
   readonly route: string;
 }
 
-interface HookPlan {
+/** The request hooks one request runs: before it is forwarded, and on its answer. */
+export interface RequestHookPlan {
   readonly runtime: RequestHookRuntime;
-  readonly pre: readonly MatchedHook[];
-  readonly post: readonly MatchedHook[];
+  readonly pre: readonly MatchedRequestHook[];
+  readonly post: readonly MatchedRequestHook[];
+}
+
+/**
+ * The request hooks of `plugin` that a request (`method`, `targetPath` on
+ * the agent half) matches, in declaration order — or `refuse` when the
+ * plugin declares relay hooks Lamaste may not run (not approved): its
+ * traffic is refused rather than let past hooks that do not run.
+ */
+export async function buildRequestHookPlan(
+  runtime: RequestHookRuntime,
+  plugin: string,
+  method: string,
+  targetPath: string,
+): Promise<RequestHookPlan | { readonly refuse: string }> {
+  const found = await runtime.hooksFor(plugin);
+  if ('refuse' in found) return { refuse: found.refuse };
+  const upper = method.toUpperCase();
+  const segments = requestPathSegments(targetPath) ?? [];
+  const pre: MatchedRequestHook[] = [];
+  const post: MatchedRequestHook[] = [];
+  for (const hook of found.hooks) {
+    const matched = matchedRoute(hook, upper, segments);
+    if (matched === null) continue;
+    (hook.stage === 'pre-forward' ? pre : post).push({ hook, route: matched });
+  }
+  return { runtime, pre, post };
 }
 
 /** The most body any of `hooks` reads: 0 when none reads one. */
-function largestBodyMax(hooks: readonly MatchedHook[]): number {
+function largestBodyMax(hooks: readonly MatchedRequestHook[]): number {
   return hooks.reduce((max, p) => Math.max(max, p.hook.bodyMaxBytes ?? 0), 0);
 }
 
@@ -836,10 +876,10 @@ async function forward(
   request: FastifyRequest,
   reply: FastifyReply,
   target: AgentForwardTarget,
-  caller: CallerIdentity,
+  caller: ForwardedCaller,
   targetPath: string,
-  opts: ForwardTimeouts,
-  plan: HookPlan | null,
+  opts: AgentForwardTimeouts,
+  plan: RequestHookPlan | null,
 ): Promise<ForwardOutcome> {
   const method = request.method.toUpperCase();
   const bodyIdleTimeoutMs = opts.bodyIdleTimeoutMs ?? AGENT_FORWARD_DEFAULTS.bodyIdleTimeoutMs;
@@ -869,7 +909,7 @@ async function forward(
   const headers = forwardedRequestHeaders(request.headers, target.port, opts.host ?? '127.0.0.1');
   const query = targetPath.includes('?') ? targetPath.slice(targetPath.indexOf('?') + 1) : '';
   const pathOnly = targetPath.split('?')[0] ?? targetPath;
-  const requestInfo = { method, path: pathOnly, query, caller };
+  const requestInfo = { method, path: pathOnly, query, caller: hookCallerOf(caller) };
 
   reply.hijack();
   const res = reply.raw;
@@ -956,10 +996,17 @@ async function forward(
   // The nonce is chosen here so the answer's responder signature can be
   // checked against it.
   const nonce = generateCallerAssertionNonce();
-  headers[CALLER_ASSERTION_HEADER] = signCallerAssertion(
-    { plugin: target.plugin, caller, method, path: targetPath, nonce },
-    target.secret,
-  );
+  try {
+    headers[CALLER_ASSERTION_HEADER] = signCallerAssertion(
+      { plugin: target.plugin, caller, method, path: targetPath, nonce },
+      target.secret,
+    );
+  } catch (err: unknown) {
+    // A malformed secret, or a caller the path is not for: a mistake in
+    // Lamaste — nothing is sent, and the hijacked reply is still answered.
+    writeJson(res, 500, { error: 'The request could not be signed for the agent half' });
+    return { status: 500, error: err instanceof Error ? err.message : String(err) };
+  }
   if (body.kind === 'buffer') headers['content-length'] = String(body.bytes.length);
   else if (withBody && declared !== undefined) headers['content-length'] = declared;
 
@@ -1120,6 +1167,46 @@ function answer(reply: FastifyReply, status: number, body: string): ForwardOutco
   return { status };
 }
 
+/** The one metadata line a forwarded request leaves: never a body, a query or a username. */
+function logForwarded(
+  logger: AgentForwarderLogger,
+  entry: {
+    readonly plugin: string;
+    readonly caller: ForwardedCaller;
+    readonly method: string;
+    readonly targetPath: string;
+    readonly startedAt: number;
+    readonly plan: RequestHookPlan | null;
+    readonly outcome: ForwardOutcome;
+  },
+  messages: { readonly done: string; readonly failed: string },
+): void {
+  const { plan, outcome } = entry;
+  const line = {
+    plugin: entry.plugin,
+    caller: callerLabel(entry.caller),
+    method: entry.method,
+    path: entry.targetPath.split('?')[0] ?? entry.targetPath,
+    status: outcome.status,
+    durationMs: Date.now() - entry.startedAt,
+    ...(plan && (plan.pre.length > 0 || plan.post.length > 0)
+      ? { hooks: { pre: plan.pre.length, post: plan.post.length } }
+      : {}),
+    ...(outcome.hook ? { hook: outcome.hook } : {}),
+    ...(outcome.error ? { error: outcome.error } : {}),
+  };
+  if (outcome.error) logger.warn(line, messages.failed);
+  else logger.info(line, messages.done);
+}
+
+/** The body reaches the forwarder as the raw stream, whatever its type: nothing here parses it. */
+function passBodiesThrough(fastify: FastifyInstance): void {
+  fastify.removeAllContentTypeParsers();
+  fastify.addContentTypeParser('*', (_request, payload, done) => {
+    done(null, payload);
+  });
+}
+
 /**
  * Fastify plugin registering `/:route` and `/:route/*` (under the prefix it
  * is registered with — `/api` on the panel). Register it after every core
@@ -1135,12 +1222,7 @@ export async function agentForwarderPlugin(
   const reserved = new Set<string>(RESERVED_API_PREFIXES);
   const apiPrefix = fastify.prefix;
 
-  // The body is handed to the forwarder as the raw stream, whatever its
-  // content type: nothing here reads or parses it.
-  fastify.removeAllContentTypeParsers();
-  fastify.addContentTypeParser('*', (_request, payload, done) => {
-    done(null, payload);
-  });
+  passBodiesThrough(fastify);
 
   const handler = async (
     request: FastifyRequest<{ Params: { route: string } }>,
@@ -1168,7 +1250,9 @@ export async function agentForwarderPlugin(
       return reply.code(guarded.status).send(guarded.body);
     }
     const caller = await opts.authorize(request, resolved.plugin);
-    if (!caller) {
+    // Only an admin or an agent reaches the admin surface; the panel's
+    // authorizer names nothing else, and anything else is refused.
+    if (!caller || (caller.type !== 'admin' && caller.type !== 'agent')) {
       return reply.code(403).send({
         error: 'Insufficient scope for plugin route',
         details: { required: `admin OR agent with a "plugin:${route}:*" capability` },
@@ -1182,42 +1266,35 @@ export async function agentForwarderPlugin(
       return reply.callNotFound();
     }
 
-    let plan: HookPlan | null = null;
+    let plan: RequestHookPlan | null = null;
     if (opts.hooks) {
-      const found = await opts.hooks.hooksFor(resolved.plugin);
-      if ('refuse' in found) {
-        return reply.code(503).send({ error: found.refuse, code: 'hooks_not_approved' });
+      const built = await buildRequestHookPlan(
+        opts.hooks,
+        resolved.plugin,
+        request.method,
+        targetPath,
+      );
+      if ('refuse' in built) {
+        return reply.code(503).send({ error: built.refuse, code: 'hooks_not_approved' });
       }
-      const method = request.method.toUpperCase();
-      const segments = requestPathSegments(targetPath) ?? [];
-      const pre: MatchedHook[] = [];
-      const post: MatchedHook[] = [];
-      for (const hook of found.hooks) {
-        const matched = matchedRoute(hook, method, segments);
-        if (matched === null) continue;
-        (hook.stage === 'pre-forward' ? pre : post).push({ hook, route: matched });
-      }
-      plan = { runtime: opts.hooks, pre, post };
+      plan = built;
     }
 
     const startedAt = Date.now();
     const outcome = await forward(request, reply, resolved, caller, targetPath, opts, plan);
-    const pathOnly = targetPath.split('?')[0] ?? targetPath;
-    const line = {
-      plugin: resolved.plugin,
-      caller: callerLabel(caller),
-      method: request.method,
-      path: pathOnly,
-      status: outcome.status,
-      durationMs: Date.now() - startedAt,
-      ...(plan && (plan.pre.length > 0 || plan.post.length > 0)
-        ? { hooks: { pre: plan.pre.length, post: plan.post.length } }
-        : {}),
-      ...(outcome.hook ? { hook: outcome.hook } : {}),
-      ...(outcome.error ? { error: outcome.error } : {}),
-    };
-    if (outcome.error) logger.warn(line, 'Plugin request not completed');
-    else logger.info(line, 'Forwarded plugin request');
+    logForwarded(
+      logger,
+      {
+        plugin: resolved.plugin,
+        caller,
+        method: request.method,
+        targetPath,
+        startedAt,
+        plan,
+        outcome,
+      },
+      { done: 'Forwarded plugin request', failed: 'Plugin request not completed' },
+    );
   };
 
   fastify.all('/:route', handler);
@@ -1234,11 +1311,191 @@ export interface HookedForwarderOptions extends AgentForwarderOptions {
  * enters the tunnel) and their response for `request:post-forward` (scan,
  * redact or block before it leaves the relay); every other route streams
  * through untouched. While the plugin is down, a failed request is answered
- * with its `tunnel:down` fallback. The admin forwarder uses it now; the
- * plugin gateway of the user surface will, so hooks behave the same on both.
+ * with its `tunnel:down` fallback. The user surface ({@link userSurfacePlugin})
+ * runs the same hooks on `/app/*` routes, so they behave the same on both.
  */
 export function createHookedForwarder(
   opts: HookedForwarderOptions,
 ): (fastify: FastifyInstance) => Promise<void> {
   return (fastify) => agentForwarderPlugin(fastify, opts);
+}
+
+// ---------------------------------------------------------------------------
+// The user surface: /api/<route>/app/* → the agent half's /app/*
+// ---------------------------------------------------------------------------
+
+/**
+ * Map the request URL of a user-surface request (`/api/<route>/app[/<rest>][?query]`)
+ * to the path on the agent half (`/app[/<rest>][?query]`). Null when the
+ * URL is not on the route's user surface, or when its path has a segment a
+ * server could resolve differently from the check (`isUserSurfaceUrl`, the
+ * relay assertion's check: `.` and `..`, encoded `.`, `/` and `\`,
+ * backslashes, undecodable escapes). Pure; exported for tests.
+ */
+export function userSurfaceHalfPath(rawUrl: string, route: string): string | null {
+  if (!isUserSurfaceUrl(rawUrl, route)) return null;
+  return `${AGENT_HALF_APP_PREFIX}${rawUrl.slice(userSurfaceApiPath(route).length)}`;
+}
+
+/** What the panel's relay check made of a user-surface request. */
+export type UserSurfaceRelayVerification =
+  | {
+      readonly ok: true;
+      /** The Authelia username Gatekeeper attested. */
+      readonly username: string;
+      /** The plugin route the assertion is bound to. */
+      readonly route: string;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/** Who the user is to the plugin, or why they may not use it. */
+export type UserCallerResolution =
+  | { readonly ok: true; readonly caller: UserCallerIdentity }
+  | {
+      readonly ok: false;
+      /** 403: disabled, removed or not entitled; 404: no such user surface; 503: not ready. */
+      readonly status: 403 | 404 | 503;
+      readonly error: string;
+    };
+
+type MaybePromise<T> = T | Promise<T>;
+
+export interface UserSurfaceOptions extends AgentForwardTimeouts {
+  /**
+   * Check the request's relay assertion (`RELAY_PANEL_AUDIENCE`, bound to
+   * the method and the raw request target): the username Gatekeeper
+   * attested and the route the assertion is for.
+   */
+  verifyRelay(request: FastifyRequest): MaybePromise<UserSurfaceRelayVerification>;
+  /**
+   * The forward target of a route with a user surface — bound to a host,
+   * its plugin declaring `identity` in its approved version, hosted — or
+   * null (404). Called on every request.
+   */
+  resolveTarget(route: string): MaybePromise<AgentForwardTarget | null>;
+  /** The directory's user behind `username` for this plugin: id, username and roles. */
+  resolveUserCaller(route: string, username: string): MaybePromise<UserCallerResolution>;
+  /**
+   * The origin of the host bound as the route's user surface
+   * (`https://<fqdn>`), or null when none is. A request that may change
+   * something — any method but GET, HEAD and OPTIONS — must carry exactly
+   * that `Origin`.
+   */
+  originFor(route: string): MaybePromise<string | null>;
+  /** The plugins' request hooks; without it every request streams through untouched. */
+  readonly hooks?: RequestHookRuntime | undefined;
+  readonly logger?: AgentForwarderLogger | undefined;
+}
+
+/**
+ * Fastify plugin serving plugins' user surfaces: `/:route/app` and
+ * `/:route/app/*`, registered under the prefix `/api` (anything else
+ * throws — the relay assertion binds the path `/api/<route>/app…`), in a
+ * context of its own that answers only what Gatekeeper vouched for. Per
+ * request, in order:
+ *
+ * 1. the relay assertion must verify and be bound to the URL's route —
+ *    else 401 `{ error: 'unauthenticated' }`, JSON (no redirect for an
+ *    XHR), before anything is looked up;
+ * 2. the route must have a user surface (`resolveTarget`) — else 404;
+ * 3. a request that may change something must carry `Origin` equal to the
+ *    bound host's origin — else 403 `{ error: 'cross-origin request
+ *    refused' }` (CSRF: the session cookie travels with any cross-site
+ *    request);
+ * 4. the directory must know the user for this plugin
+ *    (`resolveUserCaller`) — else its 403, 404 or 503;
+ * 5. the request is forwarded to `/app/<rest>` with the `user` caller,
+ *    through the plugin's request hooks — the admin forwarder's pipeline:
+ *    credentials and Lamaste's headers stripped (the relay assertion and
+ *    the session cookie among them), the body limit, the signed assertion,
+ *    the responder check, streaming, and no `Set-Cookie` back.
+ *
+ * Logs one metadata line per forwarded request, the user as
+ * `user:<userId>`; never a body, a query string or a username.
+ */
+export async function userSurfacePlugin(
+  fastify: FastifyInstance,
+  opts: UserSurfaceOptions,
+): Promise<void> {
+  if (fastify.prefix !== USER_SURFACE_API_PREFIX) {
+    throw new Error(
+      `The user surface is served under "${USER_SURFACE_API_PREFIX}" (registered under "${fastify.prefix}")`,
+    );
+  }
+  const logger = opts.logger ?? fastify.log;
+  const reserved = new Set<string>(RESERVED_API_PREFIXES);
+
+  passBodiesThrough(fastify);
+
+  const handler = async (
+    request: FastifyRequest<{ Params: { route: string } }>,
+    reply: FastifyReply,
+  ): Promise<void> => {
+    const { route } = request.params;
+    const relay = await opts.verifyRelay(request);
+    if (!relay.ok || relay.route !== route) {
+      return reply.code(401).send({ error: 'unauthenticated' });
+    }
+    if (!ROUTE_RE.test(route) || reserved.has(route)) {
+      return reply.code(404).send({ error: 'Not found' });
+    }
+    const target = await opts.resolveTarget(route);
+    if (!target) return reply.code(404).send({ error: 'Not found' });
+
+    const method = request.method.toUpperCase();
+    if (hasRequestBody(method)) {
+      const origin = await opts.originFor(route);
+      if (origin === null || request.headers.origin !== origin) {
+        return reply.code(403).send({ error: 'cross-origin request refused' });
+      }
+    }
+
+    const resolution = await opts.resolveUserCaller(route, relay.username);
+    if (!resolution.ok) {
+      return reply.code(resolution.status).send({ error: resolution.error });
+    }
+    // The assertion carries exactly what is checked here: a valid user
+    // caller, and the user Gatekeeper attested — never someone else.
+    const caller = parseCallerIdentity(resolution.caller);
+    if (!caller || caller.type !== 'user' || caller.username !== relay.username) {
+      logger.warn(
+        { plugin: target.plugin, route },
+        'The user surface resolved a caller that is not the attested user',
+      );
+      return reply.code(500).send({ error: 'The user could not be resolved' });
+    }
+
+    const targetPath = userSurfaceHalfPath(request.raw.url ?? '', route);
+    if (targetPath === null) {
+      return reply.code(400).send({ error: 'Invalid plugin path' });
+    }
+
+    let plan: RequestHookPlan | null = null;
+    if (opts.hooks) {
+      const built = await buildRequestHookPlan(opts.hooks, target.plugin, method, targetPath);
+      if ('refuse' in built) {
+        return reply.code(503).send({ error: built.refuse, code: 'hooks_not_approved' });
+      }
+      plan = built;
+    }
+
+    const startedAt = Date.now();
+    const outcome = await forward(request, reply, target, caller, targetPath, opts, plan);
+    logForwarded(
+      logger,
+      {
+        plugin: target.plugin,
+        caller,
+        method: request.method,
+        targetPath,
+        startedAt,
+        plan,
+        outcome,
+      },
+      { done: 'Forwarded user request', failed: 'User request not completed' },
+    );
+  };
+
+  fastify.all('/:route/app', handler);
+  fastify.all('/:route/app/*', handler);
 }

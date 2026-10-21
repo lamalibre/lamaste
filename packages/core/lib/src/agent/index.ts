@@ -236,6 +236,22 @@ export type {
   SettingsUpdateOutcome,
   SettingsHandlerOptions,
 } from './plugin-settings-store.js';
+// Identity in the agent half: the projection of the plugin's audience
+// (lamaste_users in its own SQLite database) and the /admin/identity/*
+// handlers the panel's feed arrives at
+export { createIdentityProjection, IdentityCursorConflictError } from './identity-projection.js';
+export type {
+  IdentitySqlValue,
+  IdentityProjectionStatement,
+  IdentityProjectionDatabase,
+  IdentityProjectionOptions,
+  IdentityProjectionState,
+  IdentityProjection,
+  ProjectedUser,
+  ProjectedUserStatus,
+} from './identity-projection.js';
+export { createIdentityHandlers } from './identity-handler.js';
+export type { IdentityHandlerLogger, IdentityHandlersOptions } from './identity-handler.js';
 // App host helper (slice 3): running lamaste-apphost, the record of the agent
 // halves it installed here, and the host facts the relay checks hosting against
 export { appServiceAccountComment } from '../agent-half.js';

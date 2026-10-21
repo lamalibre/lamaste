@@ -36,6 +36,13 @@
  * a port without the secret can serve nothing: not a health answer, not a
  * hook decision, not `panel.js`.
  *
+ * Paths are a boundary between callers (`user-surface.ts`): a `user` caller
+ * — a person on the plugin's user surface — is valid only for a path under
+ * `/app`, and every other caller never for one there. Signing refuses
+ * either mistake and verifying answers `wrong_request`, so an assertion of
+ * one kind can never act on the other's routes. A verifier built before
+ * the `user` caller existed refuses it as `malformed`.
+ *
  * Shared between the server subpath (signing, responder checks) and the
  * agent subpath (verifying, responder signing); the two never import each
  * other.
@@ -43,8 +50,11 @@
 
 import crypto from 'node:crypto';
 
+import { isLamasteUsername } from './constants.js';
+import { isIdentityRoleList, isIdentityUuid } from './identity.js';
 import { decryptSettingsSecret } from './settings-secrets.js';
 import type { EncryptedSettingsSecret } from './settings-secrets.js';
+import { isAgentHalfAppPath, isUnderAgentHalfApp } from './user-surface.js';
 
 /** The request header that carries the assertion (lower case, as Node reports headers). */
 export const CALLER_ASSERTION_HEADER = 'x-lamalibre-caller';
@@ -74,15 +84,30 @@ const RESPONDER_CONTEXT = 'lamaste.responder.v1';
 const MAC_BASE64URL_LENGTH = 43;
 
 /**
+ * A person on a plugin's user surface (`/app/*`), as the panel's directory
+ * knows them: the stable `userId` (UUID v4) to key anything on, the
+ * username to show, and their roles in this plugin (1–32 of the role ids
+ * its manifest declares).
+ */
+export interface UserCallerIdentity {
+  readonly type: 'user';
+  readonly userId: string;
+  readonly username: string;
+  readonly roles: readonly string[];
+}
+
+/**
  * Who made the request. `admin` and `agent` are callers the panel admitted
- * and forwards; `lamaste` is Lamaste itself — its health probes, the
- * lifecycle hook calls (`/admin/hooks/*`) and the settings calls
- * (`/admin/settings*`), the last two of which no forwarded caller can
- * reach.
+ * and forwards to `/admin/*`; `user` one it forwards to `/app/*` (the user
+ * surface, {@link UserCallerIdentity}); `lamaste` is Lamaste itself — its
+ * health probes, the lifecycle hook calls (`/admin/hooks/*`), the settings
+ * calls (`/admin/settings*`) and the identity feed (`/admin/identity/*`),
+ * the last three of which no forwarded caller can reach.
  */
 export type CallerIdentity =
   | { readonly type: 'admin' }
   | { readonly type: 'agent'; readonly label: string }
+  | UserCallerIdentity
   | { readonly type: 'lamaste' };
 
 export interface CallerAssertionPayload {
@@ -150,9 +175,44 @@ function hmac(secret: string, data: string): Buffer {
 }
 
 /**
+ * A caller as an assertion may name one, or null. An `agent` needs a
+ * string label; a `user` a lower-case UUID v4 `userId`, a Lamaste
+ * username and 1–32 distinct role ids. Unknown fields are dropped — the
+ * `user` caller is rebuilt from the three it has.
+ */
+export function parseCallerIdentity(raw: unknown): CallerIdentity | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const caller = raw as Record<string, unknown>;
+  if (caller['type'] === 'admin') return { type: 'admin' };
+  if (caller['type'] === 'agent' && typeof caller['label'] === 'string') {
+    return { type: 'agent', label: caller['label'] };
+  }
+  if (caller['type'] === 'lamaste') return { type: 'lamaste' };
+  if (caller['type'] === 'user') {
+    const { userId, username, roles } = caller;
+    if (!isIdentityUuid(userId) || !isLamasteUsername(username) || !isIdentityRoleList(roles)) {
+      return null;
+    }
+    return { type: 'user', userId, username, roles: [...roles] };
+  }
+  return null;
+}
+
+/**
+ * Whether `caller` may be named for a request to `path` on the agent half:
+ * a `user` only under `/app` (read literally), every other caller never
+ * where a router could take the path for `/app` (`user-surface.ts`).
+ */
+function callerMayReach(caller: CallerIdentity, path: string): boolean {
+  return caller.type === 'user' ? isAgentHalfAppPath(path) : !isUnderAgentHalfApp(path);
+}
+
+/**
  * Sign a caller assertion for one request. `iat` and `nonce` are filled in
  * when omitted; `bodySha256` is included only when given. Throws on a
- * malformed secret, nonce or body hash — a mistake in Lamaste, never sent.
+ * malformed secret, nonce, body hash or caller, and on a caller the path
+ * is not for (a `user` outside `/app`, anyone else under it) — a mistake
+ * in Lamaste, never sent.
  */
 export function signCallerAssertion(input: CallerAssertionInput, secret: string): string {
   assertHostingSecret(secret);
@@ -162,10 +222,21 @@ export function signCallerAssertion(input: CallerAssertionInput, secret: string)
   if (input.bodySha256 !== undefined && !SHA256_HEX_RE.test(input.bodySha256)) {
     throw new Error('Invalid caller assertion body hash');
   }
+  const parsedCaller = parseCallerIdentity(input.caller);
+  if (!parsedCaller) throw new Error('Invalid caller in caller assertion');
+  if (!callerMayReach(parsedCaller, input.path)) {
+    throw new Error(
+      parsedCaller.type === 'user'
+        ? 'A user caller is only valid for a path under /app'
+        : 'Only a user caller is valid for a path under /app',
+    );
+  }
   const payload: CallerAssertionPayload = {
     v: CALLER_ASSERTION_VERSION,
     plugin: input.plugin,
-    caller: input.caller,
+    // A user caller is signed in its canonical form; the others exactly as
+    // given, as before the user caller existed.
+    caller: parsedCaller.type === 'user' ? parsedCaller : input.caller,
     method: input.method.toUpperCase(),
     path: input.path,
     iat: input.iat ?? Date.now(),
@@ -342,7 +413,6 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
   }
   if (!parsed || typeof parsed !== 'object') return null;
   const p = parsed as Record<string, unknown>;
-  const caller = p['caller'] as Record<string, unknown> | undefined;
   if (
     p['v'] !== CALLER_ASSERTION_VERSION ||
     typeof p['plugin'] !== 'string' ||
@@ -351,9 +421,7 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
     typeof p['iat'] !== 'number' ||
     !Number.isFinite(p['iat']) ||
     typeof p['nonce'] !== 'string' ||
-    !NONCE_RE.test(p['nonce']) ||
-    !caller ||
-    typeof caller !== 'object'
+    !NONCE_RE.test(p['nonce'])
   ) {
     return null;
   }
@@ -364,16 +432,8 @@ function parsePayload(encoded: string): CallerAssertionPayload | null {
   ) {
     return null;
   }
-  let identity: CallerIdentity;
-  if (caller['type'] === 'admin') {
-    identity = { type: 'admin' };
-  } else if (caller['type'] === 'agent' && typeof caller['label'] === 'string') {
-    identity = { type: 'agent', label: caller['label'] };
-  } else if (caller['type'] === 'lamaste') {
-    identity = { type: 'lamaste' };
-  } else {
-    return null;
-  }
+  const identity = parseCallerIdentity(p['caller']);
+  if (!identity) return null;
   return {
     v: CALLER_ASSERTION_VERSION,
     plugin: p['plugin'],
@@ -401,10 +461,11 @@ function bodyMatches(payload: CallerAssertionPayload, opts: VerifyCallerAssertio
 /**
  * Verify the `X-Lamalibre-Caller` header of a request the agent half
  * received. Checks, in order: shape, signature against each accepted secret
- * (constant time), plugin, method and path, body (constant time), age, and
- * replay. The nonce is recorded only when everything else passed, so a
- * forged assertion — or a true one with another body — cannot poison the
- * store.
+ * (constant time), plugin, method and path, whether the caller may be named
+ * for that path (a `user` only under `/app`, every other caller never
+ * there — `wrong_request`), body (constant time), age, and replay. The
+ * nonce is recorded only when everything else passed, so a forged
+ * assertion — or a true one with another body — cannot poison the store.
  */
 export function verifyCallerAssertion(
   header: string | undefined,
@@ -431,6 +492,7 @@ export function verifyCallerAssertion(
   if (payload.method !== opts.method.toUpperCase() || payload.path !== opts.path) {
     return { ok: false, reason: 'wrong_request' };
   }
+  if (!callerMayReach(payload.caller, payload.path)) return { ok: false, reason: 'wrong_request' };
   if (!bodyMatches(payload, opts)) return { ok: false, reason: 'wrong_body' };
 
   const now = opts.now ?? Date.now();

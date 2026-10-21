@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { USERNAME_MAX_LENGTH, USERNAME_MIN_LENGTH, USERNAME_REGEX } from '@lamalibre/lamaste';
 import { getConfig } from '../lib/config.js';
 import { ensureSessionSecret } from '../lib/session.js';
 import { createUserSession } from '../lib/user-access-session.js';
@@ -20,9 +21,9 @@ import { readTunnels } from '../lib/state.js';
 const CreateGrantSchema = z.object({
   username: z
     .string()
-    .min(2)
-    .max(32)
-    .regex(/^[a-z0-9][a-z0-9_-]*$/, 'Invalid username format'),
+    .min(USERNAME_MIN_LENGTH)
+    .max(USERNAME_MAX_LENGTH)
+    .regex(USERNAME_REGEX, 'Invalid username format'),
   pluginName: z
     .string()
     .min(1)

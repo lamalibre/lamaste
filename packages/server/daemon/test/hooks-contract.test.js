@@ -187,12 +187,14 @@ test('hook set: defaults applied, digest binds the declarations and the module b
   );
 });
 
-test('hook set: the preview shows fail-open hooks, effects, packs and inactive routes', () => {
+test('hook set: the preview shows fail-open hooks, effects, packs and user-surface routes', () => {
   const set = relayHookSetOf(validateManifest({ ...base, hooks: fullHooks }));
   const preview = relayHookSetPreview(set, hookEntrySha256(Buffer.from('x')));
   assert.deepEqual(preview.request[0].failOpen, []);
   assert.deepEqual(preview.request[1].failOpen, ['onUnscannable']);
-  assert.deepEqual(preview.request[1].inactiveRoutes, ['GET /app/*']);
+  // `/app` routes run for requests on the user surface (slice 6).
+  assert.deepEqual(preview.request[1].userSurfaceRoutes, ['GET /app/*']);
+  assert.equal(preview.request[1].inactiveRoutes, undefined);
   assert.equal(preview.failOpenCount, 1);
   assert.deepEqual(preview.effects, ['audit', 'notify-admins']);
   assert.deepEqual(preview.packs, ['credentials@1', 'jwt@1']);
