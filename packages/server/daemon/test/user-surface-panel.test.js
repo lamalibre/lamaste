@@ -296,6 +296,9 @@ const ADMIN_CERT = {
 };
 
 before(async () => {
+  // The mTLS middleware treats every request as the administrator under
+  // NODE_ENV=development; these tests exercise the checks a relay runs.
+  process.env.NODE_ENV = 'production';
   dir = await realpath(await mkdtemp(path.join(tmpdir(), 'lamaste-s6-panel-')));
   stateDir = path.join(dir, 'state');
   await mkdir(stateDir);
